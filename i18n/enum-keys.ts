@@ -1,4 +1,9 @@
-import type { EquipmentType, ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
+import type {
+  BodyMeasurementSite,
+  EquipmentType,
+  ExerciseCategory,
+  MuscleGroup,
+} from '@/lib/prisma-client';
 
 export const muscleGroupMessageKeys = {
   CHEST: 'chest',
@@ -34,3 +39,19 @@ export const equipmentTypeMessageKeys = {
   CARDIO: 'cardio',
   OTHER: 'other',
 } as const satisfies Record<EquipmentType, string>;
+
+export const measurementSiteMessageKeys = {
+  NECK: 'neck',
+  SHOULDERS: 'shoulders',
+  CHEST: 'chest',
+  WAIST: 'waist',
+  HIPS: 'hips',
+  ARM_LEFT: 'armLeft',
+  ARM_RIGHT: 'armRight',
+  FOREARM_LEFT: 'forearmLeft',
+  FOREARM_RIGHT: 'forearmRight',
+  THIGH_LEFT: 'thighLeft',
+  THIGH_RIGHT: 'thighRight',
+  CALF_LEFT: 'calfLeft',
+  CALF_RIGHT: 'calfRight',
+} as const satisfies Record<BodyMeasurementSite, string>;

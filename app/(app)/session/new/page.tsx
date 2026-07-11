@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ReadinessCheckin } from '@/components/session/readiness-checkin';
 import { WorkoutStartList } from '@/components/session/workout-start-list';
+import { getTrainingDisplayName } from '@/i18n/training-names';
 
 const DAY_KEYS = [
   'monday',
@@ -21,6 +22,7 @@ const DAY_KEYS = [
 export default async function NewSessionPage() {
   const t = await getTranslations('session');
   const common = await getTranslations('common');
+  const locale = await getLocale();
   const session = await requireSession();
   const [activeProgram, user, gyms] = await Promise.all([
     db.program.findFirst({
@@ -56,7 +58,9 @@ export default async function NewSessionPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t('startTitle')}</h1>
           {activeProgram ? (
             <p className="text-sm text-muted-foreground">
-              {t('activeProgram', { name: activeProgram.name })}
+              {t('activeProgram', {
+                name: getTrainingDisplayName(activeProgram.name, locale),
+              })}
             </p>
           ) : null}
         </div>
@@ -94,7 +98,12 @@ export default async function NewSessionPage() {
               workouts={activeProgram.workouts.map((w) => {
                 const dayKey = w.dayOfWeek != null ? DAY_KEYS[w.dayOfWeek - 1] : null;
                 const day = dayKey ? common(`days.${dayKey}`) : null;
-                return { id: w.id, name: w.name, day, exerciseCount: w._count.exercises };
+                return {
+                  id: w.id,
+                  name: getTrainingDisplayName(w.name, locale),
+                  day,
+                  exerciseCount: w._count.exercises,
+                };
               })}
             />
           </>
