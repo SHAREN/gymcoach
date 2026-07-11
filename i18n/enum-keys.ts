@@ -1,4 +1,4 @@
-import type { ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
+import type { EquipmentType, ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
 
 export const muscleGroupMessageKeys = {
   CHEST: 'chest',
@@ -24,3 +24,13 @@ export const exerciseCategoryMessageKeys = {
   ISOLATION: 'isolation',
   CARDIO: 'cardio',
 } as const satisfies Record<ExerciseCategory, string>;
+
+export const equipmentTypeMessageKeys = {
+  DUMBBELL: 'dumbbell',
+  BARBELL: 'barbell',
+  MACHINE: 'machine',
+  CABLE: 'cable',
+  BODYWEIGHT: 'bodyweight',
+  CARDIO: 'cardio',
+  OTHER: 'other',
+} as const satisfies Record<EquipmentType, string>;
