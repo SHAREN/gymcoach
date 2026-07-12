@@ -19,7 +19,7 @@ const withPWA = require('@ducanh2912/next-pwa').default({
           request.mode === 'navigate' && !url.pathname.startsWith('/api/'),
         handler: 'NetworkFirst',
         options: {
-          cacheName: 'pages',
+          cacheName: 'pages-v2',
           expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
         },
       },

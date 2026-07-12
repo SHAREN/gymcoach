@@ -56,7 +56,7 @@ describe('ExerciseCard', () => {
     expect(screen.queryByText(importedNote)).not.toBeInTheDocument();
     expect(screen.queryByText(/Last session/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Suggestion:/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/5 sets × 10 reps · RIR 2 · Rest 120s/i)).toBeInTheDocument();
+    expect(screen.queryByText(/5 sets × 10 reps · RIR 2 · Rest 120s/i)).not.toBeInTheDocument();
   });
 
   it('keeps workout notes collapsible and shows only relevant gym context', () => {
@@ -73,20 +73,5 @@ describe('ExerciseCard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Notes \/ mind-muscle cue/i }));
     expect(screen.getByText(programExercise.notes!)).toBeInTheDocument();
-  });
-
-  it('keeps the compact prescription for cardio exercises', () => {
-    render(
-      <ExerciseCard
-        programExercise={{
-          ...programExercise,
-          targetSets: 2,
-          restSec: 60,
-          exercise: { ...exercise, category: 'CARDIO' },
-        }}
-      />,
-    );
-
-    expect(screen.getByText(/2 sets · Rest 60s/i)).toBeInTheDocument();
   });
 });
