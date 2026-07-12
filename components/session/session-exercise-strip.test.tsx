@@ -24,14 +24,16 @@ const exercises = [
 ] as never;
 
 describe('SessionExerciseStrip', () => {
-  it('shows media when available, falls back to initials, and selects an exercise', () => {
+  it('dims inactive exercises, switches them, and opens the active exercise', () => {
     const onSelect = vi.fn();
+    const onOpen = vi.fn();
     render(
       <SessionExerciseStrip
         exercises={exercises}
         currentIndex={0}
         completedExerciseIds={new Set(['exercise-1'])}
         onSelect={onSelect}
+        onOpen={onOpen}
       />,
     );
 
@@ -41,8 +43,14 @@ describe('SessionExerciseStrip', () => {
     );
     expect(screen.getByText('CRD')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '2. Custom Rear Delt Raise' }));
+    const active = screen.getByRole('button', { name: '1. Squats · Barbell' });
+    const inactive = screen.getByRole('button', { name: '2. Custom Rear Delt Raise' });
+    expect(active).toHaveClass('opacity-100');
+    expect(inactive).toHaveClass('opacity-45');
+
+    fireEvent.click(inactive);
     expect(onSelect).toHaveBeenCalledWith(1);
+    fireEvent.click(active);
+    expect(onOpen).toHaveBeenCalledWith('exercise-1');
   });
 });
-

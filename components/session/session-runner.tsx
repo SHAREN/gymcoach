@@ -480,6 +480,7 @@ export function SessionRunner({
             setCurrentIdx(index);
             setMode({ kind: 'input' });
           }}
+          onOpen={(exerciseId) => router.push(`/exercises/${exerciseId}`)}
         />
       </div>
 
