@@ -116,6 +116,9 @@ on your own key - all self-hosted.
   structured context the AI receives.
 - **Your provider** - Anthropic SDK or any OpenRouter model. With no key set,
   the app is still a clean, fast tracker.
+- **Documented coaching contract** - source-backed principles, deterministic
+  formulas and product heuristics are recorded in
+  [`docs/ai-coach-principles.md`](docs/ai-coach-principles.md).
 
 ### Programs and exercises
 

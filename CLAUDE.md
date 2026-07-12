@@ -61,6 +61,9 @@ to pass the gate is itself a defect.
 
 ## AI layer notes
 
+- `docs/ai-coach-principles.md` is the normative training-science and
+  calculation contract. Read it before changing coach prompts, progression,
+  readiness, deload, plateau, return-to-training or intra-set logic.
 - Pick the provider with `LLM_PROVIDER`. The rest of the app is provider-agnostic.
 - Every AI call builds a compact, structured payload (profile + recent sessions +
   active program + per-exercise progression), not raw rows.
