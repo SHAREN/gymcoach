@@ -137,6 +137,13 @@ export const session = {
     warmupHelp:
       'Это только рекомендации. Записывайте разминку с переключателем «Разминка». Вес округляется вниз до доступных блинов.',
   },
+  editableSets: {
+    weight: 'Вес подхода {number} в {unit}',
+    reps: 'Повторения подхода {number}',
+    rir: 'Повторы в запасе для подхода {number}',
+    confirm: 'Подтвердить подход {number}',
+    delete: 'Удалить подход {number}',
+  },
   previousSession: {
     title: 'Прошлая тренировка · {date}',
   },

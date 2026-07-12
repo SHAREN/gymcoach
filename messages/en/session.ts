@@ -133,6 +133,13 @@ export const session = {
     warmupHelp:
       'Suggestions only. Log warm-ups with the Warmup toggle. Weights are rounded down to loadable plates.',
   },
+  editableSets: {
+    weight: 'Set {number} weight in {unit}',
+    reps: 'Set {number} repetitions',
+    rir: 'Set {number} reps in reserve',
+    confirm: 'Confirm set {number}',
+    delete: 'Delete set {number}',
+  },
   previousSession: {
     title: 'Previous session · {date}',
   },

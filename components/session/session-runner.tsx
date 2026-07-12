@@ -49,6 +49,7 @@ import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
+import { EditableSetsTable } from '@/components/session/editable-sets-table';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -492,37 +493,68 @@ export function SessionRunner({
           loadConstraints={loadConstraintsFor(currentPE)}
         />
 
-        <SetsList
-          programExercise={currentPE}
-          sets={currentSets}
-          isInputActive={mode.kind === 'input'}
-          onDeleteSet={handleDeleteSet}
-          priorSets={lastPerf?.sets}
-        />
-
-        {!hydrated ? null : mode.kind === 'input' ? (
-          <SetInput
-            programExercise={currentPE}
-            existingSets={currentSets}
-            lastPerformance={lastPerf}
-            readiness={effectiveReadiness}
-            deloadActive={deloadActive}
-            unit={unit}
-            recommendation={currentRecommendation}
-            loadConstraints={loadConstraintsFor(currentPE)}
-            onSubmit={handleValidate}
-          />
+        {currentPE.exercise.category === 'CARDIO' ? (
+          <>
+            <SetsList
+              programExercise={currentPE}
+              sets={currentSets}
+              isInputActive={mode.kind === 'input'}
+              onDeleteSet={handleDeleteSet}
+              priorSets={lastPerf?.sets}
+            />
+            {!hydrated ? null : mode.kind === 'input' ? (
+              <SetInput
+                programExercise={currentPE}
+                existingSets={currentSets}
+                lastPerformance={lastPerf}
+                readiness={effectiveReadiness}
+                deloadActive={deloadActive}
+                unit={unit}
+                recommendation={currentRecommendation}
+                loadConstraints={loadConstraintsFor(currentPE)}
+                onSubmit={handleValidate}
+              />
+            ) : (
+              <RestTimer
+                endsAt={mode.endsAt}
+                totalSec={mode.totalSec}
+                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                recommendation={restRecommendation}
+                unit={unit}
+                onEnd={handleRestEnd}
+                onSkip={handleSkipRest}
+                onAdd30={handleAdd30s}
+              />
+            )}
+          </>
         ) : (
-          <RestTimer
-            endsAt={mode.endsAt}
-            totalSec={mode.totalSec}
-            nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
-            recommendation={restRecommendation}
-            unit={unit}
-            onEnd={handleRestEnd}
-            onSkip={handleSkipRest}
-            onAdd30={handleAdd30s}
-          />
+          <>
+            <EditableSetsTable
+              programExercise={currentPE}
+              sets={currentSets}
+              lastPerformance={lastPerf}
+              readiness={effectiveReadiness}
+              deloadActive={deloadActive}
+              unit={unit}
+              recommendation={currentRecommendation}
+              loadConstraints={loadConstraintsFor(currentPE)}
+              disabled={!hydrated || mode.kind !== 'input'}
+              onSubmit={handleValidate}
+              onDeleteSet={handleDeleteSet}
+            />
+            {mode.kind === 'rest' && (
+              <RestTimer
+                endsAt={mode.endsAt}
+                totalSec={mode.totalSec}
+                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                recommendation={restRecommendation}
+                unit={unit}
+                onEnd={handleRestEnd}
+                onSkip={handleSkipRest}
+                onAdd30={handleAdd30s}
+              />
+            )}
+          </>
         )}
 
         <PreviousSessionSets performance={lastPerf} unit={unit} />
