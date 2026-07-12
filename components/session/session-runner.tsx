@@ -334,6 +334,39 @@ export function SessionRunner({
     });
   }
 
+  async function handleUpdateSet(
+    set: PendingSet,
+    values: { weight: number; reps: number; rir: number | null },
+  ) {
+    const db = getDB();
+    try {
+      // A freshly confirmed row may still be inside its POST request. Wait for
+      // that request to finish so the correction becomes a PATCH instead of
+      // racing the original values.
+      const current = (await db.pendingSets.get(set.localId)) ?? set;
+      if (!current.serverId && current.status === 'syncing') {
+        await flushPendingSets();
+      }
+
+      await db.pendingSets.update(set.localId, {
+        weight: values.weight,
+        reps: values.reps,
+        rir: values.rir,
+        status: 'pending',
+        attempts: 0,
+        lastError: null,
+      });
+
+      // The queue chooses POST for a new local row and PATCH once serverId is
+      // present. Offline edits remain pending and sync on reconnect.
+      void flushPendingSets();
+      toast.success(t('setUpdated'));
+    } catch (error) {
+      toast.error(t('setUpdateError'));
+      throw error;
+    }
+  }
+
   async function handleDeleteSet(set: PendingSet) {
     const db = getDB();
     // If already synced: API DELETE call, then local removal.
@@ -559,7 +592,7 @@ export function SessionRunner({
               loadConstraints={loadConstraintsFor(currentPE)}
               disabled={!hydrated || mode.kind !== 'input'}
               onSubmit={handleValidate}
-              onDeleteSet={handleDeleteSet}
+              onUpdateSet={handleUpdateSet}
             />
             {mode.kind === 'rest' && (
               <RestTimer

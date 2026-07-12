@@ -28,6 +28,8 @@ export const session = {
   finish: 'Завершить',
   setDeleted: 'Подход удалён.',
   setDeleteError: 'Не удалось удалить подход.',
+  setUpdated: 'Подход исправлен.',
+  setUpdateError: 'Не удалось исправить подход.',
   finished: 'Тренировка завершена.',
   finishError: 'Не удалось завершить тренировку.',
   rest: {
@@ -142,6 +144,7 @@ export const session = {
     reps: 'Повторения подхода {number}',
     rir: 'Повторы в запасе для подхода {number}',
     confirm: 'Подтвердить подход {number}',
+    save: 'Сохранить изменения подхода {number}',
     delete: 'Удалить подход {number}',
     chooseWeight: 'Выберите вес ({unit})',
     chooseReps: 'Выберите повторения',

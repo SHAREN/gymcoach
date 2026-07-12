@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Loader2, Trash2 } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
@@ -37,7 +37,10 @@ interface Props {
     isDropSet: false;
     notes: null;
   }) => Promise<void>;
-  onDeleteSet: (set: PendingSet) => void;
+  onUpdateSet: (
+    set: PendingSet,
+    values: { weight: number; reps: number; rir: number | null },
+  ) => Promise<void>;
 }
 
 interface DraftSet {
@@ -46,8 +49,21 @@ interface DraftSet {
   rir: number | null;
 }
 
+interface EditingSet {
+  set: PendingSet;
+  draft: DraftSet;
+}
+
 const SET_GRID_COLUMNS =
-  'grid-cols-[1.25rem_minmax(0,1fr)_2.75rem_3rem_3.5rem_2.5rem] sm:grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem]';
+  'grid-cols-[1.5rem_minmax(0,1.05fr)_minmax(2.75rem,0.72fr)_minmax(2.5rem,0.65fr)_minmax(3.75rem,0.9fr)_2.75rem] sm:grid-cols-[2.25rem_minmax(5rem,1.05fr)_minmax(3.5rem,0.72fr)_minmax(3.25rem,0.65fr)_minmax(4.5rem,0.9fr)_3rem]';
+
+function draftFromSet(set: PendingSet): DraftSet {
+  return {
+    weight: set.weight,
+    reps: set.reps,
+    rir: set.rir,
+  };
+}
 
 function initialDraft(
   pe: Props['programExercise'],
@@ -113,7 +129,7 @@ export function EditableSetsTable({
   loadConstraints = null,
   disabled = false,
   onSubmit,
-  onDeleteSet,
+  onUpdateSet,
 }: Props) {
   const t = useTranslations('session.editableSets');
   const locale = useLocale();
@@ -130,6 +146,8 @@ export function EditableSetsTable({
     ),
   );
   const [submitting, setSubmitting] = useState(false);
+  const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
+  const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
   const [manualValue, setManualValue] = useState('');
 
@@ -165,30 +183,64 @@ export function EditableSetsTable({
   const displayWeight =
     unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight;
   const rmValue = estimateRepMax(draft.weight, draft.reps, rmTarget);
+  const pickerDraft = editingSet?.draft ?? draft;
   const availableWeights = useMemo(() => {
-    const constrained = gymWeightOptions(loadConstraints, draft.weight);
+    const constrained = gymWeightOptions(loadConstraints, pickerDraft.weight);
     if (constrained.length > 0) return constrained;
     const step = programExercise.exercise.category === 'ISOLATION' ? 1 : 2.5;
     return Array.from({ length: 81 }, (_, index) => +(index * step).toFixed(2));
-  }, [draft.weight, loadConstraints, programExercise.exercise.category]);
+  }, [pickerDraft.weight, loadConstraints, programExercise.exercise.category]);
   const repOptions = useMemo(() => Array.from({ length: 30 }, (_, index) => index + 1), []);
 
-  function openPicker(kind: 'weight' | 'reps') {
+  function beginEditing(set: PendingSet) {
+    setEditingSet((current) =>
+      current?.set.localId === set.localId ? current : { set, draft: draftFromSet(set) },
+    );
+  }
+
+  function openPicker(kind: 'weight' | 'reps', set?: PendingSet) {
+    let source = draft;
+    if (set) {
+      const nextEditing =
+        editingSet?.set.localId === set.localId ? editingSet : { set, draft: draftFromSet(set) };
+      setEditingSet(nextEditing);
+      source = nextEditing.draft;
+    } else {
+      setEditingSet(null);
+    }
+
     setPicker(kind);
     setManualValue(
       kind === 'weight'
-        ? String(unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight)
-        : String(draft.reps),
+        ? String(
+            unit === 'LB' ? roundWeight(toDisplayWeight(source.weight, unit), 1) : source.weight,
+          )
+        : String(source.reps),
     );
   }
 
   function chooseValue(value: number) {
-    setDraft((current) =>
+    const updateDraft = (current: DraftSet): DraftSet =>
       picker === 'weight'
         ? { ...current, weight: fromDisplayWeight(value, unit) }
-        : { ...current, reps: Math.max(1, Math.round(value)) },
-    );
+        : { ...current, reps: Math.max(1, Math.round(value)) };
+
+    if (editingSet) {
+      setEditingSet((current) =>
+        current ? { ...current, draft: updateDraft(current.draft) } : current,
+      );
+    } else {
+      setDraft(updateDraft);
+    }
     setPicker(null);
+  }
+
+  function updateEditingRir(set: PendingSet, rir: number | null) {
+    setEditingSet((current) => {
+      const next =
+        current?.set.localId === set.localId ? current : { set, draft: draftFromSet(set) };
+      return { ...next, draft: { ...next.draft, rir } };
+    });
   }
 
   async function confirmRow() {
@@ -210,6 +262,36 @@ export function EditableSetsTable({
     }
   }
 
+  async function confirmEditedSet() {
+    if (
+      disabled ||
+      !editingSet ||
+      updatingSetId === editingSet.set.localId ||
+      editingSet.draft.reps <= 0 ||
+      editingSet.draft.weight < 0
+    ) {
+      return;
+    }
+
+    setUpdatingSetId(editingSet.set.localId);
+    try {
+      await onUpdateSet(editingSet.set, {
+        weight: constrainGymWeight(
+          editingSet.draft.weight,
+          editingSet.draft.weight,
+          loadConstraints,
+        ),
+        reps: editingSet.draft.reps,
+        rir: editingSet.draft.rir,
+      });
+      setEditingSet(null);
+    } catch {
+      // The parent shows the localized error and the row remains editable.
+    } finally {
+      setUpdatingSetId(null);
+    }
+  }
+
   return (
     <section
       data-testid="editable-sets-table"
@@ -228,36 +310,90 @@ export function EditableSetsTable({
           <span aria-hidden />
         </div>
 
-        {workingSets.map((set, index) => (
-          <div
-            key={set.localId}
-            className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-2 text-center text-xs tabular-nums sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
-          >
-            <span className="text-muted-foreground">{index + 1}</span>
-            <span className="font-medium">
-              {formatWeight(set.weight, unit, { decimals: 2, group: false, locale })}
-            </span>
-            <span className="font-medium">{set.reps}</span>
-            <span>{set.rir ?? '–'}</span>
-            <span className="text-muted-foreground">
-              {formatWeight(estimateRepMax(set.weight, set.reps, rmTarget), unit, {
-                decimals: 1,
-                group: false,
-                locale,
-              })}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => onDeleteSet(set)}
-              aria-label={t('delete', { number: index + 1 })}
-              className="size-8 justify-self-center text-muted-foreground hover:text-destructive sm:size-9"
+        {workingSets.map((set, index) => {
+          const rowNumber = index + 1;
+          const isEditing = editingSet?.set.localId === set.localId;
+          const rowDraft = isEditing ? editingSet.draft : draftFromSet(set);
+          const isUpdating = updatingSetId === set.localId;
+
+          return (
+            <div
+              key={set.localId}
+              data-testid={`completed-set-${rowNumber}`}
+              className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-1.5 text-center text-xs tabular-nums transition-colors sm:gap-1 sm:px-2 sm:text-sm ${isEditing ? 'bg-primary/5' : ''}`}
             >
-              <Trash2 className="size-3.5 sm:size-4" />
-            </Button>
-          </div>
-        ))}
+              <span className="text-muted-foreground">{rowNumber}</span>
+              <button
+                type="button"
+                onClick={() => openPicker('weight', set)}
+                disabled={disabled || isUpdating}
+                aria-label={t('weight', { number: rowNumber, unit })}
+                className={`h-9 w-full min-w-0 rounded-md border px-0.5 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
+              >
+                {formatWeight(rowDraft.weight, unit, {
+                  decimals: 2,
+                  group: false,
+                  locale,
+                })}
+              </button>
+              <button
+                type="button"
+                onClick={() => openPicker('reps', set)}
+                disabled={disabled || isUpdating}
+                aria-label={t('reps', { number: rowNumber })}
+                className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
+              >
+                {rowDraft.reps}
+              </button>
+              <select
+                aria-label={t('rir', { number: rowNumber })}
+                value={rowDraft.rir ?? ''}
+                onPointerDown={() => beginEditing(set)}
+                onFocus={() => beginEditing(set)}
+                onChange={(event) =>
+                  updateEditingRir(
+                    set,
+                    event.target.value === '' ? null : Number(event.target.value),
+                  )
+                }
+                disabled={disabled || isUpdating}
+                className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'appearance-none border-transparent bg-transparent'}`}
+              >
+                <option value="">–</option>
+                {[0, 1, 2, 3, 4, 5].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <span className="min-w-0 whitespace-nowrap text-[0.6875rem] text-muted-foreground sm:text-sm">
+                {formatWeight(estimateRepMax(rowDraft.weight, rowDraft.reps, rmTarget), unit, {
+                  decimals: 1,
+                  group: false,
+                  locale,
+                })}
+              </span>
+              {isEditing ? (
+                <Button
+                  type="button"
+                  size="icon"
+                  onClick={confirmEditedSet}
+                  disabled={disabled || isUpdating || rowDraft.reps <= 0}
+                  aria-label={t('save', { number: rowNumber })}
+                  className="size-9 justify-self-center sm:size-10"
+                >
+                  {isUpdating ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Check className="size-5" />
+                  )}
+                </Button>
+              ) : (
+                <span aria-hidden />
+              )}
+            </div>
+          );
+        })}
 
         <div
           className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
@@ -282,6 +418,7 @@ export function EditableSetsTable({
           <select
             aria-label={t('rir', { number: currentNumber })}
             value={draft.rir ?? ''}
+            onFocus={() => setEditingSet(null)}
             onChange={(event) =>
               setDraft((current) => ({
                 ...current,
@@ -381,7 +518,8 @@ export function EditableSetsTable({
                     ? roundWeight(toDisplayWeight(value, unit), 1)
                     : value
                   : value;
-              const selected = picker === 'weight' ? value === draft.weight : value === draft.reps;
+              const selected =
+                picker === 'weight' ? value === pickerDraft.weight : value === pickerDraft.reps;
               return (
                 <button
                   key={value}

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { EditableSetsTable } from './editable-sets-table';
+import type { PendingSet } from '@/lib/indexeddb';
 
 vi.mock('@/lib/preferences', async () => {
   const actual = await vi.importActual<typeof import('@/lib/preferences')>('@/lib/preferences');
@@ -19,6 +20,26 @@ const programExercise = {
   targetRIR: 2,
   exercise: { id: 'exercise-1', name: 'Squat', category: 'COMPOUND' },
 } as never;
+const completedSet: PendingSet = {
+  localId: 'local-1',
+  sessionId: 'session-1',
+  exerciseId: 'exercise-1',
+  setNumber: 1,
+  weight: 100,
+  reps: 10,
+  rir: 2,
+  durationSec: null,
+  distanceM: null,
+  notes: null,
+  isWarmup: false,
+  isDropSet: false,
+  createdAt: Date.parse('2026-07-12T10:00:00.000Z'),
+  status: 'synced',
+  serverId: 'server-1',
+  syncedAt: Date.parse('2026-07-12T10:00:00.000Z'),
+  attempts: 0,
+  lastError: null,
+};
 
 describe('EditableSetsTable', () => {
   it('uses compact responsive columns without horizontal scrolling', () => {
@@ -31,7 +52,7 @@ describe('EditableSetsTable', () => {
         deloadActive={false}
         unit="KG"
         onSubmit={vi.fn()}
-        onDeleteSet={vi.fn()}
+        onUpdateSet={vi.fn()}
       />,
     );
 
@@ -41,8 +62,8 @@ describe('EditableSetsTable', () => {
     expect(table.querySelector('[class~="overflow-x-auto"]')).not.toBeInTheDocument();
     expect(table.querySelector('[class*="min-w-[31rem]"]')).not.toBeInTheDocument();
     expect(header).toHaveClass(
-      'grid-cols-[1.25rem_minmax(0,1fr)_2.75rem_3rem_3.5rem_2.5rem]',
-      'sm:grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem]',
+      'grid-cols-[1.5rem_minmax(0,1.05fr)_minmax(2.75rem,0.72fr)_minmax(2.5rem,0.65fr)_minmax(3.75rem,0.9fr)_2.75rem]',
+      'sm:grid-cols-[2.25rem_minmax(5rem,1.05fr)_minmax(3.5rem,0.72fr)_minmax(3.25rem,0.65fr)_minmax(4.5rem,0.9fr)_3rem]',
     );
   });
 
@@ -57,7 +78,7 @@ describe('EditableSetsTable', () => {
         deloadActive={false}
         unit="KG"
         onSubmit={onSubmit}
-        onDeleteSet={vi.fn()}
+        onUpdateSet={vi.fn()}
       />,
     );
 
@@ -89,6 +110,44 @@ describe('EditableSetsTable', () => {
     );
   });
 
+  it('edits a completed set in place without a delete button', async () => {
+    const onUpdateSet = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[completedSet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={onUpdateSet}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /delete set 1/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1 weight in KG' }));
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '95' } });
+    fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1 repetitions' }));
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' }), {
+      target: { value: '1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes to set 1' }));
+
+    await waitFor(() =>
+      expect(onUpdateSet).toHaveBeenCalledWith(completedSet, {
+        weight: 95,
+        reps: 9,
+        rir: 1,
+      }),
+    );
+  });
+
   it('prefills active and upcoming rows from matching previous-session sets', () => {
     render(
       <EditableSetsTable
@@ -110,7 +169,7 @@ describe('EditableSetsTable', () => {
         deloadActive={false}
         unit="KG"
         onSubmit={vi.fn()}
-        onDeleteSet={vi.fn()}
+        onUpdateSet={vi.fn()}
       />,
     );
 
