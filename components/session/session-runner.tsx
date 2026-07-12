@@ -56,6 +56,7 @@ import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
+import { EditableSetsTable } from '@/components/session/editable-sets-table';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -565,43 +566,74 @@ export function SessionRunner({
           usesBodyweight={currentTarget.exercise.usesBodyweight}
         />
 
-        <SetsList
-          programExercise={currentTarget}
-          sets={currentSets}
-          isInputActive={mode.kind === 'input'}
-          onDeleteSet={handleDeleteSet}
-          priorSets={lastPerf?.sets}
-        />
-
-        {!hydrated ? null : mode.kind === 'input' ? (
-          <SetInput
-            programExercise={currentTarget}
-            existingSets={currentSets}
-            lastPerformance={lastPerf}
-            readiness={effectiveReadiness}
-            deloadActive={deloadActive}
-            unit={unit}
-            recommendation={currentRecommendation}
-            returnRecommendation={currentReturnRecommendation}
-            loadConstraints={loadConstraintsFor(currentTarget)}
-            equipmentOptions={(session.gym?.equipment ?? []).filter(
-              (item) =>
-                !droppedEquipmentIds.includes(item.id) &&
-                item.exerciseLinks.some((link) => link.exerciseId === currentPE.exerciseId),
+        {currentPE.exercise.category === 'CARDIO' ? (
+          <>
+            <SetsList
+              programExercise={currentTarget}
+              sets={currentSets}
+              isInputActive={mode.kind === 'input'}
+              onDeleteSet={handleDeleteSet}
+              priorSets={lastPerf?.sets}
+            />
+            {!hydrated ? null : mode.kind === 'input' ? (
+              <SetInput
+                programExercise={currentTarget}
+                existingSets={currentSets}
+                lastPerformance={lastPerf}
+                readiness={effectiveReadiness}
+                deloadActive={deloadActive}
+                unit={unit}
+                recommendation={currentRecommendation}
+                returnRecommendation={currentReturnRecommendation}
+                loadConstraints={loadConstraintsFor(currentTarget)}
+                equipmentOptions={(session.gym?.equipment ?? []).filter(
+                  (item) =>
+                    !droppedEquipmentIds.includes(item.id) &&
+                    item.exerciseLinks.some((link) => link.exerciseId === currentPE.exerciseId),
+                )}
+                onSubmit={handleValidate}
+              />
+            ) : (
+              <RestTimer
+                endsAt={mode.endsAt}
+                totalSec={mode.totalSec}
+                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                recommendation={restRecommendation}
+                unit={unit}
+                onEnd={handleRestEnd}
+                onSkip={handleSkipRest}
+                onAdd30={handleAdd30s}
+              />
             )}
-            onSubmit={handleValidate}
-          />
+          </>
         ) : (
-          <RestTimer
-            endsAt={mode.endsAt}
-            totalSec={mode.totalSec}
-            nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
-            recommendation={restRecommendation}
-            unit={unit}
-            onEnd={handleRestEnd}
-            onSkip={handleSkipRest}
-            onAdd30={handleAdd30s}
-          />
+          <>
+            <EditableSetsTable
+              programExercise={currentTarget}
+              sets={currentSets}
+              lastPerformance={lastPerf}
+              readiness={effectiveReadiness}
+              deloadActive={deloadActive}
+              unit={unit}
+              recommendation={currentRecommendation}
+              loadConstraints={loadConstraintsFor(currentTarget)}
+              disabled={!hydrated || mode.kind !== 'input'}
+              onSubmit={handleValidate}
+              onDeleteSet={handleDeleteSet}
+            />
+            {mode.kind === 'rest' && (
+              <RestTimer
+                endsAt={mode.endsAt}
+                totalSec={mode.totalSec}
+                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                recommendation={restRecommendation}
+                unit={unit}
+                onEnd={handleRestEnd}
+                onSkip={handleSkipRest}
+                onAdd30={handleAdd30s}
+              />
+            )}
+          </>
         )}
 
         <PreviousSessionSets performance={lastPerf} unit={unit} />
