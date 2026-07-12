@@ -110,8 +110,9 @@ on your own key - all self-hosted.
   fatigue signals and conditioning volume.
 - **Conversational coach** - streaming chat grounded in your training data,
   including mid-session with the live workout attached in one tap.
-- **Program generation** - a full program from a one-sentence goal, editable
-  before saving.
+- **Program generation and next mesocycles** - a full program or next phase from
+  the same server-calculated training, recovery and gym context used by MCP,
+  editable and revalidated before saving.
 - **Explainable by design** - a "What your coach sees" card shows the exact
   structured context the AI receives.
 - **Your provider** - Anthropic SDK or any OpenRouter model. With no key set,

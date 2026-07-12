@@ -6,6 +6,13 @@ import { useTranslations } from 'next-intl';
 import { Loader2, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
+import type {
+  ProgramDesignAnswers,
+  ProgramDesignMode,
+  TrainingExperience,
+} from '@/lib/schemas/program-design';
+import type { ProgramDesignQuestion } from '@/lib/program-design-context';
+import type { ProgramDesignValidation } from '@/lib/program-design-validation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -23,16 +30,37 @@ import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
 
 type Draft = GeneratedProgram;
 
+type GenerationResponse =
+  | {
+      status: 'needs-input';
+      questions: ProgramDesignQuestion[];
+      methodologyVersion: string;
+      sourceProgramId: string | null;
+    }
+  | {
+      status: 'generated';
+      program: Draft;
+      validation: ProgramDesignValidation;
+      methodologyVersion: string;
+      sourceProgramId: string | null;
+    };
+
 export function ProgramGenerator() {
   const t = useTranslations('programs');
   const common = useTranslations('common');
   const exerciseT = useTranslations('exercises');
   const router = useRouter();
   const [goal, setGoal] = useState('');
+  const [mode, setMode] = useState<ProgramDesignMode>('NEW_PROGRAM');
+  const [answers, setAnswers] = useState<ProgramDesignAnswers>({});
+  const [questions, setQuestions] = useState<ProgramDesignQuestion[]>([]);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [validation, setValidation] = useState<ProgramDesignValidation | null>(null);
+  const [methodologyVersion, setMethodologyVersion] = useState<string | null>(null);
+  const [sourceProgramId, setSourceProgramId] = useState<string | null>(null);
 
   async function generate() {
     setGenerating(true);
@@ -41,14 +69,24 @@ export function ProgramGenerator() {
       const res = await fetch('/api/programs/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal }),
+        body: JSON.stringify({ goal, mode, answers }),
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `Error ${res.status}`);
       }
-      const j = (await res.json()) as { program: Draft };
+      const j = (await res.json()) as GenerationResponse;
+      setMethodologyVersion(j.methodologyVersion);
+      setSourceProgramId(j.sourceProgramId);
+      if (j.status === 'needs-input') {
+        setQuestions(j.questions);
+        setDraft(null);
+        setValidation(null);
+        return;
+      }
+      setQuestions([]);
       setDraft(j.program);
+      setValidation(j.validation);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('generator.generationError'));
     } finally {
@@ -64,7 +102,14 @@ export function ProgramGenerator() {
       const res = await fetch('/api/programs/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          program: draft,
+          goal,
+          mode,
+          answers,
+          sourceProgramId,
+          methodologyVersion,
+        }),
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -81,10 +126,12 @@ export function ProgramGenerator() {
   }
 
   function patchProgram(patch: Partial<Draft>) {
+    setValidation(null);
     setDraft((d) => (d ? { ...d, ...patch } : d));
   }
 
   function patchWorkout(wi: number, patch: Partial<Draft['workouts'][number]>) {
+    setValidation(null);
     setDraft((d) =>
       d ? { ...d, workouts: d.workouts.map((w, i) => (i === wi ? { ...w, ...patch } : w)) } : d,
     );
@@ -95,6 +142,7 @@ export function ProgramGenerator() {
     ei: number,
     patch: Partial<Draft['workouts'][number]['exercises'][number]>,
   ) {
+    setValidation(null);
     setDraft((d) => {
       if (!d) return d;
       const workouts = d.workouts.map((w, i) =>
@@ -107,6 +155,7 @@ export function ProgramGenerator() {
   }
 
   function removeExercise(wi: number, ei: number) {
+    setValidation(null);
     setDraft((d) => {
       if (!d) return d;
       const workouts = d.workouts.map((w, i) =>
@@ -117,6 +166,7 @@ export function ProgramGenerator() {
   }
 
   function removeWorkout(wi: number) {
+    setValidation(null);
     setDraft((d) => (d ? { ...d, workouts: d.workouts.filter((_, i) => i !== wi) } : d));
   }
 
@@ -124,6 +174,8 @@ export function ProgramGenerator() {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
   };
+  const hasValidationErrors =
+    validation?.issues.some((issue) => issue.severity === 'error') ?? false;
 
   return (
     <div className="flex flex-col gap-6">
@@ -136,9 +188,33 @@ export function ProgramGenerator() {
           <p className="text-xs text-muted-foreground">{t('generator.description')}</p>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-sm">{t('generator.mode')}</Label>
+            <Select
+              value={mode}
+              onValueChange={(value) => {
+                setMode(value as ProgramDesignMode);
+                setDraft(null);
+                setValidation(null);
+                setQuestions([]);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="NEW_PROGRAM">{t('generator.modeNew')}</SelectItem>
+                <SelectItem value="NEXT_MESOCYCLE">{t('generator.modeNext')}</SelectItem>
+                <SelectItem value="REVISE_CURRENT">{t('generator.modeRevise')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Textarea
             value={goal}
-            onChange={(e) => setGoal(e.target.value)}
+            onChange={(e) => {
+              setGoal(e.target.value);
+              setValidation(null);
+            }}
             rows={4}
             placeholder={t('generator.placeholder')}
           />
@@ -163,6 +239,43 @@ export function ProgramGenerator() {
             </Button>
           </div>
           {error && <p className="text-sm text-rose-600">{error}</p>}
+          {questions.length > 0 && (
+            <div className="space-y-3 border-t pt-3">
+              <div>
+                <p className="text-sm font-medium">{t('generator.questionsTitle')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('generator.questionsDescription')}
+                </p>
+              </div>
+              {questions.map((question) => (
+                <ProgramDesignQuestionField
+                  key={question.id}
+                  question={question}
+                  answers={answers}
+                  onChange={setAnswers}
+                  labels={{
+                    trainingExperience: t('generator.trainingExperience'),
+                    beginner: t('generator.experienceBeginner'),
+                    intermediate: t('generator.experienceIntermediate'),
+                    advanced: t('generator.experienceAdvanced'),
+                    weeklyFrequency: t('generator.weeklyFrequency'),
+                    sessionDuration: t('generator.sessionDuration'),
+                    limitations: t('generator.limitations'),
+                    limitationsPlaceholder: t('generator.limitationsPlaceholder'),
+                    equipmentAccess: t('generator.equipmentAccess'),
+                    equipmentAccessPlaceholder: t('generator.equipmentAccessPlaceholder'),
+                    postBlockAssessment: t('generator.postBlockAssessment'),
+                    postBlockNoIssues: t('generator.postBlockNoIssues'),
+                    postBlockDreading: t('generator.postBlockDreading'),
+                    postBlockSleep: t('generator.postBlockSleep'),
+                    postBlockPerformance: t('generator.postBlockPerformance'),
+                    postBlockStress: t('generator.postBlockStress'),
+                    postBlockAches: t('generator.postBlockAches'),
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -173,6 +286,21 @@ export function ProgramGenerator() {
             <p className="text-xs text-muted-foreground">{t('generator.reviewDescription')}</p>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
+            {validation && validation.issues.length > 0 && (
+              <div className="space-y-2 border-b pb-4">
+                <p className="text-sm font-medium">{t('generator.validationTitle')}</p>
+                <ul className="space-y-1 text-xs">
+                  {validation.issues.map((issue, index) => (
+                    <li
+                      key={`${issue.code}-${index}`}
+                      className={issue.severity === 'error' ? 'text-rose-600' : 'text-amber-700'}
+                    >
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-sm">{t('programName')}</Label>
@@ -239,11 +367,16 @@ export function ProgramGenerator() {
                           <Trash2 className="size-4 text-rose-600" />
                         </Button>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
                         <NumField
                           label={t('exercise.sets')}
                           value={ex.targetSets}
                           onChange={(v) => patchExercise(wi, ei, { targetSets: num(v) })}
+                        />
+                        <NumField
+                          label={t('exercise.dropSets')}
+                          value={ex.targetDropSets ?? 0}
+                          onChange={(v) => patchExercise(wi, ei, { targetDropSets: num(v) })}
                         />
                         <NumField
                           label={t('exercise.repsMin')}
@@ -313,7 +446,7 @@ export function ProgramGenerator() {
               <Button
                 type="button"
                 onClick={save}
-                disabled={saving || draft.workouts.length === 0}
+                disabled={saving || draft.workouts.length === 0 || hasValidationErrors}
                 className="min-h-tap"
               >
                 {saving ? (
@@ -327,6 +460,181 @@ export function ProgramGenerator() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function ProgramDesignQuestionField({
+  question,
+  answers,
+  onChange,
+  labels,
+}: {
+  question: ProgramDesignQuestion;
+  answers: ProgramDesignAnswers;
+  onChange: (answers: ProgramDesignAnswers) => void;
+  labels: {
+    trainingExperience: string;
+    beginner: string;
+    intermediate: string;
+    advanced: string;
+    weeklyFrequency: string;
+    sessionDuration: string;
+    limitations: string;
+    limitationsPlaceholder: string;
+    equipmentAccess: string;
+    equipmentAccessPlaceholder: string;
+    postBlockAssessment: string;
+    postBlockNoIssues: string;
+    postBlockDreading: string;
+    postBlockSleep: string;
+    postBlockPerformance: string;
+    postBlockStress: string;
+    postBlockAches: string;
+  };
+}) {
+  if (question.id === 'trainingExperience') {
+    return (
+      <div className="space-y-1.5">
+        <Label>{labels.trainingExperience}</Label>
+        <Select
+          value={answers.trainingExperience}
+          onValueChange={(value) =>
+            onChange({ ...answers, trainingExperience: value as TrainingExperience })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder={labels.trainingExperience} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="BEGINNER">{labels.beginner}</SelectItem>
+            <SelectItem value="INTERMEDIATE">{labels.intermediate}</SelectItem>
+            <SelectItem value="ADVANCED">{labels.advanced}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+  if (question.id === 'sessionDurationMin') {
+    return (
+      <div className="space-y-1.5">
+        <Label htmlFor="program-session-duration">{labels.sessionDuration}</Label>
+        <Input
+          id="program-session-duration"
+          type="number"
+          min={question.min}
+          max={question.max}
+          value={answers.sessionDurationMin ?? ''}
+          onChange={(event) =>
+            onChange({
+              ...answers,
+              sessionDurationMin: event.target.value ? Number(event.target.value) : undefined,
+            })
+          }
+        />
+      </div>
+    );
+  }
+  if (question.id === 'weeklyFrequency') {
+    return (
+      <div className="space-y-1.5">
+        <Label htmlFor="program-weekly-frequency">{labels.weeklyFrequency}</Label>
+        <Input
+          id="program-weekly-frequency"
+          type="number"
+          min={question.min}
+          max={question.max}
+          value={answers.weeklyFrequency ?? ''}
+          onChange={(event) =>
+            onChange({
+              ...answers,
+              weeklyFrequency: event.target.value ? Number(event.target.value) : undefined,
+            })
+          }
+        />
+      </div>
+    );
+  }
+  if (question.id === 'equipmentAccess') {
+    return (
+      <div className="space-y-1.5">
+        <Label htmlFor="program-equipment-access">{labels.equipmentAccess}</Label>
+        <Textarea
+          id="program-equipment-access"
+          rows={2}
+          value={answers.equipmentAccess ?? ''}
+          placeholder={labels.equipmentAccessPlaceholder}
+          onChange={(event) => onChange({ ...answers, equipmentAccess: event.target.value })}
+        />
+      </div>
+    );
+  }
+  if (question.id === 'postBlockAssessment') {
+    const values = answers.postBlockAssessment;
+    const options = [
+      ['dreadingTraining', labels.postBlockDreading],
+      ['sleepWorse', labels.postBlockSleep],
+      ['performanceDecreasing', labels.postBlockPerformance],
+      ['lifeStressHigher', labels.postBlockStress],
+      ['achesAndPainsWorse', labels.postBlockAches],
+    ] as const;
+    const emptyAssessment = {
+      dreadingTraining: false,
+      sleepWorse: false,
+      performanceDecreasing: false,
+      lifeStressHigher: false,
+      achesAndPainsWorse: false,
+    };
+    const noIssues = values != null && !Object.values(values).some(Boolean);
+    return (
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">{labels.postBlockAssessment}</legend>
+        {options.map(([key, label]) => (
+          <label key={key} className="flex min-h-tap items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={values?.[key] ?? false}
+              onChange={(event) =>
+                onChange({
+                  ...answers,
+                  postBlockAssessment: {
+                    ...(values ?? emptyAssessment),
+                    [key]: event.target.checked,
+                  },
+                })
+              }
+              className="h-4 w-4"
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+        <label className="flex min-h-tap items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={noIssues}
+            onChange={(event) =>
+              onChange({
+                ...answers,
+                postBlockAssessment: event.target.checked ? emptyAssessment : undefined,
+              })
+            }
+            className="h-4 w-4"
+          />
+          <span>{labels.postBlockNoIssues}</span>
+        </label>
+      </fieldset>
+    );
+  }
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="program-limitations">{labels.limitations}</Label>
+      <Textarea
+        id="program-limitations"
+        rows={2}
+        value={answers.limitations ?? ''}
+        placeholder={labels.limitationsPlaceholder}
+        onChange={(event) => onChange({ ...answers, limitations: event.target.value })}
+      />
     </div>
   );
 }

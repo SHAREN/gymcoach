@@ -2,9 +2,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { buildCoachPayload } from '@/lib/coach';
-import { buildProgramFromGenerated } from '@/lib/program-generation';
+import { buildProgramFromGenerated, evaluateProgramDesign } from '@/lib/program-generation';
 import { generatedExerciseSchema, generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { programInputSchema } from '@/lib/schemas/program';
+import { programDesignAnswersSchema, programDesignModeSchema } from '@/lib/schemas/program-design';
+import { buildProgramDesignContext } from '@/lib/program-design-context';
+import { validateProgramDesign } from '@/lib/program-design-validation';
+import {
+  PROGRAM_DESIGN_METHODOLOGY,
+  PROGRAM_DESIGN_METHODOLOGY_VERSION,
+} from '@/lib/program-design-methodology';
 import {
   EquipmentType,
   ExerciseCategory,
@@ -16,6 +23,8 @@ import type { McpPrincipal } from '@/lib/mcp/auth';
 export const GYMCOACH_MCP_INSTRUCTIONS = `GymCoach stores the trainee's profile, gyms, equipment, programs, workout history, sets, RIR, goals and recovery signals.
 
 Use read tools before making recommendations. Ground every recommendation in returned GymCoach data and never invent completed sets, available equipment, records or injuries. Respect the active gym's equipment constraints. Use the trainee's language.
+
+Before creating, extending or revising a program, read gymcoach://methodology/program-design and call get_program_design_context with the intended mode. Ask every required question returned in missingQuestions. Use validate_program_draft before any write. Do not calculate an exact catabolism percentage or CNS fatigue score; use GymCoach recovery and volume-pressure signals.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
@@ -80,6 +89,26 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     }),
   );
 
+  server.registerResource(
+    'gymcoach-program-design-methodology',
+    'gymcoach://methodology/program-design',
+    {
+      title: 'GymCoach program-design methodology',
+      description:
+        'Normative evidence, safety and deterministic rules for creating or extending programs.',
+      mimeType: 'text/plain',
+    },
+    async () => ({
+      contents: [
+        {
+          uri: 'gymcoach://methodology/program-design',
+          mimeType: 'text/plain',
+          text: PROGRAM_DESIGN_METHODOLOGY,
+        },
+      ],
+    }),
+  );
+
   server.registerPrompt(
     'build-training-program',
     {
@@ -93,7 +122,28 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
           role: 'user',
           content: {
             type: 'text',
-            text: `Goal: ${goal}\n\nFirst call get_training_context and list_exercises. Design a realistic program that respects the saved gym and equipment. Explain the draft, ask for confirmation, then call create_program.`,
+            text: `Goal: ${goal}\n\nRead gymcoach://methodology/program-design. Call get_program_design_context with mode NEW_PROGRAM and list_exercises. Ask every required missing question. Design a realistic draft from the returned metrics, call validate_program_draft, explain the draft and warnings, ask for confirmation, then call create_program with the same goal and answers.`,
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerPrompt(
+    'extend-training-program',
+    {
+      title: 'Build the next GymCoach mesocycle',
+      description:
+        'Analyse the active program and completed training, then create a reviewable next phase.',
+      argsSchema: { goal: z.string().trim().min(5).max(2000) },
+    },
+    async ({ goal }) => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Next-phase goal: ${goal}\n\nRead gymcoach://methodology/program-design. Call get_program_design_context with mode NEXT_MESOCYCLE, then get_program for the source program. Ask every required missing question. Preserve what is progressing, use the calculated recovery and volume metrics, validate the draft, explain every change, ask for confirmation, then call create_program_revision.`,
           },
         },
       ],
@@ -132,10 +182,67 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         }),
       ]);
       return result({
-        instructionsVersion: 1,
+        instructionsVersion: 2,
         unit: user?.unit ?? 'KG',
         activeGym: user?.activeGym ?? null,
         coach,
+      });
+    },
+  );
+
+  server.registerTool(
+    'get_program_design_context',
+    {
+      title: 'Get program-design context',
+      description:
+        'Returns the shared methodology version, required questions, full source program, gym inventory, calculated performance, volume, recovery, adherence and return-to-training metrics used by the internal LLM.',
+      inputSchema: {
+        goal: z.string().trim().min(5).max(2000),
+        mode: programDesignModeSchema.default('NEW_PROGRAM'),
+        sourceProgramId: z.string().cuid().optional(),
+        answers: programDesignAnswersSchema.optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ goal, mode, sourceProgramId, answers }) => {
+      const context = await buildProgramDesignContext({
+        userId: principal.userId,
+        goal,
+        mode,
+        sourceProgramId,
+        answers,
+      });
+      return result({ context });
+    },
+  );
+
+  server.registerTool(
+    'validate_program_draft',
+    {
+      title: 'Validate program draft',
+      description:
+        'Checks a draft against the same recovery, gym, volume, duration and safety rules used by the internal LLM flow.',
+      inputSchema: {
+        goal: z.string().trim().min(5).max(2000),
+        mode: programDesignModeSchema.default('NEW_PROGRAM'),
+        sourceProgramId: z.string().cuid().optional(),
+        answers: programDesignAnswersSchema.optional(),
+        program: generatedProgramSchema,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ goal, mode, sourceProgramId, answers, program }) => {
+      const context = await buildProgramDesignContext({
+        userId: principal.userId,
+        goal,
+        mode,
+        sourceProgramId,
+        answers,
+      });
+      return result({
+        methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
+        missingQuestions: context.missingQuestions,
+        validation: validateProgramDesign(program, context),
       });
     },
   );
@@ -234,8 +341,13 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     {
       title: 'Create training program',
       description:
-        'Creates a complete inactive GymCoach program. Explain the draft and obtain user confirmation before calling.',
-      inputSchema: { confirmed: explicitConfirmation, program: generatedProgramSchema },
+        'Creates a complete inactive GymCoach program after rebuilding design context and validating the final draft.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        goal: z.string().trim().min(5).max(2000),
+        answers: programDesignAnswersSchema,
+        program: generatedProgramSchema,
+      },
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -243,10 +355,68 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         openWorldHint: false,
       },
     },
-    async ({ program }) => {
+    async ({ goal, answers, program }) => {
       requireWrite(principal);
-      const id = await buildProgramFromGenerated(principal.userId, program);
-      return result({ ok: true, programId: id, active: false });
+      const { context, validation } = await evaluateProgramDesign(
+        principal.userId,
+        { goal, mode: 'NEW_PROGRAM', answers },
+        program,
+      );
+      assertProgramDesignReady(context.missingQuestions, validation);
+      const id = await buildProgramFromGenerated(principal.userId, program, {
+        methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
+      });
+      return result({
+        ok: true,
+        programId: id,
+        active: false,
+        methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
+        validation,
+      });
+    },
+  );
+
+  server.registerTool(
+    'create_program_revision',
+    {
+      title: 'Create next program mesocycle',
+      description:
+        'Creates an inactive next-phase program linked to its source program. Validate and obtain user confirmation before calling.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        goal: z.string().trim().min(5).max(2000),
+        sourceProgramId: z.string().cuid(),
+        answers: programDesignAnswersSchema,
+        program: generatedProgramSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ goal, sourceProgramId, answers, program }) => {
+      requireWrite(principal);
+      await getOwnedProgram(principal.userId, sourceProgramId);
+      const { context, validation } = await evaluateProgramDesign(
+        principal.userId,
+        { goal, mode: 'NEXT_MESOCYCLE', sourceProgramId, answers },
+        program,
+      );
+      assertProgramDesignReady(context.missingQuestions, validation);
+      const id = await buildProgramFromGenerated(principal.userId, program, {
+        sourceProgramId: context.sourceProgramId,
+        methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
+      });
+      return result({
+        ok: true,
+        programId: id,
+        sourceProgramId,
+        active: false,
+        methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
+        validation,
+      });
     },
   );
 
@@ -461,3 +631,20 @@ export const MCP_ENUMS = {
   exerciseCategories: Object.values(ExerciseCategory),
   muscleGroups: Object.values(MuscleGroup),
 };
+
+function assertProgramDesignReady(
+  missingQuestions: Array<{ prompt: string }>,
+  validation: ReturnType<typeof validateProgramDesign>,
+) {
+  if (missingQuestions.length > 0) {
+    throw new Error(
+      `Answer every required program-design question first: ${missingQuestions
+        .map((question) => question.prompt)
+        .join(' ')}`,
+    );
+  }
+  const errors = validation.issues.filter((issue) => issue.severity === 'error');
+  if (errors.length > 0) {
+    throw new Error(`Program validation failed: ${errors.map((issue) => issue.message).join(' ')}`);
+  }
+}

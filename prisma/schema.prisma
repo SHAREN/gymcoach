@@ -187,19 +187,28 @@ enum ExerciseCategory {
 }
 
 model Program {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id])
-  name        String
-  description String?
-  phase       String
-  isActive    Boolean   @default(false)
-  startDate   DateTime  @default(now())
-  endDate     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  workouts    Workout[]
-  sessions    Session[]
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id])
+  name               String
+  description        String?
+  phase              String
+  isActive           Boolean   @default(false)
+  startDate          DateTime  @default(now())
+  endDate            DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  // Program lineage for AI-built next mesocycles. A revision is always created
+  // inactive, preserving the prior program and its session history.
+  parentProgramId    String?
+  parentProgram      Program?  @relation("ProgramRevisions", fields: [parentProgramId], references: [id], onDelete: SetNull)
+  revisions          Program[] @relation("ProgramRevisions")
+  // Version of the deterministic methodology used to prepare an AI draft.
+  methodologyVersion String?
+  workouts           Workout[]
+  sessions           Session[]
+
+  @@index([parentProgramId])
 }
 
 model Workout {

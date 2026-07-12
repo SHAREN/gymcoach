@@ -38,14 +38,18 @@ authentication with OAuth before submission.
 Resources:
 
 - `gymcoach://instructions/agent`
+- `gymcoach://methodology/program-design`
 
 Prompts:
 
 - `build-training-program`
+- `extend-training-program`
 
 Read tools:
 
 - `get_training_context`
+- `get_program_design_context`
+- `validate_program_draft`
 - `list_exercises`
 - `list_programs`
 - `get_program`
@@ -53,11 +57,18 @@ Read tools:
 Write tools:
 
 - `create_program`
+- `create_program_revision`
 - `update_program_metadata`
 - `add_program_exercise`
 - `update_program_exercise`
 - `remove_program_exercise`
 - `activate_program`
+
+The two design write tools rebuild the context and rerun validation immediately
+before persistence. An MCP client cannot make a program valid by calling the
+read-only validator once and then submitting a different draft. Required
+questions must be answered, validation errors block the write, and the server
+records its own current methodology version instead of trusting a caller value.
 
 ## Health check
 
