@@ -14,10 +14,23 @@ import { constrainGymWeight, gymWeightOptions } from '@/lib/gym-loads';
 import { suggestNextWeight, type ReadinessSignal } from '@/lib/progression';
 import { estimateRepMax } from '@/lib/stats';
 import { formatWeight, fromDisplayWeight, roundWeight, toDisplayWeight } from '@/lib/units';
-import { loadPreferences } from '@/lib/preferences';
+import {
+  loadPreferences,
+  savePreferences,
+  SET_TABLE_METRICS,
+  setTableMetricEnabled,
+  type SetTableMetric,
+} from '@/lib/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { SetValuePicker } from '@/components/session/set-value-picker';
 import { WeightInventoryEditor } from '@/components/session/weight-inventory-editor';
 import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
@@ -63,8 +76,30 @@ interface EditingSet {
   awaitingPersistence: boolean;
 }
 
-const SET_GRID_COLUMNS =
+const SINGLE_METRIC_GRID_COLUMNS =
   'grid-cols-[1.5rem_minmax(0,1.05fr)_minmax(2.75rem,0.72fr)_minmax(2.5rem,0.65fr)_minmax(3.75rem,0.9fr)_2.75rem] sm:grid-cols-[2.25rem_minmax(5rem,1.05fr)_minmax(3.5rem,0.72fr)_minmax(3.25rem,0.65fr)_minmax(4.5rem,0.9fr)_3rem]';
+
+const DUAL_METRIC_GRID_COLUMNS =
+  'grid-cols-[1.35rem_minmax(0,0.95fr)_minmax(2.35rem,0.68fr)_minmax(2.1rem,0.58fr)_minmax(2.5rem,0.72fr)_minmax(2.5rem,0.72fr)_2.5rem] sm:grid-cols-[2rem_minmax(4.5rem,1fr)_minmax(3.25rem,0.72fr)_minmax(3rem,0.65fr)_minmax(4rem,0.85fr)_minmax(4rem,0.85fr)_2.75rem]';
+
+function formatSetMetric(
+  metric: SetTableMetric,
+  draft: DraftSet,
+  unit: WeightUnit,
+  locale: string,
+): string {
+  const value =
+    metric === 'VOLUME'
+      ? draft.weight * draft.reps
+      : estimateRepMax(draft.weight, draft.reps, metric === '10RM' ? 10 : 1);
+  if (value <= 0) return '–';
+  return formatWeight(value, unit, {
+    decimals: 1,
+    group: false,
+    locale,
+    withUnit: false,
+  });
+}
 
 function draftFromSet(set: PendingSet): DraftSet {
   return {
@@ -159,7 +194,7 @@ export function EditableSetsTable({
   const t = useTranslations('session.editableSets');
   const inputT = useTranslations('session.input');
   const locale = useLocale();
-  const [rmTarget, setRmTarget] = useState<1 | 10>(1);
+  const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
   const [draft, setDraft] = useState<DraftSet>(() =>
     initialDraft(
       programExercise,
@@ -191,7 +226,7 @@ export function EditableSetsTable({
   ].join('|');
 
   useEffect(() => {
-    setRmTarget(loadPreferences().rmDisplay === '10RM' ? 10 : 1);
+    setMetrics(loadPreferences().setTableMetrics);
   }, []);
 
   useEffect(() => {
@@ -256,7 +291,7 @@ export function EditableSetsTable({
   const isNextDropSet = nextPlannedSetIsDropSet(programExercise, sets);
   const displayWeight =
     unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight;
-  const rmValue = estimateRepMax(draft.weight, draft.reps, rmTarget);
+  const gridColumns = metrics.length > 1 ? DUAL_METRIC_GRID_COLUMNS : SINGLE_METRIC_GRID_COLUMNS;
   const pickerDraft = editingSet?.draft ?? draft;
   const availableWeights = useMemo(() => {
     const constrained = gymWeightOptions(loadConstraints, pickerDraft.weight);
@@ -270,6 +305,28 @@ export function EditableSetsTable({
     : null;
   const canApplyRecommendation =
     !isNextDropSet && recommendation != null && appliedRecommendationKey !== recommendationKey;
+
+  function metricLabel(metric: SetTableMetric, short = false) {
+    if (metric === '1RM') return t(short ? 'metrics.oneRmShort' : 'metrics.oneRm');
+    if (metric === '10RM') return t(short ? 'metrics.tenRmShort' : 'metrics.tenRm');
+    return t(short ? 'metrics.volumeShort' : 'metrics.volume');
+  }
+
+  function updateMetric(metric: SetTableMetric, enabled: boolean) {
+    const next = setTableMetricEnabled(metrics, metric, enabled);
+    if (next.length === metrics.length && next.every((value, index) => value === metrics[index])) {
+      return;
+    }
+
+    const prefs = loadPreferences();
+    const rmDisplay = next.includes('10RM')
+      ? '10RM'
+      : next.includes('1RM')
+        ? '1RM'
+        : prefs.rmDisplay;
+    savePreferences({ ...prefs, rmDisplay, setTableMetrics: next });
+    setMetrics(next);
+  }
 
   function applyRecommendation() {
     if (!recommendation || disabled) return;
@@ -458,7 +515,7 @@ export function EditableSetsTable({
       <div>
         <div
           data-testid="editable-sets-header"
-          className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-muted/30 px-1 py-2 text-center text-[0.625rem] font-medium uppercase text-muted-foreground sm:gap-1 sm:px-2 sm:text-[0.6875rem]`}
+          className={`grid ${gridColumns} items-center gap-0.5 border-b border-border bg-muted/30 px-1 py-2 text-center text-[0.625rem] font-medium uppercase text-muted-foreground sm:gap-1 sm:px-2 sm:text-[0.6875rem]`}
         >
           <span>#</span>
           <span className="flex items-center justify-center gap-1">
@@ -478,8 +535,45 @@ export function EditableSetsTable({
           </span>
           <span>REPS</span>
           <span>RIR</span>
-          <span>{rmTarget}RM</span>
-          <span aria-hidden />
+          {metrics.map((metric) => (
+            <span
+              key={metric}
+              data-testid={`set-metric-header-${metric}`}
+              className="min-w-0 truncate"
+            >
+              {metricLabel(metric, true)}
+            </span>
+          ))}
+          <span className="flex items-center justify-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('metrics.open')}
+                  title={t('metrics.open')}
+                  className="size-6 text-muted-foreground"
+                >
+                  <Pencil className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuLabel>{t('metrics.label')}</DropdownMenuLabel>
+                {SET_TABLE_METRICS.map((option) => (
+                  <DropdownMenuCheckboxItem
+                    key={option}
+                    checked={metrics.includes(option)}
+                    disabled={metrics.length === 1 && metrics[0] === option}
+                    onSelect={(event) => event.preventDefault()}
+                    onCheckedChange={(checked) => updateMetric(option, checked === true)}
+                  >
+                    {metricLabel(option)}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
         </div>
 
         {loggedSets.map((set, index) => {
@@ -492,7 +586,7 @@ export function EditableSetsTable({
             <div
               key={set.localId}
               data-testid={`completed-set-${rowNumber}`}
-              className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-1.5 text-center text-xs tabular-nums transition-colors sm:gap-1 sm:px-2 sm:text-sm ${isEditing ? 'bg-primary/5' : ''}`}
+              className={`grid ${gridColumns} items-center gap-0.5 border-b border-border px-1 py-1.5 text-center text-xs tabular-nums transition-colors sm:gap-1 sm:px-2 sm:text-sm ${isEditing ? 'bg-primary/5' : ''}`}
             >
               <span
                 className="flex items-center justify-center gap-0.5 text-muted-foreground"
@@ -542,13 +636,15 @@ export function EditableSetsTable({
                   </option>
                 ))}
               </select>
-              <span className="min-w-0 whitespace-nowrap text-[0.6875rem] text-muted-foreground sm:text-sm">
-                {formatWeight(estimateRepMax(rowDraft.weight, rowDraft.reps, rmTarget), unit, {
-                  decimals: 1,
-                  group: false,
-                  locale,
-                })}
-              </span>
+              {metrics.map((metric) => (
+                <span
+                  key={metric}
+                  data-testid={`completed-set-${rowNumber}-metric-${metric}`}
+                  className="min-w-0 whitespace-nowrap text-[0.625rem] text-muted-foreground sm:text-sm"
+                >
+                  {formatSetMetric(metric, rowDraft, unit, locale)}
+                </span>
+              ))}
               <span className="flex items-center justify-center" aria-hidden>
                 {isUpdating && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
               </span>
@@ -557,7 +653,7 @@ export function EditableSetsTable({
         })}
 
         <div
-          className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
+          className={`grid ${gridColumns} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
         >
           {recommendation && !isNextDropSet ? (
             <button
@@ -623,9 +719,15 @@ export function EditableSetsTable({
               </option>
             ))}
           </select>
-          <span className="min-w-0 whitespace-nowrap text-center text-[0.6875rem] font-medium tabular-nums leading-tight text-muted-foreground sm:text-sm">
-            {rmValue > 0 ? formatWeight(rmValue, unit, { decimals: 1, group: false, locale }) : '–'}
-          </span>
+          {metrics.map((metric) => (
+            <span
+              key={metric}
+              data-testid={`active-set-metric-${metric}`}
+              className="min-w-0 whitespace-nowrap text-center text-[0.625rem] font-medium tabular-nums leading-tight text-muted-foreground sm:text-sm"
+            >
+              {formatSetMetric(metric, draft, unit, locale)}
+            </span>
+          ))}
           <Button
             type="button"
             size="icon"
@@ -650,7 +752,7 @@ export function EditableSetsTable({
           return (
             <div
               key={`upcoming-${rowNumber}`}
-              className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
+              className={`grid ${gridColumns} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
             >
               <span className="flex items-center justify-center gap-0.5">
                 {isUpcomingDropSet && <Droplet className="size-3 fill-current" />}
@@ -663,15 +765,15 @@ export function EditableSetsTable({
               </span>
               <span>{previous?.reps ?? '–'}</span>
               <span>{previous?.rir ?? '–'}</span>
-              <span>
-                {previous
-                  ? formatWeight(estimateRepMax(previous.weight, previous.reps, rmTarget), unit, {
-                      decimals: 1,
-                      group: false,
-                      locale,
-                    })
-                  : '–'}
-              </span>
+              {metrics.map((metric) => (
+                <span
+                  key={metric}
+                  data-testid={`upcoming-set-${rowNumber}-metric-${metric}`}
+                  className="text-[0.625rem] sm:text-sm"
+                >
+                  {previous ? formatSetMetric(metric, previous, unit, locale) : '–'}
+                </span>
+              ))}
               <span />
             </div>
           );

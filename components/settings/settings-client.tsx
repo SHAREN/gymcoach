@@ -20,6 +20,9 @@ import {
   DEFAULT_PREFERENCES,
   loadPreferences,
   savePreferences,
+  SET_TABLE_METRICS,
+  setTableMetricEnabled,
+  type SetTableMetric,
   type UserPreferences,
 } from '@/lib/preferences';
 import { BackupSection } from './backup-section';
@@ -43,6 +46,22 @@ export function SettingsClient() {
       savePreferences(next);
       return next;
     });
+  }
+
+  function updateSetTableMetric(metric: SetTableMetric) {
+    const setTableMetrics = setTableMetricEnabled(
+      prefs.setTableMetrics,
+      metric,
+      !prefs.setTableMetrics.includes(metric),
+    );
+    const rmDisplay = setTableMetrics.includes('10RM')
+      ? '10RM'
+      : setTableMetrics.includes('1RM')
+        ? '1RM'
+        : prefs.rmDisplay;
+    const next = { ...prefs, rmDisplay, setTableMetrics };
+    setPrefs(next);
+    savePreferences(next);
   }
 
   return (
@@ -129,17 +148,21 @@ export function SettingsClient() {
                 <p className="text-xs text-muted-foreground">{t('rmDisplayDescription')}</p>
               </div>
             </div>
-            <div className="flex shrink-0 gap-1">
-              {(['1RM', '10RM'] as const).map((value) => (
+            <div className="flex shrink-0 flex-wrap justify-end gap-1">
+              {SET_TABLE_METRICS.map((metric) => (
                 <Button
-                  key={value}
+                  key={metric}
                   type="button"
                   size="sm"
-                  variant={prefs.rmDisplay === value ? 'default' : 'outline'}
-                  onClick={() => update('rmDisplay', value)}
-                  disabled={!hydrated}
+                  variant={prefs.setTableMetrics.includes(metric) ? 'default' : 'outline'}
+                  onClick={() => updateSetTableMetric(metric)}
+                  disabled={
+                    !hydrated ||
+                    (prefs.setTableMetrics.length === 1 && prefs.setTableMetrics[0] === metric)
+                  }
+                  className="px-2"
                 >
-                  {value}
+                  {metric === 'VOLUME' ? t('volumeDisplay') : metric}
                 </Button>
               ))}
             </div>

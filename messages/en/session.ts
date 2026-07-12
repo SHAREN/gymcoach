@@ -173,6 +173,16 @@ export const session = {
     barWeight: 'Bar {weight} {unit}',
     plateRemainder: 'Loads to {weight} {unit}',
     pickerDescription: 'Select a saved value or enter one with the on-screen keypad.',
+    metrics: {
+      open: 'Choose calculated columns',
+      label: 'Calculated columns',
+      oneRm: 'Estimated 1RM',
+      tenRm: 'Estimated 10RM',
+      volume: 'Volume',
+      oneRmShort: '1RM',
+      tenRmShort: '10RM',
+      volumeShort: 'VOL',
+    },
     weightEditor: {
       open: 'Edit available weights',
       noGym: 'Choose a gym before editing available weights',
