@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Droplet, Loader2 } from 'lucide-react';
+import { Check, Droplet, Loader2, Sparkles } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
 import type { SerializedLastPerformance } from '@/components/session/session-runner';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
+import type { ReturnRecommendation } from '@/lib/return-to-training';
+import type { SetParseResult } from '@/lib/schemas/set-parse';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
 import { constrainGymWeight, gymWeightOptions } from '@/lib/gym-loads';
 import { suggestNextWeight, type ReadinessSignal } from '@/lib/progression';
@@ -15,6 +17,7 @@ import { formatWeight, fromDisplayWeight, roundWeight, toDisplayWeight } from '@
 import { loadPreferences } from '@/lib/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
 
@@ -26,6 +29,7 @@ interface Props {
   deloadActive: boolean;
   unit: WeightUnit;
   recommendation?: IntraSetRecommendation | null;
+  returnRecommendation?: ReturnRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
   disabled?: boolean;
   onSubmit: (values: {
@@ -71,11 +75,24 @@ function initialDraft(
   pe: Props['programExercise'],
   sets: PendingSet[],
   lastPerformance: SerializedLastPerformance | undefined,
+  returnRecommendation: ReturnRecommendation | null,
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
   loadConstraints: GymLoadConstraints | null,
 ): DraftSet {
   const loggedSets = sets.filter((set) => !set.isWarmup);
+  if (
+    loggedSets.length === 0 &&
+    returnRecommendation != null &&
+    returnRecommendation.mode !== 'normal'
+  ) {
+    return {
+      weight: returnRecommendation.suggestedWeight ?? 0,
+      reps: pe.targetRepsMin,
+      rir: returnRecommendation.targetRIR,
+    };
+  }
+
   const nextIsDropSet = nextPlannedSetIsDropSet(pe, sets);
   const previousRow = lastPerformance?.sets[loggedSets.length];
   if (previousRow) {
@@ -128,16 +145,26 @@ export function EditableSetsTable({
   deloadActive,
   unit,
   recommendation = null,
+  returnRecommendation = null,
   loadConstraints = null,
   disabled = false,
   onSubmit,
   onUpdateSet,
 }: Props) {
   const t = useTranslations('session.editableSets');
+  const inputT = useTranslations('session.input');
   const locale = useLocale();
   const [rmTarget, setRmTarget] = useState<1 | 10>(1);
   const [draft, setDraft] = useState<DraftSet>(() =>
-    initialDraft(programExercise, sets, lastPerformance, readiness, deloadActive, loadConstraints),
+    initialDraft(
+      programExercise,
+      sets,
+      lastPerformance,
+      returnRecommendation,
+      readiness,
+      deloadActive,
+      loadConstraints,
+    ),
   );
   const [submitting, setSubmitting] = useState(false);
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
@@ -145,6 +172,10 @@ export function EditableSetsTable({
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
   const [manualValue, setManualValue] = useState('');
   const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiParsing, setAiParsing] = useState(false);
+  const [aiHint, setAiHint] = useState<string | null>(null);
 
   useEffect(() => {
     setRmTarget(loadPreferences().rmDisplay === '10RM' ? 10 : 1);
@@ -156,15 +187,25 @@ export function EditableSetsTable({
         programExercise,
         sets,
         lastPerformance,
+        returnRecommendation,
         readiness,
         deloadActive,
         loadConstraints,
       ),
     );
     setAppliedRecommendationKey(null);
+    setAiOpen(false);
+    setAiText('');
+    setAiHint(null);
     // Re-seed when the active exercise or logged row count changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [programExercise.id, sets.length]);
+  }, [
+    programExercise.id,
+    returnRecommendation?.mode,
+    returnRecommendation?.suggestedWeight,
+    returnRecommendation?.targetRIR,
+    sets.length,
+  ]);
 
   useEffect(() => {
     if (!editingSet?.awaitingPersistence || updatingSetId === editingSet.set.localId) {
@@ -211,6 +252,42 @@ export function EditableSetsTable({
     setAppliedRecommendationKey(
       `${recommendation.weight}:${recommendation.reps}:${recommendation.rir}`,
     );
+  }
+
+  async function handleAiParse() {
+    const text = aiText.trim();
+    if (!text || aiParsing || disabled) return;
+    setAiParsing(true);
+    setAiHint(null);
+    try {
+      const response = await fetch('/api/sets/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exerciseId: programExercise.exercise.id, text }),
+      });
+      if (!response.ok) {
+        setAiHint(inputT('parseError'));
+        return;
+      }
+      const data = (await response.json()) as { parsed: SetParseResult | null };
+      if (!data.parsed || data.parsed.kind !== 'strength') {
+        setAiHint(inputT('parseError'));
+        return;
+      }
+
+      setEditingSet(null);
+      setPicker(null);
+      setDraft({
+        weight: fromDisplayWeight(data.parsed.weight, unit),
+        reps: data.parsed.reps,
+        rir: data.parsed.rir == null ? draft.rir : Math.min(5, Math.max(0, data.parsed.rir)),
+      });
+      setAppliedRecommendationKey(null);
+    } catch {
+      setAiHint(inputT('parseError'));
+    } finally {
+      setAiParsing(false);
+    }
   }
 
   function openPicker(kind: 'weight' | 'reps', set?: PendingSet) {
@@ -310,6 +387,49 @@ export function EditableSetsTable({
       data-testid="editable-sets-table"
       className="overflow-hidden rounded-md border border-border"
     >
+      <div className="border-b border-border bg-muted/20 px-2 py-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setAiOpen((open) => !open)}
+          aria-expanded={aiOpen}
+          className="h-8 px-2 text-xs text-muted-foreground"
+        >
+          <Sparkles className="size-3.5" />
+          <span className="ml-1.5">{inputT('describe')}</span>
+        </Button>
+        {aiOpen && (
+          <div className="space-y-1 pb-1 pt-1">
+            <Label htmlFor={`ai-set-${programExercise.id}`} className="sr-only">
+              {inputT('describe')}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id={`ai-set-${programExercise.id}`}
+                value={aiText}
+                onChange={(event) => {
+                  setAiText(event.target.value);
+                  if (aiHint) setAiHint(null);
+                }}
+                placeholder={inputT('strengthExample')}
+                disabled={disabled || aiParsing}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleAiParse}
+                disabled={disabled || aiParsing || aiText.trim() === ''}
+                className="shrink-0"
+              >
+                {aiParsing && <Loader2 className="size-4 animate-spin" />}
+                {aiParsing ? inputT('parsing') : inputT('parse')}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">{aiHint ?? inputT('parseHelp')}</p>
+          </div>
+        )}
+      </div>
       <div>
         <div
           data-testid="editable-sets-header"

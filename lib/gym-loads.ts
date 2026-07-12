@@ -69,6 +69,18 @@ export function constrainGymWeight(
   return selectDirectionalWeight(normalized, targetWeight, referenceWeight);
 }
 
+export function constrainGymWeightAtOrBelow(
+  targetWeight: number,
+  constraints?: GymLoadConstraints | null,
+): number {
+  if (constraints?.isAvailable === false) return 0;
+  if (!constraints || targetWeight <= 0) return round(Math.max(0, targetWeight));
+
+  const options = gymWeightOptions(constraints, targetWeight);
+  if (options.length === 0) return round(targetWeight);
+  return round(options.filter((value) => value <= targetWeight).at(-1) ?? 0);
+}
+
 export function constructibleBarbellWeights(
   barWeights: number[],
   plateWeights: number[],

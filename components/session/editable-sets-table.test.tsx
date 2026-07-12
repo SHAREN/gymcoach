@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditableSetsTable } from './editable-sets-table';
 import type { PendingSet } from '@/lib/indexeddb';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
@@ -50,6 +50,10 @@ const completedSet2: PendingSet = {
   reps: 9,
   rir: 1,
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const recommendation: IntraSetRecommendation = {
   mode: 'PRESERVE_RIR',
@@ -129,6 +133,42 @@ describe('EditableSetsTable', () => {
         notes: null,
       }),
     );
+  });
+
+  it('fills the active table row from an explicitly requested AI parse', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          parsed: { kind: 'strength', weight: 100, reps: 8, rir: 2 },
+        }),
+      }),
+    );
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Describe the set (AI)' }));
+    fireEvent.change(screen.getByLabelText('Describe the set (AI)'), {
+      target: { value: '100 kg for 8, 2 in the tank' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Parse with AI' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('100'),
+    );
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('8');
+    expect(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' })).toHaveValue('2');
   });
 
   it('applies the recommendation and restores it after a manual change or next set', async () => {
@@ -279,6 +319,47 @@ describe('EditableSetsTable', () => {
     expect(screen.getByRole('button', { name: /weight/i })).toHaveTextContent('27.25');
     expect(screen.getByRole('button', { name: /repetitions/i })).toHaveTextContent('12');
     expect(screen.getByText('25 kg')).toBeInTheDocument();
+  });
+
+  it('prefills a conservative return load instead of copying stale history', () => {
+    render(
+      <EditableSetsTable
+        programExercise={{ ...(programExercise as object), targetSets: 2, targetRIR: 3 } as never}
+        sets={[]}
+        lastPerformance={{
+          sessionId: 'stale-session',
+          sessionStartedAt: '2026-05-01T10:00:00.000Z',
+          sets: [{ weight: 19, reps: 10, rir: 1 }],
+          maxWeight: 19,
+          repsAtMaxWeight: 10,
+          cardio: null,
+        }}
+        returnRecommendation={{
+          mode: 'exercise-reintro',
+          exerciseGapDays: 60,
+          muscleGapDays: 5,
+          muscleMaintained: true,
+          recentMuscleSets: 12,
+          baselineMuscleSetsPer28Days: 12,
+          recentVolumeRatio: 1,
+          targetSets: 2,
+          targetRIR: 3,
+          weightCeiling: 19,
+          suggestedWeight: 16,
+          calibrationRequired: true,
+          historySessionCount: 3,
+        }}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('16');
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('8');
+    expect(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' })).toHaveValue('3');
   });
 
   it('adds planned drop-set rows after the regular working sets', async () => {

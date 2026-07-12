@@ -2,8 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 
 // Free-text (AI-parsed) set logging (issue #210): from the session runner, the
 // lifter types a plain-language set description, clicks "Parse with AI", the
-// form fills, and they confirm with the existing Log button. The E2E server
-// runs LLM_PROVIDER=demo, so the parse is the canned strength result
+// active table row fills, and they confirm that row. The E2E server runs
+// LLM_PROVIDER=demo, so the parse is the canned strength result
 // ({ weight: 100, reps: 8, rir: 2 }) - which proves the parse round-trip works
 // end to end without auto-logging.
 
@@ -46,9 +46,7 @@ async function seedStrengthWorkout(page: Page): Promise<{ sessionId: string }> {
   return { sessionId: session.id };
 }
 
-test('a lifter can fill the set form from free text via Parse with AI', async ({
-  page,
-}) => {
+test('a lifter can fill the active set row from free text via Parse with AI', async ({ page }) => {
   const registerRes = await page.request.post('/api/auth/register', {
     headers: { 'x-forwarded-for': '10.111.0.9' },
     data: {
@@ -62,19 +60,20 @@ test('a lifter can fill the set form from free text via Parse with AI', async ({
   const { sessionId } = await seedStrengthWorkout(page);
 
   await page.goto(`/session/${sessionId}`);
+  await page.getByRole('button', { name: /describe the set/i }).click();
   await expect(page.getByLabel(/describe the set/i)).toBeVisible();
 
   // Type free text and parse it with AI.
   await page.getByLabel(/describe the set/i).fill('100 kg for 8, 2 in the tank');
   await page.getByRole('button', { name: /parse with ai/i }).click();
 
-  // The form fills from the canned demo parse: load 100, reps 8.
-  const loadInput = page.locator('input[type="number"]').first();
-  await expect(loadInput).toHaveValue('100', { timeout: 15_000 });
+  // The active table row fills from the canned demo parse: load 100, reps 8.
+  await expect(page.getByRole('button', { name: /set 1 weight/i })).toHaveText('100', {
+    timeout: 15_000,
+  });
+  await expect(page.getByRole('button', { name: /set 1 repetitions/i })).toHaveText('8');
 
-  // Nothing is logged until the lifter confirms; now confirm.
-  await page.getByRole('button', { name: /log the set/i }).click();
-
-  // The logged set renders in the sets list (100 kg x 8).
-  await expect(page.getByText(/100/).first()).toBeVisible();
+  // Nothing is logged until the lifter confirms the active row.
+  await page.getByRole('button', { name: /confirm set 1/i }).click();
+  await expect(page.getByTestId('completed-set-1')).toContainText('100');
 });
