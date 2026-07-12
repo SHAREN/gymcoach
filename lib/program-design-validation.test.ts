@@ -87,6 +87,9 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         notes: null,
         isAvailableInActiveGym: true,
         weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
       },
       {
         id: 'fly',
@@ -99,6 +102,9 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         notes: null,
         isAvailableInActiveGym: false,
         weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
       },
     ],
     dataQuality: {

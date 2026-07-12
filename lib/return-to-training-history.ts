@@ -6,7 +6,7 @@ import type {
   ProgramExercise,
 } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
-import type { GymLoadConstraints } from '@/lib/gym-loads';
+import { resolveEquipmentType, type GymLoadConstraints } from '@/lib/gym-loads';
 import {
   BASELINE_MUSCLE_VOLUME_DAYS,
   calculateReturnRecommendation,
@@ -20,11 +20,22 @@ type ProgramExerciseForReturn = Pick<
   ProgramExercise,
   'id' | 'exerciseId' | 'targetSets' | 'targetRepsMin' | 'targetRIR'
 > & {
-  exercise: Pick<Exercise, 'category' | 'equipmentType' | 'usesBodyweight' | 'muscleGroup'>;
+  exercise: Pick<
+    Exercise,
+    'name' | 'category' | 'equipmentType' | 'usesBodyweight' | 'muscleGroup'
+  >;
 };
 
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
-  exerciseConfigs: Pick<GymExerciseConfig, 'exerciseId' | 'isAvailable' | 'weightOptions'>[];
+  exerciseConfigs: Pick<
+    GymExerciseConfig,
+    | 'exerciseId'
+    | 'isAvailable'
+    | 'weightOptions'
+    | 'dumbbellWeights'
+    | 'plateWeights'
+    | 'barWeights'
+  >[];
 };
 
 interface ReturnRecommendationQuery {
@@ -216,11 +227,11 @@ function loadConstraintsFor(
   if (!gym) return null;
   const config = gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
   return {
-    equipmentType: pe.exercise.equipmentType,
+    equipmentType: resolveEquipmentType(pe.exercise.equipmentType, pe.exercise.name),
     isAvailable: config?.isAvailable ?? true,
-    dumbbellWeights: gym.dumbbellWeights,
-    plateWeights: gym.plateWeights,
-    barWeights: gym.barWeights,
+    dumbbellWeights: config?.dumbbellWeights.length ? config.dumbbellWeights : gym.dumbbellWeights,
+    plateWeights: config?.plateWeights.length ? config.plateWeights : gym.plateWeights,
+    barWeights: config?.barWeights.length ? config.barWeights : gym.barWeights,
     weightOptions: config?.weightOptions ?? [],
   };
 }

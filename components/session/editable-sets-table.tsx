@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Droplet, Loader2, Sparkles } from 'lucide-react';
+import { Check, Droplet, Loader2, Pencil, Sparkles } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
-import type { SerializedLastPerformance } from '@/components/session/session-runner';
+import type { SerializedLastPerformance, SessionGym } from '@/components/session/session-runner';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import type { SetParseResult } from '@/lib/schemas/set-parse';
@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SetValuePicker } from '@/components/session/set-value-picker';
+import { WeightInventoryEditor } from '@/components/session/weight-inventory-editor';
 import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
 
 interface Props {
@@ -31,6 +32,8 @@ interface Props {
   recommendation?: IntraSetRecommendation | null;
   returnRecommendation?: ReturnRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
+  gym?: SessionGym | null;
+  onGymUpdated?: (gym: SessionGym) => void;
   disabled?: boolean;
   onSubmit: (values: {
     weight: number;
@@ -147,6 +150,8 @@ export function EditableSetsTable({
   recommendation = null,
   returnRecommendation = null,
   loadConstraints = null,
+  gym = null,
+  onGymUpdated,
   disabled = false,
   onSubmit,
   onUpdateSet,
@@ -170,11 +175,20 @@ export function EditableSetsTable({
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiText, setAiText] = useState('');
   const [aiParsing, setAiParsing] = useState(false);
   const [aiHint, setAiHint] = useState<string | null>(null);
+  const inventoryKey = [
+    loadConstraints?.equipmentType ?? '',
+    loadConstraints?.isAvailable === false ? '0' : '1',
+    loadConstraints?.dumbbellWeights?.join(',') ?? '',
+    loadConstraints?.plateWeights?.join(',') ?? '',
+    loadConstraints?.barWeights?.join(',') ?? '',
+    loadConstraints?.weightOptions?.join(',') ?? '',
+  ].join('|');
 
   useEffect(() => {
     setRmTarget(loadPreferences().rmDisplay === '10RM' ? 10 : 1);
@@ -194,6 +208,7 @@ export function EditableSetsTable({
     );
     setAppliedRecommendationKey(null);
     setAiOpen(false);
+    setInventoryOpen(false);
     setAiText('');
     setAiHint(null);
     // Re-seed when the active exercise or logged row count changes.
@@ -205,6 +220,19 @@ export function EditableSetsTable({
     returnRecommendation?.targetRIR,
     sets.length,
   ]);
+
+  useEffect(() => {
+    const normalize = (current: DraftSet): DraftSet => {
+      const weight = constrainGymWeight(current.weight, current.weight, loadConstraints);
+      return weight === current.weight ? current : { ...current, weight };
+    };
+    setDraft(normalize);
+    setEditingSet((current) =>
+      current == null ? current : { ...current, draft: normalize(current.draft) },
+    );
+    // inventoryKey is a stable scalar representation of the active gym inventory.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inventoryKey]);
 
   useEffect(() => {
     if (!editingSet?.awaitingPersistence || updatingSetId === editingSet.set.localId) {
@@ -433,7 +461,21 @@ export function EditableSetsTable({
           className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-muted/30 px-1 py-2 text-center text-[0.625rem] font-medium uppercase text-muted-foreground sm:gap-1 sm:px-2 sm:text-[0.6875rem]`}
         >
           <span>#</span>
-          <span>{unit}</span>
+          <span className="flex items-center justify-center gap-1">
+            {unit}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={!gym || disabled}
+              onClick={() => setInventoryOpen(true)}
+              aria-label={gym ? t('weightEditor.open') : t('weightEditor.noGym')}
+              title={gym ? t('weightEditor.open') : t('weightEditor.noGym')}
+              className="size-6 text-muted-foreground"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          </span>
           <span>REPS</span>
           <span>RIR</span>
           <span>{rmTarget}RM</span>
@@ -635,6 +677,17 @@ export function EditableSetsTable({
           );
         })}
       </div>
+
+      {gym && (
+        <WeightInventoryEditor
+          open={inventoryOpen}
+          gym={gym}
+          exercise={programExercise.exercise}
+          unit={unit}
+          onOpenChange={setInventoryOpen}
+          onSaved={(updatedGym) => onGymUpdated?.(updatedGym)}
+        />
+      )}
 
       <SetValuePicker
         open={picker != null}

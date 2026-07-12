@@ -28,7 +28,12 @@ describe('buildProgramDesignContext', () => {
         barWeights: [20],
         plateWeights: [1.25, 2.5, 5, 10, 20],
         exerciseConfigs: {
-          create: { exerciseId: bench.id, isAvailable: true },
+          create: {
+            exerciseId: bench.id,
+            isAvailable: true,
+            barWeights: [15],
+            plateWeights: [1.25, 5],
+          },
         },
       },
     });
@@ -88,6 +93,8 @@ describe('buildProgramDesignContext', () => {
     expect(context.availableExercises[0]).toMatchObject({
       name: 'Bench press',
       isAvailableInActiveGym: true,
+      barWeights: [15],
+      plateWeights: [1.25, 5],
     });
     expect(context.history.returnToTraining[0]?.mode).toBe('normal');
   });

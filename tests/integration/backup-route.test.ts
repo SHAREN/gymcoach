@@ -101,7 +101,14 @@ async function seedFullUser(email: string) {
       plateWeights: [1.25, 2.5, 5, 10, 20],
       barWeights: [20],
       exerciseConfigs: {
-        create: { exerciseId: running.id, isAvailable: false, weightOptions: [] },
+        create: {
+          exerciseId: running.id,
+          isAvailable: false,
+          weightOptions: [],
+          dumbbellWeights: [7.5],
+          plateWeights: [1.25],
+          barWeights: [10],
+        },
       },
     },
   });
@@ -282,7 +289,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(4);
+    expect(dump.version).toBe(5);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -304,7 +311,16 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
         dumbbellWeights: [10, 12, 14, 16, 19],
         plateWeights: [1.25, 2.5, 5, 10, 20],
         barWeights: [20],
-        exerciseConfigs: [{ exerciseName: 'Running', isAvailable: false, weightOptions: [] }],
+        exerciseConfigs: [
+          {
+            exerciseName: 'Running',
+            isAvailable: false,
+            weightOptions: [],
+            dumbbellWeights: [7.5],
+            plateWeights: [1.25],
+            barWeights: [10],
+          },
+        ],
       },
     ]);
     expect(dump.sessions[0].gymName).toBe('Basement');

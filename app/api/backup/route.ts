@@ -53,7 +53,7 @@ import { gymWeightListSchema } from '@/lib/schemas/gym';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 4;
+const VERSION = 5;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -180,6 +180,9 @@ export async function GET() {
           exerciseName: config.exercise.name,
           isAvailable: config.isAvailable,
           weightOptions: config.weightOptions,
+          dumbbellWeights: config.dumbbellWeights,
+          plateWeights: config.plateWeights,
+          barWeights: config.barWeights,
         })),
       })),
       programs: programs.map((p) => ({
@@ -456,6 +459,9 @@ const importSchema = z.object({
               exerciseName: z.string().max(120),
               isAvailable: z.boolean(),
               weightOptions: gymWeightListSchema,
+              dumbbellWeights: gymWeightListSchema.default([]),
+              plateWeights: gymWeightListSchema.default([]),
+              barWeights: gymWeightListSchema.default([]),
             }),
           )
           .max(2000),
@@ -607,6 +613,9 @@ export async function POST(req: Request) {
                     exerciseId,
                     isAvailable: config.isAvailable,
                     weightOptions: config.weightOptions,
+                    dumbbellWeights: config.dumbbellWeights,
+                    plateWeights: config.plateWeights,
+                    barWeights: config.barWeights,
                   },
                 ]
               : [];

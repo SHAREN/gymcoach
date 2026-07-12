@@ -14,6 +14,9 @@ export const gymExerciseConfigSchema = z.object({
   exerciseId: z.string().min(1),
   isAvailable: z.boolean().default(true),
   weightOptions: gymWeightListSchema.default([]),
+  dumbbellWeights: gymWeightListSchema.default([]),
+  plateWeights: gymWeightListSchema.default([]),
+  barWeights: gymWeightListSchema.default([]),
 });
 
 export const gymCreateSchema = z.object({
@@ -27,5 +30,15 @@ export const gymCreateSchema = z.object({
 
 export const gymUpdateSchema = gymCreateSchema.omit({ makeActive: true });
 
+export const gymWeightUpdateSchema = z.object({
+  exerciseId: z.string().min(1),
+  scope: z.enum(['equipment', 'exercise']),
+  dumbbellWeights: gymWeightListSchema.default([]),
+  plateWeights: gymWeightListSchema.default([]),
+  barWeights: gymWeightListSchema.default([]),
+  weightOptions: gymWeightListSchema.default([]),
+});
+
 export type GymCreateInput = z.infer<typeof gymCreateSchema>;
 export type GymUpdateInput = z.infer<typeof gymUpdateSchema>;
+export type GymWeightUpdateInput = z.infer<typeof gymWeightUpdateSchema>;
