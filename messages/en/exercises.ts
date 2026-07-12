@@ -53,6 +53,7 @@ export const exercises = {
   },
   detail: {
     back: 'Back to exercises',
+    backToSession: 'Back to workout',
     information: 'Exercise information',
     muscle: 'Primary muscle group',
     equipment: 'Equipment',

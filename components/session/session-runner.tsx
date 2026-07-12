@@ -87,6 +87,7 @@ type SessionRunnerProps = {
   // step down and the runner shows a "Deload week" badge.
   deloadActive: boolean;
   unit: WeightUnit;
+  initialExerciseId?: string;
 };
 
 type Mode =
@@ -100,6 +101,7 @@ export function SessionRunner({
   readiness,
   deloadActive,
   unit,
+  initialExerciseId,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -112,8 +114,14 @@ export function SessionRunner({
   const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
   const programExercises = supersetView.ordered;
 
+  const initialExerciseIndex = initialExerciseId
+    ? Math.max(
+        0,
+        programExercises.findIndex((pe) => pe.exerciseId === initialExerciseId),
+      )
+    : 0;
   const [hydrated, setHydrated] = useState(false);
-  const [currentIdx, setCurrentIdx] = useState(0);
+  const [currentIdx, setCurrentIdx] = useState(initialExerciseIndex);
   const [mode, setMode] = useState<Mode>({ kind: 'input' });
   const [closing, setClosing] = useState(false);
   // Readiness auto-regulation can be turned off in settings (issue #61). The
@@ -365,17 +373,27 @@ export function SessionRunner({
     }
   }
 
+  function selectExercise(index: number) {
+    const next = programExercises[index];
+    if (!next) return;
+    setCurrentIdx(index);
+    if (typeof window !== 'undefined') {
+      const url = `/session/${session.id}?exerciseId=${encodeURIComponent(next.exerciseId)}`;
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }
+
   function handleRestEnd() {
     vibrate(VIBRATION_PATTERNS.restEnd);
     if (mode.kind === 'rest' && mode.nextExerciseIdx != null) {
-      setCurrentIdx(mode.nextExerciseIdx);
+      selectExercise(mode.nextExerciseIdx);
     }
     setMode({ kind: 'input' });
   }
 
   function handleSkipRest() {
     if (mode.kind === 'rest' && mode.nextExerciseIdx != null) {
-      setCurrentIdx(mode.nextExerciseIdx);
+      selectExercise(mode.nextExerciseIdx);
     }
     setMode({ kind: 'input' });
   }
@@ -386,7 +404,7 @@ export function SessionRunner({
   }
 
   function goPrev() {
-    setCurrentIdx((i) => Math.max(0, i - 1));
+    selectExercise(Math.max(0, currentIdx - 1));
     setMode({ kind: 'input' });
   }
   // Next is linear for standalone exercises (unchanged) and cycles within a
@@ -396,7 +414,7 @@ export function SessionRunner({
   const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
   function goNext() {
     if (navNextIdx == null) return;
-    setCurrentIdx(navNextIdx);
+    selectExercise(navNextIdx);
     setMode({ kind: 'input' });
   }
 
@@ -477,10 +495,13 @@ export function SessionRunner({
           completedExerciseIds={completedExerciseIds}
           disabled={mode.kind !== 'input'}
           onSelect={(index) => {
-            setCurrentIdx(index);
+            selectExercise(index);
             setMode({ kind: 'input' });
           }}
-          onOpen={(exerciseId) => router.push(`/exercises/${exerciseId}`)}
+          onOpen={(exerciseId) => {
+            const returnTo = `/session/${session.id}?exerciseId=${encodeURIComponent(exerciseId)}`;
+            router.push(`/exercises/${exerciseId}?returnTo=${encodeURIComponent(returnTo)}`);
+          }}
         />
       </div>
 

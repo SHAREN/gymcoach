@@ -18,10 +18,12 @@ import { Button } from '@/components/ui/button';
 
 interface Props {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }
 
-export default async function ExerciseDetailPage({ params }: Props) {
+export default async function ExerciseDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const { returnTo: requestedReturnTo } = await searchParams;
   const auth = await requireSession();
   const locale = await getLocale();
   const t = await getTranslations('exercises.detail');
@@ -46,6 +48,7 @@ export default async function ExerciseDetailPage({ params }: Props) {
   ]);
 
   if (!exercise) notFound();
+  const returnTo = safeSessionReturnPath(requestedReturnTo);
   const displayName = getExerciseDisplayName(exercise.name, locale);
   const unit = user?.unit ?? 'KG';
   const sessions = new Map<string, { id: string; startedAt: Date; sets: typeof exercise.sets }>();
@@ -67,9 +70,9 @@ export default async function ExerciseDetailPage({ params }: Props) {
     <main className="flex-1 px-4 py-6">
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <Button asChild variant="ghost" size="sm" className="self-start">
-          <Link href="/exercises">
+          <Link href={returnTo ?? '/exercises'}>
             <ChevronLeft className="size-4" />
-            <span className="ml-1">{t('back')}</span>
+            <span className="ml-1">{t(returnTo ? 'backToSession' : 'back')}</span>
           </Link>
         </Button>
 
@@ -198,4 +201,8 @@ export default async function ExerciseDetailPage({ params }: Props) {
       </div>
     </main>
   );
+}
+function safeSessionReturnPath(value: string | undefined): string | null {
+  if (!value) return null;
+  return /^\/session\/[a-zA-Z0-9_-]+(?:\?exerciseId=[a-zA-Z0-9_%.-]+)?$/.test(value) ? value : null;
 }
