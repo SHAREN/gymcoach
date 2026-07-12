@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 export interface LastPerformance {
   exerciseId: string;
   // The most recent previous session for this exercise (excluding the current session).
+  sessionId: string;
   sessionStartedAt: Date;
   sets: { weight: number; reps: number; rir: number | null }[];
   // Best load of the session (handy for a quick display).
@@ -87,6 +88,7 @@ export async function getLastPerformances(
 
       result.set(exerciseId, {
         exerciseId,
+        sessionId: lastSet.session.id,
         sessionStartedAt: lastSet.session.startedAt,
         sets,
         maxWeight,

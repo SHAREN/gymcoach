@@ -63,6 +63,7 @@ import type { GymLoadConstraints } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 
 export interface SerializedLastPerformance {
+  sessionId?: string;
   sessionStartedAt: string;
   sets: { weight: number; reps: number; rir: number | null }[];
   maxWeight: number;
