@@ -8,6 +8,7 @@ describe('PreviousSessionSets', () => {
       <PreviousSessionSets
         unit="KG"
         performance={{
+          sessionId: 'history-session',
           sessionStartedAt: '2026-07-01T10:00:00.000Z',
           sets: [{ weight: 80, reps: 8, rir: 2 }],
           maxWeight: 80,
@@ -17,6 +18,7 @@ describe('PreviousSessionSets', () => {
       />,
     );
 
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/history/history-session');
     expect(screen.getByRole('columnheader', { name: 'RIR' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '2' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '101.3 kg' })).toBeInTheDocument();

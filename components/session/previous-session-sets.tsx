@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import type { WeightUnit } from '@/lib/prisma-client';
 import { estimate1RM } from '@/lib/stats';
@@ -24,8 +25,8 @@ export function PreviousSessionSets({ performance, unit }: Props) {
     year: 'numeric',
   });
 
-  return (
-    <section className="overflow-hidden rounded-md border border-border bg-muted/25">
+  const content = (
+    <section className="overflow-hidden rounded-md border border-border bg-muted/25 transition-colors hover:border-primary/50">
       <div className="border-b border-border px-3 py-2">
         <h3 className="text-xs font-medium text-muted-foreground">{t('title', { date })}</h3>
       </div>
@@ -42,9 +43,13 @@ export function PreviousSessionSets({ performance, unit }: Props) {
           </thead>
           <tbody>
             {performance.sets.map((set, index) => {
-              const oneRm = set.weight > 0 && set.reps > 0 ? estimate1RM(set.weight, set.reps) : null;
+              const oneRm =
+                set.weight > 0 && set.reps > 0 ? estimate1RM(set.weight, set.reps) : null;
               return (
-                <tr key={`${index}-${set.weight}-${set.reps}`} className="border-t border-border/70">
+                <tr
+                  key={`${index}-${set.weight}-${set.reps}`}
+                  className="border-t border-border/70"
+                >
                   <td className="px-2 py-2.5 text-muted-foreground">{index + 1}</td>
                   <td className="px-2 py-2.5 font-medium">
                     {formatWeight(set.weight, unit, { decimals: 2, group: false, locale })}
@@ -63,5 +68,13 @@ export function PreviousSessionSets({ performance, unit }: Props) {
         </table>
       </div>
     </section>
+  );
+
+  return performance.sessionId ? (
+    <Link href={`/history/${performance.sessionId}`} aria-label={t('openHistory', { date })}>
+      {content}
+    </Link>
+  ) : (
+    content
   );
 }

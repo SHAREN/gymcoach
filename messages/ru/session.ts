@@ -143,9 +143,14 @@ export const session = {
     rir: 'Повторы в запасе для подхода {number}',
     confirm: 'Подтвердить подход {number}',
     delete: 'Удалить подход {number}',
+    chooseWeight: 'Выберите вес ({unit})',
+    chooseReps: 'Выберите повторения',
+    applyValue: 'Применить значение',
+    repsShort: 'повт.',
   },
   previousSession: {
     title: 'Прошлая тренировка · {date}',
+    openHistory: 'Открыть тренировку от {date} в истории',
   },
   setsList: {
     noneDuringRest: 'Подходов пока нет. После отдыха можно записать подход {number}.',

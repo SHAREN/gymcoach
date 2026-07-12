@@ -139,9 +139,14 @@ export const session = {
     rir: 'Set {number} reps in reserve',
     confirm: 'Confirm set {number}',
     delete: 'Delete set {number}',
+    chooseWeight: 'Choose weight ({unit})',
+    chooseReps: 'Choose repetitions',
+    applyValue: 'Apply value',
+    repsShort: 'reps',
   },
   previousSession: {
     title: 'Previous session · {date}',
+    openHistory: 'Open the workout from {date} in history',
   },
   setsList: {
     noneDuringRest: 'No sets yet. After rest you can log set {number}.',

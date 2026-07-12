@@ -55,6 +55,7 @@ import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
 
 export interface SerializedLastPerformance {
+  sessionId?: string;
   sessionStartedAt: string;
   sets: { weight: number; reps: number; rir: number | null }[];
   maxWeight: number;
