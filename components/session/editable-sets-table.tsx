@@ -46,6 +46,9 @@ interface DraftSet {
   rir: number | null;
 }
 
+const SET_GRID_COLUMNS =
+  'grid-cols-[1.25rem_minmax(0,1fr)_2.75rem_3rem_3.5rem_2.5rem] sm:grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem]';
+
 function initialDraft(
   pe: Props['programExercise'],
   sets: PendingSet[],
@@ -208,136 +211,140 @@ export function EditableSetsTable({
   }
 
   return (
-    <section className="overflow-hidden rounded-md border border-border">
-      <div className="overflow-x-auto">
-        <div className="min-w-[31rem]">
-          <div className="grid grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem] items-center gap-1 border-b border-border bg-muted/30 px-2 py-2 text-center text-[0.6875rem] font-medium uppercase text-muted-foreground">
-            <span>#</span>
-            <span>{unit}</span>
-            <span>REPS</span>
-            <span>RIR</span>
-            <span>{rmTarget}RM</span>
-            <span aria-hidden />
-          </div>
+    <section
+      data-testid="editable-sets-table"
+      className="overflow-hidden rounded-md border border-border"
+    >
+      <div>
+        <div
+          data-testid="editable-sets-header"
+          className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-muted/30 px-1 py-2 text-center text-[0.625rem] font-medium uppercase text-muted-foreground sm:gap-1 sm:px-2 sm:text-[0.6875rem]`}
+        >
+          <span>#</span>
+          <span>{unit}</span>
+          <span>REPS</span>
+          <span>RIR</span>
+          <span>{rmTarget}RM</span>
+          <span aria-hidden />
+        </div>
 
-          {workingSets.map((set, index) => (
-            <div
-              key={set.localId}
-              className="grid grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem] items-center gap-1 border-b border-border px-2 py-2 text-center text-sm tabular-nums"
-            >
-              <span className="text-muted-foreground">{index + 1}</span>
-              <span className="font-medium">
-                {formatWeight(set.weight, unit, { decimals: 2, group: false, locale })}
-              </span>
-              <span className="font-medium">{set.reps}</span>
-              <span>{set.rir ?? '–'}</span>
-              <span className="text-muted-foreground">
-                {formatWeight(estimateRepMax(set.weight, set.reps, rmTarget), unit, {
-                  decimals: 1,
-                  group: false,
-                  locale,
-                })}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => onDeleteSet(set)}
-                aria-label={t('delete', { number: index + 1 })}
-                className="size-9 text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          ))}
-
-          <div className="grid grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem] items-center gap-1 border-b border-border bg-primary/5 px-2 py-2">
-            <span className="text-center text-sm font-semibold text-primary">{currentNumber}</span>
-            <button
-              type="button"
-              onClick={() => openPicker('weight')}
-              aria-label={t('weight', { number: currentNumber, unit })}
-              className="h-11 rounded-md border border-input bg-background px-2 text-center text-base font-semibold tabular-nums"
-            >
-              {displayWeight}
-            </button>
-            <button
-              type="button"
-              onClick={() => openPicker('reps')}
-              aria-label={t('reps', { number: currentNumber })}
-              className="h-11 rounded-md border border-input bg-background px-1 text-center text-base font-semibold tabular-nums"
-            >
-              {draft.reps}
-            </button>
-            <select
-              aria-label={t('rir', { number: currentNumber })}
-              value={draft.rir ?? ''}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  rir: event.target.value === '' ? null : Number(event.target.value),
-                }))
-              }
-              className="h-11 rounded-md border border-input bg-background px-1 text-center text-base font-semibold"
-            >
-              <option value="">–</option>
-              {[0, 1, 2, 3, 4, 5].map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-            <span className="text-center text-sm font-medium tabular-nums text-muted-foreground">
-              {rmValue > 0
-                ? formatWeight(rmValue, unit, { decimals: 1, group: false, locale })
-                : '–'}
+        {workingSets.map((set, index) => (
+          <div
+            key={set.localId}
+            className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-2 text-center text-xs tabular-nums sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
+          >
+            <span className="text-muted-foreground">{index + 1}</span>
+            <span className="font-medium">
+              {formatWeight(set.weight, unit, { decimals: 2, group: false, locale })}
+            </span>
+            <span className="font-medium">{set.reps}</span>
+            <span>{set.rir ?? '–'}</span>
+            <span className="text-muted-foreground">
+              {formatWeight(estimateRepMax(set.weight, set.reps, rmTarget), unit, {
+                decimals: 1,
+                group: false,
+                locale,
+              })}
             </span>
             <Button
               type="button"
+              variant="ghost"
               size="icon"
-              onClick={confirmRow}
-              disabled={disabled || submitting || draft.reps <= 0}
-              aria-label={t('confirm', { number: currentNumber })}
-              className="size-11"
+              onClick={() => onDeleteSet(set)}
+              aria-label={t('delete', { number: index + 1 })}
+              className="size-8 justify-self-center text-muted-foreground hover:text-destructive sm:size-9"
             >
-              {submitting ? (
-                <Loader2 className="size-5 animate-spin" />
-              ) : (
-                <Check className="size-6" />
-              )}
+              <Trash2 className="size-3.5 sm:size-4" />
             </Button>
           </div>
+        ))}
 
-          {Array.from({ length: Math.max(0, totalRows - currentNumber) }, (_, index) => {
-            const rowNumber = currentNumber + index + 1;
-            const previous = lastPerformance?.sets[rowNumber - 1];
-            return (
-              <div
-                key={`upcoming-${rowNumber}`}
-                className="grid grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem] items-center gap-1 border-b border-border px-2 py-3 text-center text-sm text-muted-foreground last:border-b-0"
-              >
-                <span>{rowNumber}</span>
-                <span>
-                  {previous
-                    ? formatWeight(previous.weight, unit, { decimals: 2, group: false, locale })
-                    : '–'}
-                </span>
-                <span>{previous?.reps ?? '–'}</span>
-                <span>{previous?.rir ?? '–'}</span>
-                <span>
-                  {previous
-                    ? formatWeight(estimateRepMax(previous.weight, previous.reps, rmTarget), unit, {
-                        decimals: 1,
-                        group: false,
-                        locale,
-                      })
-                    : '–'}
-                </span>
-                <span />
-              </div>
-            );
-          })}
+        <div
+          className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
+        >
+          <span className="text-center text-sm font-semibold text-primary">{currentNumber}</span>
+          <button
+            type="button"
+            onClick={() => openPicker('weight')}
+            aria-label={t('weight', { number: currentNumber, unit })}
+            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-1 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-2 sm:text-base"
+          >
+            {displayWeight}
+          </button>
+          <button
+            type="button"
+            onClick={() => openPicker('reps')}
+            aria-label={t('reps', { number: currentNumber })}
+            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0.5 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-1 sm:text-base"
+          >
+            {draft.reps}
+          </button>
+          <select
+            aria-label={t('rir', { number: currentNumber })}
+            value={draft.rir ?? ''}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                rir: event.target.value === '' ? null : Number(event.target.value),
+              }))
+            }
+            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-sm font-semibold sm:h-11 sm:px-1 sm:text-base"
+          >
+            <option value="">–</option>
+            {[0, 1, 2, 3, 4, 5].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+          <span className="min-w-0 whitespace-nowrap text-center text-[0.6875rem] font-medium tabular-nums leading-tight text-muted-foreground sm:text-sm">
+            {rmValue > 0 ? formatWeight(rmValue, unit, { decimals: 1, group: false, locale }) : '–'}
+          </span>
+          <Button
+            type="button"
+            size="icon"
+            onClick={confirmRow}
+            disabled={disabled || submitting || draft.reps <= 0}
+            aria-label={t('confirm', { number: currentNumber })}
+            className="size-10 justify-self-center sm:size-11"
+          >
+            {submitting ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <Check className="size-5 sm:size-6" />
+            )}
+          </Button>
         </div>
+
+        {Array.from({ length: Math.max(0, totalRows - currentNumber) }, (_, index) => {
+          const rowNumber = currentNumber + index + 1;
+          const previous = lastPerformance?.sets[rowNumber - 1];
+          return (
+            <div
+              key={`upcoming-${rowNumber}`}
+              className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
+            >
+              <span>{rowNumber}</span>
+              <span>
+                {previous
+                  ? formatWeight(previous.weight, unit, { decimals: 2, group: false, locale })
+                  : '–'}
+              </span>
+              <span>{previous?.reps ?? '–'}</span>
+              <span>{previous?.rir ?? '–'}</span>
+              <span>
+                {previous
+                  ? formatWeight(estimateRepMax(previous.weight, previous.reps, rmTarget), unit, {
+                      decimals: 1,
+                      group: false,
+                      locale,
+                    })
+                  : '–'}
+              </span>
+              <span />
+            </div>
+          );
+        })}
       </div>
 
       <Dialog open={picker != null} onOpenChange={(open) => !open && setPicker(null)}>
