@@ -14,7 +14,10 @@ export const setInputSchema = z.object({
   setNumber: z.coerce.number().int().min(1).max(50),
   weight: z.coerce.number().min(0).max(500),
   reps: z.coerce.number().int().min(0).max(100),
-  rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+  rir: z
+    .union([z.coerce.number().int().min(0).max(5), z.null()])
+    .optional()
+    .nullable(),
   // Cardio fields (issue #133): only valid on CARDIO exercises - the API
   // enforces that with validateSetForCategory below, since the category lives
   // on the exercise row, not in the payload. Bounds: 1 second to 24 hours,
@@ -45,6 +48,14 @@ export const setInputSchema = z.object({
 });
 
 export type SetInput = z.infer<typeof setInputSchema>;
+
+export const setUpdateSchema = setInputSchema.pick({
+  weight: true,
+  reps: true,
+  rir: true,
+});
+
+export type SetUpdateInput = z.infer<typeof setUpdateSchema>;
 
 // Cross-field rule the schema alone cannot express: duration/distance are
 // accepted only on CARDIO exercises (so strength data stays clean), and a

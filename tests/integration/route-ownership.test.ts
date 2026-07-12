@@ -7,7 +7,7 @@ import { getCurrentUserId } from '@/lib/auth';
 vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
 const mockUserId = vi.mocked(getCurrentUserId);
 
-import { DELETE as deleteSet } from '@/app/api/sets/[id]/route';
+import { DELETE as deleteSet, PATCH as patchSet } from '@/app/api/sets/[id]/route';
 import { PUT as putSession } from '@/app/api/sessions/[id]/route';
 import { GET as getExercise } from '@/app/api/exercises/[id]/route';
 
@@ -54,7 +54,7 @@ describe('route ownership: DELETE /api/sets/[id]', () => {
     expect(await db.set.findUnique({ where: { id: set.id } })).toBeNull();
   });
 
-  it("returns 404 and keeps the set when a stranger tries to delete it", async () => {
+  it('returns 404 and keeps the set when a stranger tries to delete it', async () => {
     const { b, set } = await seed();
     actAs(b.id);
     const res = await deleteSet(new Request('http://t/api', { method: 'DELETE' }), {
@@ -63,6 +63,39 @@ describe('route ownership: DELETE /api/sets/[id]', () => {
     expect(res.status).toBe(404);
     // The set must still exist - no cross-user deletion.
     expect(await db.set.findUnique({ where: { id: set.id } })).not.toBeNull();
+  });
+});
+
+describe('route ownership: PATCH /api/sets/[id]', () => {
+  it('lets the owner correct their set', async () => {
+    const { a, set } = await seed();
+    actAs(a.id);
+    const res = await patchSet(jsonReq('PATCH', { weight: 62.5, reps: 8, rir: 1 }), {
+      params: Promise.resolve({ id: set.id }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await db.set.findUnique({ where: { id: set.id } })).toMatchObject({
+      weight: 62.5,
+      reps: 8,
+      rir: 1,
+      setNumber: 1,
+      exerciseId: set.exerciseId,
+    });
+  });
+
+  it('returns 404 and keeps the set when a stranger tries to edit it', async () => {
+    const { b, set } = await seed();
+    actAs(b.id);
+    const res = await patchSet(jsonReq('PATCH', { weight: 200, reps: 1, rir: 0 }), {
+      params: Promise.resolve({ id: set.id }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(await db.set.findUnique({ where: { id: set.id } })).toMatchObject({
+      weight: 60,
+      reps: 10,
+    });
   });
 });
 
@@ -77,7 +110,7 @@ describe('route ownership: PUT /api/sessions/[id]', () => {
     expect((await db.session.findUnique({ where: { id: session.id } }))?.notes).toBe('mine');
   });
 
-  it("returns 404 and leaves the session untouched for a stranger", async () => {
+  it('returns 404 and leaves the session untouched for a stranger', async () => {
     const { b, session } = await seed();
     actAs(b.id);
     const res = await putSession(jsonReq('PUT', { notes: 'hacked' }), {
@@ -92,7 +125,9 @@ describe('route ownership: GET /api/exercises/[id]', () => {
   it('lets the owner read their exercise', async () => {
     const { a, exercise } = await seed();
     actAs(a.id);
-    const res = await getExercise(new Request('http://t/api'), { params: Promise.resolve({ id: exercise.id }) });
+    const res = await getExercise(new Request('http://t/api'), {
+      params: Promise.resolve({ id: exercise.id }),
+    });
     expect(res.status).toBe(200);
     expect((await res.json()).id).toBe(exercise.id);
   });
@@ -100,7 +135,9 @@ describe('route ownership: GET /api/exercises/[id]', () => {
   it("returns 404 for a stranger reading someone else's exercise", async () => {
     const { b, exercise } = await seed();
     actAs(b.id);
-    const res = await getExercise(new Request('http://t/api'), { params: Promise.resolve({ id: exercise.id }) });
+    const res = await getExercise(new Request('http://t/api'), {
+      params: Promise.resolve({ id: exercise.id }),
+    });
     expect(res.status).toBe(404);
   });
 });

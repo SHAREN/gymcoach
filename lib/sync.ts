@@ -50,22 +50,30 @@ async function doFlush(): Promise<FlushResult> {
     await db.pendingSets.update(item.localId, { status: 'syncing' });
 
     try {
-      const res = await fetch(`/api/sessions/${item.sessionId}/sets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          exerciseId: item.exerciseId,
-          setNumber: item.setNumber,
-          weight: item.weight,
-          reps: item.reps,
-          rir: item.rir,
-          durationSec: item.durationSec ?? null,
-          distanceM: item.distanceM ?? null,
-          notes: item.notes,
-          isWarmup: item.isWarmup,
-          isDropSet: item.isDropSet,
-        }),
-      });
+      const updatesExistingSet = item.serverId != null;
+      const res = await fetch(
+        updatesExistingSet ? `/api/sets/${item.serverId}` : `/api/sessions/${item.sessionId}/sets`,
+        {
+          method: updatesExistingSet ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            updatesExistingSet
+              ? { weight: item.weight, reps: item.reps, rir: item.rir }
+              : {
+                  exerciseId: item.exerciseId,
+                  setNumber: item.setNumber,
+                  weight: item.weight,
+                  reps: item.reps,
+                  rir: item.rir,
+                  durationSec: item.durationSec ?? null,
+                  distanceM: item.distanceM ?? null,
+                  notes: item.notes,
+                  isWarmup: item.isWarmup,
+                  isDropSet: item.isDropSet,
+                },
+          ),
+        },
+      );
 
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -82,10 +90,10 @@ async function doFlush(): Promise<FlushResult> {
         continue;
       }
 
-      const created = (await res.json()) as { id: string };
+      const saved = (await res.json()) as { id: string };
       await db.pendingSets.update(item.localId, {
         status: 'synced',
-        serverId: created.id,
+        serverId: item.serverId ?? saved.id,
         syncedAt: Date.now(),
         lastError: null,
       });
@@ -107,7 +115,10 @@ async function doFlush(): Promise<FlushResult> {
 
 // Helper: adds a set to the queue (status pending) and triggers a flush.
 export async function queueSet(
-  set: Omit<PendingSet, 'createdAt' | 'status' | 'serverId' | 'syncedAt' | 'attempts' | 'lastError'>,
+  set: Omit<
+    PendingSet,
+    'createdAt' | 'status' | 'serverId' | 'syncedAt' | 'attempts' | 'lastError'
+  >,
 ): Promise<PendingSet> {
   const db = getDB();
   const record: PendingSet = {

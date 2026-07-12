@@ -25,6 +25,8 @@ export const session = {
   finish: 'Finish',
   setDeleted: 'Set deleted.',
   setDeleteError: 'Could not delete the set.',
+  setUpdated: 'Set updated.',
+  setUpdateError: 'Could not update the set.',
   finished: 'Session finished.',
   finishError: 'Could not finish the session.',
   rest: {
@@ -138,6 +140,7 @@ export const session = {
     reps: 'Set {number} repetitions',
     rir: 'Set {number} reps in reserve',
     confirm: 'Confirm set {number}',
+    save: 'Save changes to set {number}',
     delete: 'Delete set {number}',
     chooseWeight: 'Choose weight ({unit})',
     chooseReps: 'Choose repetitions',
