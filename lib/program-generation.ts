@@ -104,6 +104,7 @@ export async function buildProgramFromGenerated(
             exerciseId: exercise.id,
             order: exerciseOrder++,
             targetSets: ex.targetSets,
+            targetDropSets: ex.targetDropSets ?? 0,
             targetRepsMin: ex.targetRepsMin,
             targetRepsMax: Math.max(ex.targetRepsMax, ex.targetRepsMin),
             targetRIR: ex.targetRIR,

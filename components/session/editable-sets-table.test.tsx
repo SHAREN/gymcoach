@@ -19,6 +19,7 @@ const programExercise = {
   targetRepsMin: 8,
   targetRepsMax: 12,
   targetRIR: 2,
+  targetDropSets: 0,
   exercise: { id: 'exercise-1', name: 'Squat', category: 'COMPOUND' },
 } as never;
 const completedSet: PendingSet = {
@@ -255,5 +256,38 @@ describe('EditableSetsTable', () => {
     expect(screen.getByRole('button', { name: /weight/i })).toHaveTextContent('27.25');
     expect(screen.getByRole('button', { name: /repetitions/i })).toHaveTextContent('12');
     expect(screen.getByText('25 kg')).toBeInTheDocument();
+  });
+
+  it('adds planned drop-set rows after the regular working sets', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EditableSetsTable
+        programExercise={
+          { ...(programExercise as object), targetSets: 1, targetDropSets: 1 } as never
+        }
+        sets={[completedSet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={onSubmit}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle('Drop set 2')).toBeInTheDocument();
+    expect(screen.queryByTestId('apply-set-recommendation')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm set 2' }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          weight: 80,
+          reps: 10,
+          rir: 0,
+          isDropSet: true,
+        }),
+      ),
+    );
   });
 });
