@@ -7,11 +7,13 @@ import {
   MIN_LOAD_ADJUSTMENT_PCT,
 } from '@/lib/intra-set-autoregulation';
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
+import { MAX_TARGET_DROP_SETS } from '@/lib/planned-sets';
 
 export const programExerciseInputSchema = z
   .object({
     exerciseId: z.string().min(1, 'Exercise required'),
     targetSets: z.coerce.number().int().min(1).max(20),
+    targetDropSets: z.coerce.number().int().min(0).max(MAX_TARGET_DROP_SETS).optional(),
     targetRepsMin: z.coerce.number().int().min(1).max(50),
     targetRepsMax: z.coerce.number().int().min(1).max(50),
     targetRIR: z.coerce.number().int().min(0).max(5),

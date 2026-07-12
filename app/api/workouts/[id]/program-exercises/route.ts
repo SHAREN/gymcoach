@@ -44,6 +44,7 @@ export async function POST(req: Request, props: Params) {
         exerciseId: data.exerciseId,
         order: nextOrder,
         targetSets: data.targetSets,
+        targetDropSets: data.targetDropSets ?? 0,
         targetRepsMin: data.targetRepsMin,
         targetRepsMax: data.targetRepsMax,
         targetRIR: data.targetRIR,

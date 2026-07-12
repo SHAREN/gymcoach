@@ -42,7 +42,7 @@ export default async function SessionRunPage(props: Props) {
   if (!session.workout) notFound();
 
   const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
-  const [lastPerformances, user, latestCheckin] = await Promise.all([
+  const [lastPerformances, user, latestCheckin, catalog] = await Promise.all([
     getLastPerformances(auth.userId, exerciseIds, session.id),
     db.user.findUnique({
       where: { id: auth.userId },
@@ -51,6 +51,10 @@ export default async function SessionRunPage(props: Props) {
     db.readinessCheckin.findFirst({
       where: { userId: auth.userId },
       orderBy: { createdAt: 'desc' },
+    }),
+    db.exercise.findMany({
+      where: { userId: auth.userId },
+      orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
     }),
   ]);
 
@@ -72,6 +76,7 @@ export default async function SessionRunPage(props: Props) {
       deloadActive={deloadActive}
       unit={user?.unit ?? 'KG'}
       initialExerciseId={searchParams.exerciseId}
+      catalog={catalog}
     />
   );
 }

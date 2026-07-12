@@ -44,6 +44,7 @@ import { bindAutoSync, flushPendingSets, queueSet } from '@/lib/sync';
 import { hydrateFromServerSets } from '@/lib/sync-hydration';
 import { ExerciseCard } from '@/components/session/exercise-card';
 import { SetsList } from '@/components/session/sets-list';
+import { SessionExerciseMenu } from '@/components/session/session-exercise-menu';
 import { SetInput } from '@/components/session/set-input';
 import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
@@ -53,11 +54,17 @@ import { EditableSetsTable } from '@/components/session/editable-sets-table';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
+import {
+  DROP_SET_TRANSITION_REST_SEC,
+  isPlannedExerciseComplete,
+  nextPlannedSetIsDropSet,
+  remainingPlannedSets,
+} from '@/lib/planned-sets';
 
 export interface SerializedLastPerformance {
   sessionId?: string;
   sessionStartedAt: string;
-  sets: { weight: number; reps: number; rir: number | null }[];
+  sets: { weight: number; reps: number; rir: number | null; isDropSet?: boolean }[];
   maxWeight: number;
   repsAtMaxWeight: number;
   // Cardio totals for the last session (issue #176): null for strength
@@ -88,6 +95,7 @@ type SessionRunnerProps = {
   deloadActive: boolean;
   unit: WeightUnit;
   initialExerciseId?: string;
+  catalog: Exercise[];
 };
 
 type Mode =
@@ -102,6 +110,7 @@ export function SessionRunner({
   deloadActive,
   unit,
   initialExerciseId,
+  catalog,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -114,22 +123,52 @@ export function SessionRunner({
   const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
   const programExercises = supersetView.ordered;
 
-  const initialExerciseIndex = initialExerciseId
-    ? Math.max(
-        0,
-        programExercises.findIndex((pe) => pe.exerciseId === initialExerciseId),
-      )
-    : 0;
+  const initialProgramExerciseId =
+    (initialExerciseId
+      ? programExercises.find((pe) => pe.exerciseId === initialExerciseId)?.id
+      : null) ??
+    programExercises[0]?.id ??
+    null;
   const [hydrated, setHydrated] = useState(false);
-  const [currentIdx, setCurrentIdx] = useState(initialExerciseIndex);
+  const [selectedProgramExerciseId, setSelectedProgramExerciseId] = useState<string | null>(
+    initialProgramExerciseId,
+  );
+  const [pendingProgramExerciseId, setPendingProgramExerciseId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: 'input' });
   const [closing, setClosing] = useState(false);
+  const [exerciseMenuOpen, setExerciseMenuOpen] = useState(false);
   // Readiness auto-regulation can be turned off in settings (issue #61). The
   // preference lives in localStorage, so it is read after mount; until then we
   // assume the default (on) so the first render matches the server output.
   const [autoRegulate, setAutoRegulate] = useState(true);
 
+  const selectedIndex = programExercises.findIndex((pe) => pe.id === selectedProgramExerciseId);
+  const currentIdx = selectedIndex >= 0 ? selectedIndex : 0;
   const currentPE = programExercises[currentIdx];
+
+  useEffect(() => {
+    if (pendingProgramExerciseId) {
+      if (programExercises.some((pe) => pe.id === pendingProgramExerciseId)) {
+        setSelectedProgramExerciseId(pendingProgramExerciseId);
+        setPendingProgramExerciseId(null);
+      }
+      return;
+    }
+
+    if (programExercises.length === 0) {
+      if (selectedProgramExerciseId != null) setSelectedProgramExerciseId(null);
+      return;
+    }
+    if (!programExercises.some((pe) => pe.id === selectedProgramExerciseId)) {
+      setSelectedProgramExerciseId(programExercises[0]!.id);
+    }
+  }, [pendingProgramExerciseId, programExercises, selectedProgramExerciseId]);
+
+  useEffect(() => {
+    if (!currentPE || typeof window === 'undefined') return;
+    const url = `/session/${session.id}?exerciseId=${encodeURIComponent(currentPE.exerciseId)}`;
+    window.history.replaceState(window.history.state, '', url);
+  }, [currentPE, session.id]);
 
   // When auto-regulation is off, the readiness signal is dropped entirely, so
   // the suggestion falls back to pure programmed progression (pre-#55 behavior).
@@ -254,8 +293,8 @@ export function SessionRunner({
   const completedExerciseCount = useMemo(() => {
     let count = 0;
     for (const pe of programExercises) {
-      const done = setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0;
-      if (done >= pe.targetSets) count += 1;
+      const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
+      if (isPlannedExerciseComplete(pe, exerciseSets)) count += 1;
     }
     return count;
   }, [programExercises, setsByExercise]);
@@ -263,8 +302,8 @@ export function SessionRunner({
   const completedExerciseIds = useMemo(() => {
     const completed = new Set<string>();
     for (const pe of programExercises) {
-      const done = setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0;
-      if (done >= pe.targetSets) completed.add(pe.exerciseId);
+      const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
+      if (isPlannedExerciseComplete(pe, exerciseSets)) completed.add(pe.exerciseId);
     }
     return completed;
   }, [programExercises, setsByExercise]);
@@ -311,20 +350,27 @@ export function SessionRunner({
     // Standalone exercise (unchanged behavior): advance once the set
     // completes the target. Superset member (issue #146): alternate to the
     // next member of the group that still has sets, the A1/A2 flow.
+    const submittedSet = { isWarmup: values.isWarmup, isDropSet: values.isDropSet };
     const remainingAfterThisSet = (pe: ProgramExerciseWithExercise) => {
-      const logged = setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0;
-      const justLogged = pe.exerciseId === currentPE.exerciseId ? 1 : 0;
-      return pe.targetSets - logged - justLogged;
+      const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
+      return remainingPlannedSets(pe, exerciseSets, pe.id === currentPE.id ? submittedSet : null);
     };
-    const nextIdx = values.isWarmup
-      ? null
-      : nextAutoAdvanceIndex(supersetView, currentIdx, remainingAfterThisSet);
+    const dropSetTransition =
+      !values.isWarmup && nextPlannedSetIsDropSet(currentPE, [...existing, submittedSet]);
+    const nextIdx =
+      values.isWarmup || dropSetTransition
+        ? null
+        : nextAutoAdvanceIndex(supersetView, currentIdx, remainingAfterThisSet);
 
     // Superset-aware rest (issue #189): a short transition rest when the
     // auto-advance moves to another member of the same group (A1 -> A2); the
     // full per-exercise rest after the last member and for standalone work.
     const transition = isSupersetTransitionRest(supersetView, currentIdx, nextIdx);
-    const restSec = transition ? SUPERSET_TRANSITION_REST_SEC : currentPE.restSec;
+    const restSec = dropSetTransition
+      ? DROP_SET_TRANSITION_REST_SEC
+      : transition
+        ? SUPERSET_TRANSITION_REST_SEC
+        : currentPE.restSec;
 
     setMode({
       kind: 'rest',
@@ -409,11 +455,25 @@ export function SessionRunner({
   function selectExercise(index: number) {
     const next = programExercises[index];
     if (!next) return;
-    setCurrentIdx(index);
+    setSelectedProgramExerciseId(next.id);
+    setExerciseMenuOpen(false);
     if (typeof window !== 'undefined') {
       const url = `/session/${session.id}?exerciseId=${encodeURIComponent(next.exerciseId)}`;
       window.history.replaceState(window.history.state, '', url);
     }
+  }
+
+  function openExerciseDetails(exerciseId: string) {
+    const returnTo = `/session/${session.id}?exerciseId=${encodeURIComponent(exerciseId)}`;
+    router.push(`/exercises/${exerciseId}?returnTo=${encodeURIComponent(returnTo)}`);
+  }
+  function handleProgramChanged(options?: { selectProgramExerciseId?: string }) {
+    if (options?.selectProgramExerciseId) {
+      setPendingProgramExerciseId(options.selectProgramExerciseId);
+      setSelectedProgramExerciseId(options.selectProgramExerciseId);
+    }
+    setExerciseMenuOpen(false);
+    router.refresh();
   }
 
   function handleRestEnd() {
@@ -443,7 +503,7 @@ export function SessionRunner({
   // Next is linear for standalone exercises (unchanged) and cycles within a
   // superset group before advancing past it (issue #146).
   const remainingNow = (pe: ProgramExerciseWithExercise) =>
-    pe.targetSets - (setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0);
+    remainingPlannedSets(pe, setsByExercise.get(pe.exerciseId) ?? []);
   const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
   function goNext() {
     if (navNextIdx == null) return;
@@ -476,17 +536,23 @@ export function SessionRunner({
 
   const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
-  const currentRecommendation = recommendationFor(currentPE, Date.now());
+  const currentRecommendation = nextPlannedSetIsDropSet(currentPE, currentSets)
+    ? null
+    : recommendationFor(currentPE, Date.now());
   const restNextPe =
     mode.kind === 'rest'
       ? mode.nextExerciseIdx != null
         ? (programExercises[mode.nextExerciseIdx] ?? null)
-        : currentSets.filter((set) => !set.isWarmup).length < currentPE.targetSets
+        : remainingPlannedSets(currentPE, currentSets) > 0
           ? currentPE
           : null
       : null;
   const restRecommendation =
-    mode.kind === 'rest' && restNextPe ? recommendationFor(restNextPe, mode.endsAt) : null;
+    mode.kind === 'rest' &&
+    restNextPe &&
+    !nextPlannedSetIsDropSet(restNextPe, setsByExercise.get(restNextPe.exerciseId) ?? [])
+      ? recommendationFor(restNextPe, mode.endsAt)
+      : null;
 
   return (
     <main className="flex flex-1 flex-col">
@@ -531,10 +597,7 @@ export function SessionRunner({
             selectExercise(index);
             setMode({ kind: 'input' });
           }}
-          onOpen={(exerciseId) => {
-            const returnTo = `/session/${session.id}?exerciseId=${encodeURIComponent(exerciseId)}`;
-            router.push(`/exercises/${exerciseId}?returnTo=${encodeURIComponent(returnTo)}`);
-          }}
+          onOpen={openExerciseDetails}
         />
       </div>
 
@@ -543,6 +606,17 @@ export function SessionRunner({
           programExercise={currentPE}
           gymName={session.gym?.name ?? null}
           loadConstraints={loadConstraintsFor(currentPE)}
+          onOpenMenu={() => setExerciseMenuOpen(true)}
+        />
+        <SessionExerciseMenu
+          open={exerciseMenuOpen}
+          onOpenChange={setExerciseMenuOpen}
+          programExercise={currentPE}
+          programExercises={programExercises}
+          catalog={catalog}
+          loggedSetCount={currentSets.filter((set) => !set.isWarmup).length}
+          onChanged={handleProgramChanged}
+          onOpenHelp={openExerciseDetails}
         />
 
         {currentPE.exercise.category === 'CARDIO' ? (

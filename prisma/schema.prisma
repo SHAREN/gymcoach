@@ -221,6 +221,9 @@ model ProgramExercise {
   exercise           Exercise              @relation(fields: [exerciseId], references: [id])
   order              Int
   targetSets         Int
+  // Additional planned drop sets performed after the regular working sets.
+  // Existing programs remain unchanged through the zero default.
+  targetDropSets     Int                   @default(0)
   targetRepsMin      Int
   targetRepsMax      Int
   targetRIR          Int

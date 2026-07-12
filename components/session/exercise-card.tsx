@@ -2,38 +2,60 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, MoreHorizontal } from 'lucide-react';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
+import { meaningfulProgramNote } from '@/lib/program-notes';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
   gymName?: string | null;
   loadConstraints?: GymLoadConstraints | null;
+  onOpenMenu?: () => void;
 }
 
-export function ExerciseCard({ programExercise, gymName = null, loadConstraints = null }: Props) {
+export function ExerciseCard({
+  programExercise,
+  gymName = null,
+  loadConstraints = null,
+  onOpenMenu,
+}: Props) {
   const t = useTranslations('session.exerciseCard');
   const exerciseName = useExerciseName();
   const [notesOpen, setNotesOpen] = useState(false);
   const exo = programExercise.exercise;
   const displayName = exerciseName(exo.name);
   const showContextBadges = gymName != null || loadConstraints?.isAvailable === false;
+  const note = meaningfulProgramNote(programExercise.notes);
 
   return (
     <Card data-testid="exercise-card" className="min-w-0">
       <CardHeader className="min-w-0 pb-3">
-        <div
-          data-testid="exercise-title-scroll"
-          className="max-w-full overflow-x-auto overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        >
-          <h2 className="w-max min-w-full whitespace-nowrap text-xl font-bold sm:text-2xl">
-            {displayName}
-          </h2>
+        <div className="flex min-w-0 items-start gap-1">
+          <div
+            data-testid="exercise-title-scroll"
+            className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <h2 className="w-max min-w-full whitespace-nowrap text-xl font-bold sm:text-2xl">
+              {displayName}
+            </h2>
+          </div>
+          {onOpenMenu && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onOpenMenu}
+              aria-label={t('actions')}
+              className="-mr-2 -mt-2 size-10 shrink-0"
+            >
+              <MoreHorizontal className="size-5" />
+            </Button>
+          )}
         </div>
 
         {showContextBadges && (
@@ -46,7 +68,7 @@ export function ExerciseCard({ programExercise, gymName = null, loadConstraints 
         )}
       </CardHeader>
 
-      {programExercise.notes && (
+      {note && (
         <CardContent className="pt-0">
           <div>
             <Button
@@ -60,7 +82,7 @@ export function ExerciseCard({ programExercise, gymName = null, loadConstraints 
             </Button>
             {notesOpen && (
               <div className="mt-2 rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
-                <p className="whitespace-pre-line">{programExercise.notes}</p>
+                <p className="whitespace-pre-line">{note}</p>
               </div>
             )}
           </div>

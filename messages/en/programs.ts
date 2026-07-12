@@ -77,6 +77,7 @@ export const programs = {
     removeConfirm: 'Remove “{name}” from this session?',
     choose: 'Choose from the catalog',
     sets: 'Sets',
+    dropSets: 'Drop sets',
     repsMin: 'Reps min',
     repsMax: 'Reps max',
     rest: 'Rest (s)',

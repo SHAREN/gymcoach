@@ -32,6 +32,7 @@ function makePe(
     id: 'pe',
     workoutId: 'w',
     exerciseId: exercise.id,
+    targetDropSets: 0,
     order: 1,
     targetSets: 5,
     targetRepsMin: 8,

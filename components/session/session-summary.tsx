@@ -15,6 +15,7 @@ import { formatWeight } from '@/lib/units';
 import { detectPRs, type PRType } from '@/lib/records';
 import { formatCardioSet, formatPace, formatSpeed } from '@/lib/cardio';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { targetDropSets } from '@/lib/planned-sets';
 
 // Prior (previous-session) non-warmup sets per exerciseId, used as the PR
 // baseline. Same source as the in-session badge (getLastPerformances): a PR
@@ -122,7 +123,7 @@ export function SessionSummary({
 
   const exerciseStats = programExercises.map((pe) => {
     const exoSets = sets.filter((s) => s.exerciseId === pe.exerciseId && !s.isWarmup);
-    const targetSets = pe.targetSets;
+    const targetSets = pe.targetSets + targetDropSets(pe);
     const isCardio = pe.exercise.category === 'CARDIO';
     return {
       pe,

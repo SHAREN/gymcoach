@@ -27,6 +27,7 @@ export const generatedExerciseSchema = z
     category: z.nativeEnum(ExerciseCategory),
     equipmentType: z.nativeEnum(EquipmentType).optional(),
     targetSets: z.number().int().min(1).max(20),
+    targetDropSets: z.number().int().min(0).max(10).optional(),
     targetRepsMin: z.number().int().min(1).max(50),
     targetRepsMax: z.number().int().min(1).max(50),
     targetRIR: z.number().int().min(0).max(5),

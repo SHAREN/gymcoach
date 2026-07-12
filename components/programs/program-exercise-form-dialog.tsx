@@ -60,6 +60,7 @@ type Props = CreateProps | EditProps;
 const DEFAULT_VALUES: ProgramExerciseInput = {
   exerciseId: '',
   targetSets: 4,
+  targetDropSets: 0,
   targetRepsMin: 8,
   targetRepsMax: 10,
   targetRIR: 2,
@@ -84,6 +85,7 @@ export function ProgramExerciseFormDialog(props: Props) {
       return {
         exerciseId: pe.exerciseId,
         targetSets: pe.targetSets,
+        targetDropSets: pe.targetDropSets,
         targetRepsMin: pe.targetRepsMin,
         targetRepsMax: pe.targetRepsMax,
         targetRIR: pe.targetRIR,
@@ -188,7 +190,7 @@ export function ProgramExerciseFormDialog(props: Props) {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="targetSets">{t('sets')}</Label>
               <Input
@@ -198,6 +200,17 @@ export function ProgramExerciseFormDialog(props: Props) {
                 min={1}
                 max={20}
                 {...form.register('targetSets')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="targetDropSets">{t('dropSets')}</Label>
+              <Input
+                id="targetDropSets"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={10}
+                {...form.register('targetDropSets')}
               />
             </div>
             <div className="space-y-2">

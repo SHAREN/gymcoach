@@ -82,6 +82,7 @@ export const programs = {
     removeConfirm: 'Убрать «{name}» из этой тренировки?',
     choose: 'Выберите из каталога',
     sets: 'Подходы',
+    dropSets: 'Дроп-сеты',
     repsMin: 'Повторы, мин.',
     repsMax: 'Повторы, макс.',
     rest: 'Отдых (с)',
