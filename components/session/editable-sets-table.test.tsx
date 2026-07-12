@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { EditableSetsTable } from './editable-sets-table';
 import type { PendingSet } from '@/lib/indexeddb';
+import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
 
 vi.mock('@/lib/preferences', async () => {
   const actual = await vi.importActual<typeof import('@/lib/preferences')>('@/lib/preferences');
@@ -39,6 +40,25 @@ const completedSet: PendingSet = {
   syncedAt: Date.parse('2026-07-12T10:00:00.000Z'),
   attempts: 0,
   lastError: null,
+};
+const completedSet2: PendingSet = {
+  ...completedSet,
+  localId: 'local-2',
+  setNumber: 2,
+  weight: 95,
+  reps: 9,
+  rir: 1,
+};
+
+const recommendation: IntraSetRecommendation = {
+  mode: 'PRESERVE_RIR',
+  weight: 92.5,
+  reps: 9,
+  rir: 1,
+  reason: 'adjust-reps',
+  predictedRepsAtSameLoad: 9,
+  fatigueLoss: 1,
+  confidence: 'medium',
 };
 
 describe('EditableSetsTable', () => {
@@ -108,6 +128,65 @@ describe('EditableSetsTable', () => {
         notes: null,
       }),
     );
+  });
+
+  it('applies the recommendation and restores it after a manual change or next set', async () => {
+    const view = render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[completedSet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        recommendation={recommendation}
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    const recommendationButton = screen.getByRole('button', {
+      name: 'Apply recommendation to set 2',
+    });
+    expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('100');
+
+    fireEvent.click(recommendationButton);
+
+    expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('92.5');
+    expect(screen.getByRole('button', { name: 'Set 2 repetitions' })).toHaveTextContent('9');
+    expect(screen.getByRole('combobox', { name: 'Set 2 reps in reserve' })).toHaveValue('1');
+    expect(screen.queryByTestId('set-recommendation-dot')).not.toBeInTheDocument();
+    expect(recommendationButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 2 weight in KG' }));
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '97.5' } });
+    fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
+
+    expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
+    expect(recommendationButton).not.toBeDisabled();
+    fireEvent.click(recommendationButton);
+    expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('92.5');
+
+    const nextRecommendation = { ...recommendation, weight: 90, reps: 8, rir: 2 };
+    view.rerender(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[completedSet, completedSet2]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        recommendation={nextRecommendation}
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Apply recommendation to set 3' })).toBeEnabled(),
+    );
+    expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
   });
 
   it('edits a completed set in place without a delete button', async () => {
