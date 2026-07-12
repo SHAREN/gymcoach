@@ -508,10 +508,6 @@ export function SessionRunner({
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
         <ExerciseCard
           programExercise={currentPE}
-          lastPerformance={lastPerf}
-          readiness={effectiveReadiness}
-          deloadActive={deloadActive}
-          unit={unit}
           gymName={session.gym?.name ?? null}
           loadConstraints={loadConstraintsFor(currentPE)}
         />
