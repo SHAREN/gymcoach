@@ -116,6 +116,7 @@ confirmation.
 Use available data from these groups:
 
 - goal, training experience and user preferences;
+- realistic weekly schedule, session-duration limit and equipment access;
 - active program targets: sets, reps, RIR, rest and autoregulation mode;
 - completed weight, reps, RIR, timestamps, warm-up and drop-set flags;
 - recent exercise and primary-muscle history;
@@ -134,6 +135,12 @@ facts. Important current fallbacks:
   lightest available gym load;
 - unavailable equipment produces no load recommendation;
 - stale readiness data does not change today's progression.
+
+For program creation, the coach MUST obtain the goal, training experience,
+realistic days per week, session-duration limit, equipment access, and current
+pain or movement constraints. For a next mesocycle or current-program revision,
+it MUST also obtain the post-block recovery checklist covering motivation,
+sleep, repeated performance decline, life stress, and worsening aches or pain.
 
 ## 5. Current deterministic calculations
 
@@ -200,12 +207,12 @@ Current windows and ratios:
 
 Current modes:
 
-| Mode | Trigger | Session-only targets |
-| --- | --- | --- |
-| `normal` | Cardio, no history at all, or exercise gap at most 42 days | Authored program |
-| `exercise-reintro` | Same exercise absent for more than 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3 |
-| `new-exercise` | Muscle has history but this exercise does not | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
-| `muscle-reintro` | Primary muscle has no history or a gap over 42 days | 1 set, at least RIR 4 |
+| Mode               | Trigger                                                                        | Session-only targets                                                  |
+| ------------------ | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `normal`           | Cardio, no history at all, or exercise gap at most 42 days                     | Authored program                                                      |
+| `exercise-reintro` | Same exercise absent for more than 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3                                          |
+| `new-exercise`     | Muscle has history but this exercise does not                                  | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
+| `muscle-reintro`   | Primary muscle has no history or a gap over 42 days                            | 1 set, at least RIR 4                                                 |
 
 Drop sets are disabled during return calibration. These changes apply only to
 the active session and MUST NOT silently rewrite the saved program.
@@ -269,15 +276,58 @@ limited by any return-to-training weight ceiling.
 
 Current default coefficients:
 
-| Exercise type | `fatigueRate` | `loadAdjustmentPct` |
-| --- | ---: | ---: |
-| Lower-body compound | 1.0 | 2.5 |
-| Other compound | 0.75 | 2.5 |
-| Isolation | 0.5 | 3.0 |
+| Exercise type       | `fatigueRate` | `loadAdjustmentPct` |
+| ------------------- | ------------: | ------------------: |
+| Lower-body compound |           1.0 |                 2.5 |
+| Other compound      |          0.75 |                 2.5 |
+| Isolation           |           0.5 |                 3.0 |
 
 Allowed program values are `0.25-2.0` for `fatigueRate` and `1-5%` for
 `loadAdjustmentPct`. The coefficients model expected capacity loss and are
 engineering heuristics, not measured physiology.
+
+### 5.5 Shared program-design context and validation
+
+Implementations: `lib/program-design-context.ts`,
+`lib/program-design-validation.ts`, and
+`lib/program-design-methodology.ts`.
+
+The internal program generator and MCP program-design tools MUST use the same
+server-built `ProgramDesignContext`. It includes:
+
+- full source-program targets and program lineage;
+- active-gym inventory and exercise availability;
+- current and previous weekly hard sets by primary muscle;
+- session adherence, duration and working-set density;
+- per-exercise e1RM trends and stalled-lift signals;
+- actual RIR minus programmed RIR, excluding warm-ups and drop sets;
+- readiness, sleep, soreness, deload and post-block recovery signals;
+- exercise-specific return-to-training ceilings;
+- explicit missing questions and data-confidence level.
+
+Objective performance trends and completed training have higher decision weight
+than a single subjective or wearable signal. Subjective recovery remains
+important when it persists or agrees with performance decline. This ordering is
+a product interpretation of the source-backed need to combine objective and
+subjective monitoring, not a universal numerical formula.
+
+The current post-block checklist uses an engineering heuristic: two or more
+worsening items place program design in `reduce_load`; one item places it in
+`watch`. The checklist does not diagnose overtraining. A `reduce_load` state
+blocks an increase in total primary-muscle sets relative to the source program.
+
+Program validation currently checks required answers, unavailable equipment,
+compound failure and drop-set warnings, weekly and per-session primary-muscle
+volume, frequency distribution, estimated session duration, active-gym state,
+and attempts to raise volume during under-recovery. The final user-edited draft
+MUST be rebuilt against fresh context and validated again immediately before it
+is saved. MCP write tools follow the same rule.
+
+The following useful monitoring inputs are not yet first-class GymCoach data:
+session RPE, session-RPE training impulse, structured life-stress ratings,
+actual inter-set rest in the program-design payload, movement-pattern overlap,
+and lumbar-fatigue load. Prompts and agents MUST NOT imply that these were
+calculated. Adding them requires separate schemas, privacy review, UI and tests.
 
 ## 6. LLM coach contract
 
@@ -300,6 +350,11 @@ The conversational and weekly coach MUST:
 Program generation MUST choose an autoregulation mode and bounded coefficients
 for every exercise. Generated JSON MUST pass the project Zod schema before it is
 previewed or saved.
+
+New programs, next mesocycles and current-program revisions remain inactive
+drafts. A next mesocycle or revision records its source `Program` and the
+methodology version used to prepare it. A nominally new independent program
+MUST NOT be linked as a revision merely because another program is active.
 
 ## 7. Safety boundary
 
@@ -341,6 +396,11 @@ muscles, movement patterns, range of motion, technique quality, age, injury
 history and reliability of self-reported RIR are not yet modeled deeply. The
 coach MUST NOT imply that these unmodeled factors were calculated.
 
+RIR adherence is less reliable for trainees who are unfamiliar with RPE/RIR.
+The current context records training-experience level but does not yet model a
+separate RIR calibration score. The LLM SHOULD lower confidence when set RIR is
+sparse, inconsistent, or reported by a beginner.
+
 ## 10. Change-control checklist
 
 Before changing a training rule, formula, threshold or prompt:
@@ -368,15 +428,15 @@ Consulted on 2026-07-13 through NotebookLM:
 
 Primary source books used by NotebookLM included:
 
-- *Advanced Personal Training: Science to Practice*, Paul Hough and Brad
+- _Advanced Personal Training: Science to Practice_, Paul Hough and Brad
   Schoenfeld;
-- *Essentials of Strength Training and Conditioning*, 5th edition;
-- *Science and Development of Muscle Hypertrophy*, 2nd edition, Brad
+- _Essentials of Strength Training and Conditioning_, 5th edition;
+- _Science and Development of Muscle Hypertrophy_, 2nd edition, Brad
   Schoenfeld;
-- *Science and Practice of Strength Training*, Vladimir Zatsiorsky and William
+- _Science and Practice of Strength Training_, Vladimir Zatsiorsky and William
   Kraemer;
-- *The Muscle and Strength Training Pyramid: Training*, Eric Helms;
-- *Periodization of Strength Training for Sports*, Tudor Bompa and Carlo
+- _The Muscle and Strength Training Pyramid: Training_, Eric Helms;
+- _Periodization of Strength Training for Sports_, Tudor Bompa and Carlo
   Buzzichelli.
 
 The review asked separate questions about source-backed principles, risks and
@@ -384,3 +444,15 @@ contraindications, deterministic product rules, and an adversarial check of the
 42/28/56-day windows plus 70%/85%/75% coefficients. The sources support gradual,
 individualized reintroduction and movement-specific calibration. They do not
 establish those exact product coefficients as universal formulas.
+
+A second review on 2026-07-13 asked eight independent questions about what a
+trainer records before, during and after training; what must be collected for a
+new program versus a next mesocycle; which metrics should be derived by the
+server; how to rank conflicting signals; and which thresholds survive an
+adversarial check. The sources supported multi-level records, objective plus
+subjective monitoring, post-block recovery review, RIR/RPE adherence, longer
+rest for demanding compound work, selective failure, and conservative deloads.
+They did not support exact catabolism percentages, a CNS-fatigue score, or a
+universal overtraining threshold. The two-item checklist trigger, session-volume
+soft cap and exact validation thresholds remain documented engineering
+heuristics.
