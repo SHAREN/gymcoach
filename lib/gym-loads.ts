@@ -9,6 +9,20 @@ export interface GymLoadConstraints {
   weightOptions?: number[];
 }
 
+export function resolveEquipmentType(
+  equipmentType: EquipmentType,
+  exerciseName: string,
+): EquipmentType {
+  if (equipmentType !== 'OTHER') return equipmentType;
+
+  const name = exerciseName.toLocaleLowerCase();
+  if (/\bbarbell\b|\bez[- ]?bar\b|штанг|ez[- ]?гриф|сз[- ]?гриф/u.test(name)) return 'BARBELL';
+  if (/\bdumbbells?\b|гантел/u.test(name)) return 'DUMBBELL';
+  if (/\bcable\b|трос|кроссовер/u.test(name)) return 'CABLE';
+  if (/\bmachine\b|тренаж[её]р/u.test(name)) return 'MACHINE';
+  return equipmentType;
+}
+
 export function gymWeightOptions(
   constraints: GymLoadConstraints | null | undefined,
   referenceWeight: number,
