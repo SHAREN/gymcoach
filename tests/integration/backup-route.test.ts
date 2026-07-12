@@ -142,6 +142,7 @@ async function seedFullUser(email: string) {
                   exerciseId: bench.id,
                   order: 1,
                   targetSets: 3,
+                  targetDropSets: 1,
                   targetRepsMin: 5,
                   targetRepsMax: 8,
                   targetRIR: 2,
@@ -303,7 +304,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 5 with set equipment history and all earlier backup fields', async () => {
+  it('exports version 5 with set equipment history, planned drop sets, and all earlier backup fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -373,6 +374,8 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
       (pe: { supersetGroup: number | null }) => pe.supersetGroup,
     );
     expect(peGroups).toEqual([1, 1]);
+
+    expect(dump.programs[0].workouts[0].exercises[0].targetDropSets).toBe(1);
 
     expect(dump.exerciseGoals).toEqual([
       {

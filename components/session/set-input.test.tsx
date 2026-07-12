@@ -22,6 +22,7 @@ const pe: ProgramExercise & { exercise: Exercise } = {
   workoutId: 'w',
   exerciseId: 'e1',
   order: 1,
+  targetDropSets: 0,
   targetSets: 3,
   targetRepsMin: 6,
   targetRepsMax: 10,

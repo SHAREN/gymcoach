@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Droplet, Loader2 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
@@ -16,6 +16,7 @@ import { loadPreferences } from '@/lib/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -34,7 +35,7 @@ interface Props {
     durationSec: null;
     distanceM: null;
     isWarmup: false;
-    isDropSet: false;
+    isDropSet: boolean;
     notes: null;
   }) => Promise<void>;
   onUpdateSet: (
@@ -73,21 +74,30 @@ function initialDraft(
   deloadActive: boolean,
   loadConstraints: GymLoadConstraints | null,
 ): DraftSet {
-  const workingSets = sets.filter((set) => !set.isWarmup);
-  const previousRow = lastPerformance?.sets[workingSets.length];
+  const loggedSets = sets.filter((set) => !set.isWarmup);
+  const nextIsDropSet = nextPlannedSetIsDropSet(pe, sets);
+  const previousRow = lastPerformance?.sets[loggedSets.length];
   if (previousRow) {
     return { weight: previousRow.weight, reps: previousRow.reps, rir: previousRow.rir };
   }
 
-  const lastWorking = workingSets.at(-1);
-  if (lastWorking) {
-    return { weight: lastWorking.weight, reps: lastWorking.reps, rir: lastWorking.rir };
+  const lastLogged = loggedSets.at(-1);
+  if (nextIsDropSet && lastLogged) {
+    return {
+      weight: constrainGymWeight(lastLogged.weight * 0.8, lastLogged.weight, loadConstraints),
+      reps: Math.max(pe.targetRepsMin, lastLogged.reps),
+      rir: 0,
+    };
+  }
+
+  if (lastLogged) {
+    return { weight: lastLogged.weight, reps: lastLogged.reps, rir: lastLogged.rir };
   }
 
   if (lastPerformance) {
     const suggestion = suggestNextWeight(
       pe,
-      lastPerformance.sets,
+      lastPerformance.sets.filter((set) => !set.isDropSet),
       readiness,
       deloadActive,
       loadConstraints,
@@ -155,9 +165,11 @@ export function EditableSetsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programExercise.id, sets.length]);
 
-  const workingSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
-  const currentNumber = workingSets.length + 1;
-  const totalRows = Math.max(programExercise.targetSets, currentNumber);
+  const loggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
+  const currentNumber = loggedSets.length + 1;
+  const plannedRows = programExercise.targetSets + targetDropSets(programExercise);
+  const totalRows = Math.max(plannedRows, currentNumber);
+  const isNextDropSet = nextPlannedSetIsDropSet(programExercise, sets);
   const displayWeight =
     unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight;
   const rmValue = estimateRepMax(draft.weight, draft.reps, rmTarget);
@@ -173,7 +185,7 @@ export function EditableSetsTable({
     ? `${recommendation.weight}:${recommendation.reps}:${recommendation.rir}`
     : null;
   const canApplyRecommendation =
-    recommendation != null && appliedRecommendationKey !== recommendationKey;
+    !isNextDropSet && recommendation != null && appliedRecommendationKey !== recommendationKey;
 
   function applyRecommendation() {
     if (!recommendation || disabled) return;
@@ -248,7 +260,7 @@ export function EditableSetsTable({
         durationSec: null,
         distanceM: null,
         isWarmup: false,
-        isDropSet: false,
+        isDropSet: isNextDropSet,
         notes: null,
       });
     } finally {
@@ -304,7 +316,7 @@ export function EditableSetsTable({
           <span aria-hidden />
         </div>
 
-        {workingSets.map((set, index) => {
+        {loggedSets.map((set, index) => {
           const rowNumber = index + 1;
           const isEditing = editingSet?.set.localId === set.localId;
           const rowDraft = isEditing ? editingSet.draft : draftFromSet(set);
@@ -316,7 +328,13 @@ export function EditableSetsTable({
               data-testid={`completed-set-${rowNumber}`}
               className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-1.5 text-center text-xs tabular-nums transition-colors sm:gap-1 sm:px-2 sm:text-sm ${isEditing ? 'bg-primary/5' : ''}`}
             >
-              <span className="text-muted-foreground">{rowNumber}</span>
+              <span
+                className="flex items-center justify-center gap-0.5 text-muted-foreground"
+                title={set.isDropSet ? t('dropSetNumber', { number: rowNumber }) : undefined}
+              >
+                {set.isDropSet && <Droplet className="size-3 fill-current" />}
+                {rowNumber}
+              </span>
               <button
                 type="button"
                 onClick={() => openPicker('weight', set)}
@@ -392,7 +410,7 @@ export function EditableSetsTable({
         <div
           className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
         >
-          {recommendation ? (
+          {recommendation && !isNextDropSet ? (
             <button
               type="button"
               data-testid="apply-set-recommendation"
@@ -412,7 +430,13 @@ export function EditableSetsTable({
               )}
             </button>
           ) : (
-            <span className="text-center text-sm font-semibold text-primary">{currentNumber}</span>
+            <span
+              className="flex items-center justify-center gap-0.5 text-center text-sm font-semibold text-primary"
+              title={isNextDropSet ? t('dropSetNumber', { number: currentNumber }) : undefined}
+            >
+              {isNextDropSet && <Droplet className="size-3.5 fill-current" />}
+              {currentNumber}
+            </span>
           )}
           <button
             type="button"
@@ -471,13 +495,18 @@ export function EditableSetsTable({
 
         {Array.from({ length: Math.max(0, totalRows - currentNumber) }, (_, index) => {
           const rowNumber = currentNumber + index + 1;
+          const isUpcomingDropSet =
+            rowNumber > programExercise.targetSets && rowNumber <= plannedRows;
           const previous = lastPerformance?.sets[rowNumber - 1];
           return (
             <div
               key={`upcoming-${rowNumber}`}
               className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
             >
-              <span>{rowNumber}</span>
+              <span className="flex items-center justify-center gap-0.5">
+                {isUpcomingDropSet && <Droplet className="size-3 fill-current" />}
+                {rowNumber}
+              </span>
               <span>
                 {previous
                   ? formatWeight(previous.weight, unit, { decimals: 2, group: false, locale })

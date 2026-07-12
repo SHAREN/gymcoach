@@ -38,6 +38,7 @@ export async function PUT(req: Request, props: Params) {
       data: {
         exerciseId: data.exerciseId,
         targetSets: data.targetSets,
+        targetDropSets: data.targetDropSets,
         targetRepsMin: data.targetRepsMin,
         targetRepsMax: data.targetRepsMax,
         targetRIR: data.targetRIR,

@@ -81,7 +81,7 @@ async function doFlush(): Promise<FlushResult> {
       let sentEquipmentId: string | null = null;
 
       if (updatesExistingSet) {
-        res = await fetch(, {
+        res = await fetch('/api/sets/' + item.serverId, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ weight: item.weight, reps: item.reps, rir: item.rir }),
@@ -101,7 +101,7 @@ async function doFlush(): Promise<FlushResult> {
           isDropSet: item.isDropSet,
         };
         const post = (gymEquipmentId: string | null) =>
-          fetch(, {
+          fetch('/api/sessions/' + item.sessionId + '/sets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...payload, gymEquipmentId }),
@@ -141,7 +141,7 @@ async function doFlush(): Promise<FlushResult> {
         !updatesExistingSet && sentEquipmentId !== null && !saved.gymEquipmentId;
       await db.pendingSets.update(item.localId, {
         status: 'synced',
-        serverId: created.id,
+        serverId: item.serverId ?? saved.id,
         syncedAt: Date.now(),
         lastError: null,
         // Written before the broadcast below, so a listener that drains

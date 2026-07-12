@@ -1,0 +1,2 @@
+ALTER TABLE "ProgramExercise"
+ADD COLUMN "targetDropSets" INTEGER NOT NULL DEFAULT 0;

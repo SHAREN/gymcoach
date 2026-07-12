@@ -6,6 +6,7 @@ describe('programExerciseInputSchema', () => {
     exerciseId: 'ex1',
     targetSets: 3,
     targetRepsMin: 8,
+    targetDropSets: 0,
     targetRepsMax: 12,
     targetRIR: 2,
     restSec: 120,
@@ -42,6 +43,15 @@ describe('programExerciseInputSchema', () => {
     expect(programExerciseInputSchema.safeParse({ ...valid, targetSets: 21 }).success).toBe(false);
     expect(programExerciseInputSchema.safeParse({ ...valid, targetRIR: 6 }).success).toBe(false);
     expect(programExerciseInputSchema.safeParse({ ...valid, restSec: 14 }).success).toBe(false);
+    expect(programExerciseInputSchema.safeParse({ ...valid, targetDropSets: 10 }).success).toBe(
+      true,
+    );
+    expect(programExerciseInputSchema.safeParse({ ...valid, targetDropSets: 11 }).success).toBe(
+      false,
+    );
+    expect(programExerciseInputSchema.safeParse({ ...valid, targetDropSets: -1 }).success).toBe(
+      false,
+    );
   });
 
   // Superset pairing (issue #146, slice 1).

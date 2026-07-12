@@ -24,6 +24,7 @@ Respond with a SINGLE JSON object and NOTHING else (no prose, no markdown, no co
           "category": "COMPOUND",     // COMPOUND or ISOLATION
           "equipmentType": "BARBELL", // one of the allowed values below
           "targetSets": 4,            // 1-20
+          "targetDropSets": 0,        // optional 0-10; extra drop sets after working sets
           "targetRepsMin": 6,         // 1-50
           "targetRepsMax": 10,        // >= targetRepsMin
           "targetRIR": 2,             // 0-5 reps in reserve
@@ -49,6 +50,8 @@ Guidelines:
 - 4 to 10 exercises per workout, ordered compounds first.
 - Evidence-based volume and intensity for the stated goal.
 - Use whole, gym-realistic numbers. targetRepsMax must be >= targetRepsMin.
+- Keep targetDropSets at 0 unless the user explicitly asks for intensity techniques or
+  a drop set is clearly appropriate for an isolation exercise.
 - Choose equipmentType for every exercise so saved-gym inventory can constrain
   recommendations. Reused catalog exercises must keep their catalog type.
 - Choose an autoregulation mode for every exercise. Use PRESERVE_RIR when effort

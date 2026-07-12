@@ -48,7 +48,7 @@ import {
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
-// - Program / Workout / ProgramExercise: all user content incl supersetGroup.
+// - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / Set: all user content incl durationSec, distanceM, avgHr.
 // - Saved Gym profiles plus physical GymEquipment, equipment-to-exercise links,
 //   and uploaded/external equipment images.
@@ -238,6 +238,7 @@ export async function GET() {
             exerciseName: pe.exercise.name,
             order: pe.order,
             targetSets: pe.targetSets,
+            targetDropSets: pe.targetDropSets,
             targetRepsMin: pe.targetRepsMin,
             targetRepsMax: pe.targetRepsMax,
             targetRIR: pe.targetRIR,
@@ -402,6 +403,7 @@ const importSchema = z.object({
                     exerciseName: z.string().max(120),
                     order: z.number().int().min(0).max(1000),
                     targetSets: z.number().int().min(1).max(20),
+                    targetDropSets: z.number().int().min(0).max(10).optional(),
                     targetRepsMin: z.number().int().min(1).max(50),
                     targetRepsMax: z.number().int().min(1).max(50),
                     targetRIR: z.number().int().min(0).max(5),
@@ -805,6 +807,7 @@ export async function POST(req: Request) {
                   exerciseId: exId,
                   order: pe.order,
                   targetSets: pe.targetSets,
+                  targetDropSets: pe.targetDropSets ?? 0,
                   targetRepsMin: pe.targetRepsMin,
                   targetRepsMax: pe.targetRepsMax,
                   targetRIR: pe.targetRIR,

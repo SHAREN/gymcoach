@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import type { PendingSet } from '@/lib/indexeddb';
 import { detectPRs, type PRType } from '@/lib/records';
 import { formatCardioSet } from '@/lib/cardio';
+import { targetDropSets } from '@/lib/planned-sets';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -28,7 +29,10 @@ const PR_TITLE_KEYS = { weight: 'weightPrTitle', e1rm: 'oneRmPrTitle' } as const
 export function SetsList({ programExercise, sets, isInputActive, onDeleteSet, priorSets }: Props) {
   const t = useTranslations('session.setsList');
   const completedNonWarmup = sets.filter((s) => !s.isWarmup);
-  const totalRows = Math.max(programExercise.targetSets, completedNonWarmup.length + 1);
+  const totalRows = Math.max(
+    programExercise.targetSets + targetDropSets(programExercise),
+    completedNonWarmup.length + 1,
+  );
   const currentSetNumber = completedNonWarmup.length + 1;
 
   // PR detection runs on read against a baseline of the previous session plus
@@ -66,15 +70,7 @@ export function SetsList({ programExercise, sets, isInputActive, onDeleteSet, pr
   );
 }
 
-function RowDone({
-  set,
-  prs,
-  onDelete,
-}: {
-  set: PendingSet;
-  prs: PRType[];
-  onDelete: () => void;
-}) {
+function RowDone({ set, prs, onDelete }: { set: PendingSet; prs: PRType[]; onDelete: () => void }) {
   const t = useTranslations('session.setsList');
   const weightLabel = set.weight === 0 ? t('bodyweight') : `${set.weight} kg`;
   // Cardio sets (issue #133) render as duration/distance, never weight x reps.
@@ -127,8 +123,7 @@ function SyncIcon({ status }: { status: PendingSet['status'] }) {
   if (status === 'synced') return <Check className="size-4 flex-shrink-0 text-primary" />;
   if (status === 'syncing')
     return <Loader2 className="size-4 flex-shrink-0 animate-spin text-muted-foreground" />;
-  if (status === 'failed')
-    return <CloudOff className="size-4 flex-shrink-0 text-amber-500" />;
+  if (status === 'failed') return <CloudOff className="size-4 flex-shrink-0 text-amber-500" />;
   // 'pending'
   return <CloudOff className="size-4 flex-shrink-0 text-muted-foreground" />;
 }
