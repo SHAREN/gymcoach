@@ -221,6 +221,9 @@ export async function GET() {
           exerciseName: config.exercise.name,
           isAvailable: config.isAvailable,
           weightOptions: config.weightOptions,
+          dumbbellWeights: config.dumbbellWeights,
+          plateWeights: config.plateWeights,
+          barWeights: config.barWeights,
         })),
       })),
       programs: programs.map((p) => ({
@@ -533,6 +536,9 @@ const importSchema = z.object({
               exerciseName: z.string().max(120),
               isAvailable: z.boolean(),
               weightOptions: gymWeightListSchema,
+              dumbbellWeights: gymWeightListSchema.default([]),
+              plateWeights: gymWeightListSchema.default([]),
+              barWeights: gymWeightListSchema.default([]),
             }),
           )
           .max(2000),
@@ -714,6 +720,9 @@ export async function POST(req: Request) {
                     exerciseId,
                     isAvailable: config.isAvailable,
                     weightOptions: config.weightOptions,
+                    dumbbellWeights: config.dumbbellWeights,
+                    plateWeights: config.plateWeights,
+                    barWeights: config.barWeights,
                   },
                 ]
               : [];

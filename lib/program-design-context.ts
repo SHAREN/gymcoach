@@ -194,6 +194,9 @@ interface ActiveGymSummary {
     exerciseName: string;
     isAvailable: boolean;
     weightOptions: number[];
+    dumbbellWeights: number[];
+    plateWeights: number[];
+    barWeights: number[];
   }>;
 }
 
@@ -208,6 +211,9 @@ interface AvailableExercise {
   notes: string | null;
   isAvailableInActiveGym: boolean | null;
   weightOptions: number[];
+  dumbbellWeights: number[];
+  plateWeights: number[];
+  barWeights: number[];
 }
 
 interface BuildProgramDesignContextInput {
@@ -282,6 +288,11 @@ export async function buildProgramDesignContext({
       notes: exercise.notes,
       isAvailableInActiveGym: gym ? (config?.isAvailable ?? true) : null,
       weightOptions: config?.weightOptions ?? [],
+      dumbbellWeights: config?.dumbbellWeights.length
+        ? config.dumbbellWeights
+        : (gym?.dumbbellWeights ?? []),
+      plateWeights: config?.plateWeights.length ? config.plateWeights : (gym?.plateWeights ?? []),
+      barWeights: config?.barWeights.length ? config.barWeights : (gym?.barWeights ?? []),
     };
   });
 
@@ -440,6 +451,9 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
       exerciseName: config.exercise.name,
       isAvailable: config.isAvailable,
       weightOptions: config.weightOptions,
+      dumbbellWeights: config.dumbbellWeights,
+      plateWeights: config.plateWeights,
+      barWeights: config.barWeights,
     })),
   };
 }

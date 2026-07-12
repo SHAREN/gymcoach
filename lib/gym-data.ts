@@ -3,7 +3,14 @@ import { ApiError } from '@/lib/api';
 
 export async function validateGymExerciseConfigs(
   userId: string,
-  configs: Array<{ exerciseId: string; isAvailable: boolean; weightOptions: number[] }>,
+  configs: Array<{
+    exerciseId: string;
+    isAvailable: boolean;
+    weightOptions: number[];
+    dumbbellWeights: number[];
+    plateWeights: number[];
+    barWeights: number[];
+  }>,
 ) {
   const deduped = [...new Map(configs.map((config) => [config.exerciseId, config])).values()];
   if (deduped.length === 0) return deduped;

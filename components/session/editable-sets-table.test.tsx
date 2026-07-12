@@ -103,7 +103,7 @@ describe('EditableSetsTable', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /weight/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1 weight in KG' }));
     let keypad = within(screen.getByTestId('set-value-keypad'));
     fireEvent.click(keypad.getByRole('button', { name: '1' }));
     fireEvent.click(keypad.getByRole('button', { name: '0' }));
@@ -299,9 +299,86 @@ describe('EditableSetsTable', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /weight/i })).toHaveTextContent('27.25');
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('27.25');
     expect(screen.getByRole('button', { name: /repetitions/i })).toHaveTextContent('12');
     expect(screen.getByText('25 kg')).toBeInTheDocument();
+  });
+
+  it('prefills a conservative return load instead of copying stale history', () => {
+    render(
+      <EditableSetsTable
+        programExercise={{ ...(programExercise as object), targetSets: 2, targetRIR: 3 } as never}
+        sets={[]}
+        lastPerformance={{
+          sessionId: 'stale-session',
+          sessionStartedAt: '2026-05-01T10:00:00.000Z',
+          sets: [{ weight: 19, reps: 10, rir: 1 }],
+          maxWeight: 19,
+          repsAtMaxWeight: 10,
+          cardio: null,
+        }}
+        returnRecommendation={{
+          mode: 'exercise-reintro',
+          exerciseGapDays: 60,
+          muscleGapDays: 5,
+          muscleMaintained: true,
+          recentMuscleSets: 12,
+          baselineMuscleSetsPer28Days: 12,
+          recentVolumeRatio: 1,
+          targetSets: 2,
+          targetRIR: 3,
+          weightCeiling: 19,
+          suggestedWeight: 16,
+          calibrationRequired: true,
+          historySessionCount: 3,
+        }}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('16');
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('8');
+    expect(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' })).toHaveValue('3');
+  });
+
+  it('normalizes the active draft when the gym inventory changes', () => {
+    const lastPerformance = {
+      sessionStartedAt: '2026-07-10T10:00:00.000Z',
+      sets: [{ weight: 15, reps: 10, rir: 2 }],
+      maxWeight: 15,
+      repsAtMaxWeight: 10,
+      cardio: null,
+    } as never;
+    const props = {
+      programExercise,
+      sets: [],
+      lastPerformance,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      onSubmit: vi.fn(),
+      onUpdateSet: vi.fn(),
+    };
+    const { rerender } = render(
+      <EditableSetsTable
+        {...props}
+        loadConstraints={{ equipmentType: 'DUMBBELL', dumbbellWeights: [10, 15] }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('15');
+    rerender(
+      <EditableSetsTable
+        {...props}
+        loadConstraints={{ equipmentType: 'DUMBBELL', dumbbellWeights: [10, 14] }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('14');
   });
 
   it('adds planned drop-set rows after the regular working sets', async () => {

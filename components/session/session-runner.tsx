@@ -88,6 +88,10 @@ type SessionGymEquipment = {
   exerciseLinks: { exerciseId: string }[];
 };
 
+export type SessionGym = Gym & {
+  exerciseConfigs: GymExerciseConfig[];
+  equipment: SessionGymEquipment[];
+};
 type SessionRunnerProps = {
   session: Session & {
     workout:
@@ -97,7 +101,7 @@ type SessionRunnerProps = {
         })
       | null;
     sets: PrismaSet[];
-    gym: (Gym & { exerciseConfigs: GymExerciseConfig[]; equipment: SessionGymEquipment[] }) | null;
+    gym: SessionGym | null;
   };
   lastPerformances: Record<string, SerializedLastPerformance>;
   returnRecommendations: Record<string, ReturnRecommendation>;
@@ -138,6 +142,7 @@ export function SessionRunner({
   const trainingName = useTrainingName();
   const router = useRouter();
   const workout = session.workout!;
+  const [sessionGym, setSessionGym] = useState<SessionGym | null>(session.gym);
   // Supersets (issue #146, slice 1): run the workout in presentation order -
   // members of a superset group come consecutively with A1/A2 labels. For a
   // workout without supersets this is exactly the stored order.
@@ -337,15 +342,17 @@ export function SessionRunner({
 
   function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints {
     const equipmentType = resolveEquipmentType(pe.exercise.equipmentType, pe.exercise.name);
-    if (!session.gym) return { equipmentType };
+    if (!sessionGym) return { equipmentType };
 
-    const config = session.gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
+    const config = sessionGym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
     return {
       equipmentType,
       isAvailable: config?.isAvailable ?? true,
-      dumbbellWeights: session.gym.dumbbellWeights,
-      plateWeights: session.gym.plateWeights,
-      barWeights: session.gym.barWeights,
+      dumbbellWeights: config?.dumbbellWeights.length
+        ? config.dumbbellWeights
+        : sessionGym.dumbbellWeights,
+      plateWeights: config?.plateWeights.length ? config.plateWeights : sessionGym.plateWeights,
+      barWeights: config?.barWeights.length ? config.barWeights : sessionGym.barWeights,
       weightOptions: config?.weightOptions ?? [],
     };
   }
@@ -695,7 +702,7 @@ export function SessionRunner({
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
         <ExerciseCard
           programExercise={currentPE}
-          gymName={session.gym?.name ?? null}
+          gymName={sessionGym?.name ?? null}
           loadConstraints={loadConstraintsFor(currentPE)}
           onOpenMenu={() => setExerciseMenuOpen(true)}
         />
@@ -766,6 +773,8 @@ export function SessionRunner({
               unit={unit}
               recommendation={currentRecommendation}
               loadConstraints={loadConstraintsFor(currentTarget)}
+              gym={sessionGym}
+              onGymUpdated={setSessionGym}
               disabled={!hydrated || mode.kind !== 'input'}
               onSubmit={handleValidate}
               onUpdateSet={handleUpdateSet}

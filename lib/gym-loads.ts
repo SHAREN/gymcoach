@@ -40,9 +40,9 @@ export function gymWeightOptions(
       );
     case 'MACHINE':
     case 'CABLE':
+    case 'BODYWEIGHT':
     case 'OTHER':
       return uniquePositive(constraints.weightOptions ?? []);
-    case 'BODYWEIGHT':
     case 'CARDIO':
       return [];
     default:
