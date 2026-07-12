@@ -9,6 +9,16 @@ import { programDesignAnswersSchema, programDesignModeSchema } from '@/lib/schem
 import { buildProgramDesignContext } from '@/lib/program-design-context';
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import {
+  GYM_EQUIPMENT_IMAGE_MIME_TYPES,
+  getOwnedGymEquipmentImage,
+  getOwnedGymInventory,
+  listOwnedGyms,
+  setOwnedGymEquipmentImage,
+  updateOwnedGymFreeWeights,
+  upsertOwnedGymEquipment,
+} from '@/lib/gym-equipment';
+import { gymWeightListSchema } from '@/lib/schemas/gym';
+import {
   PROGRAM_DESIGN_METHODOLOGY,
   PROGRAM_DESIGN_METHODOLOGY_VERSION,
 } from '@/lib/program-design-methodology';
@@ -26,7 +36,20 @@ Use read tools before making recommendations. Ground every recommendation in ret
 
 Before creating, extending or revising a program, read gymcoach://methodology/program-design and call get_program_design_context with the intended mode. Ask every required question returned in missingQuestions. Use validate_program_draft before any write. Do not calculate an exact catabolism percentage or CNS fatigue score; use GymCoach recovery and volume-pressure signals.
 
+Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory, call list_gyms and get_gym_inventory, and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
+
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
+
+export const GYM_INVENTORY_INSTRUCTIONS = `Gym inventory workflow:
+
+1. Call list_gyms and select the requested gym. Call get_gym_inventory before interpreting new observations.
+2. Treat physical equipment as separate from exercises. One machine may support several exercise IDs, and several machines may support the same exercise.
+3. Compare narrated items and photos against sharedFreeWeights and equipment. Match by function, manufacturer/model when certain, and distinctive description. Do not rely on name similarity alone.
+4. Ask focused questions for unreadable plates, pin stacks, brands, models, quantities or ambiguous machines. Mark uncertainty explicitly instead of inventing values.
+5. Present one batched change summary. After explicit confirmation, use update_gym_free_weights for dumbbells, plates and bars, and upsert_gym_equipment for physical machines, stations and accessories.
+6. Link known exercise IDs when the item supports them. GymCoach will mark those exercises available and apply item weight options to machine/cable configurations.
+7. Use set_gym_equipment_image only for an image the trainee supplied or approved. Prefer an uploaded JPEG/PNG/WebP as base64 for durable storage; an external image must use HTTPS. Never upload an unrelated or uncertain image.
+8. Use get_gym_equipment_image when an existing uploaded image must be inspected. Re-read get_gym_inventory after writes and report exactly what changed, what remains uncertain and which items still lack images or exercise links.`;
 
 interface ServerOptions {
   principal: McpPrincipal;
@@ -36,6 +59,20 @@ interface ServerOptions {
 const explicitConfirmation = z
   .literal(true)
   .describe('Set to true only after the trainee explicitly confirmed this saved-data change.');
+
+const gymIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .describe('Opaque GymCoach gym ID returned by list_gyms.');
+
+const httpsImageUrl = z
+  .string()
+  .trim()
+  .url()
+  .max(2048)
+  .refine((value) => value.startsWith('https://'), 'Equipment image URL must use HTTPS.');
 
 function result(data: Record<string, unknown>) {
   return {
@@ -84,6 +121,25 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
           uri: 'gymcoach://instructions/agent',
           mimeType: 'text/plain',
           text: GYMCOACH_MCP_INSTRUCTIONS,
+        },
+      ],
+    }),
+  );
+
+  server.registerResource(
+    'gymcoach-gym-inventory-instructions',
+    'gymcoach://instructions/gym-inventory',
+    {
+      title: 'GymCoach gym-inventory instructions',
+      description: 'Workflow for inventorying a gym from narration and photos.',
+      mimeType: 'text/plain',
+    },
+    async () => ({
+      contents: [
+        {
+          uri: 'gymcoach://instructions/gym-inventory',
+          mimeType: 'text/plain',
+          text: GYM_INVENTORY_INSTRUCTIONS,
         },
       ],
     }),
@@ -150,6 +206,189 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     }),
   );
 
+  server.registerPrompt(
+    'inventory-gym',
+    {
+      title: 'Inventory a GymCoach gym',
+      description: 'Compare narrated or photographed equipment with saved gym inventory.',
+      argsSchema: {
+        gymId: gymIdSchema.optional(),
+        observations: z.string().trim().max(5000).optional(),
+      },
+    },
+    async ({ gymId, observations }) => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Inventory this gym${gymId ? ` (${gymId})` : ''}. Observations: ${observations ?? 'Use the narration and attached photos in this conversation.'}\n\nRead gymcoach://instructions/gym-inventory. Call list_gyms, get_gym_inventory and list_exercises. Compare the observations against saved physical equipment and free weights, ask about ambiguous details, then show one batched change plan. After confirmation, update the inventory and attach approved images. Re-read the inventory and report the final result.`,
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerTool(
+    'list_gyms',
+    {
+      title: 'List gyms',
+      description:
+        'Lists saved gyms, identifies the active gym and reports physical-equipment/config counts.',
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async () => result(await listOwnedGyms(principal.userId)),
+  );
+
+  server.registerTool(
+    'get_gym_inventory',
+    {
+      title: 'Get complete gym inventory',
+      description:
+        'Returns shared dumbbells, plates and bars, every saved physical equipment item with descriptions/images/exercise links, plus full exercise availability coverage. Omit gymId to read the active gym.',
+      inputSchema: {
+        gymId: gymIdSchema.optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ gymId }) => result(await getOwnedGymInventory(principal.userId, baseUrl, gymId)),
+  );
+
+  server.registerTool(
+    'get_gym_equipment_image',
+    {
+      title: 'Get a gym-equipment image',
+      description:
+        'Returns a saved uploaded equipment image as MCP image content, or the approved external HTTPS image URL. Use this when visual comparison is needed.',
+      inputSchema: {
+        equipmentId: z.string().cuid(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ equipmentId }) => {
+      const saved = await getOwnedGymEquipmentImage(principal.userId, equipmentId);
+      if (saved.image.kind === 'uploaded') {
+        const metadata = {
+          equipment: saved.equipment,
+          image: {
+            kind: saved.image.kind,
+            mimeType: saved.image.mimeType,
+            updatedAt: saved.image.updatedAt,
+          },
+        };
+        return {
+          content: [
+            { type: 'text' as const, text: JSON.stringify(metadata, null, 2) },
+            { type: 'image' as const, data: saved.image.data, mimeType: saved.image.mimeType },
+          ],
+          structuredContent: metadata,
+        };
+      }
+      return result(saved);
+    },
+  );
+
+  server.registerTool(
+    'update_gym_free_weights',
+    {
+      title: 'Update gym free-weight inventory',
+      description:
+        'Updates any supplied dumbbell, plate or bar lists in kg after the trainee confirms the inventory change. Omitted lists remain unchanged.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema.optional(),
+        dumbbellWeights: gymWeightListSchema.optional(),
+        plateWeights: gymWeightListSchema.optional(),
+        barWeights: gymWeightListSchema.optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ gymId, confirmed: _confirmed, ...patch }) => {
+      requireWrite(principal);
+      const gym = await updateOwnedGymFreeWeights(principal.userId, gymId, patch);
+      return result({ ok: true, gym });
+    },
+  );
+
+  server.registerTool(
+    'upsert_gym_equipment',
+    {
+      title: 'Add or update physical gym equipment',
+      description:
+        'Creates or updates a physical machine, station or accessory in a gym. Link exercise IDs to make those exercises available and apply machine/cable weight options.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema.optional(),
+        equipmentId: z.string().cuid().optional(),
+        name: z.string().trim().min(1).max(120),
+        equipmentType: z.nativeEnum(EquipmentType),
+        description: z.string().trim().max(4000).nullable().optional(),
+        manufacturer: z.string().trim().max(120).nullable().optional(),
+        modelName: z.string().trim().max(120).nullable().optional(),
+        quantity: z.number().int().min(1).max(100).optional(),
+        weightOptions: gymWeightListSchema.optional(),
+        exerciseIds: z.array(z.string().cuid()).max(100).optional(),
+        markExercisesAvailable: z.boolean().optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ gymId, confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      const saved = await upsertOwnedGymEquipment(principal.userId, gymId, input);
+      return result({ ok: true, ...saved });
+    },
+  );
+
+  server.registerTool(
+    'set_gym_equipment_image',
+    {
+      title: 'Set a gym-equipment image',
+      description:
+        'Sets or clears a physical equipment image after confirmation. Use one of: an approved HTTPS URL, or JPEG/PNG/WebP base64 (raw or data URL) for durable database storage.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        equipmentId: z.string().cuid(),
+        clear: z.literal(true).optional(),
+        imageUrl: httpsImageUrl.optional(),
+        imageBase64: z.string().max(7_100_000).optional(),
+        mimeType: z.enum(GYM_EQUIPMENT_IMAGE_MIME_TYPES).optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ equipmentId, confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      const equipment = await setOwnedGymEquipmentImage(principal.userId, equipmentId, input);
+      const image = equipment.imageMimeType
+        ? {
+            kind: 'uploaded',
+            url: new URL(
+              `/api/gym-equipment/${equipment.id}/image?v=${equipment.updatedAt.getTime()}`,
+              baseUrl,
+            ).toString(),
+            mimeType: equipment.imageMimeType,
+          }
+        : equipment.imageUrl
+          ? { kind: 'external', url: equipment.imageUrl, mimeType: null }
+          : null;
+      return result({ ok: true, equipment: { ...equipment, image } });
+    },
+  );
+
   server.registerTool(
     'get_training_context',
     {
@@ -168,6 +407,28 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
             unit: true,
             activeGym: {
               include: {
+                equipment: {
+                  orderBy: { name: 'asc' },
+                  select: {
+                    id: true,
+                    name: true,
+                    equipmentType: true,
+                    description: true,
+                    manufacturer: true,
+                    modelName: true,
+                    quantity: true,
+                    weightOptions: true,
+                    imageUrl: true,
+                    imageMimeType: true,
+                    exerciseLinks: {
+                      include: {
+                        exercise: {
+                          select: { id: true, name: true, equipmentType: true },
+                        },
+                      },
+                    },
+                  },
+                },
                 exerciseConfigs: {
                   orderBy: { exercise: { name: 'asc' } },
                   include: {
@@ -182,7 +443,7 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         }),
       ]);
       return result({
-        instructionsVersion: 2,
+        instructionsVersion: 3,
         unit: user?.unit ?? 'KG',
         activeGym: user?.activeGym ?? null,
         coach,
