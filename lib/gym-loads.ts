@@ -9,6 +9,29 @@ export interface GymLoadConstraints {
   weightOptions?: number[];
 }
 
+export function gymWeightOptions(
+  constraints: GymLoadConstraints | null | undefined,
+  referenceWeight: number,
+): number[] {
+  if (!constraints || constraints.isAvailable === false) return [];
+
+  switch (constraints.equipmentType) {
+    case 'DUMBBELL':
+      return uniquePositive(constraints.dumbbellWeights ?? []);
+    case 'BARBELL':
+      return constructibleBarbellWeights(
+        constraints.barWeights ?? [],
+        constraints.plateWeights ?? [],
+        Math.max(200, referenceWeight + 100),
+      );
+    case 'MACHINE':
+    case 'CABLE':
+      return uniquePositive(constraints.weightOptions ?? []);
+    default:
+      return [];
+  }
+}
+
 export function constrainGymWeight(
   targetWeight: number,
   referenceWeight: number,

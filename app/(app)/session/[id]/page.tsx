@@ -108,6 +108,7 @@ function buildReadinessSignal(
 
 function serializePerf(p: LastPerformance): SerializedLastPerformance {
   return {
+    sessionId: p.sessionId,
     sessionStartedAt: p.sessionStartedAt.toISOString(),
     sets: p.sets,
     maxWeight: p.maxWeight,
