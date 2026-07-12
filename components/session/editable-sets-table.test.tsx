@@ -190,7 +190,7 @@ describe('EditableSetsTable', () => {
     expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
   });
 
-  it('edits a completed set in place without a delete button', async () => {
+  it('saves completed-set edits immediately without a row confirmation button', async () => {
     const onUpdateSet = vi.fn().mockResolvedValue(undefined);
     render(
       <EditableSetsTable
@@ -206,26 +206,49 @@ describe('EditableSetsTable', () => {
     );
 
     expect(screen.queryByRole('button', { name: /delete set 1/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /save changes to set 1/i }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Set 1 weight in KG' }));
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '95' } });
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
 
+    await waitFor(() =>
+      expect(onUpdateSet).toHaveBeenLastCalledWith(completedSet, {
+        weight: 95,
+        reps: 10,
+        rir: 2,
+      }),
+    );
+
     fireEvent.click(screen.getByRole('button', { name: 'Set 1 repetitions' }));
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '9' } });
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
+
+    await waitFor(() =>
+      expect(onUpdateSet).toHaveBeenLastCalledWith(completedSet, {
+        weight: 95,
+        reps: 9,
+        rir: 2,
+      }),
+    );
+
     fireEvent.change(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' }), {
       target: { value: '1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes to set 1' }));
 
     await waitFor(() =>
-      expect(onUpdateSet).toHaveBeenCalledWith(completedSet, {
+      expect(onUpdateSet).toHaveBeenLastCalledWith(completedSet, {
         weight: 95,
         reps: 9,
         rir: 1,
       }),
     );
+    expect(
+      screen.queryByRole('button', { name: /save changes to set 1/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm set 2' })).toBeInTheDocument();
   });
 
   it('prefills active and upcoming rows from matching previous-session sets', () => {
