@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DEFAULT_PREFERENCES,
   loadPreferences,
+  normalizeSetTableMetrics,
   savePreferences,
+  setTableMetricEnabled,
   isVibrationEnabled,
   isRestTimerSoundEnabled,
   isReadinessAutoRegulationEnabled,
@@ -38,6 +40,32 @@ describe('preferences', () => {
     savePreferences({ ...DEFAULT_PREFERENCES, readinessAutoRegulation: false });
     expect(loadPreferences().readinessAutoRegulation).toBe(false);
     expect(isReadinessAutoRegulationEnabled()).toBe(false);
+  });
+
+  it('migrates the legacy rep-max preference to calculated columns', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ rmDisplay: '10RM' }));
+    expect(loadPreferences().setTableMetrics).toEqual(['10RM']);
+  });
+
+  it('normalizes invalid or empty calculated-column selections', () => {
+    expect(normalizeSetTableMetrics(['1RM', '10RM', 'VOLUME'])).toEqual(['10RM', 'VOLUME']);
+    expect(normalizeSetTableMetrics([], '10RM')).toEqual(['10RM']);
+  });
+
+  it('keeps 1RM and 10RM mutually exclusive while allowing volume', () => {
+    let metrics = normalizeSetTableMetrics(['1RM']);
+
+    metrics = setTableMetricEnabled(metrics, 'VOLUME', true);
+    expect(metrics).toEqual(['1RM', 'VOLUME']);
+
+    metrics = setTableMetricEnabled(metrics, '10RM', true);
+    expect(metrics).toEqual(['10RM', 'VOLUME']);
+
+    metrics = setTableMetricEnabled(metrics, 'VOLUME', false);
+    expect(metrics).toEqual(['10RM']);
+
+    metrics = setTableMetricEnabled(metrics, '10RM', false);
+    expect(metrics).toEqual(['10RM']);
   });
 
   it('merges a partial stored object over the defaults', () => {
