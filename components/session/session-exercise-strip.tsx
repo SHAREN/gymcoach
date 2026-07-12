@@ -57,6 +57,12 @@ export function SessionExerciseStrip({
           const media = getExerciseMedia(programExercise.exercise.name);
           const isCurrent = index === currentIndex;
           const isComplete = completedExerciseIds.has(programExercise.exerciseId);
+          const supersetGroup = programExercise.supersetGroup;
+          const previousInGroup =
+            supersetGroup != null && exercises[index - 1]?.supersetGroup === supersetGroup;
+          const nextInGroup =
+            supersetGroup != null && exercises[index + 1]?.supersetGroup === supersetGroup;
+          const isInSuperset = previousInGroup || nextInGroup;
 
           return (
             <button
@@ -106,11 +112,15 @@ export function SessionExerciseStrip({
                   </span>
                 )}
               </span>
-              <span
-                className={`mx-auto mt-1 block h-0.5 rounded-full transition-all ${
-                  isCurrent ? 'w-10 bg-primary' : 'w-0 bg-transparent'
-                }`}
-              />
+              {supersetGroup != null && isInSuperset && (
+                <span
+                  data-superset-group={supersetGroup}
+                  aria-hidden
+                  className={`mt-1 block h-1 bg-red-500 ${
+                    previousInGroup ? '-ml-1 rounded-l-none' : 'rounded-l-full'
+                  } ${nextInGroup ? '-mr-1 rounded-r-none' : 'rounded-r-full'}`}
+                />
+              )}
             </button>
           );
         })}
