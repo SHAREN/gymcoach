@@ -729,11 +729,12 @@ async function fetchRecordsSummary(
     }));
 }
 
-// The same window the progress page judges stalls over (last 12 weeks).
+// Source-data horizon shared with the progress page. isStalled applies the
+// narrower current-block rule (three sessions within six weeks).
 const FATIGUE_WINDOW_WEEKS = 12;
 
 // Derived fatigue signals (issue #101), mirroring the progress page: stalled
-// lifts per isStalled over the per-session e1RM series of the last 12 weeks,
+// lifts per isStalled over the per-session e1RM points in the source horizon,
 // and the program-level deload recommendation fed by those stalls plus the
 // recent readiness check-ins.
 async function fetchFatigueSummary(
@@ -799,7 +800,7 @@ async function fetchFatigueSummary(
         bodyweight,
       ),
     );
-    if (isStalled(points.map((p) => p.estimated1RM))) {
+    if (isStalled(points, now)) {
       stalledExercises.push(first.exercise.name);
     }
   }

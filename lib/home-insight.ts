@@ -13,9 +13,9 @@ import { defaultLocale, isLocale, type Locale } from '@/i18n/config';
 import englishMessages from '@/messages/en';
 import russianMessages from '@/messages/ru';
 
-// How far back to look when judging stalled lifts and all-time records for the
-// home insight. Matches the progress page's recent window so the home nudge and
-// the progress page agree on what counts as "recent".
+// Source-data horizon for the home insight. Stall eligibility itself is
+// narrower and centralized in isStalled (three sessions within six weeks), so
+// the home nudge and progress page use the same rule.
 const INSIGHT_WINDOW_WEEKS = 12;
 
 export type HomeInsightKind = 'deload' | 'stall' | 'pr' | 'on-track';
@@ -203,7 +203,7 @@ export async function getHomeInsight(
   const stalledExerciseNames: string[] = [];
   for (const [name, sets] of byExercise) {
     const points = exerciseProgress(applyBodyweight(sets, bodyweight));
-    if (isStalled(points.map((p) => p.estimated1RM))) {
+    if (isStalled(points, now)) {
       stalledExerciseNames.push(name);
     }
   }

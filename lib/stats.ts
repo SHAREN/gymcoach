@@ -175,36 +175,63 @@ export function exerciseProgress(
 // on the prior best (within tolerance). Defined once so it lives in one place.
 export const STALL_LOOKBACK_SESSIONS = 3;
 
+// A stall is only actionable when the whole lookback belongs to the current
+// training block. Six weeks is generous enough for exercises trained every
+// 1-2 weeks while preventing sparse sessions from different blocks being
+// combined into a false plateau.
+export const STALL_WINDOW_DAYS = 42;
+
 // Relative tolerance: an e1RM counts as an improvement only when it exceeds the
 // prior best by more than this fraction (0.5%). Keeps rounding/noise from
 // masking a genuine plateau.
 export const STALL_TOLERANCE = 0.005;
 
-// Pure stall test over an exercise's per-session best-e1RM series (oldest ->
+export type StallPoint = Pick<ExerciseChartPoint, 'estimated1RM' | 'sessionStartedAt'>;
+
+// Pure stall test over an exercise's per-session best-e1RM points (oldest ->
 // newest). Returns true when, over the last `lookback` sessions, no session
 // improves on the best e1RM seen before that window (and within the window).
-// Never flags with fewer than `lookback` sessions (insufficient data).
+// All lookback sessions must also fall inside the recent calendar window;
+// sparse or stale observations are insufficient evidence of a current stall.
 export function isStalled(
-  e1rmSeries: number[],
+  points: readonly StallPoint[],
+  asOf: Date,
   lookback: number = STALL_LOOKBACK_SESSIONS,
+  windowDays: number = STALL_WINDOW_DAYS,
 ): boolean {
   if (lookback < 2) return false;
-  if (e1rmSeries.length < lookback) return false;
+  if (points.length < lookback || windowDays <= 0) return false;
 
-  const windowStart = e1rmSeries.length - lookback;
+  const asOfMs = asOf.getTime();
+  if (!Number.isFinite(asOfMs)) return false;
+
+  const windowStart = points.length - lookback;
+  const oldestWindowMs = points[windowStart]!.sessionStartedAt.getTime();
+  const newestWindowMs = points.at(-1)!.sessionStartedAt.getTime();
+  const cutoffMs = asOfMs - windowDays * 24 * 60 * 60 * 1000;
+  if (
+    !Number.isFinite(oldestWindowMs) ||
+    !Number.isFinite(newestWindowMs) ||
+    newestWindowMs < oldestWindowMs ||
+    newestWindowMs > asOfMs ||
+    oldestWindowMs < cutoffMs
+  ) {
+    return false;
+  }
+
   // Best e1RM established strictly before the lookback window. With no prior
   // history (window covers the whole series), the first window entry is the
   // baseline the rest must beat.
   let bestBefore = 0;
   for (let i = 0; i < windowStart; i++) {
-    if (e1rmSeries[i]! > bestBefore) bestBefore = e1rmSeries[i]!;
+    if (points[i]!.estimated1RM > bestBefore) bestBefore = points[i]!.estimated1RM;
   }
 
-  let baseline = windowStart === 0 ? e1rmSeries[0]! : bestBefore;
+  let baseline = windowStart === 0 ? points[0]!.estimated1RM : bestBefore;
   const startIdx = windowStart === 0 ? 1 : windowStart;
 
-  for (let i = startIdx; i < e1rmSeries.length; i++) {
-    const value = e1rmSeries[i]!;
+  for (let i = startIdx; i < points.length; i++) {
+    const value = points[i]!.estimated1RM;
     // Improvement = strictly above the running best, beyond tolerance.
     if (value > baseline * (1 + STALL_TOLERANCE)) {
       return false;
