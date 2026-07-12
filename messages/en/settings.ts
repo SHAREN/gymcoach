@@ -11,6 +11,8 @@ export const settings = {
   readiness: 'Let readiness/soreness adjust my suggested weights',
   readinessDescription:
     'When on, a recent readiness check-in can hold or lower the suggested load. When off, suggestions follow pure programmed progression.',
+  rmDisplay: 'Set table strength estimate',
+  rmDisplayDescription: 'Choose whether the live set table calculates estimated 1RM or 10RM.',
   plateCalculator: 'Plate calculator',
   plateCalculatorDescription:
     'Bar weight and available plates per side, used by the in-workout plate calculator. Set the values for the unit you train in.',

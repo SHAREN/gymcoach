@@ -22,7 +22,11 @@ function abbreviation(name: string): string {
   const words = name.trim().split(/\s+/u).filter(Boolean);
   if (words.length === 0) return '?';
   if (words.length === 1) return Array.from(words[0]!).slice(0, 3).join('').toUpperCase();
-  return words.slice(0, 3).map((word) => Array.from(word)[0] ?? '').join('').toUpperCase();
+  return words
+    .slice(0, 3)
+    .map((word) => Array.from(word)[0] ?? '')
+    .join('')
+    .toUpperCase();
 }
 
 export function SessionExerciseStrip({
@@ -76,6 +80,7 @@ export function SessionExerciseStrip({
                     src={media.frames[0]}
                     alt=""
                     fill
+                    unoptimized
                     sizes="80px"
                     className={`object-cover transition-opacity ${isComplete ? 'opacity-55' : ''}`}
                   />
@@ -106,4 +111,3 @@ export function SessionExerciseStrip({
     </div>
   );
 }
-

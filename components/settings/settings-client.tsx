@@ -3,7 +3,16 @@
 import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslations } from 'next-intl';
-import { Activity, Languages, Moon, Smartphone, Sun, Volume2, Monitor } from 'lucide-react';
+import {
+  Activity,
+  Languages,
+  Moon,
+  Smartphone,
+  Sun,
+  Volume2,
+  Monitor,
+  Calculator,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -112,6 +121,29 @@ export function SettingsClient() {
             onChange={(v) => update('readinessAutoRegulation', v)}
             disabled={!hydrated}
           />
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border/40 p-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <Calculator className="mt-0.5 size-4 text-muted-foreground" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('rmDisplay')}</p>
+                <p className="text-xs text-muted-foreground">{t('rmDisplayDescription')}</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              {(['1RM', '10RM'] as const).map((value) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  variant={prefs.rmDisplay === value ? 'default' : 'outline'}
+                  onClick={() => update('rmDisplay', value)}
+                  disabled={!hydrated}
+                >
+                  {value}
+                </Button>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

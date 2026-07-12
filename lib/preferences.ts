@@ -13,6 +13,8 @@ export interface UserPreferences {
   // (hold the load or step it down). When off, readiness is ignored entirely and
   // the suggestion follows pure programmed progression (pre-#55 behavior).
   readinessAutoRegulation: boolean;
+  // Estimated rep-max column shown while logging strength sets.
+  rmDisplay: '1RM' | '10RM';
   // Plate-loading calculator (issue #39). Bar weight and available plate
   // denominations are stored per unit, since a kg gym and a lb gym stock
   // different plates. Values are in the matching display unit.
@@ -26,6 +28,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   vibration: true,
   restTimerSound: false,
   readinessAutoRegulation: true,
+  rmDisplay: '1RM',
   barWeightKg: 20,
   barWeightLb: 45,
   platesKg: [25, 20, 15, 10, 5, 2.5, 1.25],

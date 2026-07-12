@@ -6,6 +6,7 @@ import {
   dailyConditioning,
   effectiveWeight,
   estimate1RM,
+  estimateRepMax,
   exerciseProgress,
   isoWeekKey,
   isoWeekStart,
@@ -42,6 +43,12 @@ describe('setVolume / totalVolume', () => {
   });
 });
 
+describe('estimateRepMax', () => {
+  it('converts a completed set to estimated 1RM and 10RM values', () => {
+    expect(estimateRepMax(100, 10, 10)).toBeCloseTo(100, 5);
+    expect(estimateRepMax(100, 10, 1)).toBeCloseTo(133.33, 2);
+  });
+});
 describe('estimate1RM (Epley)', () => {
   it('matches the formula weight * (1 + reps/30)', () => {
     expect(estimate1RM(100, 5)).toBeCloseTo(116.667, 2);
@@ -379,12 +386,8 @@ describe('resolveVolumeBand (issue #211)', () => {
 
   it('falls back to defaults for an internally inconsistent stored band', () => {
     // A hand-tampered row (mrv <= mev or mev < 1) is ignored, not trusted.
-    expect(resolveVolumeBand('CHEST', { CHEST: { mev: 18, mrv: 10 } }).custom).toBe(
-      false,
-    );
-    expect(resolveVolumeBand('CHEST', { CHEST: { mev: 0, mrv: 10 } }).custom).toBe(
-      false,
-    );
+    expect(resolveVolumeBand('CHEST', { CHEST: { mev: 18, mrv: 10 } }).custom).toBe(false);
+    expect(resolveVolumeBand('CHEST', { CHEST: { mev: 0, mrv: 10 } }).custom).toBe(false);
   });
 });
 
@@ -606,9 +609,7 @@ describe('cardio set exclusion', () => {
 
   it('exerciseProgress produces no point from cardio-only sessions', () => {
     const d = new Date('2026-06-01T10:00:00Z');
-    const points = exerciseProgress([
-      { ...cardio, sessionId: 's1', sessionStartedAt: d },
-    ]);
+    const points = exerciseProgress([{ ...cardio, sessionId: 's1', sessionStartedAt: d }]);
     expect(points).toHaveLength(0);
   });
 
@@ -722,9 +723,17 @@ describe('dailyConditioning (issue #153)', () => {
   it('aggregates minutes and km per UTC calendar day, ascending', () => {
     const days = dailyConditioning(
       [
-        run({ sessionStartedAt: new Date('2026-06-10T18:00:00Z'), durationSec: 600, distanceM: null }),
+        run({
+          sessionStartedAt: new Date('2026-06-10T18:00:00Z'),
+          durationSec: 600,
+          distanceM: null,
+        }),
         run(), // Tuesday 30 min / 5 km
-        run({ sessionStartedAt: new Date('2026-06-09T18:30:00Z'), durationSec: 900, distanceM: 2500 }),
+        run({
+          sessionStartedAt: new Date('2026-06-09T18:30:00Z'),
+          durationSec: 900,
+          distanceM: 2500,
+        }),
       ],
       { now: NOW },
     );
@@ -750,7 +759,13 @@ describe('dailyConditioning (issue #153)', () => {
 
   it('includes the Monday boundary of the current week', () => {
     const days = dailyConditioning(
-      [run({ sessionStartedAt: new Date('2026-06-08T00:00:00Z'), durationSec: 1200, distanceM: null })],
+      [
+        run({
+          sessionStartedAt: new Date('2026-06-08T00:00:00Z'),
+          durationSec: 1200,
+          distanceM: null,
+        }),
+      ],
       { now: NOW },
     );
     expect(days).toEqual([{ date: '2026-06-08', minutes: 20, km: 0 }]);

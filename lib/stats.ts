@@ -37,9 +37,10 @@ export function effectiveWeight(
 // decorated beforehand with `usesBodyweight` (typically copied from
 // `set.exercise.usesBodyweight` in the Server Component). We avoid mutating,
 // returning a new list instead.
-export function applyBodyweight<
-  T extends { weight: number; usesBodyweight?: boolean | null },
->(sets: T[], bodyweight: number | null | undefined): T[] {
+export function applyBodyweight<T extends { weight: number; usesBodyweight?: boolean | null }>(
+  sets: T[],
+  bodyweight: number | null | undefined,
+): T[] {
   if (!bodyweight || bodyweight <= 0) return sets;
   return sets.map((s) =>
     s.usesBodyweight ? { ...s, weight: +(bodyweight + s.weight).toFixed(2) } : s,
@@ -49,9 +50,7 @@ export function applyBodyweight<
 // Volume of a set = load × reps. For bodyweight (weight = 0),
 // we return 0 by convention (impossible to compare with a load).
 // Cardio sets carry no tonnage and always count 0.
-export function setVolume(
-  set: Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio,
-): number {
+export function setVolume(set: Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio): number {
   if (set.isWarmup || isCardioSet(set)) return 0;
   return set.weight * set.reps;
 }
@@ -70,12 +69,19 @@ export function estimate1RM(weight: number, reps: number): number {
   return weight * (1 + reps / 30);
 }
 
+// Converts a completed set to the estimated load for a requested rep maximum.
+// Epley is used in both directions so 1RM and 10RM remain directly comparable.
+export function estimateRepMax(weight: number, reps: number, targetReps: 1 | 10): number {
+  const oneRm = estimate1RM(weight, reps);
+  if (oneRm <= 0) return 0;
+  if (targetReps == 1) return oneRm;
+  return oneRm / (1 + targetReps / 30);
+}
+
 // Best estimated 1RM over a list of sets (warmups and drop sets included
 // since they are technically valid for estimating strength). Cardio sets
 // are skipped: they have no load to estimate from.
-export function best1RM(
-  sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio)[],
-): number {
+export function best1RM(sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio)[]): number {
   let best = 0;
   for (const s of sets) {
     if (s.isWarmup || isCardioSet(s)) continue;
@@ -131,10 +137,7 @@ export function exerciseProgress(
   sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> &
     MaybeCardio & { sessionId: string; sessionStartedAt: Date })[],
 ): ExerciseChartPoint[] {
-  const bySession = new Map<
-    string,
-    { startedAt: Date; sets: typeof sets }
-  >();
+  const bySession = new Map<string, { startedAt: Date; sets: typeof sets }>();
   for (const s of sets) {
     if (s.isWarmup || isCardioSet(s)) continue;
     const entry = bySession.get(s.sessionId);
@@ -243,13 +246,10 @@ export function weeklyVolumeByMuscleGroup(
       byWeek.set(key, entry);
     }
     const v = setVolume(s);
-    entry.byMuscleGroup[s.muscleGroup] =
-      (entry.byMuscleGroup[s.muscleGroup] ?? 0) + v;
+    entry.byMuscleGroup[s.muscleGroup] = (entry.byMuscleGroup[s.muscleGroup] ?? 0) + v;
     entry.total += v;
   }
-  return [...byWeek.values()].sort(
-    (a, b) => a.weekStart.getTime() - b.weekStart.getTime(),
-  );
+  return [...byWeek.values()].sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
 }
 
 // ============================================================
@@ -344,13 +344,10 @@ export function weeklySetsByMuscleGroup(
       };
       byWeek.set(key, entry);
     }
-    entry.byMuscleGroup[s.muscleGroup] =
-      (entry.byMuscleGroup[s.muscleGroup] ?? 0) + 1;
+    entry.byMuscleGroup[s.muscleGroup] = (entry.byMuscleGroup[s.muscleGroup] ?? 0) + 1;
     entry.total += 1;
   }
-  return [...byWeek.values()].sort(
-    (a, b) => a.weekStart.getTime() - b.weekStart.getTime(),
-  );
+  return [...byWeek.values()].sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
 }
 
 export interface WeeklyFrequencyPoint {
@@ -567,9 +564,7 @@ export function trainingConsistency(
   const windowWeeks = options.windowWeeks ?? 12;
   const now = options.now ?? new Date();
   const weeklyFrequency =
-    options.weeklyFrequency != null && options.weeklyFrequency > 0
-      ? options.weeklyFrequency
-      : null;
+    options.weeklyFrequency != null && options.weeklyFrequency > 0 ? options.weeklyFrequency : null;
 
   // Distinct trained calendar days per ISO week key. (`Set` from @prisma/client
   // shadows the global Set type here, so reference it via globalThis.)
@@ -594,9 +589,7 @@ export function trainingConsistency(
     weekStart.setUTCDate(weekStart.getUTCDate() - i * 7);
     const weekKey = isoWeekKey(weekStart);
     const trainedDays = daysByWeek.get(weekKey)?.size ?? 0;
-    const onStreak = weeklyFrequency
-      ? trainedDays >= weeklyFrequency
-      : trainedDays >= 1;
+    const onStreak = weeklyFrequency ? trainedDays >= weeklyFrequency : trainedDays >= 1;
     weeks.push({
       weekKey,
       weekStartIso: weekStart.toISOString(),
