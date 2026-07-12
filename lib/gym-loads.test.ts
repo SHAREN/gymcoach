@@ -3,6 +3,7 @@ import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
   constructibleBarbellWeights,
+  gymWeightOptions,
   resolveEquipmentType,
 } from '@/lib/gym-loads';
 
@@ -43,6 +44,18 @@ describe('saved gym load constraints', () => {
         plateWeights: [1.25, 2.5],
       }),
     ).toBe(22.5);
+  });
+
+  it('uses exercise-specific added loads for weighted bodyweight exercises', () => {
+    expect(
+      gymWeightOptions({ equipmentType: 'BODYWEIGHT', weightOptions: [5, 10, 15.5, 20] }, 12),
+    ).toEqual([5, 10, 15.5, 20]);
+    expect(
+      constrainGymWeight(14, 10, {
+        equipmentType: 'BODYWEIGHT',
+        weightOptions: [5, 10, 15.5, 20],
+      }),
+    ).toBe(15.5);
   });
 
   it('uses explicit machine stack values when configured', () => {

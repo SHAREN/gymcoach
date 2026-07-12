@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const weightList = z
+export const gymWeightListSchema = z
   .array(z.coerce.number().min(0.1).max(5000))
   .max(200)
   .transform((values) =>
@@ -10,19 +10,32 @@ const weightList = z
 export const gymExerciseConfigSchema = z.object({
   exerciseId: z.string().min(1),
   isAvailable: z.boolean().default(true),
-  weightOptions: weightList.default([]),
+  weightOptions: gymWeightListSchema.default([]),
+  dumbbellWeights: gymWeightListSchema.default([]),
+  plateWeights: gymWeightListSchema.default([]),
+  barWeights: gymWeightListSchema.default([]),
 });
 
 export const gymCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  dumbbellWeights: weightList.default([]),
-  plateWeights: weightList.default([]),
-  barWeights: weightList.default([]),
+  dumbbellWeights: gymWeightListSchema.default([]),
+  plateWeights: gymWeightListSchema.default([]),
+  barWeights: gymWeightListSchema.default([]),
   exerciseConfigs: z.array(gymExerciseConfigSchema).max(2000).default([]),
   makeActive: z.boolean().default(false),
 });
 
 export const gymUpdateSchema = gymCreateSchema.omit({ makeActive: true });
 
+export const gymWeightUpdateSchema = z.object({
+  exerciseId: z.string().min(1),
+  scope: z.enum(['equipment', 'exercise']),
+  dumbbellWeights: gymWeightListSchema.default([]),
+  plateWeights: gymWeightListSchema.default([]),
+  barWeights: gymWeightListSchema.default([]),
+  weightOptions: gymWeightListSchema.default([]),
+});
+
 export type GymCreateInput = z.infer<typeof gymCreateSchema>;
 export type GymUpdateInput = z.infer<typeof gymUpdateSchema>;
+export type GymWeightUpdateInput = z.infer<typeof gymWeightUpdateSchema>;

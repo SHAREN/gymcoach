@@ -45,7 +45,16 @@ interface Draft {
   dumbbellWeights: number[];
   plateWeights: number[];
   barWeights: number[];
-  configs: Map<string, { isAvailable: boolean; weightOptions: number[] }>;
+  configs: Map<
+    string,
+    {
+      isAvailable: boolean;
+      weightOptions: number[];
+      dumbbellWeights: number[];
+      plateWeights: number[];
+      barWeights: number[];
+    }
+  >;
 }
 
 export function GymProfilesSection({ initialGyms, activeGymId: initialActive, exercises }: Props) {
@@ -77,11 +86,23 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
 
   function updateConfig(
     exerciseId: string,
-    next: Partial<{ isAvailable: boolean; weightOptions: number[] }>,
+    next: Partial<{
+      isAvailable: boolean;
+      weightOptions: number[];
+      dumbbellWeights: number[];
+      plateWeights: number[];
+      barWeights: number[];
+    }>,
   ) {
     setDraft((current) => {
       const configs = new Map(current.configs);
-      const previous = configs.get(exerciseId) ?? { isAvailable: true, weightOptions: [] };
+      const previous = configs.get(exerciseId) ?? {
+        isAvailable: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      };
       configs.set(exerciseId, { ...previous, ...next });
       return { ...current, configs };
     });
@@ -97,7 +118,13 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
         plateWeights: draft.plateWeights,
         barWeights: draft.barWeights,
         exerciseConfigs: [...draft.configs.entries()].flatMap(([exerciseId, config]) =>
-          !config.isAvailable || config.weightOptions.length > 0 ? [{ exerciseId, ...config }] : [],
+          !config.isAvailable ||
+          config.weightOptions.length > 0 ||
+          config.dumbbellWeights.length > 0 ||
+          config.plateWeights.length > 0 ||
+          config.barWeights.length > 0
+            ? [{ exerciseId, ...config }]
+            : [],
         ),
         ...(draft.id ? {} : { makeActive: true }),
       };
@@ -374,7 +401,13 @@ function draftFromGym(gym?: GymWithConfigs): Draft {
     configs: new Map(
       gym?.exerciseConfigs.map((config) => [
         config.exerciseId,
-        { isAvailable: config.isAvailable, weightOptions: config.weightOptions },
+        {
+          isAvailable: config.isAvailable,
+          weightOptions: config.weightOptions,
+          dumbbellWeights: config.dumbbellWeights,
+          plateWeights: config.plateWeights,
+          barWeights: config.barWeights,
+        },
       ]) ?? [],
     ),
   };

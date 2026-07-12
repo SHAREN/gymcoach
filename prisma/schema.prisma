@@ -305,7 +305,12 @@ model GymExerciseConfig {
   isAvailable   Boolean  @default(true)
   // Optional explicit machine/cable pin stack or other exercise-specific
   // loads. Empty means use the normal category increment.
-  weightOptions Float[]  @default([])
+  weightOptions   Float[] @default([])
+  // Optional per-exercise overrides for the gym's shared free-weight inventory.
+  // Empty means inherit the corresponding list from Gym.
+  dumbbellWeights Float[] @default([])
+  plateWeights    Float[] @default([])
+  barWeights      Float[] @default([])
 
   @@unique([gymId, exerciseId])
   @@index([exerciseId])
