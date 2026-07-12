@@ -85,19 +85,18 @@ function groupSpan<T extends SupersetItem>(
   let start = currentIdx;
   while (start > 0 && view.groupById.get(view.ordered[start - 1]!.id) === group) start -= 1;
   let end = currentIdx;
-  while (
-    end + 1 < view.ordered.length &&
-    view.groupById.get(view.ordered[end + 1]!.id) === group
-  ) {
+  while (end + 1 < view.ordered.length && view.groupById.get(view.ordered[end + 1]!.id) === group) {
     end += 1;
   }
   return { start, end };
 }
 
-// Where the runner should auto-advance to once the rest after a logged
-// working set ends. `remaining` returns how many target working sets are
-// still to log for an item (<= 0 when complete), INCLUDING the set just
-// logged on the current item.
+// Where the runner should continue after a logged working set. The session
+// runner applies same-group transitions immediately so the timer is already
+// shown on the next superset member; other advances still happen when rest
+// ends. `remaining` returns how many target working sets are still to log for
+// an item (<= 0 when complete), INCLUDING the set just logged on the current
+// item.
 // - Standalone (unchanged behavior): the next exercise once the current one
 //   has completed its target sets, otherwise stay (null).
 // - Superset member (the A1/A2 flow): alternate to the next member of the

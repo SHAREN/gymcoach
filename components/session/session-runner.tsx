@@ -100,7 +100,13 @@ type SessionRunnerProps = {
 
 type Mode =
   | { kind: 'input' }
-  | { kind: 'rest'; endsAt: number; totalSec: number; nextExerciseIdx: number | null }
+  | {
+      kind: 'rest';
+      endsAt: number;
+      totalSec: number;
+      nextExerciseIdx: number | null;
+      navigatedImmediately: boolean;
+    }
   | { kind: 'summary' };
 
 export function SessionRunner({
@@ -346,7 +352,7 @@ export function SessionRunner({
 
     vibrate(VIBRATION_PATTERNS.validate);
 
-    // Start the rest, preparing the auto-advance at the end of the timer.
+    // Start the rest and determine where the runner should continue.
     // Standalone exercise (unchanged behavior): advance once the set
     // completes the target. Superset member (issue #146): alternate to the
     // next member of the group that still has sets, the A1/A2 flow.
@@ -372,11 +378,18 @@ export function SessionRunner({
         ? SUPERSET_TRANSITION_REST_SEC
         : currentPE.restSec;
 
+    // Inside a superset, show the next member immediately so the athlete can
+    // get into position while the transition timer is running. The timer only
+    // unlocks input when it ends; it must not navigate a second time.
+    const navigatedImmediately = transition && nextIdx != null;
+    if (navigatedImmediately) selectExercise(nextIdx);
+
     setMode({
       kind: 'rest',
       endsAt: Date.now() + restSec * 1000,
       totalSec: restSec,
       nextExerciseIdx: nextIdx,
+      navigatedImmediately,
     });
   }
 
@@ -478,14 +491,14 @@ export function SessionRunner({
 
   function handleRestEnd() {
     vibrate(VIBRATION_PATTERNS.restEnd);
-    if (mode.kind === 'rest' && mode.nextExerciseIdx != null) {
+    if (mode.kind === 'rest' && !mode.navigatedImmediately && mode.nextExerciseIdx != null) {
       selectExercise(mode.nextExerciseIdx);
     }
     setMode({ kind: 'input' });
   }
 
   function handleSkipRest() {
-    if (mode.kind === 'rest' && mode.nextExerciseIdx != null) {
+    if (mode.kind === 'rest' && !mode.navigatedImmediately && mode.nextExerciseIdx != null) {
       selectExercise(mode.nextExerciseIdx);
     }
     setMode({ kind: 'input' });
@@ -546,6 +559,10 @@ export function SessionRunner({
         : remainingPlannedSets(currentPE, currentSets) > 0
           ? currentPE
           : null
+      : null;
+  const restNextLabel =
+    mode.kind === 'rest' && !mode.navigatedImmediately && restNextPe
+      ? exerciseName(restNextPe.exercise.name)
       : null;
   const restRecommendation =
     mode.kind === 'rest' &&
@@ -644,7 +661,7 @@ export function SessionRunner({
               <RestTimer
                 endsAt={mode.endsAt}
                 totalSec={mode.totalSec}
-                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                nextLabel={restNextLabel}
                 recommendation={restRecommendation}
                 unit={unit}
                 onEnd={handleRestEnd}
@@ -672,7 +689,7 @@ export function SessionRunner({
               <RestTimer
                 endsAt={mode.endsAt}
                 totalSec={mode.totalSec}
-                nextLabel={restNextPe ? exerciseName(restNextPe.exercise.name) : null}
+                nextLabel={restNextLabel}
                 recommendation={restRecommendation}
                 unit={unit}
                 onEnd={handleRestEnd}
