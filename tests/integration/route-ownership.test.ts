@@ -7,7 +7,7 @@ import { getCurrentUserId } from '@/lib/auth';
 vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
 const mockUserId = vi.mocked(getCurrentUserId);
 
-import { DELETE as deleteSet } from '@/app/api/sets/[id]/route';
+import { DELETE as deleteSet, PATCH as patchSet } from '@/app/api/sets/[id]/route';
 import {
   GET as getSession,
   PUT as putSession,
@@ -154,6 +154,36 @@ describe('route ownership: DELETE /api/sets/[id]', () => {
     expect(await db.set.findUnique({ where: { id: set.id } })).not.toBeNull();
   });
 });
+
+describe('route ownership: PATCH /api/sets/[id]', () => {
+  it('lets the owner correct their set', async () => {
+    const { a, set } = await seed();
+    actAs(a.id);
+    const res = await patchSet(jsonReq('PATCH', { weight: 62.5, reps: 8, rir: 1 }), idParams(set.id));
+
+    expect(res.status).toBe(200);
+    expect(await db.set.findUnique({ where: { id: set.id } })).toMatchObject({
+      weight: 62.5,
+      reps: 8,
+      rir: 1,
+      setNumber: 1,
+      exerciseId: set.exerciseId,
+    });
+  });
+
+  it('returns 404 and keeps the set when a stranger tries to edit it', async () => {
+    const { b, set } = await seed();
+    actAs(b.id);
+    const res = await patchSet(jsonReq('PATCH', { weight: 200, reps: 1, rir: 0 }), idParams(set.id));
+
+    expect(res.status).toBe(404);
+    expect(await db.set.findUnique({ where: { id: set.id } })).toMatchObject({
+      weight: 60,
+      reps: 10,
+    });
+  });
+});
+
 
 describe('route ownership: /api/sessions/[id]', () => {
   it('lets the owner read and update their session', async () => {
