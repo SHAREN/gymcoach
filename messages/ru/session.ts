@@ -177,6 +177,16 @@ export const session = {
     barWeight: 'Гриф {weight} {unit}',
     plateRemainder: 'Собирается {weight} {unit}',
     pickerDescription: 'Выберите сохранённое значение или введите его экранной клавиатурой.',
+    metrics: {
+      open: 'Выбрать расчётные столбцы',
+      label: 'Расчётные столбцы',
+      oneRm: 'Расчётный 1ПМ',
+      tenRm: 'Расчётный 10ПМ',
+      volume: 'Объём',
+      oneRmShort: '1ПМ',
+      tenRmShort: '10ПМ',
+      volumeShort: 'ОБЪЁМ',
+    },
     weightEditor: {
       open: 'Изменить доступные веса',
       noGym: 'Выберите зал, чтобы изменить доступные веса',

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditableSetsTable } from './editable-sets-table';
 import type { PendingSet } from '@/lib/indexeddb';
@@ -92,6 +93,45 @@ describe('EditableSetsTable', () => {
     );
   });
 
+  it('shows volume alone or paired with one rep-max estimate', async () => {
+    const user = userEvent.setup();
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[completedSet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    const openSelector = screen.getByRole('button', { name: 'Choose calculated columns' });
+    await user.click(openSelector);
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Volume' }));
+
+    expect(screen.getByTestId('set-metric-header-1RM')).toBeInTheDocument();
+    expect(screen.getByTestId('set-metric-header-VOLUME')).toBeInTheDocument();
+    expect(screen.getByTestId('completed-set-1-metric-VOLUME')).toHaveTextContent('1000');
+    expect(screen.getByTestId('editable-sets-header')).toHaveClass(
+      'grid-cols-[1.35rem_minmax(0,0.95fr)_minmax(2.35rem,0.68fr)_minmax(2.1rem,0.58fr)_minmax(2.5rem,0.72fr)_minmax(2.5rem,0.72fr)_2.5rem]',
+    );
+
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Estimated 10RM' }));
+    expect(screen.queryByTestId('set-metric-header-1RM')).not.toBeInTheDocument();
+    expect(screen.getByTestId('set-metric-header-10RM')).toBeInTheDocument();
+    expect(screen.getByTestId('set-metric-header-VOLUME')).toBeInTheDocument();
+    expect(screen.getByTestId('completed-set-1-metric-10RM')).toHaveTextContent('100');
+
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Volume' }));
+    expect(screen.queryByTestId('set-metric-header-VOLUME')).not.toBeInTheDocument();
+    expect(screen.getByTestId('editable-sets-header')).toHaveClass(
+      'grid-cols-[1.5rem_minmax(0,1.05fr)_minmax(2.75rem,0.72fr)_minmax(2.5rem,0.65fr)_minmax(3.75rem,0.9fr)_2.75rem]',
+    );
+  });
+
   it('edits and confirms the active set row through the value pickers', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
@@ -125,7 +165,7 @@ describe('EditableSetsTable', () => {
       target: { value: '1' },
     });
 
-    expect(screen.getByText('133.3 kg')).toBeInTheDocument();
+    expect(screen.getByTestId('active-set-metric-1RM')).toHaveTextContent('133.3');
     fireEvent.click(screen.getByRole('button', { name: /confirm set 1/i }));
 
     await waitFor(() =>
