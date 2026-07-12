@@ -56,6 +56,7 @@ export const exercises = {
   },
   detail: {
     back: 'Назад к упражнениям',
+    backToSession: 'Назад к тренировке',
     information: 'Информация об упражнении',
     muscle: 'Основная мышечная группа',
     equipment: 'Оборудование',
