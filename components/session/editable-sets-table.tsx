@@ -53,6 +53,7 @@ interface DraftSet {
 interface EditingSet {
   set: PendingSet;
   draft: DraftSet;
+  awaitingPersistence: boolean;
 }
 
 const SET_GRID_COLUMNS =
@@ -165,6 +166,21 @@ export function EditableSetsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programExercise.id, sets.length]);
 
+  useEffect(() => {
+    if (!editingSet?.awaitingPersistence || updatingSetId === editingSet.set.localId) {
+      return;
+    }
+    const persisted = sets.find((set) => set.localId === editingSet.set.localId);
+    if (
+      persisted &&
+      persisted.weight === editingSet.draft.weight &&
+      persisted.reps === editingSet.draft.reps &&
+      persisted.rir === editingSet.draft.rir
+    ) {
+      setEditingSet(null);
+    }
+  }, [editingSet, sets, updatingSetId]);
+
   const loggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
   const currentNumber = loggedSets.length + 1;
   const plannedRows = programExercise.targetSets + targetDropSets(programExercise);
@@ -197,17 +213,13 @@ export function EditableSetsTable({
     );
   }
 
-  function beginEditing(set: PendingSet) {
-    setEditingSet((current) =>
-      current?.set.localId === set.localId ? current : { set, draft: draftFromSet(set) },
-    );
-  }
-
   function openPicker(kind: 'weight' | 'reps', set?: PendingSet) {
     let source = draft;
     if (set) {
       const nextEditing =
-        editingSet?.set.localId === set.localId ? editingSet : { set, draft: draftFromSet(set) };
+        editingSet?.set.localId === set.localId
+          ? editingSet
+          : { set, draft: draftFromSet(set), awaitingPersistence: false };
       setEditingSet(nextEditing);
       source = nextEditing.draft;
     } else {
@@ -231,9 +243,10 @@ export function EditableSetsTable({
         : { ...current, reps: Math.max(1, Math.round(value)) };
 
     if (editingSet) {
-      setEditingSet((current) =>
-        current ? { ...current, draft: updateDraft(current.draft) } : current,
-      );
+      const nextDraft = updateDraft(editingSet.draft);
+      setPicker(null);
+      void persistEditedSet(editingSet.set, nextDraft);
+      return;
     } else {
       setDraft(updateDraft);
       setAppliedRecommendationKey(null);
@@ -242,11 +255,8 @@ export function EditableSetsTable({
   }
 
   function updateEditingRir(set: PendingSet, rir: number | null) {
-    setEditingSet((current) => {
-      const next =
-        current?.set.localId === set.localId ? current : { set, draft: draftFromSet(set) };
-      return { ...next, draft: { ...next.draft, rir } };
-    });
+    const current = editingSet?.set.localId === set.localId ? editingSet.draft : draftFromSet(set);
+    void persistEditedSet(set, { ...current, rir });
   }
 
   async function confirmRow() {
@@ -268,31 +278,28 @@ export function EditableSetsTable({
     }
   }
 
-  async function confirmEditedSet() {
+  async function persistEditedSet(set: PendingSet, nextDraft: DraftSet) {
+    const normalizedDraft = {
+      ...nextDraft,
+      weight: constrainGymWeight(nextDraft.weight, nextDraft.weight, loadConstraints),
+    };
+
     if (
       disabled ||
-      !editingSet ||
-      updatingSetId === editingSet.set.localId ||
-      editingSet.draft.reps <= 0 ||
-      editingSet.draft.weight < 0
+      updatingSetId === set.localId ||
+      normalizedDraft.reps <= 0 ||
+      normalizedDraft.weight < 0
     ) {
       return;
     }
 
-    setUpdatingSetId(editingSet.set.localId);
+    setEditingSet({ set, draft: normalizedDraft, awaitingPersistence: true });
+    setUpdatingSetId(set.localId);
     try {
-      await onUpdateSet(editingSet.set, {
-        weight: constrainGymWeight(
-          editingSet.draft.weight,
-          editingSet.draft.weight,
-          loadConstraints,
-        ),
-        reps: editingSet.draft.reps,
-        rir: editingSet.draft.rir,
-      });
-      setEditingSet(null);
+      await onUpdateSet(set, normalizedDraft);
     } catch {
-      // The parent shows the localized error and the row remains editable.
+      // The parent shows the localized error; revert the optimistic row values.
+      setEditingSet(null);
     } finally {
       setUpdatingSetId(null);
     }
@@ -360,8 +367,6 @@ export function EditableSetsTable({
               <select
                 aria-label={t('rir', { number: rowNumber })}
                 value={rowDraft.rir ?? ''}
-                onPointerDown={() => beginEditing(set)}
-                onFocus={() => beginEditing(set)}
                 onChange={(event) =>
                   updateEditingRir(
                     set,
@@ -385,24 +390,9 @@ export function EditableSetsTable({
                   locale,
                 })}
               </span>
-              {isEditing ? (
-                <Button
-                  type="button"
-                  size="icon"
-                  onClick={confirmEditedSet}
-                  disabled={disabled || isUpdating || rowDraft.reps <= 0}
-                  aria-label={t('save', { number: rowNumber })}
-                  className="size-9 justify-self-center sm:size-10"
-                >
-                  {isUpdating ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Check className="size-5" />
-                  )}
-                </Button>
-              ) : (
-                <span aria-hidden />
-              )}
+              <span className="flex items-center justify-center" aria-hidden>
+                {isUpdating && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+              </span>
             </div>
           );
         })}
