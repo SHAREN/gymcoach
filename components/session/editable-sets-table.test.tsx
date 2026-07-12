@@ -21,6 +21,31 @@ const programExercise = {
 } as never;
 
 describe('EditableSetsTable', () => {
+  it('uses compact responsive columns without horizontal scrolling', () => {
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onDeleteSet={vi.fn()}
+      />,
+    );
+
+    const table = screen.getByTestId('editable-sets-table');
+    const header = screen.getByTestId('editable-sets-header');
+
+    expect(table.querySelector('[class~="overflow-x-auto"]')).not.toBeInTheDocument();
+    expect(table.querySelector('[class*="min-w-[31rem]"]')).not.toBeInTheDocument();
+    expect(header).toHaveClass(
+      'grid-cols-[1.25rem_minmax(0,1fr)_2.75rem_3rem_3.5rem_2.5rem]',
+      'sm:grid-cols-[2.5rem_minmax(5rem,1fr)_4.5rem_4rem_5rem_3.25rem]',
+    );
+  });
+
   it('edits and confirms the active set row through the value pickers', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
