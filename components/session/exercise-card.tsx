@@ -22,16 +22,10 @@ export function ExerciseCard({ programExercise, gymName = null, loadConstraints 
   const [notesOpen, setNotesOpen] = useState(false);
   const exo = programExercise.exercise;
   const displayName = exerciseName(exo.name);
-  const isCardio = exo.category === 'CARDIO';
   const showContextBadges = gymName != null || loadConstraints?.isAvailable === false;
 
-  const repsLabel =
-    programExercise.targetRepsMin === programExercise.targetRepsMax
-      ? `${programExercise.targetRepsMin}`
-      : `${programExercise.targetRepsMin}-${programExercise.targetRepsMax}`;
-
   return (
-    <Card className="min-w-0">
+    <Card data-testid="exercise-card" className="min-w-0">
       <CardHeader className="min-w-0 pb-3">
         <div
           data-testid="exercise-title-scroll"
@@ -52,23 +46,8 @@ export function ExerciseCard({ programExercise, gymName = null, loadConstraints 
         )}
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-3 pt-0">
-        <p className="text-sm font-medium">
-          {isCardio
-            ? t('cardioPrescription', {
-                sets: programExercise.targetSets,
-                seconds: programExercise.restSec,
-              })
-            : t('strengthPrescription', {
-                sets: programExercise.targetSets,
-                reps: repsLabel,
-                rir: programExercise.targetRIR,
-                seconds: programExercise.restSec,
-                tempo: programExercise.tempo ?? 'none',
-              })}
-        </p>
-
-        {programExercise.notes && (
+      {programExercise.notes && (
+        <CardContent className="pt-0">
           <div>
             <Button
               variant="ghost"
@@ -85,8 +64,8 @@ export function ExerciseCard({ programExercise, gymName = null, loadConstraints 
               </div>
             )}
           </div>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
     </Card>
   );
 }
