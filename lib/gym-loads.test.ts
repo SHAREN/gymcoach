@@ -3,9 +3,17 @@ import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
   constructibleBarbellWeights,
+  resolveEquipmentType,
 } from '@/lib/gym-loads';
 
 describe('saved gym load constraints', () => {
+  it('recovers equipment types for legacy exercises saved as OTHER', () => {
+    expect(resolveEquipmentType('OTHER', 'Bent-over barbell row')).toBe('BARBELL');
+    expect(resolveEquipmentType('OTHER', 'Тяга штанги в наклоне')).toBe('BARBELL');
+    expect(resolveEquipmentType('OTHER', 'Incline dumbbell press')).toBe('DUMBBELL');
+    expect(resolveEquipmentType('MACHINE', 'Barbell-looking machine')).toBe('MACHINE');
+  });
+
   it('steps down to an actually available dumbbell across inventory gaps', () => {
     const weight = constrainGymWeight(17.1, 19, {
       equipmentType: 'DUMBBELL',

@@ -18,7 +18,7 @@ import { loadPreferences } from '@/lib/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { SetValuePicker } from '@/components/session/set-value-picker';
 import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
 
 interface Props {
@@ -170,7 +170,6 @@ export function EditableSetsTable({
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
-  const [manualValue, setManualValue] = useState('');
   const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiText, setAiText] = useState('');
@@ -291,32 +290,30 @@ export function EditableSetsTable({
   }
 
   function openPicker(kind: 'weight' | 'reps', set?: PendingSet) {
-    let source = draft;
     if (set) {
       const nextEditing =
         editingSet?.set.localId === set.localId
           ? editingSet
           : { set, draft: draftFromSet(set), awaitingPersistence: false };
       setEditingSet(nextEditing);
-      source = nextEditing.draft;
     } else {
       setEditingSet(null);
     }
 
     setPicker(kind);
-    setManualValue(
-      kind === 'weight'
-        ? String(
-            unit === 'LB' ? roundWeight(toDisplayWeight(source.weight, unit), 1) : source.weight,
-          )
-        : String(source.reps),
-    );
   }
 
   function chooseValue(value: number) {
     const updateDraft = (current: DraftSet): DraftSet =>
       picker === 'weight'
-        ? { ...current, weight: fromDisplayWeight(value, unit) }
+        ? {
+            ...current,
+            weight: constrainGymWeight(
+              fromDisplayWeight(value, unit),
+              current.weight,
+              loadConstraints,
+            ),
+          }
         : { ...current, reps: Math.max(1, Math.round(value)) };
 
     if (editingSet) {
@@ -639,58 +636,28 @@ export function EditableSetsTable({
         })}
       </div>
 
-      <Dialog open={picker != null} onOpenChange={(open) => !open && setPicker(null)}>
-        <DialogContent className="bottom-0 left-0 top-auto max-h-[82vh] w-full max-w-none translate-x-0 translate-y-0 gap-3 rounded-t-lg border-x-0 border-b-0 p-4 sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:border">
-          <DialogTitle>
-            {picker === 'weight' ? t('chooseWeight', { unit }) : t('chooseReps')}
-          </DialogTitle>
-          <div className="flex gap-2">
-            <Input
-              autoFocus
-              type="number"
-              inputMode={picker === 'weight' ? 'decimal' : 'numeric'}
-              step={picker === 'weight' ? '0.1' : '1'}
-              min="0"
-              value={manualValue}
-              onChange={(event) => setManualValue(event.target.value)}
-              className="h-12 text-center text-xl font-semibold tabular-nums"
-            />
-            <Button
-              type="button"
-              size="icon"
-              className="size-12 shrink-0"
-              onClick={() => chooseValue(Number(manualValue) || 0)}
-              aria-label={t('applyValue')}
-            >
-              <Check className="size-6" />
-            </Button>
-          </div>
-          <div className="max-h-[55vh] space-y-2 overflow-y-auto overscroll-contain py-1">
-            {(picker === 'weight' ? availableWeights : repOptions).map((value) => {
-              const shown =
-                picker === 'weight'
-                  ? unit === 'LB'
-                    ? roundWeight(toDisplayWeight(value, unit), 1)
-                    : value
-                  : value;
-              const selected =
-                picker === 'weight' ? value === pickerDraft.weight : value === pickerDraft.reps;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => chooseValue(shown)}
-                  className={`flex h-16 w-full items-center justify-center rounded-md border text-xl font-semibold tabular-nums ${
-                    selected ? 'border-primary bg-primary/10' : 'border-border bg-muted/40'
-                  }`}
-                >
-                  {shown} {picker === 'weight' ? unit.toLowerCase() : t('repsShort')}
-                </button>
-              );
-            })}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SetValuePicker
+        open={picker != null}
+        kind={picker ?? 'weight'}
+        value={
+          picker === 'reps'
+            ? pickerDraft.reps
+            : unit === 'LB'
+              ? roundWeight(toDisplayWeight(pickerDraft.weight, unit), 1)
+              : pickerDraft.weight
+        }
+        options={
+          picker === 'reps'
+            ? repOptions
+            : availableWeights.map((weight) =>
+                unit === 'LB' ? roundWeight(toDisplayWeight(weight, unit), 1) : weight,
+              )
+        }
+        unit={unit}
+        loadConstraints={loadConstraints}
+        onClose={() => setPicker(null)}
+        onChoose={chooseValue}
+      />
     </section>
   );
 }

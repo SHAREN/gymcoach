@@ -43,6 +43,37 @@ export interface PlateLoad {
   exact: boolean;
 }
 
+export function computeBestPlateLoad(
+  targetWeight: number,
+  availableBars: number[],
+  availablePlates: number[],
+  fallbackBarWeight: number,
+): PlateLoad {
+  const bars = [
+    ...new Set(
+      availableBars
+        .filter((weight) => Number.isFinite(weight) && weight > 0)
+        .map((weight) => clean(weight)),
+    ),
+  ];
+  const candidates = (bars.length > 0 ? bars : [fallbackBarWeight]).map((barWeight) =>
+    computePlateLoad(targetWeight, barWeight, availablePlates),
+  );
+  return candidates.sort(
+    (a, b) =>
+      Number(b.exact) - Number(a.exact) ||
+      a.remainder - b.remainder ||
+      b.achievedWeight - a.achievedWeight ||
+      plateCount(a) - plateCount(b) ||
+      Math.abs(a.barWeight - fallbackBarWeight) - Math.abs(b.barWeight - fallbackBarWeight) ||
+      a.barWeight - b.barWeight,
+  )[0]!;
+}
+
+function plateCount(load: PlateLoad): number {
+  return load.perSide.reduce((sum, group) => sum + group.count, 0);
+}
+
 // Round to a small number of decimals to kill floating-point noise from the
 // repeated subtraction (e.g. 2.5 + 1.25 sums).
 function clean(value: number): number {
