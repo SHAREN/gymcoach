@@ -4,6 +4,10 @@ Read and follow `CLAUDE.md` for the repository architecture, code conventions,
 verification gate, security rules, and Git workflow. The requirements below
 apply to every coding or analysis agent working in this repository.
 
+Before changing or explaining any training calculation, also read
+`docs/ai-coach-principles.md`. It is the normative contract for source-backed
+principles, engineering heuristics, current formulas and safety boundaries.
+
 ## Mandatory training-science research workflow
 
 Any question, design decision, algorithm, prompt, recommendation, or code change
@@ -37,6 +41,8 @@ Required workflow:
    established science when the notebook sources do not specify it.
 7. Record which notebook was consulted and summarize the evidence that drove
    the implementation or recommendation.
+8. Update `docs/ai-coach-principles.md` in the same change whenever a training
+   formula, threshold, prompt rule or safety boundary changes.
 
 If NotebookLM is unavailable, explicitly report the problem. Do not finalize a
 training-methodology decision by inventing evidence or silently substituting an

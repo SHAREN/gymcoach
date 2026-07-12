@@ -4,6 +4,11 @@ GymCoach exposes a Streamable HTTP MCP endpoint at `/mcp`. It lets external AI
 agents read the trainee context and, with an explicitly write-enabled token,
 create or edit training programs.
 
+The repository's normative coaching and calculation contract is documented in
+[`ai-coach-principles.md`](ai-coach-principles.md). MCP integrations must keep
+their recommendations consistent with its safety, evidence and user-control
+rules.
+
 ## Connect ChatGPT
 
 1. Sign in to GymCoach and open **Settings -> ChatGPT and MCP**.
