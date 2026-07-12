@@ -45,9 +45,7 @@ async function seedRunningSession(page: Page): Promise<string> {
   return session.id as string;
 }
 
-test('a lifter can ask the coach mid-session with the live workout attached', async ({
-  page,
-}) => {
+test('a lifter can ask the coach mid-session with the live workout attached', async ({ page }) => {
   // Sign up through the API (fresh user each run; the response cookie lands in
   // the shared browser context). A unique X-Forwarded-For keeps this spec in
   // its own register rate-limit bucket: the suite's parallel UI signups
@@ -76,7 +74,7 @@ test('a lifter can ask the coach mid-session with the live workout attached', as
 
   // Ask a mid-workout question: the demo provider streams the in-session
   // canned answer, proving the currentSession context reached the LLM call.
-  await page.getByPlaceholder('Message your coach...').fill('My shoulder feels off, what now?');
-  await page.getByPlaceholder('Message your coach...').press('Enter');
+  await page.getByPlaceholder('Ask your coach...').fill('My shoulder feels off, what now?');
+  await page.getByPlaceholder('Ask your coach...').press('Enter');
   await expect(page.getByText('looking at your live session')).toBeVisible({ timeout: 15_000 });
 });

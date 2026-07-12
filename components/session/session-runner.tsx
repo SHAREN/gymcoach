@@ -51,9 +51,11 @@ import { SessionSummary } from '@/components/session/session-summary';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { EditableSetsTable } from '@/components/session/editable-sets-table';
+import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
+import type { ReturnRecommendation } from '@/lib/return-to-training';
 import {
   DROP_SET_TRANSITION_REST_SEC,
   isPlannedExerciseComplete,
@@ -87,6 +89,7 @@ type SessionRunnerProps = {
     gym: (Gym & { exerciseConfigs: GymExerciseConfig[] }) | null;
   };
   lastPerformances: Record<string, SerializedLastPerformance>;
+  returnRecommendations: Record<string, ReturnRecommendation>;
   // Latest in-window readiness check-in (or null). Drives whether the load
   // suggestion is held/reduced and the matching explainer in the UI.
   readiness: ReadinessSignal | null;
@@ -112,6 +115,7 @@ type Mode =
 export function SessionRunner({
   session,
   lastPerformances,
+  returnRecommendations,
   readiness,
   deloadActive,
   unit,
@@ -128,6 +132,24 @@ export function SessionRunner({
   // workout without supersets this is exactly the stored order.
   const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
   const programExercises = supersetView.ordered;
+  const effectiveProgramExercises = useMemo<ProgramExerciseWithExercise[]>(
+    () =>
+      programExercises.map((pe) => {
+        const recommendation = returnRecommendations[pe.id];
+        if (!recommendation || recommendation.mode === 'normal') return pe;
+        return {
+          ...pe,
+          targetSets: recommendation.targetSets,
+          targetDropSets: 0,
+          targetRIR: recommendation.targetRIR,
+        };
+      }),
+    [programExercises, returnRecommendations],
+  );
+  const effectiveProgramExerciseById = useMemo(
+    () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
+    [effectiveProgramExercises],
+  );
 
   const initialProgramExerciseId =
     (initialExerciseId
@@ -151,6 +173,7 @@ export function SessionRunner({
   const selectedIndex = programExercises.findIndex((pe) => pe.id === selectedProgramExerciseId);
   const currentIdx = selectedIndex >= 0 ? selectedIndex : 0;
   const currentPE = programExercises[currentIdx];
+  const currentTarget = effectiveProgramExercises[currentIdx];
 
   useEffect(() => {
     if (pendingProgramExerciseId) {
@@ -223,8 +246,8 @@ export function SessionRunner({
   }, [liveSets]);
 
   const programExerciseByExerciseId = useMemo(
-    () => new Map(programExercises.map((pe) => [pe.exerciseId, pe])),
-    [programExercises],
+    () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
+    [effectiveProgramExercises],
   );
 
   function recommendationFor(
@@ -269,6 +292,7 @@ export function SessionRunner({
       recoverySec: Math.max(0, (atMs - lastWorkingSet.createdAt) / 1000),
       sameMuscleSuperset,
       allowLoadIncrease,
+      maxWeight: returnRecommendations[pe.id]?.weightCeiling ?? null,
       loadConstraints: loadConstraintsFor(pe),
     });
   }
@@ -298,21 +322,21 @@ export function SessionRunner({
 
   const completedExerciseCount = useMemo(() => {
     let count = 0;
-    for (const pe of programExercises) {
+    for (const pe of effectiveProgramExercises) {
       const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
       if (isPlannedExerciseComplete(pe, exerciseSets)) count += 1;
     }
     return count;
-  }, [programExercises, setsByExercise]);
+  }, [effectiveProgramExercises, setsByExercise]);
 
   const completedExerciseIds = useMemo(() => {
     const completed = new Set<string>();
-    for (const pe of programExercises) {
+    for (const pe of effectiveProgramExercises) {
       const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
       if (isPlannedExerciseComplete(pe, exerciseSets)) completed.add(pe.exerciseId);
     }
     return completed;
-  }, [programExercises, setsByExercise]);
+  }, [effectiveProgramExercises, setsByExercise]);
 
   const progressPct =
     programExercises.length === 0
@@ -329,7 +353,7 @@ export function SessionRunner({
     isDropSet: boolean;
     notes: string | null;
   }) {
-    if (!currentPE) return;
+    if (!currentPE || !currentTarget) return;
     const existing = setsByExercise.get(currentPE.exerciseId) ?? [];
     const setNumber = (existing.at(-1)?.setNumber ?? 0) + 1;
 
@@ -359,10 +383,15 @@ export function SessionRunner({
     const submittedSet = { isWarmup: values.isWarmup, isDropSet: values.isDropSet };
     const remainingAfterThisSet = (pe: ProgramExerciseWithExercise) => {
       const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
-      return remainingPlannedSets(pe, exerciseSets, pe.id === currentPE.id ? submittedSet : null);
+      const target = effectiveProgramExerciseById.get(pe.id) ?? pe;
+      return remainingPlannedSets(
+        target,
+        exerciseSets,
+        pe.id === currentPE.id ? submittedSet : null,
+      );
     };
     const dropSetTransition =
-      !values.isWarmup && nextPlannedSetIsDropSet(currentPE, [...existing, submittedSet]);
+      !values.isWarmup && nextPlannedSetIsDropSet(currentTarget, [...existing, submittedSet]);
     const nextIdx =
       values.isWarmup || dropSetTransition
         ? null
@@ -376,7 +405,7 @@ export function SessionRunner({
       ? DROP_SET_TRANSITION_REST_SEC
       : transition
         ? SUPERSET_TRANSITION_REST_SEC
-        : currentPE.restSec;
+        : currentTarget.restSec;
 
     // Inside a superset, show the next member immediately so the athlete can
     // get into position while the transition timer is running. The timer only
@@ -516,7 +545,10 @@ export function SessionRunner({
   // Next is linear for standalone exercises (unchanged) and cycles within a
   // superset group before advancing past it (issue #146).
   const remainingNow = (pe: ProgramExerciseWithExercise) =>
-    remainingPlannedSets(pe, setsByExercise.get(pe.exerciseId) ?? []);
+    remainingPlannedSets(
+      effectiveProgramExerciseById.get(pe.id) ?? pe,
+      setsByExercise.get(pe.exerciseId) ?? [],
+    );
   const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
   function goNext() {
     if (navNextIdx == null) return;
@@ -529,7 +561,7 @@ export function SessionRunner({
       <SessionSummary
         session={session}
         sets={liveSets}
-        programExercises={programExercises}
+        programExercises={effectiveProgramExercises}
         unit={unit}
         priorSets={priorSetsByExercise}
         onBack={() => setMode({ kind: 'input' })}
@@ -539,7 +571,7 @@ export function SessionRunner({
     );
   }
 
-  if (!currentPE) {
+  if (!currentPE || !currentTarget) {
     return (
       <main className="flex flex-1 items-center justify-center px-4 py-6">
         <p className="text-muted-foreground">{t('noExercises')}</p>
@@ -549,15 +581,16 @@ export function SessionRunner({
 
   const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
-  const currentRecommendation = nextPlannedSetIsDropSet(currentPE, currentSets)
+  const currentReturnRecommendation = returnRecommendations[currentPE.id];
+  const currentRecommendation = nextPlannedSetIsDropSet(currentTarget, currentSets)
     ? null
-    : recommendationFor(currentPE, Date.now());
+    : recommendationFor(currentTarget, Date.now());
   const restNextPe =
     mode.kind === 'rest'
       ? mode.nextExerciseIdx != null
-        ? (programExercises[mode.nextExerciseIdx] ?? null)
-        : remainingPlannedSets(currentPE, currentSets) > 0
-          ? currentPE
+        ? (effectiveProgramExercises[mode.nextExerciseIdx] ?? null)
+        : remainingPlannedSets(currentTarget, currentSets) > 0
+          ? currentTarget
           : null
       : null;
   const restNextLabel =
@@ -625,6 +658,11 @@ export function SessionRunner({
           loadConstraints={loadConstraintsFor(currentPE)}
           onOpenMenu={() => setExerciseMenuOpen(true)}
         />
+        <ReturnToTrainingNotice
+          recommendation={currentReturnRecommendation}
+          unit={unit}
+          usesBodyweight={currentTarget.exercise.usesBodyweight}
+        />
         <SessionExerciseMenu
           open={exerciseMenuOpen}
           onOpenChange={setExerciseMenuOpen}
@@ -639,7 +677,7 @@ export function SessionRunner({
         {currentPE.exercise.category === 'CARDIO' ? (
           <>
             <SetsList
-              programExercise={currentPE}
+              programExercise={currentTarget}
               sets={currentSets}
               isInputActive={mode.kind === 'input'}
               onDeleteSet={handleDeleteSet}
@@ -647,14 +685,14 @@ export function SessionRunner({
             />
             {!hydrated ? null : mode.kind === 'input' ? (
               <SetInput
-                programExercise={currentPE}
+                programExercise={currentTarget}
                 existingSets={currentSets}
                 lastPerformance={lastPerf}
                 readiness={effectiveReadiness}
                 deloadActive={deloadActive}
                 unit={unit}
                 recommendation={currentRecommendation}
-                loadConstraints={loadConstraintsFor(currentPE)}
+                loadConstraints={loadConstraintsFor(currentTarget)}
                 onSubmit={handleValidate}
               />
             ) : (
@@ -673,14 +711,15 @@ export function SessionRunner({
         ) : (
           <>
             <EditableSetsTable
-              programExercise={currentPE}
+              programExercise={currentTarget}
               sets={currentSets}
               lastPerformance={lastPerf}
               readiness={effectiveReadiness}
               deloadActive={deloadActive}
               unit={unit}
               recommendation={currentRecommendation}
-              loadConstraints={loadConstraintsFor(currentPE)}
+              returnRecommendation={currentReturnRecommendation}
+              loadConstraints={loadConstraintsFor(currentTarget)}
               disabled={!hydrated || mode.kind !== 'input'}
               onSubmit={handleValidate}
               onUpdateSet={handleUpdateSet}
