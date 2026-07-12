@@ -28,7 +28,10 @@ describe('GymCoach MCP server', () => {
     const tools = await client.listTools();
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
     expect(byName.has('get_training_context')).toBe(true);
+    expect(byName.has('get_program_design_context')).toBe(true);
+    expect(byName.has('validate_program_draft')).toBe(true);
     expect(byName.has('create_program')).toBe(true);
+    expect(byName.has('create_program_revision')).toBe(true);
     expect(byName.has('update_program_exercise')).toBe(true);
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);
@@ -37,8 +40,12 @@ describe('GymCoach MCP server', () => {
     expect(resources.resources.map((resource) => resource.uri)).toContain(
       'gymcoach://instructions/agent',
     );
+    expect(resources.resources.map((resource) => resource.uri)).toContain(
+      'gymcoach://methodology/program-design',
+    );
     const prompts = await client.listPrompts();
     expect(prompts.prompts.map((prompt) => prompt.name)).toContain('build-training-program');
+    expect(prompts.prompts.map((prompt) => prompt.name)).toContain('extend-training-program');
 
     const instructions = await client.readResource({ uri: 'gymcoach://instructions/agent' });
     expect(instructions.contents[0]).toMatchObject({ text: GYMCOACH_MCP_INSTRUCTIONS });

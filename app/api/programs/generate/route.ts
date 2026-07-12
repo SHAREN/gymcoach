@@ -1,17 +1,9 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { LlmError } from '@/lib/llm';
 import { rateLimit } from '@/lib/rate-limit';
 import { generateProgram } from '@/lib/program-generation';
-
-const bodySchema = z.object({
-  goal: z
-    .string()
-    .trim()
-    .min(10, 'Describe your goal in a bit more detail.')
-    .max(2000),
-});
+import { programDesignRequestSchema } from '@/lib/schemas/program-design';
 
 // POST /api/programs/generate: returns a structured program draft for the
 // user to preview and edit. Does not persist anything.
@@ -25,9 +17,9 @@ export async function POST(req: Request) {
         { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
       );
     }
-    const { goal } = await parseJsonBody(req, bodySchema);
-    const program = await generateProgram(userId, goal);
-    return NextResponse.json({ program });
+    const input = await parseJsonBody(req, programDesignRequestSchema);
+    const result = await generateProgram(userId, input);
+    return NextResponse.json(result);
   } catch (err) {
     if (err instanceof LlmError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

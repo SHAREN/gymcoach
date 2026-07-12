@@ -27,6 +27,9 @@ Required workflow:
 1. Inspect the notebook and its current sources before querying it.
 2. Ask at least three distinct NotebookLM questions for each training-science
    topic. A single broad query is not sufficient.
+   Run independent questions in parallel through lower-cost subagents when
+   available. The main agent remains responsible for reconciling answers and
+   distinguishing evidence from heuristics.
 3. Include separate questions for:
    - source-backed principles and direct recommendations;
    - edge cases, risks, contraindications, and competing interpretations;

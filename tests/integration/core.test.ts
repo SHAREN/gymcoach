@@ -88,6 +88,74 @@ describe('buildProgramFromGenerated', () => {
     const names = program?.workouts[0]?.exercises.map((pe) => pe.exercise.name).sort();
     expect(names).toEqual(['Barbell bench press', 'Brand New Cable Thing']);
   });
+
+  it('creates an inactive next mesocycle linked to its source program', async () => {
+    const user = await makeUser('revision@test.dev');
+    const sourceId = await buildProgramFromGenerated(user.id, {
+      name: 'Phase 1',
+      phase: 'Accumulation',
+      workouts: [],
+    });
+    const revisionId = await buildProgramFromGenerated(
+      user.id,
+      { name: 'Phase 2', phase: 'Intensification', workouts: [] },
+      { sourceProgramId: sourceId, methodologyVersion: 'test-methodology' },
+    );
+
+    const revision = await db.program.findUnique({ where: { id: revisionId } });
+    expect(revision).toMatchObject({
+      parentProgramId: sourceId,
+      methodologyVersion: 'test-methodology',
+      isActive: false,
+    });
+  });
+
+  it('reuses an existing catalog exercise case-insensitively', async () => {
+    const user = await makeUser('case-insensitive-exercise@test.dev');
+    const existing = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Bench press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    });
+
+    const programId = await buildProgramFromGenerated(user.id, {
+      name: 'Case test',
+      phase: 'Hypertrophy',
+      workouts: [
+        {
+          name: 'Push',
+          exercises: [
+            {
+              name: 'bench PRESS',
+              muscleGroup: 'BICEPS',
+              category: 'ISOLATION',
+              equipmentType: 'DUMBBELL',
+              targetSets: 3,
+              targetRepsMin: 6,
+              targetRepsMax: 10,
+              targetRIR: 2,
+              restSec: 120,
+            },
+          ],
+        },
+      ],
+    });
+
+    const persisted = await db.programExercise.findFirst({
+      where: { workout: { programId } },
+      include: { exercise: true },
+    });
+    expect(persisted?.exerciseId).toBe(existing.id);
+    expect(persisted?.exercise).toMatchObject({
+      muscleGroup: 'CHEST',
+      category: 'COMPOUND',
+      equipmentType: 'BARBELL',
+    });
+  });
 });
 
 describe('built-in program templates materialize into a Program', () => {
@@ -204,7 +272,14 @@ describe('buildCoachPayload cardio exclusion (issue #140)', () => {
       data: { sessionId: session.id, exerciseId: bench.id, setNumber: 1, weight: 80, reps: 8 },
     });
     await db.set.create({
-      data: { sessionId: session.id, exerciseId: bench.id, setNumber: 2, weight: 40, reps: 10, isWarmup: true },
+      data: {
+        sessionId: session.id,
+        exerciseId: bench.id,
+        setNumber: 2,
+        weight: 40,
+        reps: 10,
+        isWarmup: true,
+      },
     });
     await db.set.create({
       data: {
@@ -271,13 +346,9 @@ describe('buildCoachPayload conditioning (issue #145)', () => {
     const inPreviousWeek = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000);
 
     // Two cardio sessions this week (30 min / 5 km and 10 min), one last week.
-    await cardioSession(user.id, run.id, inCurrentWeek, [
-      { durationSec: 1800, distanceM: 5000 },
-    ]);
+    await cardioSession(user.id, run.id, inCurrentWeek, [{ durationSec: 1800, distanceM: 5000 }]);
     await cardioSession(user.id, run.id, inCurrentWeek, [{ durationSec: 600 }]);
-    await cardioSession(user.id, run.id, inPreviousWeek, [
-      { durationSec: 3600, distanceM: 10000 },
-    ]);
+    await cardioSession(user.id, run.id, inPreviousWeek, [{ durationSec: 3600, distanceM: 10000 }]);
 
     const payload = await buildCoachPayload(user.id);
     expect(payload.conditioning.weekCurrent).toEqual({
@@ -337,9 +408,7 @@ describe('buildCoachPayload conditioning (issue #145)', () => {
     const { user: userB, run: runB } = await makeCardioUser('conditioning-b@test.dev');
     const weekStart = isoWeekStart(new Date());
     const inCurrentWeek = new Date(weekStart.getTime() + 60 * 60 * 1000);
-    await cardioSession(userB.id, runB.id, inCurrentWeek, [
-      { durationSec: 1800, distanceM: 5000 },
-    ]);
+    await cardioSession(userB.id, runB.id, inCurrentWeek, [{ durationSec: 1800, distanceM: 5000 }]);
 
     const payload = await buildCoachPayload(userA.id);
     expect(payload.conditioning.weekCurrent).toEqual({ minutes: 0, km: 0, sessions: 0 });
@@ -507,11 +576,7 @@ describe('buildCoachPayload goals (issue #101)', () => {
 describe('buildCoachPayload fatigue (issue #101)', () => {
   // Three sessions on distinct days with an identical top set: e1RM flat over
   // the full stall lookback -> isStalled flags the lift.
-  async function seedStalledLift(
-    userId: string,
-    name: string,
-    daysAgo: number[] = [10, 9, 8],
-  ) {
+  async function seedStalledLift(userId: string, name: string, daysAgo: number[] = [10, 9, 8]) {
     const exercise = await db.exercise.create({
       data: { userId, name, muscleGroup: 'CHEST', category: 'COMPOUND' },
     });
@@ -570,9 +635,7 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
     const payload = await buildCoachPayload(user.id);
     expect(payload.fatigue.stalledExercises).toEqual(['Bench', 'Squat']);
     expect(payload.fatigue.deloadRecommended).toBe(true);
-    expect(payload.fatigue.deloadReasons).toEqual([
-      '2 lifts have stalled: Bench, Squat.',
-    ]);
+    expect(payload.fatigue.deloadReasons).toEqual(['2 lifts have stalled: Bench, Squat.']);
   });
 
   it('does not recommend a deload on a single stalled lift', async () => {
