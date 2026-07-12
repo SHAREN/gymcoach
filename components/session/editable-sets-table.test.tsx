@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditableSetsTable } from './editable-sets-table';
 import type { PendingSet } from '@/lib/indexeddb';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
@@ -104,11 +104,18 @@ describe('EditableSetsTable', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /weight/i }));
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '100' } });
+    let keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(keypad.getByRole('button', { name: '1' }));
+    fireEvent.click(keypad.getByRole('button', { name: '0' }));
+    fireEvent.click(keypad.getByRole('button', { name: '0' }));
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
 
     fireEvent.click(screen.getByRole('button', { name: /repetitions/i }));
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '10' } });
+    keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(screen.getByRole('button', { name: /delete last digit/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete last digit/i }));
+    fireEvent.click(keypad.getByRole('button', { name: '1' }));
+    fireEvent.click(keypad.getByRole('button', { name: '0' }));
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
     fireEvent.change(screen.getByRole('combobox', { name: /reps in reserve/i }), {
       target: { value: '1' },
@@ -161,7 +168,14 @@ describe('EditableSetsTable', () => {
     expect(recommendationButton).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Set 2 weight in KG' }));
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '97.5' } });
+    for (let index = 0; index < 4; index += 1) {
+      fireEvent.click(screen.getByRole('button', { name: /delete last digit/i }));
+    }
+    const keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(keypad.getByRole('button', { name: '9' }));
+    fireEvent.click(keypad.getByRole('button', { name: '7' }));
+    fireEvent.click(keypad.getByRole('button', { name: '.' }));
+    fireEvent.click(keypad.getByRole('button', { name: '5' }));
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
 
     expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
@@ -211,7 +225,12 @@ describe('EditableSetsTable', () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Set 1 weight in KG' }));
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '95' } });
+    for (let index = 0; index < 3; index += 1) {
+      fireEvent.click(screen.getByRole('button', { name: /delete last digit/i }));
+    }
+    let keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(keypad.getByRole('button', { name: '9' }));
+    fireEvent.click(keypad.getByRole('button', { name: '5' }));
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
 
     await waitFor(() =>
@@ -223,7 +242,11 @@ describe('EditableSetsTable', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Set 1 repetitions' }));
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '9' } });
+    for (let index = 0; index < 2; index += 1) {
+      fireEvent.click(screen.getByRole('button', { name: /delete last digit/i }));
+    }
+    keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(keypad.getByRole('button', { name: '9' }));
     fireEvent.click(screen.getByRole('button', { name: /apply value/i }));
 
     await waitFor(() =>

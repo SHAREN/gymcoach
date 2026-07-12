@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  computeBestPlateLoad,
   computePlateLoad,
   DEFAULT_BAR_WEIGHT,
   DEFAULT_PLATES,
@@ -101,5 +102,19 @@ describe('computePlateLoad', () => {
     expect(DEFAULT_BAR_WEIGHT.KG).toBe(20);
     expect(DEFAULT_BAR_WEIGHT.LB).toBe(45);
     expect(DEFAULT_PLATES.KG[0]).toBeGreaterThan(DEFAULT_PLATES.KG.at(-1)!);
+  });
+
+  it('chooses the saved bar that loads the target exactly', () => {
+    const load = computeBestPlateLoad(65, [15, 20], [20, 2.5, 1.25], 20);
+    expect(load).toMatchObject({
+      exact: true,
+      barWeight: 20,
+      achievedWeight: 65,
+      remainder: 0,
+      perSide: [
+        { plate: 20, count: 1 },
+        { plate: 2.5, count: 1 },
+      ],
+    });
   });
 });

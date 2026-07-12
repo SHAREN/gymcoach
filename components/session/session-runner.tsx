@@ -60,7 +60,7 @@ import { PreviousSessionSets } from '@/components/session/previous-session-sets'
 import { EditableSetsTable } from '@/components/session/editable-sets-table';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
-import type { GymLoadConstraints } from '@/lib/gym-loads';
+import { resolveEquipmentType, type GymLoadConstraints } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import {
   DROP_SET_TRANSITION_REST_SEC,
@@ -335,11 +335,13 @@ export function SessionRunner({
     });
   }
 
-  function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints | null {
-    if (!session.gym) return null;
+  function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints {
+    const equipmentType = resolveEquipmentType(pe.exercise.equipmentType, pe.exercise.name);
+    if (!session.gym) return { equipmentType };
+
     const config = session.gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
     return {
-      equipmentType: pe.exercise.equipmentType,
+      equipmentType,
       isAvailable: config?.isAvailable ?? true,
       dumbbellWeights: session.gym.dumbbellWeights,
       plateWeights: session.gym.plateWeights,
