@@ -74,6 +74,7 @@ export const common = {
     description: 'Выберите язык интерфейса GymCoach.',
     english: 'Английский',
     russian: 'Русский',
+    error: 'Не удалось сменить язык.',
   },
   theme: {
     dark: 'Тёмная',
