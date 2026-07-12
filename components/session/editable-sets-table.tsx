@@ -71,17 +71,8 @@ function initialDraft(
   lastPerformance: SerializedLastPerformance | undefined,
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
-  recommendation: IntraSetRecommendation | null,
   loadConstraints: GymLoadConstraints | null,
 ): DraftSet {
-  if (recommendation) {
-    return {
-      weight: recommendation.weight,
-      reps: recommendation.reps,
-      rir: recommendation.rir,
-    };
-  }
-
   const workingSets = sets.filter((set) => !set.isWarmup);
   const previousRow = lastPerformance?.sets[workingSets.length];
   if (previousRow) {
@@ -135,21 +126,14 @@ export function EditableSetsTable({
   const locale = useLocale();
   const [rmTarget, setRmTarget] = useState<1 | 10>(1);
   const [draft, setDraft] = useState<DraftSet>(() =>
-    initialDraft(
-      programExercise,
-      sets,
-      lastPerformance,
-      readiness,
-      deloadActive,
-      recommendation,
-      loadConstraints,
-    ),
+    initialDraft(programExercise, sets, lastPerformance, readiness, deloadActive, loadConstraints),
   );
   const [submitting, setSubmitting] = useState(false);
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
   const [manualValue, setManualValue] = useState('');
+  const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
 
   useEffect(() => {
     setRmTarget(loadPreferences().rmDisplay === '10RM' ? 10 : 1);
@@ -163,19 +147,13 @@ export function EditableSetsTable({
         lastPerformance,
         readiness,
         deloadActive,
-        recommendation,
         loadConstraints,
       ),
     );
-    // Re-seed only when the active exercise, logged row count, or deterministic recommendation changes.
+    setAppliedRecommendationKey(null);
+    // Re-seed when the active exercise or logged row count changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    programExercise.id,
-    sets.length,
-    recommendation?.weight,
-    recommendation?.reps,
-    recommendation?.rir,
-  ]);
+  }, [programExercise.id, sets.length]);
 
   const workingSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
   const currentNumber = workingSets.length + 1;
@@ -191,6 +169,21 @@ export function EditableSetsTable({
     return Array.from({ length: 81 }, (_, index) => +(index * step).toFixed(2));
   }, [pickerDraft.weight, loadConstraints, programExercise.exercise.category]);
   const repOptions = useMemo(() => Array.from({ length: 30 }, (_, index) => index + 1), []);
+  const recommendationKey = recommendation
+    ? `${recommendation.weight}:${recommendation.reps}:${recommendation.rir}`
+    : null;
+  const canApplyRecommendation =
+    recommendation != null && appliedRecommendationKey !== recommendationKey;
+
+  function applyRecommendation() {
+    if (!recommendation || disabled) return;
+    setEditingSet(null);
+    setPicker(null);
+    setDraft({ weight: recommendation.weight, reps: recommendation.reps, rir: recommendation.rir });
+    setAppliedRecommendationKey(
+      `${recommendation.weight}:${recommendation.reps}:${recommendation.rir}`,
+    );
+  }
 
   function beginEditing(set: PendingSet) {
     setEditingSet((current) =>
@@ -231,6 +224,7 @@ export function EditableSetsTable({
       );
     } else {
       setDraft(updateDraft);
+      setAppliedRecommendationKey(null);
     }
     setPicker(null);
   }
@@ -398,7 +392,28 @@ export function EditableSetsTable({
         <div
           className={`grid ${SET_GRID_COLUMNS} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
         >
-          <span className="text-center text-sm font-semibold text-primary">{currentNumber}</span>
+          {recommendation ? (
+            <button
+              type="button"
+              data-testid="apply-set-recommendation"
+              onClick={applyRecommendation}
+              disabled={disabled || !canApplyRecommendation}
+              aria-label={t('applyRecommendation', { number: currentNumber })}
+              title={t('applyRecommendation', { number: currentNumber })}
+              className="relative mx-auto flex size-6 items-center justify-center rounded-md text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-default disabled:opacity-100"
+            >
+              {currentNumber}
+              {canApplyRecommendation && (
+                <span
+                  data-testid="set-recommendation-dot"
+                  aria-hidden
+                  className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-sky-500 ring-2 ring-background"
+                />
+              )}
+            </button>
+          ) : (
+            <span className="text-center text-sm font-semibold text-primary">{currentNumber}</span>
+          )}
           <button
             type="button"
             onClick={() => openPicker('weight')}
@@ -419,12 +434,13 @@ export function EditableSetsTable({
             aria-label={t('rir', { number: currentNumber })}
             value={draft.rir ?? ''}
             onFocus={() => setEditingSet(null)}
-            onChange={(event) =>
+            onChange={(event) => {
               setDraft((current) => ({
                 ...current,
                 rir: event.target.value === '' ? null : Number(event.target.value),
-              }))
-            }
+              }));
+              setAppliedRecommendationKey(null);
+            }}
             className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-sm font-semibold sm:h-11 sm:px-1 sm:text-base"
           >
             <option value="">–</option>
