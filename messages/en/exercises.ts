@@ -51,6 +51,18 @@ export const exercises = {
     missing: 'No verified local media is mapped to this custom exercise yet.',
     searchCommons: 'Search Wikimedia Commons',
   },
+  detail: {
+    back: 'Back to exercises',
+    information: 'Exercise information',
+    muscle: 'Primary muscle group',
+    equipment: 'Equipment',
+    defaultRest: 'Default rest',
+    seconds: 'sec',
+    history: 'Training history',
+    openChart: 'Progress chart',
+    noHistory: 'No completed sets for this exercise yet.',
+    openSession: 'Open workout',
+  },
   muscleGroups: {
     chest: 'Chest',
     backWidth: 'Back (width)',
