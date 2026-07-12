@@ -77,6 +77,16 @@ describe('getHomeInsight (issue #237, server)', () => {
     expect(insight?.detail).toContain('Bench');
   });
 
+  it('ignores flat sessions spread beyond the six-week stall window', async () => {
+    const user = await makeUser('hi-sparse-stall@test.dev');
+    const bench = await makeExercise(user.id, 'Bench');
+    await logSession(user.id, bench.id, weeksAgo(8), 100, 5);
+    await logSession(user.id, bench.id, weeksAgo(4), 100, 5);
+    await logSession(user.id, bench.id, weeksAgo(1), 100, 5);
+
+    expect(await getHomeInsight(user.id, NOW)).toBeNull();
+  });
+
   it('recommends a deload when two or more lifts have stalled', async () => {
     const user = await makeUser('hi-deload@test.dev');
     const bench = await makeExercise(user.id, 'Bench');

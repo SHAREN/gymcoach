@@ -21,9 +21,10 @@ export const progress = {
     belowMev: 'Below MEV',
     inRange: 'In range',
     aboveMrv: 'Above MRV',
-    noProgress: 'No estimated 1RM progress over the last {count} sessions.',
+    noProgress:
+      'No estimated 1RM progress over the last {count} sessions completed within the last {weeks} weeks.',
     noProgressAdvice:
-      'No estimated 1RM progress over the last {count} sessions. Consider a deload, rep-range change, or exercise swap.',
+      'No estimated 1RM progress over the last {count} sessions completed within the last {weeks} weeks. Consider a deload, rep-range change, or exercise swap.',
     noExerciseData: 'No data for this exercise.',
     show: 'Show',
     hide: 'Hide',

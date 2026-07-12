@@ -507,12 +507,16 @@ describe('buildCoachPayload goals (issue #101)', () => {
 describe('buildCoachPayload fatigue (issue #101)', () => {
   // Three sessions on distinct days with an identical top set: e1RM flat over
   // the full stall lookback -> isStalled flags the lift.
-  async function seedStalledLift(userId: string, name: string) {
+  async function seedStalledLift(
+    userId: string,
+    name: string,
+    daysAgo: number[] = [10, 9, 8],
+  ) {
     const exercise = await db.exercise.create({
       data: { userId, name, muscleGroup: 'CHEST', category: 'COMPOUND' },
     });
-    for (let i = 0; i < 3; i++) {
-      const startedAt = new Date(Date.now() - (10 - i) * 24 * 60 * 60 * 1000);
+    for (const days of daysAgo) {
+      const startedAt = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const session = await db.session.create({
         data: { userId, startedAt, finishedAt: startedAt },
       });
@@ -577,6 +581,15 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
 
     const payload = await buildCoachPayload(user.id);
     expect(payload.fatigue.stalledExercises).toEqual(['Bench']);
+    expect(payload.fatigue.deloadRecommended).toBe(false);
+  });
+
+  it('does not flag flat sessions spread beyond the six-week stall window', async () => {
+    const user = await makeUser('fatigue-sparse-stall@test.dev');
+    await seedStalledLift(user.id, 'Bench', [50, 25, 5]);
+
+    const payload = await buildCoachPayload(user.id);
+    expect(payload.fatigue.stalledExercises).toEqual([]);
     expect(payload.fatigue.deloadRecommended).toBe(false);
   });
 

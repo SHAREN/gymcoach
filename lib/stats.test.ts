@@ -15,6 +15,7 @@ import {
   setVolume,
   STALL_LOOKBACK_SESSIONS,
   STALL_TOLERANCE,
+  STALL_WINDOW_DAYS,
   totalVolume,
   trainingConsistency,
   weeklyConditioning,
@@ -533,57 +534,81 @@ describe('trainingConsistency', () => {
 });
 
 describe('isStalled', () => {
-  it('uses a default lookback of 3 sessions', () => {
+  const asOf = new Date('2026-06-30T12:00:00.000Z');
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  function points(values: number[], daysAgo?: number[]) {
+    const offsets = daysAgo ?? values.map((_, index) => (values.length - index - 1) * 7);
+    return values.map((estimated1RM, index) => ({
+      estimated1RM,
+      sessionStartedAt: new Date(asOf.getTime() - offsets[index]! * dayMs),
+    }));
+  }
+
+  it('uses 3 sessions inside a 42-day window by default', () => {
     expect(STALL_LOOKBACK_SESSIONS).toBe(3);
+    expect(STALL_WINDOW_DAYS).toBe(42);
   });
 
   it('flags a flat lift over the lookback window', () => {
     // Reached 100 earlier, then held flat: the last 3 sessions never beat the
     // prior best of 100.
-    expect(isStalled([95, 100, 100, 100, 100])).toBe(true);
+    expect(isStalled(points([95, 100, 100, 100, 100]), asOf)).toBe(true);
   });
 
   it('flags a strictly declining lift', () => {
-    expect(isStalled([110, 105, 100])).toBe(true);
+    expect(isStalled(points([110, 105, 100]), asOf)).toBe(true);
   });
 
   it('does not flag a clearly progressing lift', () => {
-    expect(isStalled([100, 105, 110])).toBe(false);
+    expect(isStalled(points([100, 105, 110]), asOf)).toBe(false);
   });
 
   it('does not flag when the latest session beats the prior best', () => {
     // Prior best 100; the window dips then exceeds it -> still progressing.
-    expect(isStalled([100, 98, 102])).toBe(false);
+    expect(isStalled(points([100, 98, 102]), asOf)).toBe(false);
   });
 
   it('does not flag with fewer than the lookback number of sessions', () => {
-    expect(isStalled([100, 100])).toBe(false);
-    expect(isStalled([100])).toBe(false);
-    expect(isStalled([])).toBe(false);
+    expect(isStalled(points([100, 100]), asOf)).toBe(false);
+    expect(isStalled(points([100]), asOf)).toBe(false);
+    expect(isStalled([], asOf)).toBe(false);
   });
 
   it('treats sub-tolerance growth as no improvement (still stalled)', () => {
     // +0.4% < 0.5% tolerance -> noise, not progress.
     const within = 100 * (1 + STALL_TOLERANCE * 0.8);
-    expect(isStalled([100, within, within])).toBe(true);
+    expect(isStalled(points([100, within, within]), asOf)).toBe(true);
   });
 
   it('treats above-tolerance growth as improvement (not stalled)', () => {
     // +0.6% > 0.5% tolerance -> a genuine gain.
     const above = 100 * (1 + STALL_TOLERANCE * 1.2);
-    expect(isStalled([100, 100, above])).toBe(false);
+    expect(isStalled(points([100, 100, above]), asOf)).toBe(false);
   });
 
   it('honours a custom lookback', () => {
     // Lookback 2: the window [100, 100] must beat the prior best (100) to count
     // as progress; it does not, so the lift is stalled. With a higher final
     // session it would improve and clear the flag.
-    expect(isStalled([100, 100, 100], 2)).toBe(true);
-    expect(isStalled([100, 100, 105], 2)).toBe(false);
+    expect(isStalled(points([100, 100, 100]), asOf, 2)).toBe(true);
+    expect(isStalled(points([100, 100, 105]), asOf, 2)).toBe(false);
   });
 
   it('never flags with a lookback below 2', () => {
-    expect(isStalled([100, 100, 100], 1)).toBe(false);
+    expect(isStalled(points([100, 100, 100]), asOf, 1)).toBe(false);
+  });
+
+  it('does not combine three flat sessions spread beyond six weeks', () => {
+    expect(isStalled(points([100, 100, 100], [49, 21, 0]), asOf)).toBe(false);
+  });
+
+  it('does not flag a stale cluster whose newest session is outside six weeks', () => {
+    expect(isStalled(points([100, 100, 100], [70, 63, 56]), asOf)).toBe(false);
+  });
+
+  it('accepts three flat sessions exactly on the six-week boundary', () => {
+    expect(isStalled(points([100, 100, 100], [42, 21, 0]), asOf)).toBe(true);
   });
 });
 

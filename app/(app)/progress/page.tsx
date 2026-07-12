@@ -53,7 +53,8 @@ export default async function ProgressPage(
   const auth = await requireSession();
 
   // Lower bound: 12 weeks before today (Monday 00:00).
-  const since = new Date();
+  const now = new Date();
+  const since = new Date(now);
   since.setUTCHours(0, 0, 0, 0);
   since.setUTCDate(since.getUTCDate() - RECENT_WEEKS * 7);
 
@@ -328,7 +329,7 @@ export default async function ProgressPage(
         lastE1RM: last.estimated1RM,
         e1rmDelta: +(last.estimated1RM - first.estimated1RM).toFixed(1),
         // Read-only flag: e1RM has not improved over the recent sessions.
-        stalled: isStalled(points.map((p) => p.estimated1RM)),
+        stalled: isStalled(points, now),
       };
     }),
   );

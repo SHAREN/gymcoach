@@ -28,6 +28,7 @@ import {
 import type { MuscleGroup, WeightUnit } from '@/lib/prisma-client';
 import {
   STALL_LOOKBACK_SESSIONS,
+  STALL_WINDOW_DAYS,
   type ExerciseChartPoint,
   type VolumeLandmarkZone,
 } from '@/lib/stats';
@@ -417,7 +418,10 @@ export function ProgressDashboard({
           <CardHeader className="pb-3">
             <h2 className="text-base font-semibold">{t('stalled')}</h2>
             <p className="text-xs text-muted-foreground">
-              {t('noProgressAdvice', { count: STALL_LOOKBACK_SESSIONS })}
+              {t('noProgressAdvice', {
+                count: STALL_LOOKBACK_SESSIONS,
+                weeks: STALL_WINDOW_DAYS / 7,
+              })}
             </p>
           </CardHeader>
           <CardContent>
@@ -521,7 +525,10 @@ export function ProgressDashboard({
                             <Badge
                               variant="secondary"
                               className="text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400"
-                              title={t('noProgress', { count: STALL_LOOKBACK_SESSIONS })}
+                              title={t('noProgress', {
+                                count: STALL_LOOKBACK_SESSIONS,
+                                weeks: STALL_WINDOW_DAYS / 7,
+                              })}
                             >
                               {t('stalledBadge')}
                             </Badge>

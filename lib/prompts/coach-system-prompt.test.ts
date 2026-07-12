@@ -54,6 +54,7 @@ describe('coach system prompt positioning', () => {
 
   it('tells the coach to prefer recovery over load increases on a deload recommendation', () => {
     expect(COACH_SYSTEM_PROMPT).toMatch(/fatigue\.stalledExercises/);
+    expect(COACH_SYSTEM_PROMPT).toMatch(/3 sessions completed within 6 weeks/i);
     expect(COACH_SYSTEM_PROMPT).toMatch(
       /deloadRecommended is true, prefer recovery-oriented advice/i,
     );
