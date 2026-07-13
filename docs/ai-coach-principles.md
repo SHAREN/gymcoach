@@ -119,6 +119,7 @@ Use available data from these groups:
 - realistic weekly schedule, session-duration limit and equipment access;
 - active program targets: sets, reps, RIR, rest and autoregulation mode;
 - completed weight, reps, RIR, timestamps, warm-up and drop-set flags;
+- actual recovery time between attempts and session RPE when recorded;
 - recent exercise and primary-muscle history;
 - readiness, sleep, soreness, stress and coach notes when present;
 - active gym and available dumbbells, plates, bars and machines;
@@ -323,11 +324,14 @@ and attempts to raise volume during under-recovery. The final user-edited draft
 MUST be rebuilt against fresh context and validated again immediately before it
 is saved. MCP write tools follow the same rule.
 
-The following useful monitoring inputs are not yet first-class GymCoach data:
-session RPE, session-RPE training impulse, structured life-stress ratings,
-actual inter-set rest in the program-design payload, movement-pattern overlap,
-and lumbar-fatigue load. Prompts and agents MUST NOT imply that these were
-calculated. Adding them requires separate schemas, privacy review, UI and tests.
+Session RPE and actual recovery time between attempts are now first-class set
+and session records. They are persisted by the web and Android APIs, included in
+backups, and used by native next-set calculation where applicable. They are not
+yet included in the shared program-design payload or converted into a
+session-RPE training impulse metric. The following useful monitoring inputs are
+still unavailable to program generation: structured life-stress ratings,
+movement-pattern overlap and lumbar-fatigue load. Prompts and agents MUST NOT
+imply that unavailable metrics were calculated.
 
 ## 6. LLM coach contract
 
@@ -456,3 +460,9 @@ They did not support exact catabolism percentages, a CNS-fatigue score, or a
 universal overtraining threshold. The two-item checklist trigger, session-volume
 soft cap and exact validation thresholds remain documented engineering
 heuristics.
+
+The Android offline implementation records the source-backed fields identified
+in that second review: load, repetitions, RIR, exercise identity and order,
+actual recovery time, session timing, session RPE, warm-up and working-set
+distinction, timestamps and notes. The outbox and synchronization rules are
+engineering reliability mechanisms and do not change the training formulas.
