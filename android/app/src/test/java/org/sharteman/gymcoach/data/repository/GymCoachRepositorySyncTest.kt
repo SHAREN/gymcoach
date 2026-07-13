@@ -27,6 +27,8 @@ import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncBatchResponse
 import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.SyncOperationResult
+import org.sharteman.gymcoach.data.model.StartSessionOperation
+import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.network.MobileApi
 import org.sharteman.gymcoach.data.network.ApiException
@@ -188,6 +190,55 @@ class GymCoachRepositorySyncTest {
         assertEquals("FAILED", queue.single().status)
     }
 
+    @Test
+    fun discardingARejectedSessionStartRemovesItsDependentLocalWork() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_rejected",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        val set = LocalSetEntity(
+            id = "set_rejected",
+            sessionId = session.id,
+            exerciseId = "exercise_1",
+            setNumber = 1,
+            weight = 80.0,
+            reps = 10,
+            rir = 2,
+            completedAt = "2026-07-13T10:05:00Z",
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.saveSet(set)
+        val start = StartSessionOperation(
+            operationId = "operation_start_rejected",
+            session = MobileSessionPayload(session.id, session.workoutId, null, session.startedAt),
+        )
+        val upsert = UpsertSetOperation(
+            operationId = "operation_set_after_start",
+            set = MobileSetPayload(
+                id = set.id,
+                sessionId = set.sessionId,
+                exerciseId = set.exerciseId,
+                setNumber = set.setNumber,
+                weight = set.weight,
+                reps = set.reps,
+                rir = set.rir,
+                completedAt = set.completedAt,
+            ),
+        )
+        fixture.dao.enqueue(fixture.outbox(start))
+        fixture.dao.enqueue(fixture.outbox(upsert))
+        fixture.dao.markOperationBlocked(start.operationId, "Invalid gym")
+
+        fixture.repository.discardBlockedChange()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals(null, fixture.dao.getSession(session.id))
+        assertEquals(null, fixture.dao.getSet(set.id))
+    }
+
     private fun fixture(): Fixture {
         val dao = InMemoryDao()
         val api = TestApi()
@@ -301,6 +352,7 @@ class GymCoachRepositorySyncTest {
         private val outbox = mutableListOf<SyncOutboxEntity>()
         private val openSessionsFlow = MutableStateFlow<List<LocalSessionEntity>>(emptyList())
         private val pendingCountFlow = MutableStateFlow(0)
+        private val blockedOperationFlow = MutableStateFlow<SyncOutboxEntity?>(null)
         private var nextSequence = 1L
 
         override fun observeBootstrap(): Flow<BootstrapCacheEntity?> = bootstrapFlow
@@ -352,6 +404,7 @@ class GymCoachRepositorySyncTest {
             publishPending()
         }
         override suspend fun queuedOperations() = outbox.sortedBy { it.sequence }
+        override fun observeBlockedOperation(): Flow<SyncOutboxEntity?> = blockedOperationFlow
         override suspend fun removeOperations(operationIds: List<String>) {
             outbox.removeIf { it.operationId in operationIds }
             publishPending()
@@ -361,6 +414,9 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun markOperationBlocked(operationId: String, error: String) {
             updateOperation(operationId) { it.copy(status = "BLOCKED", attempts = it.attempts + 1, lastError = error) }
+        }
+        override suspend fun retryOperation(operationId: String) {
+            updateOperation(operationId) { it.copy(status = "PENDING", lastError = null) }
         }
         override suspend fun recoverInterruptedOperations() {
             outbox.indices.forEach { index ->
@@ -391,6 +447,7 @@ class GymCoachRepositorySyncTest {
         }
         private fun publishPending() {
             pendingCountFlow.value = outbox.size
+            blockedOperationFlow.value = outbox.filter { it.status == "BLOCKED" }.minByOrNull { it.sequence }
         }
     }
 }

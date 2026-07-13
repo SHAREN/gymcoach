@@ -36,6 +36,7 @@ fun GymCoachApp(repository: GymCoachRepository) {
     val bootstrap by repository.bootstrap.collectAsState(initial = null)
     val openSessions by repository.openSessions.collectAsState(initial = emptyList())
     val pendingCount by repository.pendingCount.collectAsState(initial = 0)
+    val syncIssue by repository.syncIssue.collectAsState(initial = null)
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -61,8 +62,9 @@ fun GymCoachApp(repository: GymCoachRepository) {
             composable("home") {
                 HomeScreen(
                 bootstrap = bootstrap,
-                openSessions = openSessions,
-                pendingCount = pendingCount,
+                    openSessions = openSessions,
+                    pendingCount = pendingCount,
+                    syncIssue = syncIssue,
                 online = online,
                 syncing = syncing,
                 onStartWorkout = { workout, gymId ->
@@ -71,7 +73,7 @@ fun GymCoachApp(repository: GymCoachRepository) {
                         navController.navigate("session/$sessionId")
                     }
                 },
-                onSync = {
+                    onSync = {
                     scope.launch {
                         syncing = true
                         runCatching { repository.syncPending() }
@@ -82,7 +84,13 @@ fun GymCoachApp(repository: GymCoachRepository) {
                             }
                         syncing = false
                     }
-                },
+                    },
+                    onRetrySyncIssue = {
+                        scope.launch { repository.retryBlockedChange() }
+                    },
+                    onDiscardSyncIssue = {
+                        scope.launch { repository.discardBlockedChange() }
+                    },
                 onWebPanel = { navController.navigate("web") },
                 onLogout = {
                     scope.launch {
