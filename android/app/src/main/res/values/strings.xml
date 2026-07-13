@@ -39,6 +39,11 @@
     <string name="edit">Edit</string>
     <string name="sync_error">Sync failed. Data stays safely on this phone.</string>
     <string name="sync_blocked">One change was rejected. Later changes remain safely queued.</string>
+    <string name="sync_issue_title">Synchronization needs attention</string>
+    <string name="retry">Retry</string>
+    <string name="discard_change">Discard rejected change</string>
+    <string name="discard">Discard</string>
+    <string name="discard_change_warning">This removes the rejected local change. If starting the session was rejected, the complete unsynchronized session is removed. Use Retry first when the server problem may be temporary.</string>
     <string name="login_error">Could not sign in.</string>
     <string name="web_offline">The web panel needs internet. Native workouts remain available.</string>
     <string name="recommendation_low_confidence">Low confidence: RIR was not recorded.</string>

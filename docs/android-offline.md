@@ -47,8 +47,10 @@ is rejected.
 The client sends at most 500 operations per request and drains additional
 batches in sequence. Only one synchronization run may execute in the process at
 a time. A rejected operation becomes the blocked queue head and later
-operations remain pending instead of bypassing it. Network failures retain the
-operations for WorkManager retry.
+operations remain pending instead of bypassing it. The home screen exposes the
+rejection and lets the trainee retry it or explicitly discard it. Discarding a
+rejected session start also removes that unsynchronized local session and its
+dependent operations. Network failures retain operations for WorkManager retry.
 
 ## Bootstrap reconciliation
 

@@ -16,7 +16,9 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,8 +28,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -37,6 +44,7 @@ import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.WorkoutDto
+import org.sharteman.gymcoach.data.repository.SyncIssue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,13 +52,17 @@ fun HomeScreen(
     bootstrap: BootstrapResponse?,
     openSessions: List<LocalSessionEntity>,
     pendingCount: Int,
+    syncIssue: SyncIssue?,
     online: Boolean,
     syncing: Boolean,
     onStartWorkout: (WorkoutDto, String?) -> Unit,
     onSync: () -> Unit,
+    onRetrySyncIssue: () -> Unit,
+    onDiscardSyncIssue: () -> Unit,
     onWebPanel: () -> Unit,
     onLogout: () -> Unit,
 ) {
+    var confirmDiscard by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -99,6 +111,40 @@ fun HomeScreen(
                     }
                 }
             }
+            if (syncIssue != null) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.WarningAmber, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    stringResource(R.string.sync_issue_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                            Text(syncIssue.message, style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = onRetrySyncIssue) {
+                                    Text(stringResource(R.string.retry))
+                                }
+                                TextButton(onClick = { confirmDiscard = true }) {
+                                    Text(stringResource(R.string.discard_change))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             item {
                 Text(stringResource(R.string.workouts), style = MaterialTheme.typography.titleLarge)
             }
@@ -129,6 +175,26 @@ fun HomeScreen(
             }
             item { Spacer(Modifier.padding(bottom = 24.dp)) }
         }
+    }
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text(stringResource(R.string.discard_change)) },
+            text = { Text(stringResource(R.string.discard_change_warning)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDiscard = false
+                        onDiscardSyncIssue()
+                    },
+                ) { Text(stringResource(R.string.discard)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDiscard = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 

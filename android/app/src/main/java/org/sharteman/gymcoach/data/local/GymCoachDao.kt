@@ -68,6 +68,9 @@ interface GymCoachDao {
     @Query("SELECT * FROM sync_outbox ORDER BY sequence")
     suspend fun queuedOperations(): List<SyncOutboxEntity>
 
+    @Query("SELECT * FROM sync_outbox WHERE status = 'BLOCKED' ORDER BY sequence LIMIT 1")
+    fun observeBlockedOperation(): Flow<SyncOutboxEntity?>
+
     @Query("DELETE FROM sync_outbox WHERE operationId IN (:operationIds)")
     suspend fun removeOperations(operationIds: List<String>)
 
@@ -76,6 +79,9 @@ interface GymCoachDao {
 
     @Query("UPDATE sync_outbox SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
     suspend fun markOperationBlocked(operationId: String, error: String)
+
+    @Query("UPDATE sync_outbox SET status = 'PENDING', lastError = NULL WHERE operationId = :operationId")
+    suspend fun retryOperation(operationId: String)
 
     @Query("UPDATE sync_outbox SET status = 'PENDING' WHERE status = 'SYNCING'")
     suspend fun recoverInterruptedOperations()

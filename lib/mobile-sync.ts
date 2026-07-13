@@ -84,11 +84,35 @@ async function applyMobileOperation(
       result: applied.result,
     };
   } catch (error) {
-    return {
-      operationId: operation.operationId,
-      status: 'REJECTED',
-      error: error instanceof ApiError ? error.message : 'Server could not apply the operation.',
-    };
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const raced = await db.mobileMutation.findUnique({
+        where: {
+          userId_operationId: { userId: principal.userId, operationId: operation.operationId },
+        },
+      });
+      if (raced) {
+        if (raced.payloadHash !== payloadHash) {
+          return {
+            operationId: operation.operationId,
+            status: 'REJECTED',
+            error: 'Operation ID was already used with a different payload.',
+          };
+        }
+        return {
+          operationId: operation.operationId,
+          status: 'DUPLICATE',
+          result: raced.result as Record<string, unknown>,
+        };
+      }
+    }
+    if (error instanceof ApiError) {
+      return {
+        operationId: operation.operationId,
+        status: 'REJECTED',
+        error: error.message,
+      };
+    }
+    throw error;
   }
 }
 
