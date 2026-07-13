@@ -12,47 +12,49 @@ datasource db {
 }
 
 model User {
-  id                String             @id @default(cuid())
-  email             String             @unique
-  passwordHash      String
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  passwordHash       String
   // Bodyweight in kg, used to compute the effective tonnage on bodyweight
   // exercises (Set.weight = added load, always >= 0; the input schemas clamp
   // it). Null = not filled in yet, so no bodyweight bonus is applied
   // (backward-safe).
-  bodyweight        Float?
+  bodyweight         Float?
   // Optional profile, used to tailor the AI coach output to the user.
-  displayName       String?
-  sex               Sex?
-  heightCm          Int?
-  goal              TrainingGoal?
-  weeklyFrequency   Int?
+  displayName        String?
+  sex                Sex?
+  heightCm           Int?
+  goal               TrainingGoal?
+  weeklyFrequency    Int?
   // Preferred weight unit for display and input. Data is always stored in kg;
   // this only affects the presentation layer. Default keeps existing users on kg.
-  unit              WeightUnit         @default(KG)
+  unit               WeightUnit          @default(KG)
   // End of the user's planned deload week (issue #112). While this timestamp
   // is in the future, load suggestions apply the planned-deload step-down.
   // Null or in the past = no planned deload (backward-safe additive column).
-  deloadUntil       DateTime?
+  deloadUntil        DateTime?
   // Free-text note the user writes to their AI coach (issue #188): their own
   // current context for the coach to weigh - injuries, illness, life
   // constraints ("shoulder is bothering me, go easy on pressing"). Input-side
   // only and correctable by the user. Null = no note (backward-safe additive
   // column); the set/clear route bounds it to 500 chars.
-  coachNote         String?
-  createdAt         DateTime           @default(now())
-  programs          Program[]
-  sessions          Session[]
-  exercises         Exercise[]
-  conversations     Conversation[]
-  readinessCheckins ReadinessCheckin[]
-  exerciseGoals     ExerciseGoal[]
-  bodyweightEntries BodyweightEntry[]
-  bodyMeasurements  BodyMeasurement[]
-  volumeTargets     VolumeTarget[]
-  gyms              Gym[]              @relation("GymOwner")
-  mcpAccessTokens   McpAccessToken[]
-  activeGymId       String?
-  activeGym         Gym?               @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
+  coachNote          String?
+  createdAt          DateTime            @default(now())
+  programs           Program[]
+  sessions           Session[]
+  exercises          Exercise[]
+  conversations      Conversation[]
+  readinessCheckins  ReadinessCheckin[]
+  exerciseGoals      ExerciseGoal[]
+  bodyweightEntries  BodyweightEntry[]
+  bodyMeasurements   BodyMeasurement[]
+  volumeTargets      VolumeTarget[]
+  gyms               Gym[]               @relation("GymOwner")
+  mcpAccessTokens    McpAccessToken[]
+  mobileAccessTokens MobileAccessToken[]
+  mobileMutations    MobileMutation[]
+  activeGymId        String?
+  activeGym          Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
 
 // Personal access tokens for remote MCP clients such as ChatGPT. Only a
@@ -69,6 +71,43 @@ model McpAccessToken {
   lastUsedAt  DateTime?
   revokedAt   DateTime?
 
+  @@index([userId, createdAt])
+}
+
+// Revocable bearer token issued to one Android installation. Only the hash is
+// stored; the raw token is returned once after password authentication.
+model MobileAccessToken {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String
+  deviceName  String
+  tokenHash   String    @unique
+  tokenPrefix String
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+
+  @@index([userId, createdAt])
+  @@index([userId, deviceId])
+}
+
+// Applied mobile operations are retained as an idempotency journal. Retrying a
+// batch after a network interruption returns the original result instead of
+// creating a duplicate session or set.
+model MobileMutation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String
+  operationId String
+  type        String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, operationId])
   @@index([userId, createdAt])
 }
 
@@ -269,6 +308,8 @@ model Session {
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
   notes      String?
+  // Whole-session effort rating captured at finish (1 easy to 10 maximal).
+  sessionRpe Int?
   // The gym is frozen when the session starts so later switching gyms does
   // not change the inventory used by an in-progress or historical workout.
   gymId      String?
@@ -387,6 +428,8 @@ model Set {
   notes       String?
   isWarmup    Boolean  @default(false)
   isDropSet   Boolean  @default(false)
+  // Actual recovery time since the previous attempt of this exercise.
+  recoverySec Int?
   completedAt DateTime @default(now())
 
   @@index([exerciseId, completedAt])

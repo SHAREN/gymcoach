@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GymCoach</string>
+    <string name="login_title">Вход в GymCoach</string>
+    <string name="email">Электронная почта</string>
+    <string name="password">Пароль</string>
+    <string name="server">Сервер</string>
+    <string name="sign_in">Войти</string>
+    <string name="offline_cache_hint">После первой синхронизации тренировки будут доступны без интернета.</string>
+    <string name="workouts">Тренировки</string>
+    <plurals name="exercise_count">
+        <item quantity="one">%1$d упражнение</item>
+        <item quantity="few">%1$d упражнения</item>
+        <item quantity="many">%1$d упражнений</item>
+        <item quantity="other">%1$d упражнения</item>
+    </plurals>
+    <string name="web_panel">Веб-панель</string>
+    <string name="settings">Настройки</string>
+    <string name="sync_now">Синхронизировать</string>
+    <string name="pending_changes">Ожидает отправки: %1$d</string>
+    <string name="online">Есть интернет</string>
+    <string name="offline">Автономный режим</string>
+    <string name="no_cached_program">Программа ещё не загружена. Один раз подключитесь к интернету и выполните синхронизацию.</string>
+    <string name="start">Начать</string>
+    <string name="resume">Продолжить</string>
+    <string name="logout">Выйти</string>
+    <string name="weight">Вес</string>
+    <string name="reps">Повторы</string>
+    <string name="rir">RIR</string>
+    <string name="notes">Заметки</string>
+    <string name="confirm_set">Подтвердить подход</string>
+    <string name="next_set">Следующий подход</string>
+    <string name="rest">Отдых</string>
+    <string name="skip">Пропустить</string>
+    <string name="add_30">+30 сек</string>
+    <string name="finish_workout">Завершить тренировку</string>
+    <string name="session_rpe">Оценка тренировки RPE (1-10)</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+    <string name="delete">Удалить</string>
+    <string name="edit">Изменить</string>
+    <string name="sync_error">Синхронизация не удалась. Данные надёжно сохранены на телефоне.</string>
+    <string name="sync_blocked">Одно изменение отклонено сервером. Последующие изменения безопасно остались в очереди.</string>
+    <string name="login_error">Не удалось войти.</string>
+    <string name="web_offline">Для веб-панели нужен интернет. Нативная тренировка остаётся доступной.</string>
+    <string name="recommendation_low_confidence">Низкая точность: RIR не был записан.</string>
+    <string name="set_row">Подход %1$d</string>
+</resources>

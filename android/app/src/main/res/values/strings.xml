@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GymCoach</string>
+    <string name="login_title">Sign in to GymCoach</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="server">Server</string>
+    <string name="sign_in">Sign in</string>
+    <string name="offline_cache_hint">After the first sync, workouts remain available without internet.</string>
+    <string name="workouts">Workouts</string>
+    <plurals name="exercise_count">
+        <item quantity="one">%1$d exercise</item>
+        <item quantity="other">%1$d exercises</item>
+    </plurals>
+    <string name="web_panel">Web panel</string>
+    <string name="settings">Settings</string>
+    <string name="sync_now">Sync now</string>
+    <string name="pending_changes">Pending: %1$d</string>
+    <string name="online">Online</string>
+    <string name="offline">Offline mode</string>
+    <string name="no_cached_program">No cached program yet. Connect to the internet and sync once.</string>
+    <string name="start">Start</string>
+    <string name="resume">Resume</string>
+    <string name="logout">Sign out</string>
+    <string name="weight">Weight</string>
+    <string name="reps">Reps</string>
+    <string name="rir">RIR</string>
+    <string name="notes">Notes</string>
+    <string name="confirm_set">Complete set</string>
+    <string name="next_set">Next set</string>
+    <string name="rest">Rest</string>
+    <string name="skip">Skip</string>
+    <string name="add_30">+30 sec</string>
+    <string name="finish_workout">Finish workout</string>
+    <string name="session_rpe">Session RPE (1-10)</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
+    <string name="edit">Edit</string>
+    <string name="sync_error">Sync failed. Data stays safely on this phone.</string>
+    <string name="sync_blocked">One change was rejected. Later changes remain safely queued.</string>
+    <string name="login_error">Could not sign in.</string>
+    <string name="web_offline">The web panel needs internet. Native workouts remain available.</string>
+    <string name="recommendation_low_confidence">Low confidence: RIR was not recorded.</string>
+    <string name="set_row">Set %1$d</string>
+</resources>

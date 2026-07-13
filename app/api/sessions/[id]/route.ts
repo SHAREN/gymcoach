@@ -53,6 +53,7 @@ export async function PUT(req: Request, props: Params) {
       data: {
         notes: data.notes ?? session.notes,
         finishedAt: data.finish ? new Date() : session.finishedAt,
+        ...(data.sessionRpe !== undefined ? { sessionRpe: data.sessionRpe } : {}),
       },
     });
     return NextResponse.json(updated);

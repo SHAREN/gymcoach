@@ -45,6 +45,10 @@ export const setInputSchema = z.object({
   notes: z.string().trim().max(500).optional().nullable(),
   isWarmup: z.boolean().optional().default(false),
   isDropSet: z.boolean().optional().default(false),
+  recoverySec: z
+    .union([z.coerce.number().int().min(0).max(86_400), z.null()])
+    .optional()
+    .nullable(),
 });
 
 export type SetInput = z.infer<typeof setInputSchema>;

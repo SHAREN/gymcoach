@@ -9,6 +9,7 @@ export const sessionUpdateSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
   // If true, sets finishedAt to now.
   finish: z.boolean().optional(),
+  sessionRpe: z.coerce.number().int().min(1).max(10).optional().nullable(),
 });
 
 export type SessionStart = z.infer<typeof sessionStartSchema>;
