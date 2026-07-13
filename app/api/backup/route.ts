@@ -55,7 +55,7 @@ import { gymWeightListSchema } from '@/lib/schemas/gym';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 6;
+const VERSION = 7;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -242,6 +242,7 @@ export async function GET() {
         startedAt: s.startedAt.toISOString(),
         finishedAt: s.finishedAt?.toISOString() ?? null,
         notes: s.notes,
+        sessionRpe: s.sessionRpe,
         gymName: gyms.find((gym) => gym.id === s.gymId)?.name ?? null,
         sets: s.sets.map((set) => ({
           exerciseName: exercises.find((e) => e.id === set.exerciseId)?.name ?? null,
@@ -256,6 +257,7 @@ export async function GET() {
           notes: set.notes,
           isWarmup: set.isWarmup,
           isDropSet: set.isDropSet,
+          recoverySec: set.recoverySec,
           completedAt: set.completedAt.toISOString(),
         })),
       })),
@@ -414,6 +416,7 @@ const importSchema = z.object({
         startedAt: dateString,
         finishedAt: dateString.nullable().optional(),
         notes: z.string().max(5000).nullable().optional(),
+        sessionRpe: z.number().int().min(1).max(10).nullable().optional(),
         gymName: z.string().max(80).nullable().optional(),
         sets: z
           .array(
@@ -431,6 +434,7 @@ const importSchema = z.object({
               notes: z.string().max(2000).nullable().optional(),
               isWarmup: z.boolean(),
               isDropSet: z.boolean(),
+              recoverySec: z.number().int().min(0).max(86_400).nullable().optional(),
               completedAt: dateString,
             }),
           )
@@ -791,6 +795,7 @@ export async function POST(req: Request) {
               startedAt: new Date(s.startedAt),
               finishedAt: s.finishedAt ? new Date(s.finishedAt) : null,
               notes: s.notes ?? null,
+              sessionRpe: s.sessionRpe ?? null,
               gymId: s.gymName ? (gymIdByName.get(s.gymName) ?? null) : null,
             },
           });
@@ -812,6 +817,7 @@ export async function POST(req: Request) {
                 notes: set.notes ?? null,
                 isWarmup: set.isWarmup,
                 isDropSet: set.isDropSet,
+                recoverySec: set.recoverySec ?? null,
                 completedAt: new Date(set.completedAt),
               },
             ];
