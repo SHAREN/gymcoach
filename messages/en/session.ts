@@ -173,6 +173,16 @@ export const session = {
     barWeight: 'Bar {weight} {unit}',
     plateRemainder: 'Loads to {weight} {unit}',
     pickerDescription: 'Select a saved value or enter one with the on-screen keypad.',
+    setControls: {
+      open: 'Adjust set count',
+      openForSet: 'Open set controls after set {number}',
+      title: 'Sets',
+      description: 'Change the planned set count or undo the last completed set.',
+      decrease: 'Decrease total sets',
+      increase: 'Increase total sets',
+      undoLast: 'Undo last set',
+      saveError: 'Could not update the set count.',
+    },
     metrics: {
       open: 'Choose calculated columns',
       label: 'Calculated columns',

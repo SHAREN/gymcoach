@@ -129,6 +129,7 @@ export function SessionRunner({
   const router = useRouter();
   const workout = session.workout!;
   const [sessionGym, setSessionGym] = useState<SessionGym | null>(session.gym);
+  const [targetSetOverrides, setTargetSetOverrides] = useState<Record<string, number>>({});
   // Supersets (issue #146, slice 1): run the workout in presentation order -
   // members of a superset group come consecutively with A1/A2 labels. For a
   // workout without supersets this is exactly the stored order.
@@ -138,15 +139,19 @@ export function SessionRunner({
     () =>
       programExercises.map((pe) => {
         const recommendation = returnRecommendations[pe.id];
-        if (!recommendation || recommendation.mode === 'normal') return pe;
-        return {
-          ...pe,
-          targetSets: recommendation.targetSets,
-          targetDropSets: 0,
-          targetRIR: recommendation.targetRIR,
-        };
+        const override = targetSetOverrides[pe.id];
+        const effective =
+          !recommendation || recommendation.mode === 'normal'
+            ? pe
+            : {
+                ...pe,
+                targetSets: recommendation.targetSets,
+                targetDropSets: 0,
+                targetRIR: recommendation.targetRIR,
+              };
+        return override == null ? effective : { ...effective, targetSets: override };
       }),
-    [programExercises, returnRecommendations],
+    [programExercises, returnRecommendations, targetSetOverrides],
   );
   const effectiveProgramExerciseById = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
@@ -461,19 +466,57 @@ export function SessionRunner({
     }
   }
 
-  async function handleDeleteSet(set: PendingSet) {
-    const db = getDB();
-    // If already synced: API DELETE call, then local removal.
-    // If not yet synced: local removal only.
-    if (set.serverId) {
-      const res = await fetch(`/api/sets/${set.serverId}`, { method: 'DELETE' });
-      if (!res.ok && res.status !== 404) {
-        toast.error(t('setDeleteError'));
-        return;
-      }
+  async function handleTargetSetsChange(targetSets: number) {
+    if (!currentPE) throw new Error('Program exercise missing.');
+    const programExerciseId = currentPE.id;
+    const hadOverride = Object.prototype.hasOwnProperty.call(targetSetOverrides, programExerciseId);
+    const previousOverride = targetSetOverrides[programExerciseId];
+
+    setTargetSetOverrides((current) => ({ ...current, [programExerciseId]: targetSets }));
+    try {
+      const response = await fetch(`/api/program-exercises/${programExerciseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetSets }),
+      });
+      if (!response.ok) throw new Error('Target set update failed.');
+      router.refresh();
+    } catch (error) {
+      setTargetSetOverrides((current) => {
+        const next = { ...current };
+        if (hadOverride && previousOverride != null) next[programExerciseId] = previousOverride;
+        else delete next[programExerciseId];
+        return next;
+      });
+      throw error;
     }
-    await db.pendingSets.delete(set.localId);
-    toast.success(t('setDeleted'));
+  }
+
+  async function handleDeleteSet(set: PendingSet): Promise<boolean> {
+    const db = getDB();
+    try {
+      let current = (await db.pendingSets.get(set.localId)) ?? set;
+      if (!current.serverId && (current.status === 'pending' || current.status === 'syncing')) {
+        await flushPendingSets();
+        current = (await db.pendingSets.get(set.localId)) ?? current;
+      }
+
+      // If already synced: API DELETE call, then local removal. If it has not
+      // synced yet, deleting the local row prevents its pending POST.
+      if (current.serverId) {
+        const res = await fetch(`/api/sets/${current.serverId}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) {
+          toast.error(t('setDeleteError'));
+          return false;
+        }
+      }
+      await db.pendingSets.delete(current.localId);
+      toast.success(t('setDeleted'));
+      return true;
+    } catch {
+      toast.error(t('setDeleteError'));
+      return false;
+    }
   }
 
   async function handleFinishSession() {
@@ -520,6 +563,7 @@ export function SessionRunner({
       setPendingProgramExerciseId(options.selectProgramExerciseId);
       setSelectedProgramExerciseId(options.selectProgramExerciseId);
     }
+    setTargetSetOverrides({});
     setExerciseMenuOpen(false);
     router.refresh();
   }
@@ -731,6 +775,8 @@ export function SessionRunner({
               disabled={!hydrated || mode.kind !== 'input'}
               onSubmit={handleValidate}
               onUpdateSet={handleUpdateSet}
+              onDeleteSet={handleDeleteSet}
+              onTargetSetsChange={handleTargetSetsChange}
             />
             {mode.kind === 'rest' && (
               <RestTimer

@@ -93,6 +93,69 @@ describe('EditableSetsTable', () => {
     );
   });
 
+  it('opens set controls from the first header and hides undo before the first set', async () => {
+    const onTargetSetsChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+        onTargetSetsChange={onTargetSetsChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Adjust set count' }));
+
+    expect(screen.getByTestId('set-controls-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('set-count-value')).toHaveTextContent('3');
+    expect(screen.queryByRole('button', { name: 'Undo last set' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Increase total sets' }));
+    await waitFor(() => expect(onTargetSetsChange).toHaveBeenCalledWith(4));
+  });
+
+  it('uses grey completed-row checks to undo only the latest completed set', async () => {
+    const onDeleteSet = vi.fn().mockResolvedValue(true);
+    render(
+      <EditableSetsTable
+        programExercise={{ ...(programExercise as object), targetSets: 2 } as never}
+        sets={[completedSet, completedSet2]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+        onDeleteSet={onDeleteSet}
+        onTargetSetsChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    const firstCompletedCheck = screen.getByRole('button', {
+      name: 'Open set controls after set 1',
+    });
+    expect(firstCompletedCheck).toHaveClass('text-muted-foreground/60');
+    expect(
+      screen.getByRole('button', { name: 'Open set controls after set 2' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(firstCompletedCheck);
+
+    expect(screen.getByTestId('set-count-value')).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'Decrease total sets' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo last set' }));
+
+    await waitFor(() => expect(onDeleteSet).toHaveBeenCalledWith(completedSet2));
+    await waitFor(() =>
+      expect(screen.queryByTestId('set-controls-dialog')).not.toBeInTheDocument(),
+    );
+  });
+
   it('shows volume alone or paired with one rep-max estimate', async () => {
     const user = userEvent.setup();
     render(
