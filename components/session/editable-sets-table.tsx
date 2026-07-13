@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Droplet, Loader2, Pencil, Sparkles } from 'lucide-react';
+import { Check, Droplet, Loader2, Pencil, Sparkles, Wrench } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
+import { toast } from 'sonner';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
 import type { SerializedLastPerformance, SessionGym } from '@/components/session/session-runner';
@@ -32,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { SetValuePicker } from '@/components/session/set-value-picker';
+import { SetControlsDialog } from '@/components/session/set-controls-dialog';
 import { WeightInventoryEditor } from '@/components/session/weight-inventory-editor';
 import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
 
@@ -62,6 +64,8 @@ interface Props {
     set: PendingSet,
     values: { weight: number; reps: number; rir: number | null },
   ) => Promise<void>;
+  onDeleteSet?: (set: PendingSet) => Promise<boolean | void>;
+  onTargetSetsChange?: (targetSets: number) => Promise<void>;
 }
 
 interface DraftSet {
@@ -190,6 +194,8 @@ export function EditableSetsTable({
   disabled = false,
   onSubmit,
   onUpdateSet,
+  onDeleteSet,
+  onTargetSetsChange,
 }: Props) {
   const t = useTranslations('session.editableSets');
   const inputT = useTranslations('session.input');
@@ -211,6 +217,8 @@ export function EditableSetsTable({
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [setControlsOpen, setSetControlsOpen] = useState(false);
+  const [setControlsBusy, setSetControlsBusy] = useState(false);
   const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiText, setAiText] = useState('');
@@ -244,6 +252,8 @@ export function EditableSetsTable({
     setAppliedRecommendationKey(null);
     setAiOpen(false);
     setInventoryOpen(false);
+    setSetControlsOpen(false);
+    setSetControlsBusy(false);
     setAiText('');
     setAiHint(null);
     // Re-seed when the active exercise or logged row count changes.
@@ -286,7 +296,10 @@ export function EditableSetsTable({
 
   const loggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
   const currentNumber = loggedSets.length + 1;
-  const plannedRows = programExercise.targetSets + targetDropSets(programExercise);
+  const dropSetCount = targetDropSets(programExercise);
+  const plannedRows = programExercise.targetSets + dropSetCount;
+  const minPlannedRows = Math.max(1 + dropSetCount, loggedSets.length);
+  const maxPlannedRows = 20 + dropSetCount;
   const totalRows = Math.max(plannedRows, currentNumber);
   const isNextDropSet = nextPlannedSetIsDropSet(programExercise, sets);
   const displayWeight =
@@ -464,6 +477,44 @@ export function EditableSetsTable({
     }
   }
 
+  function openSetControls() {
+    if (disabled || (!onTargetSetsChange && !onDeleteSet)) return;
+    setPicker(null);
+    setEditingSet(null);
+    setSetControlsOpen(true);
+  }
+
+  async function changePlannedRows(nextTotal: number) {
+    if (!onTargetSetsChange || disabled || setControlsBusy) return;
+    const normalizedTotal = Math.min(
+      maxPlannedRows,
+      Math.max(minPlannedRows, Math.round(nextTotal)),
+    );
+    if (normalizedTotal === plannedRows) return;
+
+    setSetControlsBusy(true);
+    try {
+      await onTargetSetsChange(normalizedTotal - dropSetCount);
+    } catch {
+      toast.error(t('setControls.saveError'));
+    } finally {
+      setSetControlsBusy(false);
+    }
+  }
+
+  async function undoLastSet() {
+    const lastSet = loggedSets.at(-1);
+    if (!lastSet || !onDeleteSet || disabled || setControlsBusy) return;
+
+    setSetControlsBusy(true);
+    try {
+      const deleted = await onDeleteSet(lastSet);
+      if (deleted !== false) setSetControlsOpen(false);
+    } finally {
+      setSetControlsBusy(false);
+    }
+  }
+
   return (
     <section
       data-testid="editable-sets-table"
@@ -517,7 +568,17 @@ export function EditableSetsTable({
           data-testid="editable-sets-header"
           className={`grid ${gridColumns} items-center gap-0.5 border-b border-border bg-muted/30 px-1 py-2 text-center text-[0.625rem] font-medium uppercase text-muted-foreground sm:gap-1 sm:px-2 sm:text-[0.6875rem]`}
         >
-          <span>#</span>
+          <button
+            type="button"
+            onClick={openSetControls}
+            disabled={disabled || !onTargetSetsChange}
+            aria-label={t('setControls.open')}
+            title={t('setControls.open')}
+            className="relative mx-auto flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <span className="text-[0.625rem] font-semibold">#</span>
+            <Wrench className="absolute -right-0.5 -top-0.5 size-3" />
+          </button>
           <span className="flex items-center justify-center gap-1">
             {unit}
             <Button
@@ -645,8 +706,21 @@ export function EditableSetsTable({
                   {formatSetMetric(metric, rowDraft, unit, locale)}
                 </span>
               ))}
-              <span className="flex items-center justify-center" aria-hidden>
-                {isUpdating && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+              <span className="flex items-center justify-center">
+                {isUpdating ? (
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={openSetControls}
+                    disabled={disabled || (!onTargetSetsChange && !onDeleteSet)}
+                    aria-label={t('setControls.openForSet', { number: rowNumber })}
+                    title={t('setControls.openForSet', { number: rowNumber })}
+                    className="flex size-8 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground disabled:opacity-40"
+                  >
+                    <Check className="size-5" />
+                  </button>
+                )}
               </span>
             </div>
           );
@@ -779,6 +853,21 @@ export function EditableSetsTable({
           );
         })}
       </div>
+
+      <SetControlsDialog
+        open={setControlsOpen}
+        totalSets={plannedRows}
+        minSets={minPlannedRows}
+        maxSets={maxPlannedRows}
+        busy={setControlsBusy}
+        canUndo={loggedSets.length > 0 && onDeleteSet != null}
+        onOpenChange={(open) => {
+          if (!setControlsBusy) setSetControlsOpen(open);
+        }}
+        onDecrease={() => void changePlannedRows(plannedRows - 1)}
+        onIncrease={() => void changePlannedRows(plannedRows + 1)}
+        onUndo={() => void undoLastSet()}
+      />
 
       {gym && (
         <WeightInventoryEditor

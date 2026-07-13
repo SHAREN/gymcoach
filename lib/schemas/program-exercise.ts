@@ -9,10 +9,14 @@ import {
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { MAX_TARGET_DROP_SETS } from '@/lib/planned-sets';
 
+export const programExerciseTargetSetsSchema = z.object({
+  targetSets: z.coerce.number().int().min(1).max(20),
+});
+
 export const programExerciseInputSchema = z
   .object({
     exerciseId: z.string().min(1, 'Exercise required'),
-    targetSets: z.coerce.number().int().min(1).max(20),
+    targetSets: programExerciseTargetSetsSchema.shape.targetSets,
     targetDropSets: z.coerce.number().int().min(0).max(MAX_TARGET_DROP_SETS).optional(),
     targetRepsMin: z.coerce.number().int().min(1).max(50),
     targetRepsMax: z.coerce.number().int().min(1).max(50),

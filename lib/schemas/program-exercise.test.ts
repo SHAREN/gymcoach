@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { programExerciseInputSchema } from './program-exercise';
+import { programExerciseInputSchema, programExerciseTargetSetsSchema } from './program-exercise';
 
 describe('programExerciseInputSchema', () => {
   const valid = {
@@ -18,6 +18,12 @@ describe('programExerciseInputSchema', () => {
   it('accepts a valid program exercise and coerces numeric strings', () => {
     const parsed = programExerciseInputSchema.parse({ ...valid, targetSets: '4' });
     expect(parsed.targetSets).toBe(4);
+  });
+
+  it('validates partial target-set updates independently', () => {
+    expect(programExerciseTargetSetsSchema.parse({ targetSets: '5' }).targetSets).toBe(5);
+    expect(programExerciseTargetSetsSchema.safeParse({ targetSets: 0 }).success).toBe(false);
+    expect(programExerciseTargetSetsSchema.safeParse({ targetSets: 21 }).success).toBe(false);
   });
 
   it('allows an equal rep range (min === max)', () => {

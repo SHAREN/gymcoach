@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { programExerciseInputSchema } from '@/lib/schemas/program-exercise';
+import {
+  programExerciseInputSchema,
+  programExerciseTargetSetsSchema,
+} from '@/lib/schemas/program-exercise';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 
 interface Params {
@@ -49,6 +52,23 @@ export async function PUT(req: Request, props: Params) {
         // skips undefined), null = unpair, number = (re)pair.
         supersetGroup: data.supersetGroup,
       },
+      include: { exercise: true },
+    });
+    return NextResponse.json(updated);
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+
+export async function PATCH(req: Request, props: Params) {
+  const params = await props.params;
+  try {
+    const userId = await requireApiUserId();
+    await ensureOwnership(params.id, userId);
+    const data = await parseJsonBody(req, programExerciseTargetSetsSchema);
+    const updated = await db.programExercise.update({
+      where: { id: params.id },
+      data: { targetSets: data.targetSets },
       include: { exercise: true },
     });
     return NextResponse.json(updated);
