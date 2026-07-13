@@ -41,6 +41,11 @@
     <string name="edit">Изменить</string>
     <string name="sync_error">Синхронизация не удалась. Данные надёжно сохранены на телефоне.</string>
     <string name="sync_blocked">Одно изменение отклонено сервером. Последующие изменения безопасно остались в очереди.</string>
+    <string name="sync_issue_title">Синхронизация требует внимания</string>
+    <string name="retry">Повторить</string>
+    <string name="discard_change">Отбросить отклонённое изменение</string>
+    <string name="discard">Отбросить</string>
+    <string name="discard_change_warning">Отклонённое локальное изменение будет удалено. Если сервер отклонил начало тренировки, удалится вся несинхронизированная тренировка. Если ошибка могла быть временной, сначала нажмите «Повторить».</string>
     <string name="login_error">Не удалось войти.</string>
     <string name="web_offline">Для веб-панели нужен интернет. Нативная тренировка остаётся доступной.</string>
     <string name="recommendation_low_confidence">Низкая точность: RIR не был записан.</string>

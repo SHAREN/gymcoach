@@ -46,12 +46,20 @@ class GymCoachRepository(
     }
     val openSessions: Flow<List<LocalSessionEntity>> = dao.observeOpenSessions()
     val pendingCount: Flow<Int> = dao.observePendingCount()
+    val syncIssue: Flow<SyncIssue?> = dao.observeBlockedOperation().map { operation ->
+        operation?.let {
+            SyncIssue(
+                operationId = it.operationId,
+                message = it.lastError ?: "Server rejected a queued change.",
+            )
+        }
+    }
 
     val isLoggedIn: Boolean get() = accountStore.getAccessToken() != null
     val serverUrl: String get() = accountStore.serverUrl
     val email: String? get() = accountStore.userEmail
 
-    suspend fun login(email: String, password: String, serverUrl: String) {
+    suspend fun login(email: String, password: String, serverUrl: String) = syncMutex.withLock {
         val candidateServerUrl = normalizeServerUrl(serverUrl)
         val response = api.login(
             candidateServerUrl,
@@ -76,12 +84,49 @@ class GymCoachRepository(
         schedulePeriodicSync()
     }
 
-    suspend fun logout() {
+    suspend fun logout() = syncMutex.withLock {
         check(dao.queuedOperations().isEmpty()) { "Sync pending changes before signing out." }
         val token = accountStore.getAccessToken()
         if (token != null) runCatching { api.logout(accountStore.serverUrl, token) }
         accountStore.clearAccount()
         dao.clearAccountData()
+    }
+
+    suspend fun retryBlockedChange() = syncMutex.withLock {
+        val blocked = dao.queuedOperations().firstOrNull { it.status == "BLOCKED" } ?: return@withLock
+        dao.retryOperation(blocked.operationId)
+        scheduleSyncNow()
+    }
+
+    suspend fun discardBlockedChange() = syncMutex.withLock {
+        val queue = dao.queuedOperations()
+        val blocked = queue.firstOrNull { it.status == "BLOCKED" } ?: return@withLock
+        val operation = runCatching {
+            api.json.decodeFromString<SyncOperation>(blocked.payloadJson)
+        }.getOrNull()
+        if (operation is StartSessionOperation) {
+            val sessionId = operation.session.id
+            val localSetIds = dao.getAllSets(sessionId).mapTo(mutableSetOf()) { it.id }
+            val relatedOperationIds = queue.mapNotNull { entry ->
+                val queued = runCatching {
+                    api.json.decodeFromString<SyncOperation>(entry.payloadJson)
+                }.getOrNull()
+                val related = when (queued) {
+                    is StartSessionOperation -> queued.session.id == sessionId
+                    is UpsertSetOperation -> queued.set.sessionId == sessionId
+                    is FinishSessionOperation -> queued.sessionId == sessionId
+                    is DeleteSetOperation -> queued.setId in localSetIds
+                    null -> entry.operationId == blocked.operationId
+                }
+                entry.operationId.takeIf { related }
+            }
+            dao.removeOperations(relatedOperationIds)
+            dao.deleteSessionLocal(sessionId)
+        } else {
+            dao.removeOperations(listOf(blocked.operationId))
+        }
+        runCatching { refreshBootstrap() }
+        scheduleSyncNow()
     }
 
     suspend fun refreshBootstrap(): BootstrapResponse {
@@ -420,3 +465,8 @@ internal fun pendingMutationTargets(
 }
 
 class MobileAuthenticationRequiredException : IOException("Sign in again to synchronize local data.")
+
+data class SyncIssue(
+    val operationId: String,
+    val message: String,
+)
