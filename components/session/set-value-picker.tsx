@@ -121,7 +121,7 @@ export function SetValuePicker({
                 key={option}
                 type="button"
                 data-picker-selected={selected ? 'true' : undefined}
-                onClick={() => onChoose(option)}
+                onClick={() => setManualValue(String(option))}
                 className={`mx-auto flex h-[4.75rem] w-full max-w-[15.5rem] items-center justify-center rounded-md border text-2xl font-semibold tabular-nums transition-colors ${
                   selected
                     ? 'border-primary bg-primary/15 text-foreground'
