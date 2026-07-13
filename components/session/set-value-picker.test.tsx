@@ -45,7 +45,7 @@ describe('SetValuePicker', () => {
     expect(onChoose).toHaveBeenCalledWith(70);
   });
 
-  it('selects a saved gym option directly from the scrolling list', () => {
+  it('keeps a saved gym option pending until the check button confirms it', () => {
     const onChoose = vi.fn();
     render(
       <SetValuePicker
@@ -59,7 +59,39 @@ describe('SetValuePicker', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '67.5 kg' }));
+    const option = screen.getByRole('button', { name: '67.5 kg' });
+    fireEvent.click(option);
+
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(option).toHaveAttribute('data-picker-selected', 'true');
+    expect(screen.getByRole('textbox', { name: 'Manual weight' })).toHaveTextContent('67.5');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply value' }));
     expect(onChoose).toHaveBeenCalledWith(67.5);
+  });
+
+  it('keeps a repetition option pending until the check button confirms it', () => {
+    const onChoose = vi.fn();
+    render(
+      <SetValuePicker
+        open
+        kind="reps"
+        value={10}
+        options={[8, 10, 12]}
+        unit="KG"
+        onClose={vi.fn()}
+        onChoose={onChoose}
+      />,
+    );
+
+    const option = screen.getByRole('button', { name: '12 reps' });
+    fireEvent.click(option);
+
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(option).toHaveAttribute('data-picker-selected', 'true');
+    expect(screen.getByRole('textbox', { name: 'Manual repetitions' })).toHaveTextContent('12');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply value' }));
+    expect(onChoose).toHaveBeenCalledWith(12);
   });
 });
