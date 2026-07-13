@@ -282,4 +282,37 @@ describe('Android mobile API', () => {
     });
     expect(await db.session.count({ where: { id: 'mob_session_not_applied' } })).toBe(0);
   });
+
+  it('classifies concurrent retries as applied plus duplicate', async () => {
+    const seeded = await seedUser('mobile-concurrent@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const operation = {
+      operationId: 'concurrent_start_0001',
+      type: 'START_SESSION',
+      session: {
+        id: 'mob_session_concurrent',
+        workoutId: seeded.workout.id,
+        gymId: seeded.gym.id,
+        startedAt: '2026-07-13T10:00:00.000Z',
+      },
+    };
+
+    const responses = await Promise.all(
+      [1, 2].map(() =>
+        sync(
+          jsonRequest(
+            'http://test.local/api/mobile/sync',
+            { operations: [operation] },
+            accessToken,
+          ),
+        ),
+      ),
+    );
+    const statuses = await Promise.all(
+      responses.map(async (response) => (await response.json()).results[0].status as string),
+    );
+
+    expect(statuses.sort()).toEqual(['APPLIED', 'DUPLICATE']);
+    expect(await db.session.count({ where: { id: operation.session.id } })).toBe(1);
+  });
 });

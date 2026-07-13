@@ -15,6 +15,11 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const results = await applyMobileOperations(principal, parsed.data.operations);
-  return Response.json({ serverTime: new Date(), results });
+  try {
+    const results = await applyMobileOperations(principal, parsed.data.operations);
+    return Response.json({ serverTime: new Date(), results });
+  } catch (error) {
+    console.error('[mobile/sync] infrastructure failure:', error);
+    return Response.json({ error: 'Synchronization is temporarily unavailable.' }, { status: 503 });
+  }
 }
