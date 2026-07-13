@@ -27,6 +27,13 @@ describe('SetValuePicker', () => {
     expect(diagram).toHaveTextContent('20');
     expect(diagram).toHaveTextContent('2.5');
     expect(diagram).toHaveTextContent('Bar 20 kg');
+    expect(within(diagram).getByTestId('barbell-shaft')).toHaveClass('inset-x-1', 'rounded-full');
+    expect(within(diagram).getByTestId('barbell-layout')).toHaveClass(
+      'grid-cols-[minmax(2.25rem,1.45fr)_max-content_minmax(1rem,0.85fr)]',
+    );
+    expect(within(diagram).getByTestId('barbell-plates')).toBeInTheDocument();
+    expect(within(diagram).getByTestId('barbell-weight-label')).toHaveClass('text-center');
+    expect(diagram.querySelector('svg')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete last digit' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete last digit' }));

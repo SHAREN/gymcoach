@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, Delete, LockKeyhole } from 'lucide-react';
+import { Check, Delete } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { WeightUnit } from '@/lib/prisma-client';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -224,46 +224,52 @@ function BarbellSideDiagram({ load, unit }: { load: PlateLoad; unit: WeightUnit 
   const maxPlate = Math.max(...plates.map((plate) => plate.weight), 1);
 
   return (
-    <div className="min-w-0" data-testid="barbell-side-diagram">
+    <div className="relative min-w-0 overflow-hidden" data-testid="barbell-side-diagram">
       <div
-        className="relative flex h-12 items-center overflow-hidden"
-        aria-label={t('platesPerSide')}
+        data-testid="barbell-shaft"
+        className="absolute inset-x-1 top-5 h-2 rounded-full bg-zinc-500"
+      />
+      <div
+        data-testid="barbell-layout"
+        className="grid min-w-0 grid-cols-[minmax(2.25rem,1.45fr)_max-content_minmax(1rem,0.85fr)]"
       >
-        <div className="absolute left-1 right-0 h-2 rounded-sm bg-zinc-500" />
-        <div className="relative z-10 ml-1 h-8 w-3 shrink-0 rounded-sm bg-zinc-400" />
-        <div className="relative z-10 flex items-center gap-0.5">
-          {plates.map((plate) => {
-            const ratio = plate.weight / maxPlate;
-            return (
-              <div
-                key={plate.key}
-                className="flex w-4 shrink-0 items-center justify-center rounded-sm border border-zinc-300 bg-zinc-700 text-[0.55rem] font-bold text-white"
-                style={{ height: `${Math.round(22 + ratio * 24)}px` }}
-                title={`${plate.weight} ${unit.toLowerCase()}`}
-              >
-                <span className="-rotate-90 whitespace-nowrap">{plate.weight}</span>
-              </div>
-            );
-          })}
+        <span aria-hidden />
+        <div className="relative z-10 min-w-0" aria-label={t('platesPerSide')}>
+          <div data-testid="barbell-plates" className="flex h-12 items-center gap-0.5">
+            {plates.map((plate) => {
+              const ratio = plate.weight / maxPlate;
+              return (
+                <div
+                  key={plate.key}
+                  className="flex w-4 shrink-0 items-center justify-center rounded-sm border border-zinc-300 bg-zinc-700 text-[0.55rem] font-bold text-white"
+                  style={{ height: `${Math.round(22 + ratio * 24)}px` }}
+                  title={`${plate.weight} ${unit.toLowerCase()}`}
+                >
+                  <span className="-rotate-90 whitespace-nowrap">{plate.weight}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div
+            data-testid="barbell-weight-label"
+            className="truncate text-center text-[0.625rem] text-muted-foreground"
+          >
+            {t('barWeight', {
+              weight: formatPickerNumber(load.barWeight, locale),
+              unit: unit.toLowerCase(),
+            })}
+          </div>
+          {!load.exact && (
+            <p className="truncate text-center text-[0.625rem] text-amber-600">
+              {t('plateRemainder', {
+                weight: formatPickerNumber(load.achievedWeight, locale),
+                unit: unit.toLowerCase(),
+              })}
+            </p>
+          )}
         </div>
+        <span aria-hidden />
       </div>
-      <div className="flex items-center gap-1 text-[0.625rem] text-muted-foreground">
-        {load.exact && <LockKeyhole className="size-3 text-emerald-500" />}
-        <span>
-          {t('barWeight', {
-            weight: formatPickerNumber(load.barWeight, locale),
-            unit: unit.toLowerCase(),
-          })}
-        </span>
-      </div>
-      {!load.exact && (
-        <p className="text-[0.625rem] text-amber-600">
-          {t('plateRemainder', {
-            weight: formatPickerNumber(load.achievedWeight, locale),
-            unit: unit.toLowerCase(),
-          })}
-        </p>
-      )}
     </div>
   );
 }
