@@ -66,6 +66,10 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.programs.ExerciseInput
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
+import org.sharteman.gymcoach.ui.localization.equipmentTypeDisplayName
+import org.sharteman.gymcoach.ui.localization.exerciseCategoryDisplayName
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
 
 private val muscleGroups = listOf(
     "CHEST", "BACK_WIDTH", "BACK_THICKNESS", "SHOULDERS_FRONT", "SHOULDERS_LATERAL",
@@ -153,15 +157,25 @@ fun ExerciseCatalogScreen(
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     EnumFilterButton(
-                        label = stringResource(R.string.filter_muscle, muscle?.let(::enumLabel) ?: stringResource(R.string.filter_all)),
+                        label = stringResource(
+                            R.string.filter_muscle,
+                            muscle?.let(::muscleGroupDisplayName)
+                                ?: stringResource(R.string.filter_all),
+                        ),
                         value = muscle,
                         values = muscleGroups,
+                        displayValue = ::muscleGroupDisplayName,
                         onValue = { muscle = it },
                     )
                     EnumFilterButton(
-                        label = stringResource(R.string.filter_category, category?.let(::enumLabel) ?: stringResource(R.string.filter_all)),
+                        label = stringResource(
+                            R.string.filter_category,
+                            category?.let(::exerciseCategoryDisplayName)
+                                ?: stringResource(R.string.filter_all),
+                        ),
                         value = category,
                         values = categories,
+                        displayValue = ::exerciseCategoryDisplayName,
                         onValue = { category = it },
                     )
                 }
@@ -215,7 +229,10 @@ fun ExerciseCatalogScreen(
     }
     deleting?.let { exercise ->
         ConfirmDeleteDialog(
-            message = stringResource(R.string.confirm_exercise_delete, exercise.name),
+            message = stringResource(
+                R.string.confirm_exercise_delete,
+                exerciseDisplayName(exercise.name),
+            ),
             onDismiss = { deleting = null },
             onConfirm = {
                 deleting = null
@@ -245,7 +262,7 @@ private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen
                 if (media != null) {
                     AsyncImage(
                         model = media.frameUrl(serverUrl),
-                        contentDescription = exercise.name,
+                        contentDescription = exerciseDisplayName(exercise.name),
                         contentScale = ContentScale.Fit,
                     )
                 } else {
@@ -256,10 +273,18 @@ private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(exercise.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(enumLabel(exercise.muscleGroup), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "${enumLabel(exercise.category)} • ${enumLabel(exercise.equipmentType)}",
+                    exerciseDisplayName(exercise.name),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    muscleGroupDisplayName(exercise.muscleGroup),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "${exerciseCategoryDisplayName(exercise.category)} • " +
+                        equipmentTypeDisplayName(exercise.equipmentType),
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
@@ -284,7 +309,12 @@ private fun ExerciseCatalogDetailDialog(
             LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(exercise.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            exerciseDisplayName(exercise.name),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
                         IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close)) }
                     }
                 }
@@ -294,7 +324,7 @@ private fun ExerciseCatalogDetailDialog(
                             repeat(2) { frame ->
                                 AsyncImage(
                                     model = media.frameUrl(serverUrl, frame),
-                                    contentDescription = exercise.name,
+                                    contentDescription = exerciseDisplayName(exercise.name),
                                     modifier = Modifier.weight(1f).aspectRatio(1f),
                                     contentScale = ContentScale.Fit,
                                 )
@@ -303,9 +333,18 @@ private fun ExerciseCatalogDetailDialog(
                     }
                 }
                 item {
-                    DetailRow(stringResource(R.string.exercise_muscle_group), enumLabel(exercise.muscleGroup))
-                    DetailRow(stringResource(R.string.exercise_category), enumLabel(exercise.category))
-                    DetailRow(stringResource(R.string.exercise_equipment_type), enumLabel(exercise.equipmentType))
+                    DetailRow(
+                        stringResource(R.string.exercise_muscle_group),
+                        muscleGroupDisplayName(exercise.muscleGroup),
+                    )
+                    DetailRow(
+                        stringResource(R.string.exercise_category),
+                        exerciseCategoryDisplayName(exercise.category),
+                    )
+                    DetailRow(
+                        stringResource(R.string.exercise_equipment_type),
+                        equipmentTypeDisplayName(exercise.equipmentType),
+                    )
                     DetailRow(stringResource(R.string.exercise_default_rest), exercise.defaultRestSec.toString())
                     exercise.notes?.takeIf { it.isNotBlank() }?.let {
                         Spacer(Modifier.height(8.dp))
@@ -369,9 +408,30 @@ private fun ExerciseEditorDialog(
                     )
                 }
                 item { OutlinedTextField(name, { name = it.take(120) }, label = { Text(stringResource(R.string.exercise_name)) }, modifier = Modifier.fillMaxWidth()) }
-                item { EnumPicker(stringResource(R.string.exercise_muscle_group), muscle, muscleGroups) { muscle = it } }
-                item { EnumPicker(stringResource(R.string.exercise_category), category, categories) { category = it } }
-                item { EnumPicker(stringResource(R.string.exercise_equipment_type), equipment, equipmentTypes) { equipment = it } }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_muscle_group),
+                        muscle,
+                        muscleGroups,
+                        ::muscleGroupDisplayName,
+                    ) { muscle = it }
+                }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_category),
+                        category,
+                        categories,
+                        ::exerciseCategoryDisplayName,
+                    ) { category = it }
+                }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_equipment_type),
+                        equipment,
+                        equipmentTypes,
+                        ::equipmentTypeDisplayName,
+                    ) { equipment = it }
+                }
                 item {
                     OutlinedTextField(
                         rest,
@@ -423,15 +483,23 @@ private fun ExerciseEditorDialog(
 }
 
 @Composable
-private fun EnumPicker(label: String, value: String, values: List<String>, onValue: (String) -> Unit) {
+private fun EnumPicker(
+    label: String,
+    value: String,
+    values: List<String>,
+    displayValue: (String) -> String,
+    onValue: (String) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium)
-        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) { Text(enumLabel(value)) }
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(displayValue(value))
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             values.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(enumLabel(option)) },
+                    text = { Text(displayValue(option)) },
                     onClick = { open = false; onValue(option) },
                 )
             }
@@ -444,6 +512,7 @@ private fun EnumFilterButton(
     label: String,
     value: String?,
     values: List<String>,
+    displayValue: (String) -> String,
     onValue: (String?) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -456,7 +525,7 @@ private fun EnumFilterButton(
             )
             values.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(enumLabel(option)) },
+                    text = { Text(displayValue(option)) },
                     onClick = { open = false; onValue(option) },
                 )
             }
@@ -469,8 +538,10 @@ internal fun filterCatalogExercises(
     query: String,
     muscleGroup: String?,
     category: String?,
+    language: String = java.util.Locale.getDefault().language,
 ): List<ExerciseDto> = exercises.filter { exercise ->
-    (query.isBlank() || exercise.name.contains(query.trim(), ignoreCase = true)) &&
+    (query.isBlank() || exercise.name.contains(query.trim(), ignoreCase = true) ||
+        exerciseDisplayName(exercise.name, language).contains(query.trim(), ignoreCase = true)) &&
         (muscleGroup == null || exercise.muscleGroup == muscleGroup) &&
         (category == null || exercise.category == category)
 }

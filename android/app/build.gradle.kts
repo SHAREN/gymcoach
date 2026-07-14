@@ -16,8 +16,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.4.3"
+        versionCode = 14
+        versionName = "0.4.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -92,6 +92,20 @@ dependencies {
 }
 
 val repositoryRoot = rootProject.projectDir.parentFile
+val generateAndroidExerciseNames = tasks.register<Exec>("generateAndroidExerciseNames") {
+    group = "build setup"
+    description = "Generates the Android Russian exercise dictionary from the web dictionary."
+    workingDir(repositoryRoot)
+    commandLine(
+        "node",
+        repositoryRoot.resolve("scripts/generate-android-exercise-names.mjs").absolutePath,
+    )
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(generateAndroidExerciseNames)
+}
+
 val debugApk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")
 val publishDebugApk = tasks.register<Exec>("publishDebugApk") {
     group = "distribution"

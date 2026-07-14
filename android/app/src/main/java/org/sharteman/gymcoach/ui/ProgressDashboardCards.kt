@@ -52,6 +52,8 @@ import org.sharteman.gymcoach.data.model.MobileVolumeLandmarksDto
 import org.sharteman.gymcoach.training.fromDisplayWeight
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -107,7 +109,7 @@ internal fun ProgressDeloadCard(
                 Text(
                     stringResource(
                         R.string.progress_deload_stalled_reason,
-                        deload.stalledExerciseNames.joinToString(", "),
+                        deload.stalledExerciseNames.joinToString(", ") { exerciseDisplayName(it) },
                     ),
                 )
             }
@@ -308,7 +310,7 @@ internal fun ProgressStalledCard(exercises: List<MobileProgressExerciseDto>) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        stalled.forEach { DashboardPill(it.name) }
+        stalled.forEach { DashboardPill(exerciseDisplayName(it.name)) }
     }
 }
 
@@ -340,7 +342,7 @@ internal fun ProgressVolumeLandmarksCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(muscleGroupLabel(row.muscleGroup), fontWeight = FontWeight.Medium)
+                    Text(muscleGroupDisplayName(row.muscleGroup), fontWeight = FontWeight.Medium)
                     DashboardPill(volumeZoneLabel(row.zone))
                 }
                 Text(
@@ -396,7 +398,7 @@ private fun VolumeTargetDialog(
             Text(
                 stringResource(
                     R.string.progress_volume_target_title,
-                    muscleGroupLabel(row.muscleGroup),
+                    muscleGroupDisplayName(row.muscleGroup),
                 ),
             )
         },
@@ -463,7 +465,7 @@ internal fun ProgressRecordsCard(records: List<MobileExerciseRecordDto>, unit: S
         records.forEach { record ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
             Column(modifier = Modifier.padding(vertical = 5.dp)) {
-                Text(record.exerciseName, fontWeight = FontWeight.Medium)
+                Text(exerciseDisplayName(record.exerciseName), fontWeight = FontWeight.Medium)
                 Text(
                     stringResource(
                         R.string.progress_record_heaviest,
@@ -500,7 +502,7 @@ internal fun ProgressRecapCard(exercises: List<MobileProgressExerciseDto>, unit:
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
             Column(modifier = Modifier.padding(vertical = 5.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(exercise.name, fontWeight = FontWeight.Medium)
+                    Text(exerciseDisplayName(exercise.name), fontWeight = FontWeight.Medium)
                     if (exercise.recap.stalled) DashboardPill(stringResource(R.string.progress_stalled_badge))
                 }
                 Text(

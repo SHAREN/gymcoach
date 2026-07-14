@@ -85,6 +85,11 @@ import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.formatSetTableMetric
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.localization.equipmentTypeDisplayName
+import org.sharteman.gymcoach.ui.localization.exerciseCategoryDisplayName
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -135,7 +140,7 @@ fun ExerciseDetailsDialog(
                         )
                     }
                     Text(
-                        exercise.name,
+                        exerciseDisplayName(exercise.name),
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -160,7 +165,7 @@ fun ExerciseDetailsDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    exercise.name,
+                                    exerciseDisplayName(exercise.name),
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -169,9 +174,9 @@ fun ExerciseDetailsDialog(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    DetailChip(formatEnumLabel(exercise.muscleGroup))
-                                    DetailChip(formatEnumLabel(exercise.category))
-                                    DetailChip(formatEnumLabel(exercise.equipmentType))
+                                    DetailChip(muscleGroupDisplayName(exercise.muscleGroup))
+                                    DetailChip(exerciseCategoryDisplayName(exercise.category))
+                                    DetailChip(equipmentTypeDisplayName(exercise.equipmentType))
                                 }
                             }
                             OutlinedButton(onClick = { techniqueOpen = true }) {
@@ -194,11 +199,11 @@ fun ExerciseDetailsDialog(
                             )
                             DetailValueRow(
                                 stringResource(R.string.muscle_group),
-                                formatEnumLabel(exercise.muscleGroup),
+                                muscleGroupDisplayName(exercise.muscleGroup),
                             )
                             DetailValueRow(
                                 stringResource(R.string.equipment),
-                                formatEnumLabel(exercise.equipmentType),
+                                equipmentTypeDisplayName(exercise.equipmentType),
                             )
                             DetailValueRow(
                                 stringResource(R.string.default_rest),
@@ -542,7 +547,11 @@ private fun ExerciseTechniqueDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(exercise.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            exerciseDisplayName(exercise.name),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Text(
                             stringResource(R.string.technique_description),
                             style = MaterialTheme.typography.bodySmall,
@@ -567,7 +576,7 @@ private fun ExerciseTechniqueDialog(
                                 .build(),
                             contentDescription = stringResource(
                                 if (frame == 0) R.string.technique_start_alt else R.string.technique_finish_alt,
-                                exercise.name,
+                                exerciseDisplayName(exercise.name),
                             ),
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),

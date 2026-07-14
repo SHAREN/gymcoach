@@ -68,6 +68,7 @@ import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
 import org.sharteman.gymcoach.data.repository.HistoryProgressDataSource
 import org.sharteman.gymcoach.training.roundWeight
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.training.toDisplayWeight
 import java.time.Instant
 import java.time.LocalDate
@@ -422,7 +423,8 @@ private fun HistorySessionCard(
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
-                session.workoutName ?: session.exercises.firstOrNull { it.category == "CARDIO" }?.name
+                session.workoutName
+                    ?: session.exercises.firstOrNull { it.category == "CARDIO" }?.name?.let(::exerciseDisplayName)
                     ?: stringResource(R.string.history_free_session),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
@@ -539,7 +541,7 @@ private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(exercise.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(exerciseDisplayName(exercise.name), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
                 Text(muscleGroupLabel(exercise.muscleGroup), style = MaterialTheme.typography.labelSmall)
             }

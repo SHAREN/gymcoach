@@ -68,7 +68,7 @@ import org.sharteman.gymcoach.data.programs.ProgramInput
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.programs.WorkoutInput
-import java.util.Locale
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 @Composable
 fun ProgramsScreen(
@@ -463,7 +463,10 @@ private fun ProgramDetailScreen(
     }
     deletingExercise?.let { target ->
         ConfirmDeleteDialog(
-            message = stringResource(R.string.confirm_program_exercise_delete, target.exercise.name),
+            message = stringResource(
+                R.string.confirm_program_exercise_delete,
+                exerciseDisplayName(target.exercise.name),
+            ),
             onDismiss = { deletingExercise = null },
             onConfirm = {
                 deletingExercise = null
@@ -512,7 +515,10 @@ private fun WorkoutCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            exerciseDisplayName(target.exercise.name),
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Text(
                             stringResource(
                                 R.string.program_targets_summary,
@@ -656,7 +662,7 @@ private fun ProgramExerciseEditorDialog(
             DropdownMenu(expanded = selectorOpen, onDismissRequest = { selectorOpen = false }) {
                 catalog.forEach { exercise ->
                     DropdownMenuItem(
-                        text = { Text(exercise.name) },
+                        text = { Text(exerciseDisplayName(exercise.name)) },
                         onClick = {
                             selectedId = exercise.id
                             if (existing == null) rest = exercise.defaultRestSec.toString()
@@ -744,8 +750,5 @@ internal fun ErrorCard(message: String?, onRetry: () -> Unit) {
         }
     }
 }
-
-internal fun enumLabel(value: String): String = value.lowercase(Locale.getDefault())
-    .split('_').joinToString(" ") { it.replaceFirstChar { char -> char.titlecase(Locale.getDefault()) } }
 
 private fun digits(value: String): String = value.filter(Char::isDigit).take(3)
