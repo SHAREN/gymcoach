@@ -322,6 +322,10 @@ data class MobileProgressSnapshot(
     val bodyweightEntries: List<MobileBodyweightEntryDto>? = null,
     val bodyMeasurements: List<MobileBodyMeasurementDto>? = null,
     val conditioningWeeks: List<MobileConditioningWeekDto>? = null,
+    val unit: String = "KG",
+    val volumeLandmarks: MobileVolumeLandmarksDto? = null,
+    val records: List<MobileExerciseRecordDto> = emptyList(),
+    val deload: MobileDeloadStatusDto = MobileDeloadStatusDto(),
 )
 
 @Serializable
@@ -377,7 +381,12 @@ data class MobileProgressExerciseDto(
     val id: String,
     val name: String,
     val muscleGroup: String,
+    val usesBodyweight: Boolean = false,
     val points: List<MobileProgressPointDto> = emptyList(),
+    val bestEstimated1RM: Double = 0.0,
+    val loadingTable: List<MobileLoadingRowDto> = emptyList(),
+    val goal: MobileProgressGoalDto? = null,
+    val recap: MobileProgressRecapDto = MobileProgressRecapDto(),
 )
 
 @Serializable

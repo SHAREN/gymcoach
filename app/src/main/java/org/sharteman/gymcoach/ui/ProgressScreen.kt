@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +54,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,12 +65,14 @@ import androidx.compose.ui.unit.dp
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.MobileProgressExerciseDto
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
+import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +84,40 @@ fun ProgressScreen(
     onRefresh: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val dashboardRepository = remember(context) { HistoryProgressRepository(context) }
+    val dashboardScope = rememberCoroutineScope()
+    var dashboardBusy by remember { mutableStateOf(false) }
+    var dashboardError by remember { mutableStateOf<String?>(null) }
+    fun runDashboardAction(action: suspend () -> Unit) {
+        dashboardScope.launch {
+            dashboardBusy = true
+            dashboardError = null
+            runCatching { action() }
+                .onSuccess { onRefresh() }
+                .onFailure {
+                    dashboardError = it.message ?: context.getString(R.string.progress_action_failed)
+                }
+            dashboardBusy = false
+        }
+    }
+    val dashboardActions = ProgressDashboardActions(
+        busy = dashboardBusy,
+        onSaveGoal = { exerciseId, weightKg, reps ->
+            runDashboardAction { dashboardRepository.saveGoal(exerciseId, weightKg, reps) }
+        },
+        onDeleteGoal = { goalId ->
+            runDashboardAction { dashboardRepository.deleteGoal(goalId) }
+        },
+        onSaveVolumeTarget = { muscleGroup, mev, mrv ->
+            runDashboardAction { dashboardRepository.saveVolumeTarget(muscleGroup, mev, mrv) }
+        },
+        onClearVolumeTarget = { muscleGroup ->
+            runDashboardAction { dashboardRepository.clearVolumeTarget(muscleGroup) }
+        },
+        onStartDeload = { runDashboardAction { dashboardRepository.startDeload() } },
+        onEndDeload = { runDashboardAction { dashboardRepository.endDeload() } },
+    )
     var selectedExerciseId by rememberSaveable(initialExerciseId) {
         mutableStateOf(initialExerciseId)
     }
@@ -136,6 +174,14 @@ fun ProgressScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (refreshing) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+            if (dashboardBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+            dashboardError?.let { message ->
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Text(message, modifier = Modifier.fillMaxWidth().padding(12.dp))
+                    }
+                }
+            }
             snapshot?.let { progress ->
                 progress.bodyweightEntries?.let { entries ->
                     item { BodyweightProgressCard(entries = entries, unit = unit) }
@@ -148,6 +194,9 @@ fun ProgressScreen(
                 }
                 progress.consistency?.let { consistency ->
                     item { ConsistencyProgressCard(consistency) }
+                }
+                if (progress.deload.active || progress.deload.recommended) {
+                    item { ProgressDeloadCard(progress.deload, dashboardActions) }
                 }
             }
             item {
@@ -208,9 +257,29 @@ fun ProgressScreen(
                     ProgressSummaryCard(selectedExercise, unit)
                 }
             }
+            selectedExercise?.let { exercise ->
+                if (exercise.loadingTable.isNotEmpty()) {
+                    item { ProgressLoadingTableCard(exercise, unit) }
+                }
+                item { ProgressGoalCard(exercise, unit, dashboardActions) }
+            }
             snapshot?.let { progress ->
                 progress.weeklyVolume?.let { weeks ->
                     item { WeeklyVolumeProgressCard(weeks = weeks, unit = unit) }
+                }
+                if (progress.exercises.any { it.recap.stalled }) {
+                    item { ProgressStalledCard(progress.exercises) }
+                }
+                progress.volumeLandmarks?.let { landmarks ->
+                    if (landmarks.rows.isNotEmpty()) {
+                        item { ProgressVolumeLandmarksCard(landmarks, dashboardActions) }
+                    }
+                }
+                if (progress.exercises.any { it.recap.sessions > 0 }) {
+                    item { ProgressRecapCard(progress.exercises, unit) }
+                }
+                if (progress.records.isNotEmpty()) {
+                    item { ProgressRecordsCard(progress.records, unit) }
                 }
             }
         }
