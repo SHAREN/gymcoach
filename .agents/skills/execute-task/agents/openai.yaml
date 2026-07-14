@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Execute Task'
+  short_description: 'Implement one READY Beads task in isolation'
+  default_prompt: 'Use $execute-task TASK-ID to implement one prepared Beads task in its own branch and worktree.'

@@ -8,6 +8,33 @@ Before changing or explaining any training calculation, also read
 `docs/ai-coach-principles.md`. It is the normative contract for source-backed
 principles, engineering heuristics, current formulas and safety boundaries.
 
+## Canonical runtime and deployment
+
+- GymCoach must have exactly one canonical runtime on the Home PC:
+  `http://192.168.0.119:3030`. The public production URL
+  `https://gymcoach7.sharteman.duckdns.org` must proxy to that runtime.
+- Temporary development or preview ports are allowed only while work is in
+  progress. After a feature passes its applicable verification gates, deploy
+  the completed version to the canonical `3030` runtime before reporting the
+  work complete. Do not leave the latest version available only on a temporary
+  port, branch or working copy.
+- Before deploying, identify the exact checkout, commit, container and image
+  currently backing `3030`. Inspect every relevant clone, worktree and branch
+  for concurrent or newer changes, including `git status`, recent commits and
+  diffs against the intended deployment source.
+- Never replace newer work by copying whole files from a stale checkout or by
+  rebuilding from an outdated branch. Integrate concurrent changes deliberately
+  with an appropriate merge, rebase, cherry-pick or reviewed patch. Resolve
+  conflicts according to behavior, preserve both valid change sets and rerun
+  all affected verification gates after integration.
+- Keep the previous working image or runtime state available for rollback.
+  Deploy the integrated version, then health-check both
+  `http://192.168.0.119:3030` and
+  `https://gymcoach7.sharteman.duckdns.org` before removing temporary runtimes.
+- Final deployment verification must confirm that `3030` is serving the latest
+  integrated version and that no other GymCoach containers or listeners remain
+  on temporary host ports such as `3031`, `3032` or `3033`.
+
 ## Mandatory training-science research workflow
 
 Any question, design decision, algorithm, prompt, recommendation, or code change
@@ -59,3 +86,133 @@ rest, but it must not diagnose or treat illness or injury. Training-related
 pain, post-illness return, and medical red flags require conservative product
 language and referral to an appropriate qualified professional. NotebookLM
 research does not replace medical clearance.
+
+## Development task workflow
+
+- Beads is the source of truth for project tasks. Follow
+  docs/CODEX_WORKFLOW.md and use the repo-local skills under
+  .agents/skills.
+- The generated beads skill is orientation only. Its generic create, ready,
+  claim, and close examples do not override GymCoach stages. Route every task
+  mutation through capture-issue, triage-inbox, execute-task, or verify-task;
+  use next-task for read-only selection.
+- New bugs and ideas must be captured into INBOX before implementation.
+- A new request must not interrupt the currently active task unless it is an
+  explicitly confirmed P0 issue. Even a P0 is captured as a separate task
+  first.
+- Only READY tasks may be implemented.
+- Each implementation task must use a separate Codex task, Git branch, and
+  Worktree.
+- Multiple READY tasks may run concurrently only when they use different Codex
+  tasks, branches, and Worktrees and their affected files, APIs, schemas, and
+  shared contracts do not overlap. Add a Beads dependency and serialize the
+  work when overlap or ordering is uncertain.
+- One implementation task has one write-owning agent. Do not run multiple
+  agents that edit the same task or Worktree. Read-only research, review, and
+  verification may be delegated in parallel.
+- The Project Dispatcher is queue-only. It may capture, triage, and select work
+  while implementations run, but it must not edit product code or claim a task.
+- One task must produce one focused diff.
+- Do not expand task scope. Capture unrelated findings as separate linked
+  tasks.
+- Do not modify product code during issue capture or triage.
+- Do not work directly on main or master.
+- Do not close a task without acceptance criteria, tests, and verification
+  evidence.
+- Do not expose, copy, log, or commit secrets, tokens, environment variables,
+  private keys, or personal data. Task descriptions and verification notes are
+  not exceptions.
+- The historical docs/loops backlog and GitHub issue loop are not active task
+  sources. Do not append new tasks to docs/loops/ideas-backlog.md.
+
+## Verification commands
+
+The canonical web/backend/shared green-gate is:
+
+```bash
+bash scripts/verify.sh
+```
+
+On the current Home PC, bare bash resolves to WSL without Node. From
+PowerShell, invoke the same canonical script through Git Bash:
+
+~~~powershell
+& 'D:\Program Files\Git\bin\bash.exe' scripts/verify.sh
+~~~
+
+It runs Prisma generation, lint, TypeScript type checking, unit/component
+tests, and the production build. The full gate requires the test PostgreSQL on
+port 5434 and runs integration and E2E tests:
+
+```bash
+bash scripts/verify.sh --full
+```
+
+On the current Home PC, run the full gate from PowerShell with:
+
+~~~powershell
+& 'D:\Program Files\Git\bin\bash.exe' scripts/verify.sh --full
+~~~
+
+When the changed area requires the full gate, unavailable prerequisites block
+REVIEW, verification, and task closure. They are not optional evidence.
+
+Useful individual commands are:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+npm run test:coverage
+npm run test:integration
+npm run build
+npm run test:e2e
+npm run format:check
+```
+
+CI additionally builds and probes the production Docker image. Run the checks
+required by the changed area and follow CLAUDE.md for the full gate contract.
+
+## Android APK publishing gate
+
+After any change to Android application code, resources, Gradle configuration
+or Android version metadata, run the Android debug assembly before reporting
+completion:
+
+```powershell
+cd android
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+```
+
+assembleDebug automatically runs publishDebugApk, creating an immutable
+hash-qualified APK in data/android-release and atomically replacing
+latest.json. Verify that the published version, size and SHA-256 match the
+newly built APK. Do not leave the web download pointing at a stale Android
+build.
+
+Pure web changes do not require a new APK because the Android WebView loads the
+web interface from the configured server.
+
+<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
+## Beads Issue Tracker
+
+Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
+
+### Quick Reference
+
+```bash
+bd ready                # Find available work
+bd show <id>            # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>           # Complete work
+bd prime                # Refresh Beads context
+```
+
+### Rules
+
+- Use `bd` for all task tracking; do not create markdown TODO lists.
+- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
+- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
+
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+<!-- END BEADS CODEX SETUP -->

@@ -1,11 +1,19 @@
 # Ideas backlog
 
-Append-only log the `ideate` loop keeps so it never re-proposes a shipped or rejected idea.
-One line per idea: `STATUS - title (issue #N, date) - one-line note`. STATUS is
-`proposed`, `shipped`, or `rejected`.
+Status: frozen historical artifact.
 
-Grounding for ideas lives in Memory `research-product-direction.md` (the competitor-review
-research and the product wedge). See `docs/loops/08-ideation-loop.md` for how this is used.
+Do not append new work here. Beads is the single source of truth, and new ideas
+must be captured with the capture-issue Codex skill. Existing entries remain
+for historical context only. No bulk migration was performed because each item
+still needs duplicate review, current product validation, priority, and
+acceptance criteria.
+
+This was the append-only log used by the historical `ideate` loop so it did
+not re-propose a shipped or rejected idea. Historical entries use one line per
+idea: `STATUS - title (issue #N, date) - one-line note`.
+
+The historical grounding lived in Memory `research-product-direction.md`.
+See `docs/loops/08-ideation-loop.md` for the archived process.
 
 ## Log
 

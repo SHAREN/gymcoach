@@ -41,19 +41,23 @@ Open source, self hosted training tracker with a built in AI coach. Log your ses
 > OpenRouter), with a unit / integration / E2E test suite and deep AI
 > integration.
 
-## This repo largely maintains itself
+## Autonomous maintenance experiment
 
-GymCoach is also an experiment in autonomous software maintenance: most of its
-ongoing changes are made by Claude Code running in **documented loops**, not by a
-human typing each one. An agent picks an open issue, writes the change to the repo
-conventions, makes it pass a green-gate (lint + typecheck + tests + build), has an
-independent agent adversarially review the diff, opens a pull request, and
-auto-merges it once CI is green. A human still owns the vision and the hard calls.
+> Current development task workflow: Beads is the single source of truth.
+> Use docs/CODEX_WORKFLOW.md and the repo-local Codex skills for new work.
+> docs/loops is retained as a historical and reproducibility reference, not as
+> a second backlog.
 
-The whole playbook is open and reproducible in [`docs/loops/`](docs/loops/): the
-pipeline (triage -> implement -> ship -> write-up), the guardrails, and the
-[autonomy charter](docs/loops/07-autonomy.md) the agent runs inside. If you care
-more about _how a repo can maintain itself_ than about the gym app, start there.
+GymCoach also contains a documented experiment in autonomous software
+maintenance. Earlier project phases used Claude Code loops to turn vetted
+GitHub issues into verified pull requests and, under strict guardrails, ship
+them automatically.
+
+That historical playbook remains open and reproducible in
+[docs/loops](docs/loops/), including its pipeline, guardrails, and
+[autonomy charter](docs/loops/07-autonomy.md). The current development queue is
+Beads, and new work follows
+[docs/CODEX_WORKFLOW.md](docs/CODEX_WORKFLOW.md).
 
 ## Features
 

@@ -1,14 +1,19 @@
 # 08 — Ideation loop (so the product, not just the repo, keeps growing)
 
+> Historical workflow reference. Do not create new GitHub issues or append to
+> ideas-backlog.md from this loop. Capture new ideas in Beads through
+> capture-issue, then prepare them through triage-inbox.
+
 `triage` (03) keeps the backlog fed with **code-health** work - tests, small bugs, deps.
-But a repo that only tidies itself plateaus. The ideation loop is the head *above* triage:
+But a repo that only tidies itself plateaus. The ideation loop is the head _above_ triage:
 when even triage comes up dry, it manufactures **product** work - well-scoped feature ideas
-- so the Issue -> PR loop never starves for *direction*, and the product keeps moving
-toward the goal of being the most complete self-hosted AI training/fitness app.
+
+- so the Issue -> PR loop never starves for _direction_, and the product keeps moving
+  toward the goal of being the most complete self-hosted AI training/fitness app.
 
 It is the cheap, recurring cousin of the one-off deep-research workflow we ran once to seed
 the roadmap (captured in Memory `research-product-direction.md`). That workflow spent ~100
-agents in a single pass; ideation must run *every time the loop would idle*, so it is
+agents in a single pass; ideation must run _every time the loop would idle_, so it is
 deliberately tiny.
 
 ```
@@ -56,7 +61,7 @@ concrete, single-PR work rather than "needs a product call".
 
 ## Guardrails
 
-Ideation only *files issues* - it never writes product code or merges. The issues it files
+Ideation only _files issues_ - it never writes product code or merges. The issues it files
 are authored by the loop's own trusted account, so they are auto-actionable, but they are
 still subject to everything downstream: the green-gate, the subagent challenge, and the
 stop-for-human list. Since the 2026-06-10 operator directive, complex ideas (data-safe

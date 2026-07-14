@@ -1,9 +1,18 @@
 ---
 name: ideate
-description: When the backlog is empty, manufacture well-scoped PRODUCT feature ideas - bounded feature research plus brainstorming grounded in the product vision and the captured competitor insights - and file them as crisp, single-PR issues so the Issue -> PR loop never starves for ideas. Use only when ship and triage have nothing and there is no open actionable issue. Strictly token-bounded; never launches the heavy multi-agent deep-research workflow.
+description: Legacy compatibility guidance for the historical GitHub ideation loop. When asked to generate current GymCoach ideas, do not append a markdown backlog or file GitHub issues; capture each approved idea as a Beads INBOX task.
 ---
 
 # ideate
+
+## Current Beads override
+
+Beads is the single source of truth. Do not execute the historical GitHub issue
+or ideas-backlog.md procedure below for new work. Generate bounded ideas only
+when requested, then capture each approved idea through capture-issue with
+stage:inbox. Do not start implementation.
+
+The remaining text is retained only as historical documentation.
 
 triage manufactures code-health work (tests, small bugs, deps); `ideate` manufactures
 **product** work when even triage comes up dry, so the loop keeps pushing the product

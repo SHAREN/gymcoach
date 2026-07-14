@@ -1,10 +1,17 @@
 # Loops: how GymCoach maintains itself
 
-This repo is partly maintained by **autonomous loops** running on Claude Code: small
-programs that prompt the agent, read what it produced, verify it, and decide whether
-to keep going. You stop prompting the agent and start authoring the loop.
+> Historical workflow reference. As of 2026-07-13, Beads is the single source
+> of truth for new project tasks. Do not create or select new work from GitHub
+> issues or ideas-backlog.md through this playbook. Use
+> docs/CODEX_WORKFLOW.md and the repo-local Codex skills instead.
 
-This folder is the reproducible playbook. Read in order:
+This repo previously used **autonomous loops** running on Claude Code: small
+programs that prompted the agent, read what it produced, verified it, and
+decided whether to continue.
+
+This folder preserves that reproducible playbook. Every item below describes
+historical behavior and must not be used as the current task workflow. Read in
+order:
 
 - [`00-concept.md`](00-concept.md) - what a loop actually is, the five-stage lineage,
   and the six ingredients mapped to real Claude Code tools.
@@ -27,7 +34,7 @@ This folder is the reproducible playbook. Read in order:
 - [`08-ideation-loop.md`](08-ideation-loop.md) - the head above triage: when even triage
   comes up dry, manufacture bounded **product** feature ideas (the cheap, recurring cousin
   of the one-off deep-research workflow) so the product keeps growing, not just the test
-  suite. Logs to [`ideas-backlog.md`](ideas-backlog.md).
+  suite. It historically logged to [`ideas-backlog.md`](ideas-backlog.md).
 - [`09-memory-and-learning.md`](09-memory-and-learning.md) - the loop as a control system:
   how it manages/compresses context (state in git, not the session), learns (layered
   filesystem memory + lessons that **graduate** into skills - no vector RAG), and regrounds

@@ -1,9 +1,20 @@
 ---
 name: implement-issue
-description: Take one open GitHub issue end to end - branch, implement following repo conventions, pass the green-gate, and open a pull request that closes it. Use when asked to "implement issue N", "work the next good first issue", or as the unit a loop calls to turn issues into PRs.
+description: Legacy compatibility guidance for the historical GitHub implementation loop. Current GymCoach implementation requires a prepared READY Beads task and must follow execute-task in a separate Codex Worktree.
 ---
 
 # implement-issue
+
+## Current Beads override
+
+Do not implement a GitHub issue directly. Require a linked Beads task with
+stage:ready, acceptance criteria, and complete dependencies, then follow
+docs/CODEX_WORKFLOW.md and execute-task in a dedicated Codex Worktree.
+
+If only a GitHub issue is supplied, capture or link it in Beads, triage it, and
+stop before implementation. The remaining text is retained only as historical
+documentation and must not override the Beads lifecycle or independent
+verify-task pass.
 
 The reusable unit the Issue -> PR loop calls. It turns **one** issue into **one**
 reviewable pull request, with self-verification built in. Read `CLAUDE.md` first

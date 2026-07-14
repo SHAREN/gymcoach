@@ -1,9 +1,21 @@
 ---
 name: triage
-description: Keep the backlog fed. Survey the repo for real, actionable work (code TODOs, coverage gaps, roadmap items, small bugs, stale deps) and file well-scoped GitHub issues so the Issue -> PR loop never starves. Use when asked to "triage", "refill the backlog", or when no actionable issue is left.
+description: Legacy compatibility guidance for the historical GitHub triage loop. When asked to triage current GymCoach work, do not file GitHub issues; use Beads and the triage-inbox or capture-issue workflow instead.
 ---
 
 # triage
+
+## Current Beads override
+
+Beads is the single source of truth. Do not execute the historical GitHub issue
+creation procedure below for new work. Use docs/CODEX_WORKFLOW.md:
+
+- capture new findings as stage:inbox through capture-issue;
+- clarify selected INBOX tasks through triage-inbox;
+- move only sufficiently clear tasks to stage:ready;
+- do not edit product code or start implementation.
+
+The remaining text is retained only as historical documentation.
 
 The Issue -> PR loop stops when there is "no actionable issue left". Triage is the
 loop that **prevents that** by manufacturing well-scoped work from the state of the

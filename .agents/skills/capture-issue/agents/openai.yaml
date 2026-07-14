@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Capture Issue'
+  short_description: 'Capture bugs and ideas into Beads INBOX'
+  default_prompt: 'Use $capture-issue to add this bug or idea to the Beads INBOX without interrupting active work.'
