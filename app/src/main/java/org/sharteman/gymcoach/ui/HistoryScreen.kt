@@ -81,16 +81,20 @@ import java.util.Locale
 @Composable
 fun HistoryScreen(
     onBack: () -> Unit,
+    initialSessionId: String? = null,
+    initialMonthKey: String? = null,
     dataSource: HistoryProgressDataSource? = null,
 ) {
     val context = LocalContext.current
     val defaultRepository = remember(context) { HistoryProgressRepository(context) }
     val repository = dataSource ?: defaultRepository
     val scope = rememberCoroutineScope()
-    var monthKey by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+    var monthKey by rememberSaveable(initialMonthKey) {
+        mutableStateOf(initialMonthKey ?: YearMonth.now().toString())
+    }
     var programId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedDay by rememberSaveable { mutableStateOf("") }
-    var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedSessionId by rememberSaveable(initialSessionId) { mutableStateOf(initialSessionId) }
     var snapshot by remember { mutableStateOf<MobileHistorySnapshot?>(null) }
     var loading by remember { mutableStateOf(false) }
     var showingCache by remember { mutableStateOf(false) }
@@ -128,6 +132,9 @@ fun HistoryScreen(
         }
     }
     val selectedSession = snapshot?.sessions?.firstOrNull { it.id == selectedSessionId }
+    LaunchedEffect(selectedSession?.startedAt) {
+        selectedSession?.startedAt?.take(10)?.let { selectedDay = it }
+    }
 
     Scaffold(
         topBar = {

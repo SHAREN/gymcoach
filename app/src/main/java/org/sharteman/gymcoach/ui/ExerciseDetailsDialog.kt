@@ -101,7 +101,7 @@ fun ExerciseDetailsDialog(
     unit: String,
     serverUrl: String,
     onOpenProgress: (String) -> Unit,
-    onOpenHistory: (String) -> Unit,
+    onOpenHistory: (String, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -111,6 +111,8 @@ fun ExerciseDetailsDialog(
     val effectiveHistory = remember(history, fallbackPerformance) {
         if (history.isNotEmpty()) history else fallbackPerformance?.let(::fallbackHistory).orEmpty()
     }
+    val backToWorkoutLabel = stringResource(R.string.back_to_workout)
+    val openTrainingSessionLabel = stringResource(R.string.open_training_session)
     var techniqueOpen by rememberSaveable(exercise.id) { mutableStateOf(false) }
 
     Dialog(
@@ -129,7 +131,7 @@ fun ExerciseDetailsDialog(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.back_to_workout),
+                            contentDescription = backToWorkoutLabel,
                         )
                     }
                     Text(
@@ -268,7 +270,8 @@ fun ExerciseDetailsDialog(
                                     ExerciseHistoryCard(
                                         session = session,
                                         unit = unit,
-                                        onOpen = { onOpenHistory(session.sessionId) },
+                                        openLabel = openTrainingSessionLabel,
+                                        onOpen = { onOpenHistory(session.sessionId, session.startedAt) },
                                     )
                                     Spacer(Modifier.height(9.dp))
                                 }
@@ -428,10 +431,10 @@ private fun ExerciseMaxWeightChart(
 private fun ExerciseHistoryCard(
     session: ExerciseHistorySessionDto,
     unit: String,
+    openLabel: String,
     onOpen: () -> Unit,
 ) {
     Card(
-        onClick = onOpen,
         modifier = Modifier.testTag("exercise-history-${session.sessionId}"),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)),
@@ -440,15 +443,9 @@ private fun ExerciseHistoryCard(
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(formatLongDate(session.startedAt), style = MaterialTheme.typography.labelLarge)
-                Text(
-                    stringResource(R.string.open_training_session),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
             }
             HorizontalDivider()
             HistoryTableRow(
@@ -472,6 +469,13 @@ private fun ExerciseHistoryCard(
                     ),
                     header = false,
                 )
+            }
+            HorizontalDivider()
+            TextButton(
+                onClick = onOpen,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(openLabel)
             }
         }
     }

@@ -17,11 +17,13 @@ import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
+import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
+import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncOperation
@@ -132,6 +134,7 @@ class GymCoachRepository(
             is StartSessionOperation -> operation.session.id
             is UpsertSetOperation -> operation.set.sessionId
             is FinishSessionOperation -> operation.sessionId
+            is DeleteSessionOperation -> operation.sessionId
             is DeleteSetOperation -> dao.getSet(operation.setId)?.sessionId
                 ?: queue.asSequence()
                     .mapNotNull { entry ->
@@ -195,6 +198,7 @@ class GymCoachRepository(
                     is StartSessionOperation -> queued.session.id == sessionId
                     is UpsertSetOperation -> queued.set.sessionId == sessionId
                     is FinishSessionOperation -> queued.sessionId == sessionId
+                    is DeleteSessionOperation -> queued.sessionId == sessionId
                     is DeleteSetOperation -> queued.setId in localSetIds
                     is UpdateTargetSetsOperation -> false
                     null -> entry.operationId == blocked.operationId
@@ -225,6 +229,22 @@ class GymCoachRepository(
             ),
         )
         return response
+    }
+
+    suspend fun saveReadiness(readiness: Int, sleepQuality: Int, note: String?) {
+        require(readiness in 1..5) { "Readiness must be between 1 and 5." }
+        require(sleepQuality in 1..5) { "Sleep quality must be between 1 and 5." }
+        val trimmedNote = note?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmedNote == null || trimmedNote.length <= 500) {
+            "Readiness note must not exceed 500 characters."
+        }
+        val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
+        api.saveReadiness(
+            accountStore.serverUrl,
+            token,
+            ReadinessCheckinRequest(readiness, sleepQuality, trimmedNote),
+        )
+        runCatching { refreshBootstrap() }
     }
 
     private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse {
@@ -379,6 +399,35 @@ class GymCoachRepository(
         scheduleSyncNow()
     }
 
+    suspend fun resetSession(sessionId: String) {
+        if (dao.getSession(sessionId) == null) return
+        val localSetIds = dao.getAllSets(sessionId).mapTo(mutableSetOf()) { it.id }
+        val queue = dao.queuedOperations()
+        val decodedQueue = queue.map { entry ->
+            entry to runCatching {
+                api.json.decodeFromString<SyncOperation>(entry.payloadJson)
+            }.getOrNull()
+        }
+        val queuedSetSessions = decodedQueue.mapNotNull { (_, queued) ->
+            (queued as? UpsertSetOperation)?.let { it.set.id to it.set.sessionId }
+        }.toMap()
+        val priorOperationIds = decodedQueue.mapNotNull { (entry, queued) ->
+            val related = when (queued) {
+                is StartSessionOperation -> queued.session.id == sessionId
+                is UpsertSetOperation -> queued.set.sessionId == sessionId
+                is FinishSessionOperation -> queued.sessionId == sessionId
+                is DeleteSessionOperation -> queued.sessionId == sessionId
+                is DeleteSetOperation -> queued.setId in localSetIds ||
+                    queuedSetSessions[queued.setId] == sessionId
+                is UpdateTargetSetsOperation, null -> false
+            }
+            entry.operationId.takeIf { related }
+        }
+        val operation = DeleteSessionOperation(operationId(), sessionId)
+        dao.resetSessionAndOperation(sessionId, priorOperationIds, outbox(operation))
+        scheduleSyncNow()
+    }
+
     suspend fun syncPending(): Boolean = syncMutex.withLock {
         val token = accountStore.getAccessToken() ?: return true
         dao.recoverInterruptedOperations()
@@ -490,6 +539,7 @@ class GymCoachRepository(
             }
         }
         for (session in bootstrap.openSessions) {
+            if (session.id in protected.deletedSessionIds) continue
             val workoutId = session.workoutId ?: continue
             if (session.id !in protected.sessionIds) {
                 dao.saveSession(
@@ -571,6 +621,7 @@ class GymCoachRepository(
 internal data class PendingMutationTargets(
     val sessionIds: Set<String>,
     val setIds: Set<String>,
+    val deletedSessionIds: Set<String>,
     val complete: Boolean,
 )
 
@@ -580,9 +631,17 @@ internal fun pendingMutationTargets(
 ): PendingMutationTargets {
     val sessionIds = mutableSetOf<String>()
     val setIds = mutableSetOf<String>()
+    val deletedSessionIds = mutableSetOf<String>()
     for (entry in entries) {
         val operation = runCatching { json.decodeFromString<SyncOperation>(entry.payloadJson) }
-            .getOrElse { return PendingMutationTargets(sessionIds, setIds, complete = false) }
+            .getOrElse {
+                return PendingMutationTargets(
+                    sessionIds,
+                    setIds,
+                    deletedSessionIds,
+                    complete = false,
+                )
+            }
         when (operation) {
             is StartSessionOperation -> sessionIds += operation.session.id
             is FinishSessionOperation -> sessionIds += operation.sessionId
@@ -591,10 +650,14 @@ internal fun pendingMutationTargets(
                 setIds += operation.set.id
             }
             is DeleteSetOperation -> setIds += operation.setId
+            is DeleteSessionOperation -> {
+                sessionIds += operation.sessionId
+                deletedSessionIds += operation.sessionId
+            }
             is UpdateTargetSetsOperation -> Unit
         }
     }
-    return PendingMutationTargets(sessionIds, setIds, complete = true)
+    return PendingMutationTargets(sessionIds, setIds, deletedSessionIds, complete = true)
 }
 
 internal fun findProgramExerciseTargetSets(

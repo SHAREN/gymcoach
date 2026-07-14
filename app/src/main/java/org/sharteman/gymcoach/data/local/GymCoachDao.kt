@@ -162,4 +162,15 @@ interface GymCoachDao {
         removeOperations(operationIds)
         deleteSessionLocal(sessionId)
     }
+
+    @Transaction
+    suspend fun resetSessionAndOperation(
+        sessionId: String,
+        priorOperationIds: List<String>,
+        operation: SyncOutboxEntity,
+    ) {
+        if (priorOperationIds.isNotEmpty()) removeOperations(priorOperationIds)
+        deleteSessionLocal(sessionId)
+        enqueue(operation)
+    }
 }
