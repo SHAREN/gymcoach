@@ -6,6 +6,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import org.sharteman.gymcoach.data.settings.AndroidPreferences
+import org.sharteman.gymcoach.data.settings.AppThemeMode
 import org.sharteman.gymcoach.ui.GymCoachApp
 import org.sharteman.gymcoach.ui.WorkoutScreenPreview
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
@@ -24,7 +32,20 @@ class MainActivity : ComponentActivity() {
             if (workoutPreview) {
                 GymCoachTheme(darkTheme = true) { WorkoutScreenPreview() }
             } else {
-                GymCoachTheme(darkTheme = true) { GymCoachApp(repository) }
+                val preferences = remember { AndroidPreferences(applicationContext) }
+                var preferenceState by remember { mutableStateOf(preferences.load()) }
+                DisposableEffect(preferences) {
+                    val registration = preferences.registerThemeListener {
+                        preferenceState = preferences.load()
+                    }
+                    onDispose { registration.close() }
+                }
+                val darkTheme = when (preferenceState.theme) {
+                    AppThemeMode.DARK -> true
+                    AppThemeMode.LIGHT -> false
+                    AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+                }
+                GymCoachTheme(darkTheme = darkTheme) { GymCoachApp(repository) }
             }
         }
     }

@@ -18,7 +18,7 @@ const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 // the trackpoint count, and bounds every persisted value.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     // Shared "import:" bucket: GPX shares the same per-user import budget as the
     // CSV and TCX imports so a single user cannot fan out across formats.

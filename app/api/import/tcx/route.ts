@@ -18,7 +18,7 @@ const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 // construction and bounds every extracted value.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     const rl = rateLimit(`import:${userId}`, 10, 60_000);
     if (!rl.ok) {

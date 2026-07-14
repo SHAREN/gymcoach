@@ -20,7 +20,7 @@ const MAX_REPORTED_ERRORS = 50;
 // outside the transaction.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     const rl = rateLimit(`import:${userId}`, 10, 60_000);
     if (!rl.ok) {

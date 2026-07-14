@@ -21,7 +21,7 @@ const MAX_REPORTED_ERRORS = 50;
 // and on the body), and no write outside the transaction.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     // Shared budget with the Strong route: one import allowance per user.
     const rl = rateLimit(`import:${userId}`, 10, 60_000);

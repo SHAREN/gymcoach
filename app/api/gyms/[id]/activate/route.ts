@@ -6,10 +6,10 @@ interface Params {
   params: Promise<{ id: string }>;
 }
 
-export async function POST(_req: Request, props: Params) {
+export async function POST(req: Request, props: Params) {
   const { id } = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const gym = await db.gym.findFirst({ where: { id, userId }, select: { id: true } });
     if (!gym) throw new ApiError(404, 'Gym not found.');
     await db.user.update({ where: { id: userId }, data: { activeGymId: id } });

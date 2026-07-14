@@ -27,6 +27,10 @@ function jsonReq(body: unknown): Request {
   });
 }
 
+function getReq(): Request {
+  return new Request('http://test.local/api/backup');
+}
+
 // Order-insensitive deep normalization: sorts every array (the export order of
 // sets depends on regenerated cuids) and every object key, so two dumps can be
 // compared field-for-field.
@@ -308,7 +312,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
-    const res = await getBackup();
+    const res = await getBackup(getReq());
     expect(res.status).toBe(200);
     const dump = await res.json();
 
@@ -404,7 +408,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
   it('restores an export losslessly into a second user, ownership-scoped', async () => {
     const userA = await seedFullUser('a@test.dev');
     actAs(userA.id);
-    const dumpA = await (await getBackup()).json();
+    const dumpA = await (await getBackup(getReq())).json();
     const countsA = await countsFor(userA.id);
 
     const userB = await db.user.create({
@@ -416,7 +420,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
 
     // Field-for-field lossless round trip (ids regenerated, so compare the
     // re-export of user B against user A's export).
-    const dumpB = await (await getBackup()).json();
+    const dumpB = await (await getBackup(getReq())).json();
     expect(comparable(dumpB)).toEqual(comparable(dumpA));
 
     // Ownership-scoped: user A's data is untouched, user B owns a full copy.
@@ -552,7 +556,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     const user = await seedFullUser('victim@test.dev');
     actAs(user.id);
     const before = await countsFor(user.id);
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
 
     dump.sessions[0].sets[0].avgHr = 999; // out of the 40..250 range
     const res = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
@@ -566,7 +570,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     const user = await seedFullUser('victim-maxhr@test.dev');
     actAs(user.id);
     const before = await countsFor(user.id);
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
 
     dump.sessions[0].sets[0].maxHr = 999; // out of the 40..250 range
     const res = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
@@ -578,7 +582,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     const user = await seedFullUser('victim-date@test.dev');
     actAs(user.id);
     const before = await countsFor(user.id);
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
 
     // Year 275760 parses in JS Date but is far outside PostgreSQL's range;
     // it must be rejected by validation, not 500 deep in Prisma.
@@ -602,7 +606,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     );
     expect(notJson.status).toBe(400);
 
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
     const noConfirm = await postBackup(jsonReq({ payload: dump, confirmReplace: false }));
     expect(noConfirm.status).toBe(400);
 
@@ -613,7 +617,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     const user = await seedFullUser('victim3@test.dev');
     actAs(user.id);
     const before = await countsFor(user.id);
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
     const pristine = JSON.parse(JSON.stringify(dump));
 
     // Passes Zod but violates the (userId, name) unique constraint during the
@@ -624,7 +628,7 @@ describe('POST /api/backup - malformed and oversized input (issue #168)', () => 
     expect(res.status).toBe(409);
 
     expect(await countsFor(user.id)).toEqual(before);
-    const dumpAfter = await (await getBackup()).json();
+    const dumpAfter = await (await getBackup(getReq())).json();
     expect(comparable(dumpAfter)).toEqual(comparable(pristine));
   });
 

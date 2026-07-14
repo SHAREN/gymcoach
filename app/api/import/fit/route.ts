@@ -119,7 +119,7 @@ function decodeFit(b64: string): Uint8Array {
 // returns one result per file (an unparseable file is skipped, not fatal).
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     // Shared "import:" bucket: one charge per request (a batch counts once).
     const rl = rateLimit(`import:${userId}`, 10, 60_000);

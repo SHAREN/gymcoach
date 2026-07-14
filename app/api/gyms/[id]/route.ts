@@ -17,7 +17,7 @@ async function requireOwnedGym(id: string, userId: string) {
 export async function PUT(req: Request, props: Params) {
   const { id } = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     await requireOwnedGym(id, userId);
     const input = await parseJsonBody(req, gymUpdateSchema);
     const exerciseConfigs = await validateGymExerciseConfigs(userId, input.exerciseConfigs);
@@ -42,10 +42,10 @@ export async function PUT(req: Request, props: Params) {
   }
 }
 
-export async function DELETE(_req: Request, props: Params) {
+export async function DELETE(req: Request, props: Params) {
   const { id } = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     await requireOwnedGym(id, userId);
     await db.$transaction(async (tx) => {
       await tx.gym.delete({ where: { id } });

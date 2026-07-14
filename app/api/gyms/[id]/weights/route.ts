@@ -11,7 +11,7 @@ interface Params {
 export async function PATCH(req: Request, props: Params) {
   const { id } = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const input = await parseJsonBody(req, gymWeightUpdateSchema);
     const [gym, exercise] = await Promise.all([
       db.gym.findFirst({ where: { id, userId }, select: { id: true } }),

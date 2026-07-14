@@ -62,9 +62,9 @@ const VERSION = 7;
 const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
 // GET /api/backup: returns an exportable JSON.
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     const [
       user,
@@ -583,7 +583,7 @@ const importBodySchema = z.object({
 // rolls back to the pre-import state.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const { payload } = await parseJsonBody(req, importBodySchema, {
       maxBytes: MAX_BACKUP_BYTES,
     });

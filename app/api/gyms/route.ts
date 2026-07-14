@@ -4,9 +4,9 @@ import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { gymCreateSchema } from '@/lib/schemas/gym';
 import { validateGymExerciseConfigs } from '@/lib/gym-data';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const [user, gyms] = await Promise.all([
       db.user.findUnique({ where: { id: userId }, select: { activeGymId: true } }),
       db.gym.findMany({
@@ -23,7 +23,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const input = await parseJsonBody(req, gymCreateSchema);
     const exerciseConfigs = await validateGymExerciseConfigs(userId, input.exerciseConfigs);
 
