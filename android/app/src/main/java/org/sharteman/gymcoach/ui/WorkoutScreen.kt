@@ -36,7 +36,10 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,6 +56,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,6 +99,7 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.PerformanceSetDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.SetRecommendation
@@ -126,7 +132,7 @@ fun WorkoutScreen(
     online: Boolean,
     onAskCoach: () -> Unit,
     onOpenProgress: (String) -> Unit,
-    onOpenHistory: (String) -> Unit,
+    onOpenHistory: (String, String) -> Unit,
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -144,7 +150,10 @@ fun WorkoutScreen(
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     var restEndsAt by rememberSaveable { mutableLongStateOf(0L) }
     var restRemaining by remember { mutableIntStateOf(0) }
-    var finishDialog by remember { mutableStateOf(false) }
+    var showSummary by rememberSaveable { mutableStateOf(false) }
+    var controlsDialog by remember { mutableStateOf(false) }
+    var resetDialog by remember { mutableStateOf(false) }
+    var resetBusy by remember { mutableStateOf(false) }
     var editSet by remember { mutableStateOf<LocalSetEntity?>(null) }
     var detailsExercise by remember { mutableStateOf<ExerciseDto?>(null) }
     var setTableMetricNames by rememberSaveable {
@@ -161,6 +170,8 @@ fun WorkoutScreen(
         setTableMetricNames = stored
         workoutPreferences.edit().putString(SET_TABLE_METRIC_KEY, stored).apply()
     }
+    val snackbar = remember { SnackbarHostState() }
+    val resetError = stringResource(R.string.workout_reset_error)
 
     if (session == null || workout == null) {
         Scaffold(topBar = { TopAppBar(title = { Text("GymCoach") }) }) { padding ->
@@ -236,6 +247,26 @@ fun WorkoutScreen(
         constraints = loadConstraints,
     )
 
+    if (showSummary) {
+        WorkoutSummaryScreen(
+            workoutName = workout.name,
+            sessionStartedAt = session?.startedAt.orEmpty(),
+            sets = allSets,
+            exercises = exercises,
+            returnRecommendations = returnRecommendations,
+            bodyweightKg = bootstrap?.profile?.bodyweight,
+            unit = unit,
+            onBack = { showSummary = false },
+            onFinish = { notes, rpe ->
+                scope.launch {
+                    repository.finishSession(sessionId, notes, rpe)
+                    onExit()
+                }
+            },
+        )
+        return
+    }
+
     var weightText by rememberSaveable(current.id) { mutableStateOf("") }
     var repsText by rememberSaveable(current.id) { mutableStateOf("") }
     var rirText by rememberSaveable(current.id) { mutableStateOf(target.targetRIR.toString()) }
@@ -278,9 +309,10 @@ fun WorkoutScreen(
                 },
                 onSelect = { selectedIndex = it },
                 onOpen = { detailsExercise = it },
-                onExit = onExit,
+                onOpenControls = { controlsDialog = true },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -393,7 +425,7 @@ fun WorkoutScreen(
                     onPrevious = { selectedIndex -= 1 },
                     onNext = { selectedIndex += 1 },
                     onAskCoach = onAskCoach,
-                    onFinish = { finishDialog = true },
+                    onFinish = { showSummary = true },
                 )
             }
             item { Spacer(Modifier.height(8.dp)) }
@@ -411,14 +443,52 @@ fun WorkoutScreen(
             },
         )
     }
-    if (finishDialog) {
-        FinishDialog(
-            onDismiss = { finishDialog = false },
-            onFinish = { notes, rpe ->
-                scope.launch {
-                    repository.finishSession(sessionId, notes, rpe)
-                    finishDialog = false
-                    onExit()
+    if (controlsDialog) {
+        WorkoutControlsDialog(
+            workoutName = workout.name,
+            startedAt = session?.startedAt.orEmpty(),
+            onComplete = {
+                controlsDialog = false
+                showSummary = true
+            },
+            onPause = {
+                controlsDialog = false
+                onExit()
+            },
+            onReset = {
+                controlsDialog = false
+                resetDialog = true
+            },
+            onDismiss = { controlsDialog = false },
+        )
+    }
+    if (resetDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!resetBusy) resetDialog = false },
+            title = { Text(stringResource(R.string.workout_reset_title)) },
+            text = { Text(stringResource(R.string.workout_reset_warning)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            resetBusy = true
+                            runCatching { repository.resetSession(sessionId) }
+                                .onSuccess {
+                                    resetDialog = false
+                                    onExit()
+                                }
+                                .onFailure { snackbar.showSnackbar(it.message ?: resetError) }
+                            resetBusy = false
+                        }
+                    },
+                    enabled = !resetBusy,
+                ) {
+                    Text(stringResource(if (resetBusy) R.string.deleting else R.string.workout_reset_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetDialog = false }, enabled = !resetBusy) {
+                    Text(stringResource(R.string.cancel))
                 }
             },
         )
@@ -438,9 +508,9 @@ fun WorkoutScreen(
                 detailsExercise = null
                 onOpenProgress(exerciseId)
             },
-            onOpenHistory = { historySessionId ->
+            onOpenHistory = { historySessionId, startedAt ->
                 detailsExercise = null
-                onOpenHistory(historySessionId)
+                onOpenHistory(historySessionId, startedAt)
             },
             onDismiss = { detailsExercise = null },
         )
@@ -458,7 +528,7 @@ private fun WorkoutHeader(
     progress: Float,
     onSelect: (Int) -> Unit,
     onOpen: (ExerciseDto) -> Unit,
-    onExit: () -> Unit,
+    onOpenControls: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.background) {
         Column(
@@ -483,8 +553,11 @@ private fun WorkoutHeader(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                IconButton(onClick = onExit) {
-                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel))
+                IconButton(onClick = onOpenControls) {
+                    Icon(
+                        Icons.Outlined.MoreVert,
+                        contentDescription = stringResource(R.string.workout_controls),
+                    )
                 }
             }
             LinearProgressIndicator(
@@ -1477,6 +1550,279 @@ private fun SessionActions(
     }
 }
 
+@Composable
+private fun WorkoutControlsDialog(
+    workoutName: String,
+    startedAt: String,
+    onComplete: () -> Unit,
+    onPause: () -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.workout_controls)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(workoutName, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.workout_started_at, formatWorkoutStartedAt(startedAt)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Flag, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.workout_review_summary))
+                }
+                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Pause, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.workout_pause))
+                }
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.RestartAlt, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.workout_reset_title))
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+internal data class WorkoutSummaryStats(
+    val workingSets: Int,
+    val totalReps: Int,
+    val volumeKg: Double,
+)
+
+internal fun workoutSummaryStats(
+    sets: List<LocalSetEntity>,
+    exercises: List<ProgramExerciseDto>,
+    bodyweightKg: Double?,
+): WorkoutSummaryStats {
+    val exerciseById = exercises.associateBy { it.exerciseId }
+    val workingSets = sets.filter { !it.deleted && !it.isWarmup }
+    return WorkoutSummaryStats(
+        workingSets = workingSets.size,
+        totalReps = workingSets.sumOf { set ->
+            val exercise = exerciseById[set.exerciseId]?.exercise
+            if (set.durationSec == null && exercise?.category != "CARDIO") set.reps else 0
+        },
+        volumeKg = workingSets.sumOf { set ->
+            val exercise = exerciseById[set.exerciseId]?.exercise
+            if (set.durationSec != null || exercise?.category == "CARDIO") {
+                0.0
+            } else {
+                val effectiveLoad = set.weight + if (exercise?.usesBodyweight == true) {
+                    bodyweightKg ?: 0.0
+                } else {
+                    0.0
+                }
+                effectiveLoad * set.reps
+            }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkoutSummaryScreen(
+    workoutName: String,
+    sessionStartedAt: String,
+    sets: List<LocalSetEntity>,
+    exercises: List<ProgramExerciseDto>,
+    returnRecommendations: Map<String, ReturnRecommendationDto>,
+    bodyweightKg: Double?,
+    unit: String,
+    onBack: () -> Unit,
+    onFinish: (String?, Int?) -> Unit,
+) {
+    val stats = remember(sets, exercises, bodyweightKg) {
+        workoutSummaryStats(sets, exercises, bodyweightKg)
+    }
+    val durationMinutes = remember(sessionStartedAt) {
+        runCatching {
+            Duration.between(Instant.parse(sessionStartedAt), Instant.now()).toMinutes().coerceAtLeast(0)
+        }.getOrDefault(0)
+    }
+    var notes by rememberSaveable { mutableStateOf("") }
+    var sessionRpe by rememberSaveable { mutableStateOf<Int?>(null) }
+    var finishing by remember { mutableStateOf(false) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.workout_summary_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack, enabled = !finishing) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.previous),
+                        )
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(workoutName, style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        stringResource(R.string.workout_started_at, formatWorkoutStartedAt(sessionStartedAt)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SummaryStat(
+                        label = stringResource(R.string.workout_summary_duration),
+                        value = stringResource(R.string.workout_summary_minutes, durationMinutes),
+                        modifier = Modifier.weight(1f),
+                    )
+                    SummaryStat(
+                        label = stringResource(R.string.workout_summary_sets),
+                        value = stats.workingSets.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    SummaryStat(
+                        label = stringResource(R.string.workout_summary_volume),
+                        value = "${formatWeight(roundWeight(toDisplayWeight(stats.volumeKg, unit), 2))} ${unit.lowercase(Locale.getDefault())}",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            item {
+                Text(
+                    stringResource(R.string.workout_summary_reps, stats.totalReps),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            stringResource(R.string.workout_summary_exercises),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        exercises.forEachIndexed { index, exercise ->
+                            val completed = sets.count {
+                                !it.deleted && !it.isWarmup && it.exerciseId == exercise.exerciseId
+                            }
+                            val adjusted = returnRecommendations[exercise.id]
+                            val planned = (adjusted?.targetSets ?: exercise.targetSets) +
+                                if (adjusted?.mode != null && adjusted.mode != "normal") {
+                                    0
+                                } else {
+                                    exercise.targetDropSets
+                                }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    if (completed >= planned) Icons.Outlined.Check else Icons.Outlined.Remove,
+                                    contentDescription = null,
+                                    tint = if (completed >= planned) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                Text(
+                                    exercise.exercise.name,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    stringResource(R.string.workout_summary_set_progress, completed, planned),
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                            if (index != exercises.lastIndex) HorizontalDivider()
+                        }
+                    }
+                }
+            }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.session_rpe), style = MaterialTheme.typography.titleSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items((1..10).toList()) { value ->
+                            FilterChip(
+                                selected = sessionRpe == value,
+                                onClick = { sessionRpe = value.takeUnless { it == sessionRpe } },
+                                label = { Text(value.toString()) },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { if (it.length <= 2000) notes = it },
+                    label = { Text(stringResource(R.string.notes)) },
+                    placeholder = { Text(stringResource(R.string.workout_summary_notes_hint)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                )
+            }
+            item {
+                Button(
+                    onClick = {
+                        finishing = true
+                        onFinish(notes.trim().takeIf { it.isNotEmpty() }, sessionRpe)
+                    },
+                    enabled = !finishing,
+                    modifier = Modifier.fillMaxWidth().height(58.dp),
+                ) {
+                    Text(
+                        stringResource(
+                            if (finishing) R.string.saving else R.string.finish_workout,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text(value, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+private fun formatWorkoutStartedAt(value: String): String = runCatching {
+    Instant.parse(value).atZone(ZoneId.systemDefault()).format(
+        DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.getDefault()),
+    )
+}.getOrElse { value.take(16).replace('T', ' ') }
+
 private fun exerciseAbbreviation(name: String): String {
     val words = name.trim().split(Regex("\\s+")).filter { word ->
         word.any { it.isLetterOrDigit() }
@@ -1599,7 +1945,7 @@ internal fun WorkoutScreenPreview() {
                 progress = 2f / 12f,
                 onSelect = { previewSelectedIndex = it },
                 onOpen = { previewDetailsExercise = it },
-                onExit = {},
+                onOpenControls = {},
             )
         },
     ) { padding ->
@@ -1688,7 +2034,7 @@ internal fun WorkoutScreenPreview() {
             unit = "KG",
             serverUrl = "https://gymcoach7.sharteman.duckdns.org",
             onOpenProgress = {},
-            onOpenHistory = {},
+            onOpenHistory = { _, _ -> },
             onDismiss = { previewDetailsExercise = null },
         )
     }

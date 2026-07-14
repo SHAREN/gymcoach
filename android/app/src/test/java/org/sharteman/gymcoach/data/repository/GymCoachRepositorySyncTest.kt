@@ -19,6 +19,7 @@ import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
+import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
@@ -29,6 +30,7 @@ import org.sharteman.gymcoach.data.model.MobileProgressPointDto
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.MobileUser
 import org.sharteman.gymcoach.data.model.ProfileDto
+import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
 import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.SessionDto
@@ -87,6 +89,162 @@ class GymCoachRepositorySyncTest {
             existing,
             fixture.api.json.decodeFromString<MobileProgressSnapshot>(cached.payloadJson),
         )
+    }
+
+    @Test
+    fun savingReadinessRefreshesTheBootstrapCache() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrap()
+
+        fixture.repository.saveReadiness(4, 3, "  Busy day  ")
+
+        assertEquals(
+            listOf(ReadinessCheckinRequest(4, 3, "Busy day")),
+            fixture.api.readinessRequests,
+        )
+        assertTrue(fixture.dao.getBootstrap() != null)
+    }
+
+    @Test
+    fun committedReadinessIsNotReportedAsFailedWhenRefreshFails() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapFailure = IOException("refresh unavailable")
+
+        val result = runCatching { fixture.repository.saveReadiness(4, 3, null) }
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, fixture.api.readinessRequests.size)
+    }
+
+    @Test
+    fun resettingSessionPersistsDeleteIntentAcrossRefreshAndRestart() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_reset",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.enqueue(
+            fixture.outbox(
+                StartSessionOperation(
+                    operationId = "operation_reset_start",
+                    session = MobileSessionPayload(session.id, session.workoutId, null, session.startedAt),
+                ),
+            ),
+        )
+
+        fixture.repository.resetSession(session.id)
+
+        assertEquals(null, fixture.dao.getSession(session.id))
+        val queued = fixture.dao.queuedOperations()
+        assertEquals(1, queued.size)
+        assertEquals(
+            session.id,
+            (fixture.api.json.decodeFromString<SyncOperation>(queued.single().payloadJson) as DeleteSessionOperation)
+                .sessionId,
+        )
+
+        fixture.api.bootstrapResponse = bootstrap(
+            openSessions = listOf(
+                SessionDto(
+                    id = session.id,
+                    workoutId = session.workoutId,
+                    startedAt = session.startedAt,
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+        assertEquals(null, fixture.dao.getSession(session.id))
+
+        fixture.api.syncHandler = { request ->
+            if (request.operations.any { it is DeleteSessionOperation }) {
+                fixture.api.bootstrapResponse = bootstrap()
+            }
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(operationId = it.operationId, status = "APPLIED")
+                },
+            )
+        }
+        assertTrue(fixture.repository.syncPending())
+        assertEquals(null, fixture.dao.getSession(session.id))
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun resettingSessionReplacesBlockedSessionChainWithDurableDeleteIntent() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_reset_blocked",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        val missingSet = MobileSetPayload(
+            id = "set_reset_missing",
+            sessionId = session.id,
+            exerciseId = "exercise_1",
+            setNumber = 1,
+            weight = 100.0,
+            reps = 5,
+            completedAt = "2026-07-13T10:05:00Z",
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.enqueue(
+            fixture.outbox(
+                UpsertSetOperation(
+                    operationId = "operation_reset_blocked_upsert",
+                    set = missingSet,
+                ),
+            ),
+        )
+        fixture.dao.markOperationBlocked(
+            operationId = "operation_reset_blocked_upsert",
+            error = "Session not found",
+        )
+        fixture.dao.enqueue(
+            fixture.outbox(
+                DeleteSetOperation(
+                    operationId = "operation_reset_missing_delete",
+                    setId = missingSet.id,
+                ),
+            ),
+        )
+
+        fixture.repository.resetSession(session.id)
+
+        assertEquals(null, fixture.dao.getSession(session.id))
+        val queuedAfterReset = fixture.dao.queuedOperations()
+        assertEquals(1, queuedAfterReset.size)
+        assertEquals(
+            session.id,
+            (fixture.api.json.decodeFromString<SyncOperation>(queuedAfterReset.single().payloadJson)
+                as DeleteSessionOperation).sessionId,
+        )
+
+        fixture.repository.discardBlockedChange()
+        val queuedAfterDiscard = fixture.dao.queuedOperations()
+        assertEquals(1, queuedAfterDiscard.size)
+        assertTrue(
+            fixture.api.json.decodeFromString<SyncOperation>(queuedAfterDiscard.single().payloadJson)
+                is DeleteSessionOperation,
+        )
+
+        fixture.api.bootstrapResponse = bootstrap(
+            openSessions = listOf(
+                SessionDto(
+                    id = session.id,
+                    workoutId = session.workoutId,
+                    startedAt = session.startedAt,
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+
+        assertEquals(null, fixture.dao.getSession(session.id))
     }
 
     @Test
@@ -788,6 +946,7 @@ class GymCoachRepositorySyncTest {
         )
         var progressFailure: Throwable? = null
         var progressCalls = 0
+        val readinessRequests = mutableListOf<ReadinessCheckinRequest>()
         val syncCalls = mutableListOf<SyncBatchRequest>()
         var syncFailure: Throwable? = null
         var syncHandler: (SyncBatchRequest) -> SyncBatchResponse = { request ->
@@ -820,6 +979,13 @@ class GymCoachRepositorySyncTest {
             syncCalls += request
             syncFailure?.let { throw it }
             return syncHandler(request)
+        }
+        override suspend fun saveReadiness(
+            baseUrl: String,
+            token: String,
+            request: ReadinessCheckinRequest,
+        ) {
+            readinessRequests += request
         }
         override suspend fun createWebSession(baseUrl: String, token: String) = listOf("session=test")
         override suspend fun logout(baseUrl: String, token: String) = Unit

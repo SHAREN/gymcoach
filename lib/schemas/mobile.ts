@@ -50,6 +50,7 @@ export const mobileSyncOperationSchema = z.discriminatedUnion('type', [
   operationBase.extend({ type: z.literal('START_SESSION'), session: mobileSessionSchema }),
   operationBase.extend({ type: z.literal('UPSERT_SET'), set: mobileSetSchema }),
   operationBase.extend({ type: z.literal('DELETE_SET'), setId: opaqueId }),
+  operationBase.extend({ type: z.literal('DELETE_SESSION'), sessionId: opaqueId }),
   operationBase.extend({
     type: z.literal('UPDATE_TARGET_SETS'),
     programExerciseId: opaqueId,

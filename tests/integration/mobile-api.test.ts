@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { POST as login } from '@/app/api/mobile/auth/login/route';
 import { GET as bootstrap } from '@/app/api/mobile/bootstrap/route';
+import { POST as saveReadiness } from '@/app/api/mobile/readiness/route';
 import { POST as sync } from '@/app/api/mobile/sync/route';
 
 function jsonRequest(url: string, body: unknown, token?: string): Request {
@@ -87,6 +88,123 @@ async function loginDevice(email: string, password = 'secret123') {
 }
 
 describe('Android mobile API', () => {
+  it('stores a bearer-authenticated readiness check-in and exposes it in bootstrap', async () => {
+    const seeded = await seedUser('mobile-readiness@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+
+    const unauthorized = await saveReadiness(
+      jsonRequest('http://test.local/api/mobile/readiness', { readiness: 4, sleepQuality: 3 }),
+    );
+    expect(unauthorized.status).toBe(401);
+
+    const saved = await saveReadiness(
+      jsonRequest(
+        'http://test.local/api/mobile/readiness',
+        { readiness: 4, sleepQuality: 3, note: 'Ready after work' },
+        accessToken,
+      ),
+    );
+    expect(saved.status).toBe(201);
+
+    const response = await bootstrap(
+      new Request('http://test.local/api/mobile/bootstrap', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).readiness).toMatchObject({
+      readiness: 4,
+      sleepQuality: 3,
+      note: 'Ready after work',
+    });
+  });
+
+  it('deletes a session idempotently without crossing ownership and rederives goals', async () => {
+    const owner = await seedUser('mobile-delete-session@test.dev');
+    const stranger = await seedUser('mobile-delete-session-stranger@test.dev');
+    const { accessToken } = await loginDevice(owner.user.email);
+    const completedAt = new Date('2026-07-14T10:15:00Z');
+    const session = await db.session.create({
+      data: {
+        id: 'mobile_delete_session_owner',
+        userId: owner.user.id,
+        workoutId: owner.workout.id,
+        programId: owner.workout.programId,
+        startedAt: new Date('2026-07-14T10:00:00Z'),
+        sets: {
+          create: {
+            exerciseId: owner.exercise.id,
+            setNumber: 1,
+            weight: 100,
+            reps: 10,
+            rir: 1,
+            completedAt,
+          },
+        },
+      },
+    });
+    const goal = await db.exerciseGoal.create({
+      data: {
+        userId: owner.user.id,
+        exerciseId: owner.exercise.id,
+        targetWeight: 90,
+        targetReps: 8,
+        achievedAt: completedAt,
+      },
+    });
+    const operation = {
+      operationId: 'operation_delete_session_owner',
+      type: 'DELETE_SESSION',
+      sessionId: session.id,
+    };
+
+    const deleted = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect(deleted.status).toBe(200);
+    expect((await deleted.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: { entityId: session.id, deleted: true },
+    });
+    expect(await db.session.findUnique({ where: { id: session.id } })).toBeNull();
+    expect((await db.exerciseGoal.findUniqueOrThrow({ where: { id: goal.id } })).achievedAt).toBeNull();
+
+    const replay = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await replay.json()).results[0].status).toBe('DUPLICATE');
+
+    const strangerSession = await db.session.create({
+      data: {
+        id: 'mobile_delete_session_stranger',
+        userId: stranger.user.id,
+        workoutId: stranger.workout.id,
+        programId: stranger.workout.programId,
+        startedAt: new Date('2026-07-14T11:00:00Z'),
+      },
+    });
+    const foreignDelete = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'operation_delete_session_foreign',
+              type: 'DELETE_SESSION',
+              sessionId: strangerSession.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await foreignDelete.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: { deleted: false },
+    });
+    expect(await db.session.findUnique({ where: { id: strangerSession.id } })).not.toBeNull();
+  });
+
   it('authenticates a device and returns a workout bootstrap for the device', async () => {
     const seeded = await seedUser('mobile-bootstrap@test.dev');
     const { accessToken } = await loginDevice(seeded.user.email);

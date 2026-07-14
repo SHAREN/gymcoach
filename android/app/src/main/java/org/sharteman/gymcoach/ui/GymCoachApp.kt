@@ -26,12 +26,28 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.BuildConfig
+import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.network.androidDownloadUrl
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
-import org.sharteman.gymcoach.data.network.androidDownloadUrl
+import org.sharteman.gymcoach.data.security.SecureAccountStore
+import org.sharteman.gymcoach.ui.coach.ChatScreen
+import org.sharteman.gymcoach.ui.coach.CoachScreen
+import org.sharteman.gymcoach.ui.programs.ExerciseCatalogScreen
+import org.sharteman.gymcoach.ui.programs.ProgramsScreen
+
+private const val HOME_ROUTE = "home"
+private const val WEB_ROUTE = "web"
+private const val SETTINGS_ROUTE = "settings"
 
 @Composable
-fun GymCoachApp(repository: GymCoachRepository) {
+fun GymCoachApp(
+    repository: GymCoachRepository,
+    settingsContent: (@Composable (
+        onBack: () -> Unit,
+        onOpenWebPath: (String) -> Unit,
+    ) -> Unit)? = null,
+) {
     var loggedIn by remember { mutableStateOf(repository.isLoggedIn) }
     if (!loggedIn) {
         LoginScreen(repository = repository, onLoggedIn = { loggedIn = true })
@@ -40,6 +56,8 @@ fun GymCoachApp(repository: GymCoachRepository) {
 
     val navController = rememberNavController()
     val context = LocalContext.current
+    val accountStore = remember(context, loggedIn) { SecureAccountStore(context.applicationContext) }
+    val accessToken = remember(accountStore, loggedIn) { accountStore.getAccessToken() }
     val bootstrap by repository.bootstrap.collectAsState(initial = null)
     val openSessions by repository.openSessions.collectAsState(initial = emptyList())
     val progress by repository.progress.collectAsState(initial = null)
@@ -51,8 +69,22 @@ fun GymCoachApp(repository: GymCoachRepository) {
     var syncing by remember { mutableStateOf(false) }
     var progressRefreshing by remember { mutableStateOf(false) }
     var webStartPath by rememberSaveable { mutableStateOf("/") }
-    val syncFailedMessage = stringResource(org.sharteman.gymcoach.R.string.sync_error)
-    val syncBlockedMessage = stringResource(org.sharteman.gymcoach.R.string.sync_blocked)
+    val syncFailedMessage = stringResource(R.string.sync_error)
+    val syncBlockedMessage = stringResource(R.string.sync_blocked)
+    val readinessSavedMessage = stringResource(R.string.readiness_saved)
+
+    fun openWebPath(path: String) {
+        webStartPath = path
+        navController.navigate(WEB_ROUTE)
+    }
+
+    fun returnHome() {
+        navController.navigate(HOME_ROUTE) {
+            popUpTo(HOME_ROUTE) { inclusive = false }
+            launchSingleTop = true
+        }
+    }
+
     val openProgress: (String?) -> Unit = { exerciseId ->
         val route = exerciseId?.let { "progress?exerciseId=${Uri.encode(it)}" } ?: "progress"
         navController.navigate(route)
@@ -80,62 +112,136 @@ fun GymCoachApp(repository: GymCoachRepository) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        NavHost(navController = navController, startDestination = "web") {
-            composable("home") {
+        NavHost(navController = navController, startDestination = HOME_ROUTE) {
+            composable(HOME_ROUTE) {
                 HomeScreen(
-                bootstrap = bootstrap,
+                    email = repository.email,
+                    bootstrap = bootstrap,
                     openSessions = openSessions,
                     pendingCount = pendingCount,
                     syncIssue = syncIssue,
-                online = online,
-                syncing = syncing,
-                onStartWorkout = { workout, gymId ->
-                    scope.launch {
-                        val sessionId = repository.startWorkout(workout, gymId)
-                        navController.navigate("session/$sessionId")
-                    }
-                },
+                    online = online,
+                    syncing = syncing,
+                    onOpenSession = { sessionId -> navController.navigate("session/$sessionId") },
+                    onStartWorkout = { workout, gymId ->
+                        scope.launch {
+                            val sessionId = repository.startWorkout(workout, gymId)
+                            navController.navigate("session/$sessionId")
+                        }
+                    },
                     onSync = {
-                    scope.launch {
-                        syncing = true
-                        runCatching { repository.syncPending() }
-                            .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
-                            .onFailure {
-                                if (it is MobileAuthenticationRequiredException) loggedIn = false
-                                else snackbar.showSnackbar(it.message ?: syncFailedMessage)
-                            }
-                        syncing = false
-                    }
+                        scope.launch {
+                            syncing = true
+                            runCatching { repository.syncPending() }
+                                .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
+                                .onFailure {
+                                    if (it is MobileAuthenticationRequiredException) loggedIn = false
+                                    else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                                }
+                            syncing = false
+                        }
                     },
                     onRetrySyncIssue = {
-                        scope.launch { repository.retryBlockedChange() }
+                        scope.launch {
+                            syncing = true
+                            runCatching {
+                                repository.retryBlockedChange()
+                                repository.syncPending()
+                            }
+                                .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
+                                .onFailure {
+                                    if (it is MobileAuthenticationRequiredException) loggedIn = false
+                                    else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                                }
+                            syncing = false
+                        }
                     },
                     onDiscardSyncIssue = {
-                        scope.launch { repository.discardBlockedChange() }
+                        scope.launch {
+                            runCatching { repository.discardBlockedChange() }
+                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                        }
                     },
-                onProgress = { openProgress(null) },
-                onWebPanel = {
-                    webStartPath = "/"
-                    navController.navigate("web")
-                },
-                currentVersion = BuildConfig.VERSION_NAME,
-                onDownloadUpdate = {
-                    runCatching {
-                        context.startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse(androidDownloadUrl(repository.serverUrl)),
-                            ),
-                        )
-                    }
-                },
-                onLogout = {
-                    scope.launch {
-                        repository.logout()
-                        CookieManager.getInstance().removeAllCookies(null)
-                        loggedIn = false
-                    }
-                },
+                    onSaveReadiness = { readiness, sleepQuality, note ->
+                        if (!online) {
+                            false
+                        } else {
+                            runCatching { repository.saveReadiness(readiness, sleepQuality, note) }
+                                .onSuccess { snackbar.showSnackbar(readinessSavedMessage) }
+                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                                .isSuccess
+                        }
+                    },
+                    onPrograms = { navController.navigate("programs") },
+                    onExerciseCatalog = { navController.navigate("exercises") },
+                    onHistory = { navController.navigate("history") },
+                    onProgress = { openProgress(null) },
+                    onCoach = { navController.navigate("coach") },
+                    onChat = { navController.navigate("chat") },
+                    onSettings = { navController.navigate(SETTINGS_ROUTE) },
+                    onWebPanel = { openWebPath("/") },
+                    currentVersion = BuildConfig.VERSION_NAME,
+                    onDownloadUpdate = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(androidDownloadUrl(repository.serverUrl)),
+                                ),
+                            )
+                        }
+                    },
+                    onLogout = {
+                        scope.launch {
+                            repository.logout()
+                            CookieManager.getInstance().removeAllCookies(null)
+                            loggedIn = false
+                        }
+                    },
+                )
+            }
+            composable("programs") {
+                if (accessToken == null) {
+                    LaunchedEffect(Unit) { loggedIn = false }
+                } else {
+                    ProgramsScreen(
+                        baseUrl = repository.serverUrl,
+                        token = accessToken,
+                        onBack = { navController.popBackStack() },
+                        onOpenWebPath = { path -> openWebPath(path) },
+                    )
+                }
+            }
+            composable("exercises") {
+                if (accessToken == null) {
+                    LaunchedEffect(Unit) { loggedIn = false }
+                } else {
+                    ExerciseCatalogScreen(
+                        baseUrl = repository.serverUrl,
+                        token = accessToken,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
+            composable(
+                route = "history?sessionId={sessionId}&month={month}",
+                arguments = listOf(
+                    navArgument("sessionId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                    navArgument("month") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                HistoryScreen(
+                    onBack = { navController.popBackStack() },
+                    initialSessionId = entry.arguments?.getString("sessionId"),
+                    initialMonthKey = entry.arguments?.getString("month"),
                 )
             }
             composable(
@@ -166,34 +272,70 @@ fun GymCoachApp(repository: GymCoachRepository) {
                     onBack = { navController.popBackStack() },
                 )
             }
+            composable("coach") {
+                CoachScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { navController.navigate("chat") },
+                )
+            }
+            composable(
+                route = "chat?sessionId={sessionId}",
+                arguments = listOf(
+                    navArgument("sessionId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                ChatScreen(
+                    sessionId = entry.arguments?.getString("sessionId"),
+                    onBack = { navController.popBackStack() },
+                )
+            }
             composable(
                 route = "session/{sessionId}",
                 arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
             ) { entry ->
+                val sessionId = entry.arguments?.getString("sessionId").orEmpty()
                 WorkoutScreen(
                     repository = repository,
-                    sessionId = entry.arguments?.getString("sessionId").orEmpty(),
+                    sessionId = sessionId,
                     bootstrap = bootstrap,
                     online = online,
                     onAskCoach = {
-                        webStartPath = "/chat?sessionId=${Uri.encode(entry.arguments?.getString("sessionId").orEmpty())}"
-                        navController.navigate("web")
+                        navController.navigate("chat?sessionId=${Uri.encode(sessionId)}")
                     },
                     onOpenProgress = { exerciseId -> openProgress(exerciseId) },
-                    onOpenHistory = { historySessionId ->
-                        webStartPath = "/history/${Uri.encode(historySessionId)}"
-                        navController.navigate("web")
+                    onOpenHistory = { historySessionId, startedAt ->
+                        val month = startedAt.take(7)
+                        navController.navigate(
+                            "history?sessionId=${Uri.encode(historySessionId)}&month=${Uri.encode(month)}",
+                        )
                     },
-                    onExit = { navController.popBackStack() },
+                    onExit = { returnHome() },
                 )
             }
-            composable("web") {
+            composable(SETTINGS_ROUTE) {
+                val back: () -> Unit = { navController.popBackStack() }
+                if (settingsContent != null) {
+                    settingsContent(back, ::openWebPath)
+                } else {
+                    WebPanelScreen(
+                        repository = repository,
+                        online = online,
+                        startPath = "/settings",
+                        onBack = back,
+                    )
+                }
+            }
+            composable(WEB_ROUTE) {
                 WebPanelScreen(
                     repository = repository,
                     online = online,
                     startPath = webStartPath,
                 ) {
-                    if (!navController.popBackStack()) navController.navigate("home")
+                    if (!navController.popBackStack()) returnHome()
                 }
             }
         }

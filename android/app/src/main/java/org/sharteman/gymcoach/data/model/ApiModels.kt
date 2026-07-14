@@ -223,6 +223,13 @@ data class ReadinessDto(
 )
 
 @Serializable
+data class ReadinessCheckinRequest(
+    val readiness: Int,
+    val sleepQuality: Int,
+    val note: String? = null,
+)
+
+@Serializable
 data class MobileSessionPayload(
     val id: String,
     val workoutId: String,
@@ -274,6 +281,13 @@ data class UpsertSetOperation(
 data class DeleteSetOperation(
     override val operationId: String,
     val setId: String,
+) : SyncOperation
+
+@Serializable
+@SerialName("DELETE_SESSION")
+data class DeleteSessionOperation(
+    override val operationId: String,
+    val sessionId: String,
 ) : SyncOperation
 
 @Serializable

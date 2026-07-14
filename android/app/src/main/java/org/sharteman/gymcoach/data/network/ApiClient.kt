@@ -15,6 +15,7 @@ import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
+import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncBatchResponse
 import java.io.IOException
@@ -26,6 +27,7 @@ interface MobileApi {
     suspend fun bootstrap(baseUrl: String, token: String): BootstrapResponse
     suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot
     suspend fun sync(baseUrl: String, token: String, request: SyncBatchRequest): SyncBatchResponse
+    suspend fun saveReadiness(baseUrl: String, token: String, request: ReadinessCheckinRequest)
     suspend fun createWebSession(baseUrl: String, token: String): List<String>
     suspend fun logout(baseUrl: String, token: String)
 }
@@ -67,6 +69,18 @@ class ApiClient : MobileApi {
             token = token,
         )
 
+    override suspend fun saveReadiness(
+        baseUrl: String,
+        token: String,
+        request: ReadinessCheckinRequest,
+    ) = requestWithoutResponse(
+        Request.Builder()
+            .url("${baseUrl.trimEnd('/')}/api/mobile/readiness")
+            .header("Authorization", "Bearer $token")
+            .post(json.encodeToString(request).toRequestBody(JSON_MEDIA_TYPE))
+            .build(),
+    )
+
     override suspend fun createWebSession(baseUrl: String, token: String): List<String> = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("${baseUrl.trimEnd('/')}/api/mobile/auth/web-session")
@@ -96,6 +110,13 @@ class ApiClient : MobileApi {
             .post(ByteArray(0).toRequestBody(JSON_MEDIA_TYPE))
             .build()
         client.newCall(request).execute().close()
+    }
+
+    private suspend fun requestWithoutResponse(request: Request) = withContext(Dispatchers.IO) {
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw apiException(response, body)
+        }
     }
 
     private suspend inline fun <reified T> get(url: String, token: String): T = withContext(Dispatchers.IO) {

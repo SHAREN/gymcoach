@@ -222,6 +222,32 @@ async function applyOperationInTransaction(
         deleted: true,
       };
     }
+    case 'DELETE_SESSION': {
+      const existing = await tx.session.findFirst({
+        where: { id: operation.sessionId, userId },
+        select: {
+          id: true,
+          sets: { select: { exerciseId: true }, distinct: ['exerciseId'] },
+        },
+      });
+      if (!existing) {
+        return {
+          entityType: 'SESSION',
+          entityId: operation.sessionId,
+          deleted: false,
+          exerciseIds: [],
+        };
+      }
+      const deleted = await tx.session.deleteMany({
+        where: { id: operation.sessionId, userId },
+      });
+      return {
+        entityType: 'SESSION',
+        entityId: operation.sessionId,
+        deleted: deleted.count === 1,
+        exerciseIds: existing.sets.map((set) => set.exerciseId),
+      };
+    }
     case 'UPDATE_TARGET_SETS': {
       const current = await tx.programExercise.findFirst({
         where: {
@@ -319,6 +345,10 @@ async function runGoalSideEffect(
       if (set && exercise) await stampGoalIfAchieved(userId, exercise, set);
     } else if (operation.type === 'DELETE_SET' && typeof result.exerciseId === 'string') {
       await rederiveGoalAchievement(userId, result.exerciseId);
+    } else if (operation.type === 'DELETE_SESSION' && Array.isArray(result.exerciseIds)) {
+      for (const exerciseId of result.exerciseIds) {
+        if (typeof exerciseId === 'string') await rederiveGoalAchievement(userId, exerciseId);
+      }
     }
   } catch (error) {
     console.error('[mobile/sync] goal update failed:', error);
