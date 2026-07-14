@@ -102,6 +102,11 @@
     <string name="bar_weight_format">Bar: %1$s %2$s</string>
     <string name="plate_achieved_format">Can load %1$s %2$s</string>
     <string name="choose_set_count">Number of sets</string>
+    <string name="apply_set_recommendation">Apply the recommendation to this set</string>
+    <string name="set_update_error">The set could not be updated. Your previous values were kept.</string>
+    <string name="set_weight_description">Set %1$d weight</string>
+    <string name="set_reps_description">Set %1$d repetitions</string>
+    <string name="set_rir_description">Set %1$d RIR</string>
     <string name="set_count_range">Available: %1$d-%2$d</string>
     <string name="decrease">Decrease</string>
     <string name="increase">Increase</string>
