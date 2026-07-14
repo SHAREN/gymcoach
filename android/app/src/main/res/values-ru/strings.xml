@@ -104,6 +104,11 @@
     <string name="bar_weight_format">Гриф: %1$s %2$s</string>
     <string name="plate_achieved_format">Можно собрать %1$s %2$s</string>
     <string name="choose_set_count">Количество подходов</string>
+    <string name="apply_set_recommendation">Применить рекомендацию к этому подходу</string>
+    <string name="set_update_error">Не удалось обновить подход. Предыдущие значения сохранены.</string>
+    <string name="set_weight_description">Вес подхода %1$d</string>
+    <string name="set_reps_description">Повторы подхода %1$d</string>
+    <string name="set_rir_description">RIR подхода %1$d</string>
     <string name="set_count_range">Доступно: %1$d-%2$d</string>
     <string name="decrease">Уменьшить</string>
     <string name="increase">Увеличить</string>

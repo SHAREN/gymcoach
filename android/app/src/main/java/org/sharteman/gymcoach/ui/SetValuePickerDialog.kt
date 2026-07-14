@@ -152,6 +152,7 @@ fun SetValuePickerDialog(
                         PickerOption(
                             label = pickerOptionLabel(option, kind, unit),
                             selected = selected,
+                            tag = "set-value-option-${kind.name}-${option?.let(::formatPickerNumber) ?: "none"}",
                             onClick = {
                                 manualValue = option?.let(::formatPickerNumber).orEmpty()
                             },
@@ -222,9 +223,14 @@ private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -
 }
 
 @Composable
-private fun PickerOption(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun PickerOption(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().widthIn(max = 250.dp).height(74.dp).clickable(onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 250.dp)
+            .height(74.dp)
+            .testTag(tag)
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(
             if (selected) 2.dp else 1.dp,
@@ -284,7 +290,7 @@ private fun PickerConfirmationRow(
         Button(
             onClick = onConfirm,
             enabled = valid,
-            modifier = Modifier.size(64.dp),
+            modifier = Modifier.size(64.dp).testTag("set-value-apply"),
             shape = RoundedCornerShape(8.dp),
             contentPadding = PaddingValues(0.dp),
         ) {

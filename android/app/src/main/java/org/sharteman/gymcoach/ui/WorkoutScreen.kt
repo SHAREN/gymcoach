@@ -79,6 +79,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -155,7 +157,6 @@ fun WorkoutScreen(
     var controlsDialog by remember { mutableStateOf(false) }
     var resetDialog by remember { mutableStateOf(false) }
     var resetBusy by remember { mutableStateOf(false) }
-    var editSet by remember { mutableStateOf<LocalSetEntity?>(null) }
     var detailsExercise by remember { mutableStateOf<ExerciseDto?>(null) }
     var setTableMetricNames by rememberSaveable {
         mutableStateOf(workoutPreferences.getString(SET_TABLE_METRIC_KEY, null))
@@ -173,6 +174,7 @@ fun WorkoutScreen(
     }
     val snackbar = remember { SnackbarHostState() }
     val resetError = stringResource(R.string.workout_reset_error)
+    val setUpdateError = stringResource(R.string.set_update_error)
 
     if (session == null || workout == null) {
         Scaffold(topBar = { TopAppBar(title = { Text("GymCoach") }) }) { padding ->
@@ -275,7 +277,7 @@ fun WorkoutScreen(
     var isWarmup by rememberSaveable(current.id) { mutableStateOf(false) }
     var isDropSet by rememberSaveable(current.id) { mutableStateOf(false) }
 
-    LaunchedEffect(current.id, currentSets.size, recommendation) {
+    LaunchedEffect(current.id, currentSets.size) {
         val initialWeight = recommendation?.weight
             ?: returnRecommendation?.suggestedWeight
             ?: lastPerformance?.maxWeight
@@ -355,7 +357,16 @@ fun WorkoutScreen(
                         isDropSet = it
                         if (it) isWarmup = false
                     },
-                    onEdit = { editSet = it },
+                    onUpdateSet = { set, weight, reps, rir ->
+                        runCatching { repository.updateSet(set, weight, reps, rir) }
+                            .fold(
+                                onSuccess = { true },
+                                onFailure = {
+                                    scope.launch { snackbar.showSnackbar(setUpdateError) }
+                                    false
+                                },
+                            )
+                    },
                     onDelete = { set -> scope.launch { repository.deleteSet(set.id) } },
                     onTargetSetsChange = { targetSets ->
                         scope.launch { repository.updateTargetSets(current.id, targetSets) }
@@ -433,17 +444,6 @@ fun WorkoutScreen(
         }
     }
 
-    editSet?.let { set ->
-        EditSetDialog(
-            set = set,
-            unit = unit,
-            onDismiss = { editSet = null },
-            onSave = { weight, reps, rir ->
-                scope.launch { repository.updateSet(set, weight, reps, rir) }
-                editSet = null
-            },
-        )
-    }
     if (controlsDialog) {
         WorkoutControlsDialog(
             workoutName = workout.name,
@@ -825,20 +825,29 @@ private fun WorkoutSetTable(
     onNotesChange: (String) -> Unit,
     onWarmupChange: (Boolean) -> Unit,
     onDropSetChange: (Boolean) -> Unit,
-    onEdit: (LocalSetEntity) -> Unit,
+    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?) -> Boolean,
     onDelete: (LocalSetEntity) -> Unit,
     onTargetSetsChange: (Int) -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     var optionsExpanded by rememberSaveable(target.id) { mutableStateOf(false) }
     var pickerKind by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
+    var pickerSetId by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
     var setCountOpen by rememberSaveable(target.id) { mutableStateOf(false) }
     var metricDialogOpen by rememberSaveable(target.id) { mutableStateOf(false) }
+    var editingSetId by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
+    var editingWeightText by rememberSaveable(target.id) { mutableStateOf("") }
+    var editingRepsText by rememberSaveable(target.id) { mutableStateOf("") }
+    var editingRirText by rememberSaveable(target.id) { mutableStateOf("") }
+    var updatingSetId by remember(target.id) { mutableStateOf<String?>(null) }
+    var appliedRecommendationKey by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
     val completedPlannedRows = sets.count { !it.isWarmup }
     val plannedRows = target.targetSets + target.targetDropSets
     val activeNumber = completedPlannedRows + 1
     val firstUpcoming = if (isWarmup) activeNumber else activeNumber + 1
-    val referenceWeightKg = weightText.replace(',', '.').toDoubleOrNull()
+    val referenceWeightText = if (pickerSetId != null) editingWeightText else weightText
+    val referenceWeightKg = referenceWeightText.replace(',', '.').toDoubleOrNull()
         ?.let { fromDisplayWeight(it, unit) }
         ?: 0.0
     val configuredWeights = gymWeightOptions(loadConstraints, referenceWeightKg)
@@ -853,6 +862,78 @@ private fun WorkoutSetTable(
         }
         .distinct()
         .sorted()
+    val currentRecommendationKey = recommendationKey(recommendation)
+    val applyRecommendationDescription = stringResource(R.string.apply_set_recommendation)
+    val recommendationActionVisible = recommendation != null && !isWarmup && !isDropSet
+    val canApplyRecommendation = recommendationActionVisible && recommendationCanApply(
+        appliedKey = appliedRecommendationKey,
+        currentKey = currentRecommendationKey,
+    )
+    LaunchedEffect(currentRecommendationKey) {
+        appliedRecommendationKey = null
+    }
+
+    fun startEditing(set: LocalSetEntity): Boolean {
+        if (updatingSetId != null) return false
+        if (editingSetId != set.id) {
+            val draft = draftFromSet(set, unit)
+            editingSetId = set.id
+            editingWeightText = draft.weightText
+            editingRepsText = draft.repsText
+            editingRirText = draft.rirText
+        }
+        return true
+    }
+
+    fun openCompletedPicker(set: LocalSetEntity, kind: SetValuePickerKind) {
+        if (!startEditing(set)) return
+        pickerSetId = set.id
+        pickerKind = kind.name
+    }
+
+    fun stopEditing() {
+        editingSetId = null
+        pickerSetId = null
+        pickerKind = null
+    }
+
+    fun saveEditedSet(
+        set: LocalSetEntity,
+        draft: EditableSetDraft = EditableSetDraft(
+            weightText = editingWeightText,
+            repsText = editingRepsText,
+            rirText = editingRirText,
+        ),
+    ) {
+        val parsed = draft.parse(unit) ?: return
+        updatingSetId = set.id
+        scope.launch {
+            try {
+                if (onUpdateSet(set, parsed.weight, parsed.reps, parsed.rir) && editingSetId == set.id) {
+                    stopEditing()
+                }
+            } finally {
+                if (updatingSetId == set.id) updatingSetId = null
+            }
+        }
+    }
+
+    fun applyRecommendation() {
+        val value = recommendation ?: return
+        val draft = recommendationDraft(value, unit)
+        onWeightChange(draft.weightText)
+        onRepsChange(draft.repsText)
+        onRirChange(draft.rirText)
+        appliedRecommendationKey = currentRecommendationKey
+    }
+    val activeNumberActionModifier = if (recommendationActionVisible) {
+        Modifier
+            .testTag("apply-set-recommendation")
+            .semantics { contentDescription = applyRecommendationDescription }
+            .clickable(enabled = canApplyRecommendation, onClick = ::applyRecommendation)
+    } else {
+        Modifier
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -863,6 +944,7 @@ private fun WorkoutSetTable(
         SetTableHeader(
             unit = unit,
             metrics = metrics,
+            onSetCountClick = { setCountOpen = true },
             onMetricClick = { metricDialogOpen = true },
         )
         sets.forEach { set ->
@@ -871,8 +953,22 @@ private fun WorkoutSetTable(
                 set = set,
                 unit = unit,
                 metrics = metrics,
-                onEdit = { onEdit(set) },
-                onDelete = { onDelete(set) },
+                isEditing = editingSetId == set.id,
+                isUpdating = updatingSetId == set.id,
+                interactionEnabled = updatingSetId == null,
+                weightText = editingWeightText,
+                repsText = editingRepsText,
+                rirText = editingRirText,
+                onWeightClick = { openCompletedPicker(set, SetValuePickerKind.WEIGHT) },
+                onRepsClick = { openCompletedPicker(set, SetValuePickerKind.REPS) },
+                onRirClick = { openCompletedPicker(set, SetValuePickerKind.RIR) },
+                onEdit = { startEditing(set) },
+                onSave = { saveEditedSet(set) },
+                onCancel = ::stopEditing,
+                onDelete = {
+                    if (editingSetId == set.id) stopEditing()
+                    onDelete(set)
+                },
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
@@ -883,7 +979,10 @@ private fun WorkoutSetTable(
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 Box(
-                    modifier = Modifier.weight(0.52f).height(50.dp).clickable { setCountOpen = true },
+                    modifier = Modifier
+                        .weight(0.52f)
+                        .height(50.dp)
+                        .then(activeNumberActionModifier),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -896,9 +995,12 @@ private fun WorkoutSetTable(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    if (recommendation != null && !isWarmup && !isDropSet) {
+                    if (canApplyRecommendation) {
                         Surface(
-                            modifier = Modifier.align(Alignment.TopEnd).size(7.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(8.dp)
+                                .testTag("set-recommendation-dot"),
                             shape = CircleShape,
                             color = Color(0xFF0EA5E9),
                         ) {}
@@ -906,18 +1008,27 @@ private fun WorkoutSetTable(
                 }
                 SetPickerField(
                     value = weightText,
-                    onClick = { pickerKind = SetValuePickerKind.WEIGHT.name },
+                    onClick = {
+                        pickerSetId = null
+                        pickerKind = SetValuePickerKind.WEIGHT.name
+                    },
                     modifier = Modifier.weight(1.25f).testTag("active-weight-picker"),
                 )
                 SetPickerField(
                     value = repsText,
-                    onClick = { pickerKind = SetValuePickerKind.REPS.name },
-                    modifier = Modifier.weight(0.9f),
+                    onClick = {
+                        pickerSetId = null
+                        pickerKind = SetValuePickerKind.REPS.name
+                    },
+                    modifier = Modifier.weight(0.9f).testTag("active-reps-picker"),
                 )
                 SetPickerField(
                     value = rirText,
-                    onClick = { pickerKind = SetValuePickerKind.RIR.name },
-                    modifier = Modifier.weight(0.78f),
+                    onClick = {
+                        pickerSetId = null
+                        pickerKind = SetValuePickerKind.RIR.name
+                    },
+                    modifier = Modifier.weight(0.78f).testTag("active-rir-picker"),
                 )
                 metrics.forEach { metric ->
                     SetMetricCell(
@@ -997,12 +1108,13 @@ private fun WorkoutSetTable(
 
     pickerKind?.let { kindName ->
         val kind = SetValuePickerKind.valueOf(kindName)
+        val editingPicker = pickerSetId != null
         SetValuePickerDialog(
             kind = kind,
             value = when (kind) {
-                SetValuePickerKind.WEIGHT -> weightText
-                SetValuePickerKind.REPS -> repsText
-                SetValuePickerKind.RIR -> rirText
+                SetValuePickerKind.WEIGHT -> if (editingPicker) editingWeightText else weightText
+                SetValuePickerKind.REPS -> if (editingPicker) editingRepsText else repsText
+                SetValuePickerKind.RIR -> if (editingPicker) editingRirText else rirText
             },
             options = when (kind) {
                 SetValuePickerKind.WEIGHT -> weightOptions
@@ -1011,14 +1123,36 @@ private fun WorkoutSetTable(
             },
             unit = unit,
             loadConstraints = loadConstraints,
-            onDismiss = { pickerKind = null },
+            onDismiss = {
+                pickerKind = null
+                pickerSetId = null
+            },
             onConfirm = { selected ->
-                when (kind) {
-                    SetValuePickerKind.WEIGHT -> onWeightChange(selected)
-                    SetValuePickerKind.REPS -> onRepsChange(selected)
-                    SetValuePickerKind.RIR -> onRirChange(selected)
+                if (editingPicker) {
+                    val currentDraft = EditableSetDraft(
+                        weightText = editingWeightText,
+                        repsText = editingRepsText,
+                        rirText = editingRirText,
+                    )
+                    val nextDraft = when (kind) {
+                        SetValuePickerKind.WEIGHT -> currentDraft.copy(weightText = selected)
+                        SetValuePickerKind.REPS -> currentDraft.copy(repsText = selected)
+                        SetValuePickerKind.RIR -> currentDraft.copy(rirText = selected)
+                    }
+                    editingWeightText = nextDraft.weightText
+                    editingRepsText = nextDraft.repsText
+                    editingRirText = nextDraft.rirText
+                    sets.firstOrNull { it.id == pickerSetId }?.let { saveEditedSet(it, nextDraft) }
+                } else {
+                    when (kind) {
+                        SetValuePickerKind.WEIGHT -> onWeightChange(selected)
+                        SetValuePickerKind.REPS -> onRepsChange(selected)
+                        SetValuePickerKind.RIR -> onRirChange(selected)
+                    }
+                    appliedRecommendationKey = null
                 }
                 pickerKind = null
+                pickerSetId = null
             },
         )
     }
@@ -1047,13 +1181,34 @@ private fun WorkoutSetTable(
 private fun SetTableHeader(
     unit: String,
     metrics: List<SetTableMetric>,
+    onSetCountClick: () -> Unit,
     onMetricClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TableHeaderCell("#", 0.52f)
+        Box(
+            modifier = Modifier
+                .weight(0.52f)
+                .height(30.dp)
+                .testTag("set-count-button")
+                .clickable(onClick = onSetCountClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "#",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Icon(
+                Icons.Outlined.Tune,
+                contentDescription = stringResource(R.string.choose_set_count),
+                modifier = Modifier.align(Alignment.TopEnd).size(11.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         TableHeaderCell(unit.uppercase(Locale.getDefault()), 1.25f)
         TableHeaderCell("REPS", 0.9f)
         TableHeaderCell("RIR", 0.78f)
@@ -1115,13 +1270,37 @@ private fun CompletedSetTableRow(
     set: LocalSetEntity,
     unit: String,
     metrics: List<SetTableMetric>,
+    isEditing: Boolean,
+    isUpdating: Boolean,
+    interactionEnabled: Boolean,
+    weightText: String,
+    repsText: String,
+    rirText: String,
+    onWeightClick: () -> Unit,
+    onRepsClick: () -> Unit,
+    onRirClick: () -> Unit,
     onEdit: () -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val weightDescription = stringResource(R.string.set_weight_description, set.setNumber)
+    val repsDescription = stringResource(R.string.set_reps_description, set.setNumber)
+    val rirDescription = stringResource(R.string.set_rir_description, set.setNumber)
+    Surface(
+        color = if (isEditing) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.12f)
+        } else {
+            Color.Transparent
+        },
     ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("completed-set-${set.setNumber}")
+                .padding(horizontal = 6.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         Text(
             when {
                 set.isWarmup -> "W"
@@ -1133,12 +1312,70 @@ private fun CompletedSetTableRow(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        SetValueCell(formatWeight(roundWeight(toDisplayWeight(set.weight, unit), 2)), 1.25f)
-        SetValueCell(set.reps.toString(), 0.9f)
-        SetValueCell(set.rir?.toString() ?: "–", 0.78f)
+        if (isEditing) {
+            SetPickerField(
+                value = weightText,
+                onClick = onWeightClick,
+                enabled = interactionEnabled,
+                accessibilityDescription = weightDescription,
+                modifier = Modifier.weight(1.25f).testTag("completed-set-${set.setNumber}-weight-editor"),
+            )
+            SetPickerField(
+                value = repsText,
+                onClick = onRepsClick,
+                enabled = interactionEnabled,
+                accessibilityDescription = repsDescription,
+                modifier = Modifier.weight(0.9f).testTag("completed-set-${set.setNumber}-reps-editor"),
+            )
+            SetPickerField(
+                value = rirText,
+                onClick = onRirClick,
+                enabled = interactionEnabled,
+                accessibilityDescription = rirDescription,
+                modifier = Modifier.weight(0.78f).testTag("completed-set-${set.setNumber}-rir-editor"),
+            )
+        } else {
+            SetValueCell(
+                value = formatWeight(roundWeight(toDisplayWeight(set.weight, unit), 2)),
+                weight = 1.25f,
+                onClick = onWeightClick,
+                tag = "completed-set-${set.setNumber}-weight",
+                accessibilityDescription = weightDescription,
+                enabled = interactionEnabled,
+            )
+            SetValueCell(
+                value = set.reps.toString(),
+                weight = 0.9f,
+                onClick = onRepsClick,
+                tag = "completed-set-${set.setNumber}-reps",
+                accessibilityDescription = repsDescription,
+                enabled = interactionEnabled,
+            )
+            SetValueCell(
+                value = set.rir?.toString() ?: "–",
+                weight = 0.78f,
+                onClick = onRirClick,
+                tag = "completed-set-${set.setNumber}-rir",
+                accessibilityDescription = rirDescription,
+                enabled = interactionEnabled,
+            )
+        }
         metrics.forEach { metric ->
             SetMetricCell(
-                if (set.isWarmup) "–" else formatSetTableMetric(metric, set.weight, set.reps, unit),
+                if (set.isWarmup) {
+                    "–"
+                } else if (isEditing) {
+                    formatSetTableMetric(
+                        metric = metric,
+                        weightKg = weightText.replace(',', '.').toDoubleOrNull()
+                            ?.let { fromDisplayWeight(it, unit) }
+                            ?: set.weight,
+                        reps = repsText.toIntOrNull() ?: set.reps,
+                        unit = unit,
+                    )
+                } else {
+                    formatSetTableMetric(metric, set.weight, set.reps, unit)
+                },
                 setMetricColumnWeight(metrics.size),
             )
         }
@@ -1146,21 +1383,55 @@ private fun CompletedSetTableRow(
             modifier = Modifier.weight(0.95f),
             horizontalArrangement = Arrangement.Center,
         ) {
-            IconButton(onClick = onEdit, modifier = Modifier.size(30.dp)) {
-                Icon(
-                    Icons.Outlined.Edit,
-                    contentDescription = stringResource(R.string.edit),
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-            IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) {
-                Icon(
-                    Icons.Outlined.Delete,
-                    contentDescription = stringResource(R.string.delete),
-                    modifier = Modifier.size(17.dp),
-                )
+            if (isEditing) {
+                IconButton(
+                    onClick = onSave,
+                    enabled = !isUpdating && isValidSetInput(weightText, repsText, rirText, unit),
+                    modifier = Modifier.size(30.dp).testTag("completed-set-${set.setNumber}-save"),
+                ) {
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = stringResource(R.string.save),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onCancel,
+                    enabled = !isUpdating,
+                    modifier = Modifier.size(30.dp).testTag("completed-set-${set.setNumber}-cancel"),
+                ) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = stringResource(R.string.cancel),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            } else {
+                IconButton(
+                    onClick = onEdit,
+                    enabled = interactionEnabled,
+                    modifier = Modifier.size(30.dp).testTag("completed-set-${set.setNumber}-edit"),
+                ) {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = stringResource(R.string.edit),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    enabled = interactionEnabled,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Delete,
+                        contentDescription = stringResource(R.string.delete),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
             }
         }
+    }
     }
 }
 
@@ -1173,6 +1444,33 @@ private fun RowScope.SetValueCell(value: String, weight: Float) {
         style = MaterialTheme.typography.bodyMedium,
         fontWeight = FontWeight.Medium,
     )
+}
+
+@Composable
+private fun RowScope.SetValueCell(
+    value: String,
+    weight: Float,
+    onClick: () -> Unit,
+    tag: String,
+    accessibilityDescription: String,
+    enabled: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .weight(weight)
+            .height(44.dp)
+            .testTag(tag)
+            .semantics { contentDescription = accessibilityDescription }
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            value,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+    }
 }
 
 @Composable
@@ -1316,9 +1614,16 @@ private fun SetPickerField(
     value: String,
     onClick: () -> Unit,
     modifier: Modifier,
+    enabled: Boolean = true,
+    accessibilityDescription: String? = null,
 ) {
+    val accessibleModifier = if (accessibilityDescription == null) {
+        modifier
+    } else {
+        modifier.semantics { contentDescription = accessibilityDescription }
+    }
     Surface(
-        modifier = modifier.height(50.dp).clickable(onClick = onClick),
+        modifier = accessibleModifier.height(50.dp).clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(5.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         color = MaterialTheme.colorScheme.surface,
@@ -1885,10 +2190,12 @@ internal fun WorkoutScreenPreview() {
             ),
         )
     }
-    val sets = remember {
-        listOf(
+    var sets by remember {
+        mutableStateOf(
+            listOf(
             previewLocalSet("set-1", 1, 100.0, 10, 2),
             previewLocalSet("set-2", 2, 100.0, 10, 1),
+            ),
         )
     }
     val previous = remember {
@@ -1981,7 +2288,20 @@ internal fun WorkoutScreenPreview() {
                     onNotesChange = { notes = it },
                     onWarmupChange = { warmup = it },
                     onDropSetChange = { dropSet = it },
-                    onEdit = {},
+                    onUpdateSet = { set, updatedWeight, updatedReps, updatedRir ->
+                        sets = sets.map { currentSet ->
+                            if (currentSet.id == set.id) {
+                                currentSet.copy(
+                                    weight = updatedWeight,
+                                    reps = updatedReps,
+                                    rir = updatedRir,
+                                )
+                            } else {
+                                currentSet
+                            }
+                        }
+                        true
+                    },
                     onDelete = {},
                     onTargetSetsChange = {},
                     onConfirm = {},
@@ -2117,6 +2437,7 @@ private fun PlannedSetCountDialog(
         mutableIntStateOf(totalSets.coerceIn(minSets, maxSets))
     }
     AlertDialog(
+        modifier = Modifier.testTag("set-count-dialog"),
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.choose_set_count)) },
         text = {
@@ -2166,47 +2487,6 @@ private fun PlannedSetCountDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         },
-    )
-}
-
-@Composable
-private fun EditSetDialog(
-    set: LocalSetEntity,
-    unit: String,
-    onDismiss: () -> Unit,
-    onSave: (Double, Int, Int?) -> Unit,
-) {
-    var weight by remember {
-        mutableStateOf(formatWeight(roundWeight(toDisplayWeight(set.weight, unit), 2)))
-    }
-    var reps by remember { mutableStateOf(set.reps.toString()) }
-    var rir by remember { mutableStateOf(set.rir?.toString().orEmpty()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.edit)) },
-        text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumericField(weight, { weight = it }, stringResource(R.string.weight), Modifier.weight(1f), true)
-                NumericField(reps, { reps = it }, stringResource(R.string.reps), Modifier.weight(1f))
-                NumericField(rir, { rir = it }, stringResource(R.string.rir), Modifier.weight(1f))
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val parsedWeight = weight.replace(',', '.').toDoubleOrNull() ?: return@TextButton
-                    val parsedReps = reps.toIntOrNull() ?: return@TextButton
-                    val parsedRir = if (rir.isBlank()) null else rir.toIntOrNull() ?: return@TextButton
-                    onSave(
-                        roundWeight(fromDisplayWeight(parsedWeight, unit), 2),
-                        parsedReps,
-                        parsedRir,
-                    )
-                },
-                enabled = isValidSetInput(weight, reps, rir, unit),
-            ) { Text(stringResource(R.string.save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
