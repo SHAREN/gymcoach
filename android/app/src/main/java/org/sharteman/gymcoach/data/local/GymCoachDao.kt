@@ -89,8 +89,11 @@ interface GymCoachDao {
     @Query("UPDATE sync_outbox SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
     suspend fun markOperationBlocked(operationId: String, error: String)
 
-    @Query("UPDATE sync_outbox SET status = 'PENDING', lastError = NULL WHERE operationId = :operationId")
-    suspend fun retryOperation(operationId: String)
+    @Query(
+        "UPDATE sync_outbox SET status = 'PENDING', lastError = NULL, " +
+            "lastRetryRequestedAtEpochMs = :requestedAtEpochMs WHERE operationId = :operationId",
+    )
+    suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long)
 
     @Query("UPDATE sync_outbox SET status = 'PENDING' WHERE status = 'SYNCING'")
     suspend fun recoverInterruptedOperations()

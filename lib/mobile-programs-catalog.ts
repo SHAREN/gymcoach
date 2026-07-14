@@ -1,11 +1,25 @@
 import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
 import { authenticateMobileRequest } from '@/lib/mobile-auth';
+import {
+  mobileCreateMetadataSchema,
+  type MobileCreateMetadata,
+} from '@/lib/schemas/mobile-idempotency';
 
 export async function requireMobileUserId(req: Request): Promise<string> {
   const principal = await authenticateMobileRequest(req);
   if (!principal) throw new ApiError(401, 'Unauthorized');
   return principal.userId;
+}
+
+export function parseMobileCreateMetadata(req: Request): MobileCreateMetadata {
+  const parsed = mobileCreateMetadataSchema.safeParse({
+    operationId: req.headers.get('Idempotency-Key') ?? undefined,
+    clientEntityId: req.headers.get('X-Client-Entity-Id') ?? undefined,
+  });
+  if (!parsed.success)
+    throw new ApiError(400, parsed.error.issues[0]?.message ?? 'Invalid metadata.');
+  return parsed.data;
 }
 
 export async function requireOwnedProgram(programId: string, userId: string) {

@@ -84,7 +84,7 @@ class HistoryProgressNativeTest {
     private class FakeHistorySource(private var snapshot: MobileHistorySnapshot) : HistoryProgressDataSource {
         var deletedSessionId: String? = null
 
-        override fun cachedHistory(month: String, programId: String?) = snapshot
+        override suspend fun cachedHistory(month: String, programId: String?) = snapshot
         override suspend fun refreshHistory(month: String, programId: String?) = snapshot
         override suspend fun deleteHistorySession(sessionId: String) {
             deletedSessionId = sessionId

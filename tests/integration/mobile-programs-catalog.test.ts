@@ -40,13 +40,32 @@ function request(url: string, method = 'GET', token?: string, body?: unknown): R
   });
 }
 
+function idempotentRequest(
+  url: string,
+  token: string,
+  body: unknown,
+  operationId: string,
+  clientEntityId: string,
+): Request {
+  return new Request(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': operationId,
+      'X-Client-Entity-Id': clientEntityId,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 function params(id: string) {
   return { params: Promise.resolve({ id }) };
 }
 
-async function seedMobileUser() {
+async function seedMobileUser(email = 'mobile-programs@test.dev') {
   const user = await db.user.create({
-    data: { email: 'mobile-programs@test.dev', passwordHash: 'unused' },
+    data: { email, passwordHash: 'unused' },
   });
   const token = generateMobileToken();
   await db.mobileAccessToken.create({
@@ -268,5 +287,114 @@ describe('Android programs and exercise catalog API', () => {
     ).toBe(200);
     expect(await db.exercise.count({ where: { userId: user.id } })).toBe(0);
     expect(await db.program.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it('replays client generated creates without duplicates and validates both headers', async () => {
+    const { user, token } = await seedMobileUser();
+    const programId = 'mob_program_00000000000000000000000000000001';
+    const operationId = 'op_00000000000000000000000000000001';
+    const payload = { name: 'Offline replay', phase: 'Base', description: null };
+
+    const first = await createProgram(
+      idempotentRequest('http://test/api/mobile/programs', token, payload, operationId, programId),
+    );
+    const replay = await createProgram(
+      idempotentRequest('http://test/api/mobile/programs', token, payload, operationId, programId),
+    );
+
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id: programId, userId: user.id });
+    expect(await db.program.count({ where: { id: programId } })).toBe(1);
+
+    const exerciseId = 'mob_exercise_00000000000000000000000000000001';
+    const exercisePayload = {
+      name: 'Offline press',
+      muscleGroup: 'CHEST',
+      category: 'COMPOUND',
+      defaultRestSec: 120,
+      equipmentType: 'BARBELL',
+      usesBodyweight: false,
+      notes: null,
+    };
+    for (const expectedStatus of [201, 200]) {
+      const response = await createExercise(
+        idempotentRequest(
+          'http://test/api/mobile/exercises',
+          token,
+          exercisePayload,
+          'op_00000000000000000000000000000002',
+          exerciseId,
+        ),
+      );
+      expect(response.status).toBe(expectedStatus);
+    }
+
+    const workoutId = 'mob_workout_00000000000000000000000000000001';
+    for (const expectedStatus of [201, 200]) {
+      const response = await createWorkout(
+        idempotentRequest(
+          `http://test/api/mobile/programs/${programId}/workouts`,
+          token,
+          { name: 'Offline day', dayOfWeek: 1 },
+          'op_00000000000000000000000000000003',
+          workoutId,
+        ),
+        params(programId),
+      );
+      expect(response.status).toBe(expectedStatus);
+    }
+
+    const targetId = 'mob_program_exercise_00000000000000000000000000000001';
+    const targetPayload = {
+      exerciseId,
+      targetSets: 4,
+      targetDropSets: 0,
+      targetRepsMin: 8,
+      targetRepsMax: 10,
+      targetRIR: 2,
+      restSec: 120,
+    };
+    for (const expectedStatus of [201, 200]) {
+      const response = await createProgramExercise(
+        idempotentRequest(
+          `http://test/api/mobile/workouts/${workoutId}/program-exercises`,
+          token,
+          targetPayload,
+          'op_00000000000000000000000000000004',
+          targetId,
+        ),
+        params(workoutId),
+      );
+      expect(response.status).toBe(expectedStatus);
+    }
+    expect(await db.exercise.count({ where: { id: exerciseId } })).toBe(1);
+    expect(await db.workout.count({ where: { id: workoutId } })).toBe(1);
+    expect(await db.programExercise.count({ where: { id: targetId } })).toBe(1);
+
+    const secondAccount = await seedMobileUser('mobile-programs-second@test.dev');
+    const crossAccountReplay = await createProgram(
+      idempotentRequest(
+        'http://test/api/mobile/programs',
+        secondAccount.token,
+        payload,
+        operationId,
+        programId,
+      ),
+    );
+    expect(crossAccountReplay.status).toBe(409);
+
+    const missingPair = await createProgram(
+      new Request('http://test/api/mobile/programs', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': operationId,
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+    expect(missingPair.status).toBe(400);
   });
 });
