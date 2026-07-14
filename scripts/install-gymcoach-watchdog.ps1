@@ -32,7 +32,7 @@ $task = New-ScheduledTask `
     -Trigger $trigger `
     -Principal $principal `
     -Settings $settings `
-    -Description 'Keeps the WSL Docker engine and canonical GymCoach Compose runtime available on port 3030.'
+    -Description 'Keeps the WSL Docker engine, canonical GymCoach Compose runtime and LAN fallback proxy available on port 3030.'
 
 Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
 
