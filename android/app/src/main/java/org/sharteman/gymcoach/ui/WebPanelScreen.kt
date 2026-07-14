@@ -3,7 +3,9 @@ package org.sharteman.gymcoach.ui
 import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -26,12 +28,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,9 +47,17 @@ fun WebPanelScreen(
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var ready by remember { mutableStateOf(!online) }
-    val allowedHost = remember(repository.serverUrl) { Uri.parse(repository.serverUrl).host }
-    val startUrl = remember(repository.serverUrl, startPath) {
-        repository.serverUrl.trimEnd('/') + "/" + startPath.trimStart('/')
+    var sessionBaseUrl by remember { mutableStateOf(repository.serverUrl) }
+    var fallbackAttempted by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val allowedHosts = remember(repository.primaryServerUrl, repository.fallbackServerUrl) {
+        setOfNotNull(
+            Uri.parse(repository.primaryServerUrl).host,
+            repository.fallbackServerUrl?.let { Uri.parse(it).host },
+        )
+    }
+    val startUrl = remember(sessionBaseUrl, startPath) {
+        sessionBaseUrl.trimEnd('/') + "/" + startPath.trimStart('/')
     }
 
     LaunchedEffect(online) {
@@ -53,14 +65,32 @@ fun WebPanelScreen(
             ready = true
             return@LaunchedEffect
         }
-        runCatching { repository.createWebSessionCookies() }.onSuccess { cookies ->
+        runCatching { repository.prepareWebSession() }.onSuccess { session ->
+            sessionBaseUrl = session.baseUrl
             val manager = CookieManager.getInstance()
             manager.setAcceptCookie(true)
-            cookies.forEach { manager.setCookie(repository.serverUrl, it) }
+            session.cookies.forEach { manager.setCookie(session.baseUrl, it) }
             manager.flush()
-            webView?.reload()
+            webView?.loadUrl(
+                session.baseUrl.trimEnd('/') + "/" + startPath.trimStart('/'),
+            )
         }
         ready = true
+    }
+
+    fun openFallback(view: WebView) {
+        if (fallbackAttempted) return
+        fallbackAttempted = true
+        scope.launch {
+            runCatching { repository.prepareWebSession() }.onSuccess { session ->
+                if (session.baseUrl == sessionBaseUrl) return@onSuccess
+                val manager = CookieManager.getInstance()
+                session.cookies.forEach { manager.setCookie(session.baseUrl, it) }
+                manager.flush()
+                sessionBaseUrl = session.baseUrl
+                view.loadUrl(session.baseUrl.trimEnd('/') + "/" + startPath.trimStart('/'))
+            }
+        }
     }
     BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
     DisposableEffect(Unit) {
@@ -100,11 +130,29 @@ fun WebPanelScreen(
                                     view: WebView,
                                     request: WebResourceRequest,
                                 ): Boolean {
-                                    if (request.url.host == allowedHost) return false
+                                    if (request.url.host in allowedHosts) return false
                                     runCatching {
                                         context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
                                     }
                                     return true
+                                }
+
+                                override fun onReceivedError(
+                                    view: WebView,
+                                    request: WebResourceRequest,
+                                    error: WebResourceError,
+                                ) {
+                                    if (request.isForMainFrame) openFallback(view)
+                                }
+
+                                override fun onReceivedHttpError(
+                                    view: WebView,
+                                    request: WebResourceRequest,
+                                    errorResponse: WebResourceResponse,
+                                ) {
+                                    if (request.isForMainFrame && errorResponse.statusCode in 502..504) {
+                                        openFallback(view)
+                                    }
                                 }
                             }
                             loadUrl(startUrl)

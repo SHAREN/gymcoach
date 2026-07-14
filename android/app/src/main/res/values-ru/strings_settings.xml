@@ -3,6 +3,11 @@
     <string name="settings_native_title">Настройки</string>
     <string name="settings_native_account">Аккаунт</string>
     <string name="settings_native_server">Сервер: %1$s</string>
+    <string name="settings_native_active_server">Активный сервер: %1$s</string>
+    <string name="settings_native_primary_server">Основной HTTPS-сервер</string>
+    <string name="settings_native_fallback_server">Резервный сервер в локальной сети</string>
+    <string name="settings_native_fallback_server_hint">Открывается автоматически только при недоступности основного сервера.</string>
+    <string name="settings_native_server_saved">Адреса серверов сохранены. Активное подключение выбрано автоматически.</string>
     <string name="settings_native_profile">Профиль</string>
     <string name="settings_native_display_name">Имя</string>
     <string name="settings_native_bodyweight">Вес тела, кг</string>

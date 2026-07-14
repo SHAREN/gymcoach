@@ -3,6 +3,11 @@
     <string name="settings_native_title">Settings</string>
     <string name="settings_native_account">Account</string>
     <string name="settings_native_server">Server: %1$s</string>
+    <string name="settings_native_active_server">Active server: %1$s</string>
+    <string name="settings_native_primary_server">Primary HTTPS server</string>
+    <string name="settings_native_fallback_server">Fallback LAN server</string>
+    <string name="settings_native_fallback_server_hint">Opened automatically only when the primary server is unavailable.</string>
+    <string name="settings_native_server_saved">Server addresses saved. Active connection selected automatically.</string>
     <string name="settings_native_profile">Profile</string>
     <string name="settings_native_display_name">Display name</string>
     <string name="settings_native_bodyweight">Bodyweight, kg</string>

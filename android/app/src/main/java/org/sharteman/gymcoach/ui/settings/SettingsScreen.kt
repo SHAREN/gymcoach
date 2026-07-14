@@ -77,6 +77,7 @@ import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.network.enqueueAndroidUpdate
+import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.data.settings.AndroidPreferenceState
 import org.sharteman.gymcoach.data.settings.AndroidPreferences
@@ -100,6 +101,7 @@ import org.sharteman.gymcoach.training.setTableMetricEnabled
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenWebPath: (String) -> Unit,
+    appRepository: GymCoachRepository? = null,
     repository: SettingsDataSource = SettingsRepository.create(LocalContext.current),
 ) {
     val context = LocalContext.current
@@ -107,6 +109,9 @@ fun SettingsScreen(
     val account = remember(context) { SecureAccountStore(context.applicationContext) }
     val preferenceStore = remember(context) { AndroidPreferences(context.applicationContext) }
     var preferences by remember { mutableStateOf(preferenceStore.load()) }
+    var primaryServerUrl by rememberSaveable { mutableStateOf(account.primaryServerUrl) }
+    var fallbackServerUrl by rememberSaveable { mutableStateOf(account.fallbackServerUrl.orEmpty()) }
+    var activeServerUrl by remember { mutableStateOf(account.serverUrl) }
     var snapshot by remember { mutableStateOf<SettingsSnapshot?>(null) }
     var profileDraft by remember { mutableStateOf(ProfileDraft()) }
     var gymDraft by remember { mutableStateOf(GymDraft()) }
@@ -283,10 +288,60 @@ fun SettingsScreen(
                     SettingsCard(stringResource(R.string.settings_native_account)) {
                         Text(snapshot?.profile?.email.orEmpty(), fontWeight = FontWeight.Medium)
                         Text(
-                            stringResource(R.string.settings_native_server, account.serverUrl),
+                            stringResource(R.string.settings_native_active_server, activeServerUrl),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        OutlinedTextField(
+                            value = primaryServerUrl,
+                            onValueChange = { primaryServerUrl = it },
+                            label = { Text(stringResource(R.string.settings_native_primary_server)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("settings-primary-server"),
+                        )
+                        OutlinedTextField(
+                            value = fallbackServerUrl,
+                            onValueChange = { fallbackServerUrl = it },
+                            label = { Text(stringResource(R.string.settings_native_fallback_server)) },
+                            supportingText = {
+                                Text(stringResource(R.string.settings_native_fallback_server_hint))
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("settings-fallback-server"),
+                        )
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    runCatching {
+                                        if (appRepository != null) {
+                                            appRepository.configureServerUrls(
+                                                primaryServerUrl,
+                                                fallbackServerUrl,
+                                            )
+                                        } else {
+                                            account.configureServerUrls(primaryServerUrl, fallbackServerUrl)
+                                            account.serverUrl
+                                        }
+                                    }.onSuccess { selectedServer ->
+                                        primaryServerUrl = account.primaryServerUrl
+                                        fallbackServerUrl = account.fallbackServerUrl.orEmpty()
+                                        activeServerUrl = selectedServer
+                                        feedback = context.getString(R.string.settings_native_server_saved)
+                                        error = null
+                                    }.onFailure { showFailure(it) }
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy && primaryServerUrl.isNotBlank(),
+                            modifier = Modifier.testTag("settings-save-servers"),
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null)
+                            Text(
+                                stringResource(R.string.settings_native_save),
+                                Modifier.padding(start = 6.dp),
+                            )
+                        }
                     }
                 }
                 item {

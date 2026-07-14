@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -40,14 +42,18 @@ import org.sharteman.gymcoach.data.repository.GymCoachRepository
 fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
     var email by remember { mutableStateOf(repository.email.orEmpty()) }
     var password by remember { mutableStateOf("") }
-    var server by remember { mutableStateOf(repository.serverUrl) }
+    var server by remember { mutableStateOf(repository.primaryServerUrl) }
+    var fallbackServer by remember { mutableStateOf(repository.fallbackServerUrl.orEmpty()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<LoginErrorKind?>(null) }
     val scope = rememberCoroutineScope()
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 40.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 40.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -90,7 +96,20 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
                     server = it
                     error = null
                 },
-                label = { Text(stringResource(R.string.server)) },
+                label = { Text(stringResource(R.string.primary_server)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = fallbackServer,
+                onValueChange = {
+                    fallbackServer = it
+                    error = null
+                },
+                label = { Text(stringResource(R.string.fallback_server)) },
+                supportingText = { Text(stringResource(R.string.fallback_server_hint)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -105,7 +124,7 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
                     scope.launch {
                         loading = true
                         error = null
-                        runCatching { repository.login(email, password, server) }
+                        runCatching { repository.login(email, password, server, fallbackServer) }
                             .onSuccess { onLoggedIn() }
                             .onFailure { error = classifyLoginError(it) }
                         loading = false

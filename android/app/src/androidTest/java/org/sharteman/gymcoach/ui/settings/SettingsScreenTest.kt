@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,7 +50,9 @@ class SettingsScreenTest {
                 composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
             }.isSuccess
         }
-        composeRule.onNodeWithTag("settings-check-update").performClick()
+        composeRule.onNodeWithTag("settings-primary-server").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-fallback-server").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-check-update").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
             runCatching {
                 composeRule.onNodeWithTag("settings-download-apk").assertIsDisplayed()

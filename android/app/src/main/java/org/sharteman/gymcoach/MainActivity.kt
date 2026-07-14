@@ -48,7 +48,11 @@ class MainActivity : ComponentActivity() {
                 }
                 GymCoachTheme(darkTheme = darkTheme) {
                     GymCoachApp(repository = repository) { onBack, onOpenWebPath ->
-                        SettingsScreen(onBack = onBack, onOpenWebPath = onOpenWebPath)
+                        SettingsScreen(
+                            onBack = onBack,
+                            onOpenWebPath = onOpenWebPath,
+                            appRepository = repository,
+                        )
                     }
                 }
             }

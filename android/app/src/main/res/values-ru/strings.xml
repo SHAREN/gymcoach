@@ -59,6 +59,9 @@
     <string name="discard">Отбросить</string>
     <string name="discard_change_warning">Отклонённое локальное изменение будет удалено. Если сервер отклонил начало тренировки, удалится вся несинхронизированная тренировка. Если ошибка могла быть временной, сначала нажмите «Повторить».</string>
     <string name="login_error">Не удалось войти.</string>
+    <string name="primary_server">Основной сервер</string>
+    <string name="fallback_server">Резервный сервер</string>
+    <string name="fallback_server_hint">Используется только при недоступности основного HTTPS-сервера. Для локальной сети разрешён приватный HTTP-адрес.</string>
     <string name="login_error_title">Ошибка входа</string>
     <string name="login_error_invalid_credentials">Неверная электронная почта или пароль.</string>
     <string name="login_error_invalid_request">Проверьте формат электронной почты и заполнение полей.</string>
