@@ -16,6 +16,7 @@ import org.sharteman.gymcoach.data.settings.AndroidPreferences
 import org.sharteman.gymcoach.data.settings.AppThemeMode
 import org.sharteman.gymcoach.ui.GymCoachApp
 import org.sharteman.gymcoach.ui.WorkoutScreenPreview
+import org.sharteman.gymcoach.ui.settings.SettingsScreen
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
 
 class MainActivity : ComponentActivity() {
@@ -45,7 +46,11 @@ class MainActivity : ComponentActivity() {
                     AppThemeMode.LIGHT -> false
                     AppThemeMode.SYSTEM -> isSystemInDarkTheme()
                 }
-                GymCoachTheme(darkTheme = darkTheme) { GymCoachApp(repository) }
+                GymCoachTheme(darkTheme = darkTheme) {
+                    GymCoachApp(repository = repository) { onBack, onOpenWebPath ->
+                        SettingsScreen(onBack = onBack, onOpenWebPath = onOpenWebPath)
+                    }
+                }
             }
         }
     }
