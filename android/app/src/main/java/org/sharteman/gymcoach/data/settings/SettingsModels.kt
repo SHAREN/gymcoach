@@ -50,6 +50,54 @@ data class SettingsGymDto(
 )
 
 @Serializable
+data class SettingsEquipmentImageDto(
+    val kind: String,
+    val url: String,
+    val mimeType: String? = null,
+)
+
+@Serializable
+data class SettingsGymEquipmentDto(
+    val id: String,
+    val gymId: String,
+    val name: String,
+    val equipmentType: String,
+    val description: String? = null,
+    val manufacturer: String? = null,
+    val modelName: String? = null,
+    val quantity: Int = 1,
+    val weightOptions: List<Double> = emptyList(),
+    val imageUrl: String? = null,
+    val image: SettingsEquipmentImageDto? = null,
+    val exerciseLinks: List<ExerciseDto> = emptyList(),
+)
+
+@Serializable
+data class SettingsGymInventoryDto(
+    val id: String,
+    val name: String,
+    val equipment: List<SettingsGymEquipmentDto> = emptyList(),
+)
+
+@Serializable
+data class SettingsGymInventoryResponse(
+    val gym: SettingsGymInventoryDto,
+)
+
+@Serializable
+data class SettingsGymEquipmentInput(
+    val name: String,
+    val equipmentType: String,
+    val description: String? = null,
+    val manufacturer: String? = null,
+    val modelName: String? = null,
+    val quantity: Int = 1,
+    val weightOptions: List<Double> = emptyList(),
+    val exerciseIds: List<String> = emptyList(),
+    val markExercisesAvailable: Boolean = true,
+)
+
+@Serializable
 data class SettingsGymListDto(
     val activeGymId: String? = null,
     val gyms: List<SettingsGymDto> = emptyList(),
@@ -80,6 +128,7 @@ data class SettingsSnapshot(
     val profile: SettingsProfileDto,
     val gymList: SettingsGymListDto,
     val exercises: List<ExerciseDto>,
+    val gymInventories: Map<String, SettingsGymInventoryDto> = emptyMap(),
 )
 
 enum class SettingsImportFormat {

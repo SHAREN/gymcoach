@@ -34,6 +34,34 @@ class SettingsUiModelsTest {
     }
 
     @Test
+    fun `validates and normalizes physical equipment`() {
+        val input = GymEquipmentDraft(
+            name = " Cable station ",
+            equipmentType = "CABLE",
+            quantity = "2",
+            weightOptions = "20; 10; 20",
+            exerciseIds = setOf("exercise-2", "exercise-1"),
+        ).toInputOrNull()
+
+        assertNotNull(input)
+        assertEquals("Cable station", input?.name)
+        assertEquals(listOf(10.0, 20.0), input?.weightOptions)
+        assertEquals(listOf("exercise-1", "exercise-2"), input?.exerciseIds)
+        assertNull(GymEquipmentDraft(name = "Machine", quantity = "0").toInputOrNull())
+        assertNull(GymEquipmentDraft(name = "Machine", equipmentType = "INVALID").toInputOrNull())
+    }
+
+    @Test
+    fun `accepts only https equipment image URLs`() {
+        assertEquals(
+            "https://images.example.test/machine.jpg",
+            validEquipmentImageUrl(" https://images.example.test/machine.jpg "),
+        )
+        assertNull(validEquipmentImageUrl("http://images.example.test/machine.jpg"))
+        assertNull(validEquipmentImageUrl("not a url"))
+    }
+
+    @Test
     fun `extracts import preview counts without language specific labels`() {
         val summary = importResultSummary(
             buildJsonObject {

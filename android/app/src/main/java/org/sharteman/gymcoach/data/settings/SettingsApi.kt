@@ -29,6 +29,17 @@ interface SettingsDataSource {
     suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto
     suspend fun activateGym(id: String)
     suspend fun deleteGym(id: String)
+    suspend fun loadGymInventory(gymId: String): SettingsGymInventoryDto
+    suspend fun saveGymEquipment(
+        gymId: String,
+        equipmentId: String?,
+        input: SettingsGymEquipmentInput,
+    )
+    suspend fun deleteGymEquipment(equipmentId: String)
+    suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String)
+    suspend fun uploadGymEquipmentImage(equipmentId: String, imageBase64: String, mimeType: String)
+    suspend fun clearGymEquipmentImage(equipmentId: String)
+    fun equipmentImageAuthorization(): String? = null
     suspend fun latestRelease(): AndroidReleaseDto
     fun releaseDownloadUrl(release: AndroidReleaseDto): String
     suspend fun exportBackup(): String
@@ -57,7 +68,8 @@ class SettingsApi(
         val profile = request<SettingsProfileDto>("GET", "/api/profile")
         val gyms = request<SettingsGymListDto>("GET", "/api/gyms")
         val exercises = request<List<ExerciseDto>>("GET", "/api/mobile/exercises")
-        return SettingsSnapshot(profile, gyms, exercises)
+        val inventories = gyms.gyms.associate { gym -> gym.id to loadGymInventory(gym.id) }
+        return SettingsSnapshot(profile, gyms, exercises, inventories)
     }
 
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto =
@@ -76,6 +88,45 @@ class SettingsApi(
     override suspend fun deleteGym(id: String) {
         request<JsonObject>("DELETE", "/api/gyms/$id")
     }
+
+    override suspend fun loadGymInventory(gymId: String): SettingsGymInventoryDto =
+        request<SettingsGymInventoryResponse>("GET", "/api/gyms/$gymId/equipment").gym
+
+    override suspend fun saveGymEquipment(
+        gymId: String,
+        equipmentId: String?,
+        input: SettingsGymEquipmentInput,
+    ) {
+        val path = equipmentId?.let { "/api/gym-equipment/$it" } ?: "/api/gyms/$gymId/equipment"
+        request<JsonObject>(if (equipmentId == null) "POST" else "PUT", path, json.encodeToString(input))
+    }
+
+    override suspend fun deleteGymEquipment(equipmentId: String) {
+        request<JsonObject>("DELETE", "/api/gym-equipment/$equipmentId")
+    }
+
+    override suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String) {
+        val body = buildJsonObject { put("imageUrl", imageUrl) }
+        request<JsonObject>("PUT", "/api/gym-equipment/$equipmentId/image", body.toString())
+    }
+
+    override suspend fun uploadGymEquipmentImage(
+        equipmentId: String,
+        imageBase64: String,
+        mimeType: String,
+    ) {
+        val body = buildJsonObject {
+            put("imageBase64", imageBase64)
+            put("mimeType", mimeType)
+        }
+        request<JsonObject>("PUT", "/api/gym-equipment/$equipmentId/image", body.toString())
+    }
+
+    override suspend fun clearGymEquipmentImage(equipmentId: String) {
+        request<JsonObject>("DELETE", "/api/gym-equipment/$equipmentId/image")
+    }
+
+    override fun equipmentImageAuthorization(): String = "Bearer $token"
 
     override suspend fun latestRelease(): AndroidReleaseDto =
         request("GET", "/api/android/latest", authenticated = false)
