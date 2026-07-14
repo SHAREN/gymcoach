@@ -16,6 +16,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.sharteman.gymcoach.data.coach.CoachApiException
 import org.sharteman.gymcoach.data.security.AccountStore
+import org.sharteman.gymcoach.data.settings.SettingsErrorKind
 import org.sharteman.gymcoach.data.settings.SettingsException
 
 fun interface ServerReachabilityProbe {
@@ -136,7 +137,14 @@ internal fun isEndpointUnavailable(error: Throwable): Boolean {
         return apiError.statusCode in setOf(408, 502, 503, 504)
     }
     causes.filterIsInstance<SettingsException>().firstOrNull()?.let { apiError ->
-        return apiError.statusCode in setOf(408, 502, 503, 504)
+        return apiError.statusCode in setOf(408, 502, 503, 504) || apiError.kind in setOf(
+            SettingsErrorKind.BAD_GATEWAY,
+            SettingsErrorKind.SERVER_UNAVAILABLE,
+            SettingsErrorKind.DNS,
+            SettingsErrorKind.TIMEOUT,
+            SettingsErrorKind.TLS,
+            SettingsErrorKind.OFFLINE,
+        )
     }
     if (causes.any { it is SerializationException || it is IllegalArgumentException }) return false
     return causes.any {

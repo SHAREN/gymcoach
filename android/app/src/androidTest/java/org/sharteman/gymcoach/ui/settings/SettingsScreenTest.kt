@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.ui.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -52,10 +53,35 @@ class SettingsScreenTest {
         }
         composeRule.onNodeWithTag("settings-primary-server").assertIsDisplayed()
         composeRule.onNodeWithTag("settings-fallback-server").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-profile-display-name")
+            .performScrollTo()
+            .assertTextContains("Android")
+        composeRule.onNodeWithTag("settings-profile-bodyweight").assertTextContains("82.5")
+        composeRule.onNodeWithTag("settings-profile-height").assertTextContains("181")
+        composeRule.onNodeWithTag("settings-profile-frequency").assertTextContains("4")
         composeRule.onNodeWithTag("settings-check-update").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
             runCatching {
                 composeRule.onNodeWithTag("settings-download-apk").assertIsDisplayed()
+            }.isSuccess
+        }
+    }
+
+    @Test
+    fun showsRetryInsteadOfEmptyProfileWhenLoadingFails() {
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    repository = FailingSettingsSource(),
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-retry-load").assertIsDisplayed()
             }.isSuccess
         }
     }
@@ -93,7 +119,15 @@ class SettingsScreenTest {
 
 private class FakeSettingsSource : SettingsDataSource {
     fun snapshot(): SettingsSnapshot = SettingsSnapshot(
-        profile = SettingsProfileDto(email = "android@test.dev", displayName = "Android"),
+        profile = SettingsProfileDto(
+            email = "android@test.dev",
+            displayName = "Android",
+            bodyweight = 82.5,
+            sex = "MALE",
+            heightCm = 181,
+            goal = "STRENGTH",
+            weeklyFrequency = 4,
+        ),
         gymList = SettingsGymListDto(
             activeGymId = "gym-1",
             gyms = listOf(SettingsGymDto(id = "gym-1", name = "Basement")),
@@ -173,4 +207,8 @@ private class FakeSettingsSource : SettingsDataSource {
     ) = SettingsImportPreview(format, fileName, payload, unit, JsonObject(emptyMap()))
 
     override suspend fun confirmImport(preview: SettingsImportPreview) = JsonObject(emptyMap())
+}
+
+private class FailingSettingsSource : SettingsDataSource by FakeSettingsSource() {
+    override suspend fun load(): SettingsSnapshot = error("Settings are unavailable")
 }
