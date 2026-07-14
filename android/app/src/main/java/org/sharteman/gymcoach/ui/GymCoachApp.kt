@@ -1,6 +1,5 @@
 package org.sharteman.gymcoach.ui
 
-import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
 import androidx.compose.foundation.layout.Box
@@ -27,9 +26,11 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
-import org.sharteman.gymcoach.data.network.androidDownloadUrl
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
+import org.sharteman.gymcoach.data.repository.SyncIssue
+import org.sharteman.gymcoach.data.repository.syncIssueKind
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.ui.coach.ChatScreen
 import org.sharteman.gymcoach.ui.coach.CoachScreen
@@ -63,6 +64,20 @@ fun GymCoachApp(
     val progress by repository.progress.collectAsState(initial = null)
     val pendingCount by repository.pendingCount.collectAsState(initial = 0)
     val syncIssue by repository.syncIssue.collectAsState(initial = null)
+    val offlinePendingFlow = remember(loggedIn) { OfflineRuntime.pendingCount() }
+    val offlineIssuesFlow = remember(loggedIn) { OfflineRuntime.issues() }
+    val offlinePendingCount by offlinePendingFlow.collectAsState(initial = 0)
+    val offlineIssues by offlineIssuesFlow.collectAsState(initial = emptyList())
+    val offlineIssue = offlineIssues.firstOrNull()
+    val displayedSyncIssue = syncIssue ?: offlineIssue?.let {
+        SyncIssue(
+            operationId = it.operationId,
+            message = it.message,
+            kind = syncIssueKind(it.message),
+            canRetry = true,
+        )
+    }
+    val totalPendingCount = pendingCount + offlinePendingCount
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -72,6 +87,12 @@ fun GymCoachApp(
     val syncFailedMessage = stringResource(R.string.sync_error)
     val syncBlockedMessage = stringResource(R.string.sync_blocked)
     val readinessSavedMessage = stringResource(R.string.readiness_saved)
+
+    suspend fun syncAllPending(): Boolean {
+        val workoutAccepted = repository.syncPending()
+        val offlineAccepted = OfflineRuntime.syncPending()
+        return workoutAccepted && offlineAccepted
+    }
 
     fun openWebPath(path: String) {
         webStartPath = path
@@ -101,7 +122,7 @@ fun GymCoachApp(
     LaunchedEffect(online) {
         if (online) {
             syncing = true
-            runCatching { repository.syncPending() }
+            runCatching { syncAllPending() }
                 .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                 .onFailure {
                     if (it is MobileAuthenticationRequiredException) loggedIn = false
@@ -118,8 +139,8 @@ fun GymCoachApp(
                     email = repository.email,
                     bootstrap = bootstrap,
                     openSessions = openSessions,
-                    pendingCount = pendingCount,
-                    syncIssue = syncIssue,
+                    pendingCount = totalPendingCount,
+                    syncIssue = displayedSyncIssue,
                     online = online,
                     syncing = syncing,
                     onOpenSession = { sessionId -> navController.navigate("session/$sessionId") },
@@ -132,7 +153,7 @@ fun GymCoachApp(
                     onSync = {
                         scope.launch {
                             syncing = true
-                            runCatching { repository.syncPending() }
+                            runCatching { syncAllPending() }
                                 .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                                 .onFailure {
                                     if (it is MobileAuthenticationRequiredException) loggedIn = false
@@ -145,8 +166,12 @@ fun GymCoachApp(
                         scope.launch {
                             syncing = true
                             runCatching {
-                                repository.retryBlockedChange()
-                                repository.syncPending()
+                                if (syncIssue != null) {
+                                    repository.retryBlockedChange()
+                                } else {
+                                    offlineIssue?.let { OfflineRuntime.controller()?.retry(it.operationId) }
+                                }
+                                syncAllPending()
                             }
                                 .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                                 .onFailure {
@@ -158,7 +183,13 @@ fun GymCoachApp(
                     },
                     onDiscardSyncIssue = {
                         scope.launch {
-                            runCatching { repository.discardBlockedChange() }
+                            runCatching {
+                                if (syncIssue != null) {
+                                    repository.discardBlockedChange()
+                                } else {
+                                    offlineIssue?.let { OfflineRuntime.controller()?.discard(it.operationId) }
+                                }
+                            }
                                 .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
                         }
                     },
@@ -181,16 +212,7 @@ fun GymCoachApp(
                     onSettings = { navController.navigate(SETTINGS_ROUTE) },
                     onWebPanel = { openWebPath("/") },
                     currentVersion = BuildConfig.VERSION_NAME,
-                    onDownloadUpdate = {
-                        runCatching {
-                            context.startActivity(
-                                Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse(androidDownloadUrl(repository.serverUrl)),
-                                ),
-                            )
-                        }
-                    },
+                    onDownloadUpdate = { navController.navigate(SETTINGS_ROUTE) },
                     onLogout = {
                         scope.launch {
                             repository.logout()
