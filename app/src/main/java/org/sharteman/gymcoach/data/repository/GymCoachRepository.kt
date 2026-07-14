@@ -20,6 +20,7 @@ import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
+import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
@@ -31,9 +32,11 @@ import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
+import org.sharteman.gymcoach.data.security.normalizeOptionalServerUrl
 import org.sharteman.gymcoach.data.security.normalizeServerUrl
 import java.time.Duration
 import java.time.Instant
@@ -48,6 +51,7 @@ class GymCoachRepository(
     private val schedulePeriodicSync: () -> Unit,
 ) {
     private val syncMutex = Mutex()
+    private val endpointResolver = ServerEndpointResolver(accountStore)
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
         cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
     }
@@ -70,49 +74,77 @@ class GymCoachRepository(
 
     val isLoggedIn: Boolean get() = accountStore.getAccessToken() != null
     val serverUrl: String get() = accountStore.serverUrl
+    val primaryServerUrl: String get() = accountStore.primaryServerUrl
+    val fallbackServerUrl: String? get() = accountStore.fallbackServerUrl
     val email: String? get() = accountStore.userEmail
 
-    suspend fun login(email: String, password: String, serverUrl: String) = syncMutex.withLock {
+    suspend fun login(
+        email: String,
+        password: String,
+        serverUrl: String,
+        fallbackServerUrl: String? = accountStore.fallbackServerUrl,
+    ) = syncMutex.withLock {
         val candidateServerUrl = normalizeServerUrl(serverUrl)
-        val response = api.login(
-            candidateServerUrl,
-            LoginRequest(
-                email = email.trim(),
-                password = password,
-                deviceId = accountStore.deviceId,
-                deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
-                    .ifBlank { "Android device" },
-            ),
+        val candidateFallbackServerUrl = normalizeOptionalServerUrl(fallbackServerUrl)
+            ?.takeUnless { it == candidateServerUrl }
+        val previousPrimaryServerUrl = accountStore.primaryServerUrl
+        val loginEndpointStore = LoginEndpointStore(
+            delegate = accountStore,
+            primaryServerUrl = candidateServerUrl,
+            fallbackServerUrl = candidateFallbackServerUrl,
         )
-        val initialBootstrap = try {
-            api.bootstrap(candidateServerUrl, response.accessToken)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Throwable) {
-            throw LoginInitializationException(error)
-        }
+        val loginResult = ServerEndpointResolver(loginEndpointStore)
+            .execute(forcePrimaryCheck = true) { activeServerUrl ->
+                val response = api.login(
+                    activeServerUrl,
+                    LoginRequest(
+                        email = email.trim(),
+                        password = password,
+                        deviceId = accountStore.deviceId,
+                        deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+                            .ifBlank { "Android device" },
+                    ),
+                )
+                val initialBootstrap = try {
+                    api.bootstrap(activeServerUrl, response.accessToken)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    throw LoginInitializationException(error)
+                }
+                LoginResult(activeServerUrl, response, initialBootstrap)
+            }
+        val response = loginResult.response
         val previousIdentity = accountStore.userId ?: accountStore.userEmail
         val accountChanged = previousIdentity != null &&
             (previousIdentity != response.user.id && previousIdentity != response.user.email ||
-                accountStore.serverUrl != candidateServerUrl)
+                previousPrimaryServerUrl != candidateServerUrl)
         if (accountChanged) {
             dao.clearAccountData()
             OfflineRuntime.clearCurrentAccountData()
         }
-        accountStore.serverUrl = candidateServerUrl
+        accountStore.configureServerUrls(candidateServerUrl, candidateFallbackServerUrl)
+        endpointResolver.recordSelectedEndpoint(loginResult.activeServerUrl)
         accountStore.setAccessToken(response.accessToken)
         accountStore.userId = response.user.id
         accountStore.userEmail = response.user.email
-        persistBootstrap(initialBootstrap)
+        persistBootstrap(loginResult.bootstrap)
         runCatching { refreshProgress() }
         schedulePeriodicSync()
+    }
+
+    suspend fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?): String {
+        accountStore.configureServerUrls(primaryServerUrl, fallbackServerUrl)
+        return endpointResolver.resolve(forcePrimaryCheck = true)
     }
 
     suspend fun logout() = syncMutex.withLock {
         check(dao.queuedOperations().isEmpty()) { "Sync pending changes before signing out." }
         check(!OfflineRuntime.hasPendingChanges()) { "Sync pending offline changes before signing out." }
         val token = accountStore.getAccessToken()
-        if (token != null) runCatching { api.logout(accountStore.serverUrl, token) }
+        if (token != null) runCatching {
+            endpointResolver.execute { baseUrl -> api.logout(baseUrl, token) }
+        }
         OfflineRuntime.clearCurrentAccountData()
         accountStore.clearAccount()
         dao.clearAccountData()
@@ -215,13 +247,13 @@ class GymCoachRepository(
 
     suspend fun refreshBootstrap(): BootstrapResponse {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        val response = api.bootstrap(accountStore.serverUrl, token)
+        val response = endpointResolver.execute { baseUrl -> api.bootstrap(baseUrl, token) }
         return persistBootstrap(response)
     }
 
     suspend fun refreshProgress(): MobileProgressSnapshot {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        val response = api.progress(accountStore.serverUrl, token)
+        val response = endpointResolver.execute { baseUrl -> api.progress(baseUrl, token) }
         dao.saveProgress(
             ProgressCacheEntity(
                 payloadJson = api.json.encodeToString(response),
@@ -239,11 +271,13 @@ class GymCoachRepository(
             "Readiness note must not exceed 500 characters."
         }
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        api.saveReadiness(
-            accountStore.serverUrl,
-            token,
-            ReadinessCheckinRequest(readiness, sleepQuality, trimmedNote),
-        )
+        endpointResolver.execute { baseUrl ->
+            api.saveReadiness(
+                baseUrl,
+                token,
+                ReadinessCheckinRequest(readiness, sleepQuality, trimmedNote),
+            )
+        }
         runCatching { refreshBootstrap() }
     }
 
@@ -266,8 +300,14 @@ class GymCoachRepository(
     }
 
     suspend fun createWebSessionCookies(): List<String> {
+        return prepareWebSession().cookies
+    }
+
+    suspend fun prepareWebSession(): WebSession {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        return api.createWebSession(accountStore.serverUrl, token)
+        return endpointResolver.execute(forcePrimaryCheck = true) { baseUrl ->
+            WebSession(baseUrl, api.createWebSession(baseUrl, token))
+        }
     }
 
     suspend fun startWorkout(workout: WorkoutDto, gymId: String?): String {
@@ -464,11 +504,13 @@ class GymCoachRepository(
             if (decoded.isEmpty()) break
 
             val syncAttempt = runCatching {
-                api.sync(
-                    accountStore.serverUrl,
-                    token,
-                    SyncBatchRequest(decoded.map { it.second }),
-                )
+                endpointResolver.execute { baseUrl ->
+                    api.sync(
+                        baseUrl,
+                        token,
+                        SyncBatchRequest(decoded.map { it.second }),
+                    )
+                }
             }
             if (syncAttempt.isFailure) {
                 val error = syncAttempt.exceptionOrNull() ?: IOException("Unknown sync failure")
@@ -695,6 +737,28 @@ internal fun updateProgramExerciseTargetSets(
 }
 
 class MobileAuthenticationRequiredException : IOException("Sign in again to synchronize local data.")
+
+data class WebSession(val baseUrl: String, val cookies: List<String>)
+
+private data class LoginResult(
+    val activeServerUrl: String,
+    val response: LoginResponse,
+    val bootstrap: BootstrapResponse,
+)
+
+private class LoginEndpointStore(
+    delegate: AccountStore,
+    override val primaryServerUrl: String,
+    override var fallbackServerUrl: String?,
+) : AccountStore by delegate {
+    override var serverUrl: String = primaryServerUrl
+
+    override fun activateServerUrl(serverUrl: String) {
+        this.serverUrl = serverUrl
+    }
+
+    override fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) = Unit
+}
 
 class LoginInitializationException(cause: Throwable) : IOException(
     "Credentials were accepted, but the initial data load failed.",

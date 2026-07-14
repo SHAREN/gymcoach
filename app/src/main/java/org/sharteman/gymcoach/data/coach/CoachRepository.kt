@@ -3,11 +3,14 @@ package org.sharteman.gymcoach.data.coach
 import android.content.Context
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.SecureAccountStore
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 
 class CoachRepository(
     private val accountStore: AccountStore,
     private val remote: CoachRemote,
 ) {
+    private val endpointResolver = ServerEndpointResolver(accountStore)
+
     suspend fun loadOverview(): CoachOverviewDto = withCredentials(remote::overview)
 
     suspend fun requestDebrief(): GeneratedDebriefDto = withCredentials(remote::generateDebrief)
@@ -50,7 +53,7 @@ class CoachRepository(
 
     private suspend fun <T> withCredentials(block: suspend (String, String) -> T): T {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        return block(accountStore.serverUrl, token)
+        return endpointResolver.execute { baseUrl -> block(baseUrl, token) }
     }
 
     companion object {

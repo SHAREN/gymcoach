@@ -16,16 +16,35 @@ import javax.crypto.spec.GCMParameterSpec
 interface AccountStore {
     val deviceId: String
     var serverUrl: String
+    val primaryServerUrl: String
+        get() = serverUrl
+    var fallbackServerUrl: String?
+        get() = null
+        set(value) {
+            value?.let(::normalizeOptionalServerUrl)
+        }
     var userId: String?
     var userEmail: String?
     fun getAccessToken(): String?
     fun setAccessToken(token: String)
     fun clearAccessToken()
     fun clearAccount()
+    fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) {
+        serverUrl = normalizeServerUrl(primaryServerUrl)
+        this.fallbackServerUrl = normalizeOptionalServerUrl(fallbackServerUrl)
+    }
+
+    fun activateServerUrl(serverUrl: String) {
+        this.serverUrl = normalizeServerUrl(serverUrl)
+    }
 }
 
 class SecureAccountStore(context: Context) : AccountStore {
     private val preferences = context.getSharedPreferences("gymcoach-account", Context.MODE_PRIVATE)
+
+    init {
+        migrateLegacyServerSettings()
+    }
 
     override val deviceId: String
         get() = preferences.getString(KEY_DEVICE_ID, null) ?: UUID.randomUUID().toString().also {
@@ -33,10 +52,27 @@ class SecureAccountStore(context: Context) : AccountStore {
         }
 
     override var serverUrl: String
-        get() = preferences.getString(KEY_SERVER_URL, BuildConfig.DEFAULT_SERVER_URL)
-            ?: BuildConfig.DEFAULT_SERVER_URL
+        get() = preferences.getString(KEY_ACTIVE_SERVER_URL, null)
+            ?.let(::normalizeServerUrl)
+            ?: primaryServerUrl
         set(value) {
-            preferences.edit().putString(KEY_SERVER_URL, normalizeServerUrl(value)).apply()
+            preferences.edit().putString(KEY_ACTIVE_SERVER_URL, normalizeServerUrl(value)).apply()
+        }
+
+    override val primaryServerUrl: String
+        get() = preferences.getString(KEY_SERVER_URL, BuildConfig.DEFAULT_SERVER_URL)
+            ?.let(::normalizeServerUrl)
+            ?: BuildConfig.DEFAULT_SERVER_URL
+
+    override var fallbackServerUrl: String?
+        get() = if (preferences.contains(KEY_FALLBACK_SERVER_URL)) {
+            normalizeOptionalServerUrl(preferences.getString(KEY_FALLBACK_SERVER_URL, null))
+        } else {
+            BuildConfig.DEFAULT_FALLBACK_SERVER_URL
+        }
+        set(value) {
+            val normalized = normalizeOptionalServerUrl(value)
+            preferences.edit().putString(KEY_FALLBACK_SERVER_URL, normalized.orEmpty()).apply()
         }
 
     override var userId: String?
@@ -66,6 +102,36 @@ class SecureAccountStore(context: Context) : AccountStore {
 
     override fun clearAccount() {
         preferences.edit().remove(KEY_TOKEN).remove(KEY_USER_ID).remove(KEY_EMAIL).apply()
+    }
+
+    override fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) {
+        val primary = normalizeServerUrl(primaryServerUrl)
+        val fallback = normalizeOptionalServerUrl(fallbackServerUrl)?.takeUnless { it == primary }
+        preferences.edit()
+            .putString(KEY_SERVER_URL, primary)
+            .putString(KEY_ACTIVE_SERVER_URL, primary)
+            .putString(KEY_FALLBACK_SERVER_URL, fallback.orEmpty())
+            .apply()
+    }
+
+    private fun migrateLegacyServerSettings() {
+        if (preferences.contains(KEY_ACTIVE_SERVER_URL) || preferences.contains(KEY_FALLBACK_SERVER_URL)) {
+            return
+        }
+        val hadStoredServer = preferences.contains(KEY_SERVER_URL)
+        val legacyServer = preferences.getString(KEY_SERVER_URL, BuildConfig.DEFAULT_SERVER_URL)
+            ?.let { runCatching { normalizeServerUrl(it) }.getOrNull() }
+            ?: BuildConfig.DEFAULT_SERVER_URL
+        val legacyUrl = legacyServer.toHttpUrlOrNull()
+        val legacyPrivateHttp = hadStoredServer && legacyUrl?.scheme == "http" &&
+            isPrivateDevelopmentHost(legacyUrl.host)
+        val primary = if (legacyPrivateHttp) BuildConfig.DEFAULT_SERVER_URL else legacyServer
+        val fallback = if (legacyPrivateHttp) legacyServer else BuildConfig.DEFAULT_FALLBACK_SERVER_URL
+        preferences.edit()
+            .putString(KEY_SERVER_URL, primary)
+            .putString(KEY_ACTIVE_SERVER_URL, primary)
+            .putString(KEY_FALLBACK_SERVER_URL, fallback)
+            .apply()
     }
 
     private fun encrypt(value: String): String {
@@ -107,6 +173,8 @@ class SecureAccountStore(context: Context) : AccountStore {
         const val KEY_TOKEN = "access-token"
         const val KEY_DEVICE_ID = "device-id"
         const val KEY_SERVER_URL = "server-url"
+        const val KEY_ACTIVE_SERVER_URL = "active-server-url"
+        const val KEY_FALLBACK_SERVER_URL = "fallback-server-url"
         const val KEY_USER_ID = "user-id"
         const val KEY_EMAIL = "email"
     }
@@ -117,11 +185,16 @@ fun normalizeServerUrl(value: String): String {
         if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it"
     }
     val url = candidate.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid server URL.")
-    if (url.scheme == "http" && (!BuildConfig.DEBUG || !isPrivateDevelopmentHost(url.host))) {
+    if (url.scheme == "http" && !isPrivateDevelopmentHost(url.host)) {
         throw IllegalArgumentException("HTTPS is required for this server.")
     }
     return url.toString().trimEnd('/')
 }
+
+fun normalizeOptionalServerUrl(value: String?): String? = value
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.let(::normalizeServerUrl)
 
 private fun isPrivateDevelopmentHost(host: String): Boolean {
     if (host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2") return true

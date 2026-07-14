@@ -57,6 +57,9 @@
     <string name="discard">Discard</string>
     <string name="discard_change_warning">This removes the rejected local change. If starting the session was rejected, the complete unsynchronized session is removed. Use Retry first when the server problem may be temporary.</string>
     <string name="login_error">Could not sign in.</string>
+    <string name="primary_server">Primary server</string>
+    <string name="fallback_server">Fallback server</string>
+    <string name="fallback_server_hint">Used only when the primary HTTPS server is unavailable. A private LAN HTTP address is allowed.</string>
     <string name="login_error_title">Sign-in error</string>
     <string name="login_error_invalid_credentials">The email address or password is incorrect.</string>
     <string name="login_error_invalid_request">Check the email format and make sure all fields are filled in.</string>

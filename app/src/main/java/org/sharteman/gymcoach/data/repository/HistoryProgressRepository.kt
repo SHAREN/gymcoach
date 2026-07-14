@@ -8,6 +8,7 @@ import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetClearRequest
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetRequest
 import org.sharteman.gymcoach.data.network.HistoryProgressApiClient
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.offline.DeleteHistorySessionMutation
 import org.sharteman.gymcoach.data.offline.NetworkStatus
 import org.sharteman.gymcoach.data.offline.OFFLINE_DOMAIN_HISTORY
@@ -45,10 +46,11 @@ class HistoryProgressRepository(
     private val scheduleSync: () -> Unit = { OfflineRuntime.scheduleSync() },
 ) : HistoryProgressDataSource {
     private val cache = HistoryReadCache(context.applicationContext, api)
+    private val endpointResolver = ServerEndpointResolver(accountStore)
 
     override suspend fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot? {
         val account = credentials()
-        val key = accountKey(account.serverUrl, account.userId)
+        val key = accountKey(account.accountKeyServerUrl, account.userId)
         val cacheKey = historyCacheKey(key, month, programId)
         val stored = offlinePersistence?.readCache(cacheKey)
         val legacy = cache.read(account.userId, month, programId)
@@ -72,8 +74,10 @@ class HistoryProgressRepository(
             return cachedHistory(month, programId)
                 ?: throw IOException("No network connection and no cached history data.")
         }
-        val accountKey = accountKey(account.serverUrl, account.userId)
-        val remote = api.history(account.serverUrl, account.token, month, programId).also {
+        val accountKey = accountKey(account.accountKeyServerUrl, account.userId)
+        val remote = endpointResolver.execute { baseUrl ->
+            api.history(baseUrl, account.token, month, programId)
+        }.also {
             cache.write(account.userId, month, programId, it)
             offlinePersistence?.saveCache(
                 accountKey,
@@ -89,12 +93,14 @@ class HistoryProgressRepository(
         val account = credentials()
         val persistence = offlinePersistence
         if (persistence == null) {
-            api.deleteHistorySession(account.serverUrl, account.token, sessionId)
+            endpointResolver.execute { baseUrl ->
+                api.deleteHistorySession(baseUrl, account.token, sessionId)
+            }
             cache.clearUser(account.userId)
             return
         }
         persistence.enqueue(
-            accountKey(account.serverUrl, account.userId),
+            accountKey(account.accountKeyServerUrl, account.userId),
             DeleteHistorySessionMutation(operationId(), sessionId),
         )
         scheduleSync()
@@ -102,44 +108,50 @@ class HistoryProgressRepository(
 
     override suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int) {
         val account = credentials()
-        api.saveGoal(
-            account.serverUrl,
-            account.token,
-            MobileGoalRequest(exerciseId, targetWeightKg, targetReps),
-        )
+        endpointResolver.execute { baseUrl ->
+            api.saveGoal(
+                baseUrl,
+                account.token,
+                MobileGoalRequest(exerciseId, targetWeightKg, targetReps),
+            )
+        }
     }
 
     override suspend fun deleteGoal(goalId: String) {
         val account = credentials()
-        api.deleteGoal(account.serverUrl, account.token, goalId)
+        endpointResolver.execute { baseUrl -> api.deleteGoal(baseUrl, account.token, goalId) }
     }
 
     override suspend fun saveVolumeTarget(muscleGroup: String, mev: Int, mrv: Int) {
         val account = credentials()
-        api.saveVolumeTarget(
-            account.serverUrl,
-            account.token,
-            MobileVolumeTargetRequest(muscleGroup, mev, mrv),
-        )
+        endpointResolver.execute { baseUrl ->
+            api.saveVolumeTarget(
+                baseUrl,
+                account.token,
+                MobileVolumeTargetRequest(muscleGroup, mev, mrv),
+            )
+        }
     }
 
     override suspend fun clearVolumeTarget(muscleGroup: String) {
         val account = credentials()
-        api.clearVolumeTarget(
-            account.serverUrl,
-            account.token,
-            MobileVolumeTargetClearRequest(muscleGroup),
-        )
+        endpointResolver.execute { baseUrl ->
+            api.clearVolumeTarget(
+                baseUrl,
+                account.token,
+                MobileVolumeTargetClearRequest(muscleGroup),
+            )
+        }
     }
 
     override suspend fun startDeload() {
         val account = credentials()
-        api.startDeload(account.serverUrl, account.token)
+        endpointResolver.execute { baseUrl -> api.startDeload(baseUrl, account.token) }
     }
 
     override suspend fun endDeload() {
         val account = credentials()
-        api.endDeload(account.serverUrl, account.token)
+        endpointResolver.execute { baseUrl -> api.endDeload(baseUrl, account.token) }
     }
 
     override suspend fun retryOfflineChange(operationId: String): Boolean =
@@ -165,11 +177,15 @@ class HistoryProgressRepository(
     private fun credentials(): Credentials {
         val userId = accountStore.userId ?: throw MobileAuthenticationRequiredException()
         val token = accountStore.getAccessToken() ?: throw MobileAuthenticationRequiredException()
-        return Credentials(userId, accountStore.serverUrl, token)
+        return Credentials(userId, accountStore.primaryServerUrl, token)
     }
 }
 
-private data class Credentials(val userId: String, val serverUrl: String, val token: String)
+private data class Credentials(
+    val userId: String,
+    val accountKeyServerUrl: String,
+    val token: String,
+)
 
 private class HistoryReadCache(context: Context, private val api: HistoryProgressApiClient) {
     private val preferences = context.getSharedPreferences("gymcoach-history-cache", Context.MODE_PRIVATE)

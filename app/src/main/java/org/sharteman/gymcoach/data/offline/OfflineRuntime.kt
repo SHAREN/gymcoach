@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import org.sharteman.gymcoach.data.local.GymCoachDatabase
 import org.sharteman.gymcoach.data.network.HistoryProgressApiClient
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogApi
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.security.AccountStore
@@ -35,7 +36,7 @@ object OfflineRuntime {
         val userId = current.accountStore.userId ?: return null
         return ProgramsCatalogRepository.offline(
             remote = ProgramsCatalogApi(baseUrl, token),
-            accountKey = accountKey(baseUrl, userId),
+            accountKey = accountKey(current.accountStore.primaryServerUrl, userId),
             persistence = current.persistence,
             networkStatus = current.networkStatus,
             scheduleSync = current.scheduleSync,
@@ -46,9 +47,10 @@ object OfflineRuntime {
         val current = dependencies ?: return true
         val userId = current.accountStore.userId ?: return true
         val token = current.accountStore.getAccessToken() ?: return true
-        val baseUrl = current.accountStore.serverUrl
+        val baseUrl = ServerEndpointResolver(current.accountStore)
+            .resolve(forcePrimaryCheck = true)
         return OfflineSyncEngine(current.persistence, current.networkStatus).sync(
-            accountKey = accountKey(baseUrl, userId),
+            accountKey = accountKey(current.accountStore.primaryServerUrl, userId),
             baseUrl = baseUrl,
             token = token,
             catalogRemote = ProgramsCatalogApi(baseUrl, token),
@@ -59,13 +61,13 @@ object OfflineRuntime {
     suspend fun hasPendingChanges(): Boolean {
         val current = dependencies ?: return false
         val userId = current.accountStore.userId ?: return false
-        return current.persistence.operations(accountKey(current.accountStore.serverUrl, userId)).isNotEmpty()
+        return current.persistence.operations(accountKey(current.accountStore.primaryServerUrl, userId)).isNotEmpty()
     }
 
     suspend fun clearCurrentAccountData() {
         val current = dependencies ?: return
         val userId = current.accountStore.userId ?: return
-        current.persistence.clearAccount(accountKey(current.accountStore.serverUrl, userId))
+        current.persistence.clearAccount(accountKey(current.accountStore.primaryServerUrl, userId))
     }
 
     fun persistence(): OfflinePersistence? = dependencies?.persistence
@@ -77,13 +79,13 @@ object OfflineRuntime {
     fun issues(): Flow<List<OfflineSyncIssue>> {
         val current = dependencies ?: return emptyFlow()
         val userId = current.accountStore.userId ?: return emptyFlow()
-        return current.persistence.observeIssues(accountKey(current.accountStore.serverUrl, userId))
+        return current.persistence.observeIssues(accountKey(current.accountStore.primaryServerUrl, userId))
     }
 
     fun pendingCount(): Flow<Int> {
         val current = dependencies ?: return emptyFlow()
         val userId = current.accountStore.userId ?: return emptyFlow()
-        return current.persistence.observePendingCount(accountKey(current.accountStore.serverUrl, userId))
+        return current.persistence.observePendingCount(accountKey(current.accountStore.primaryServerUrl, userId))
     }
 
     private data class Dependencies(
