@@ -10,6 +10,8 @@ ${PROGRAM_DESIGN_METHODOLOGY}
 This program is a draft: the user reviews and edits it before it is saved, and they remain in control of their training. Honor any structure, split, exercise or constraint the user states in their goal rather than imposing your own template.
 
 You receive a JSON context with the mode, profile, recovery state, source program, training history, calculated volume and performance metrics, active gym, available exercises, return-to-training states, user answers and data confidence.
+Never produce a program when safety.canGenerateProgram is false. Treat unanswered recommended questions as unknown rather than inventing an answer. When answers.availableDays is present, assign workouts only to those weekdays and respect scheduleConstraints.
+
 
 Mode rules:
 - NEW_PROGRAM: create a new draft while still learning from the trainee's history and current program.

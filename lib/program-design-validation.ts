@@ -31,6 +31,8 @@ export function validateProgramDesign(
     context.history.returnToTraining.map((item) => [item.exerciseName.toLocaleLowerCase(), item]),
   );
   const estimatedSessionMinutes: Array<{ workoutName: string; minutes: number }> = [];
+  const allowedDays = new Set(context.answers.availableDays ?? []);
+  const usedDays = new Set<number>();
 
   for (const question of context.missingQuestions) {
     issues.push({
@@ -40,7 +42,41 @@ export function validateProgramDesign(
     });
   }
 
+  for (const message of context.safety.blockingReasons) {
+    issues.push({
+      code: 'medical-clearance-required',
+      severity: 'error',
+      message,
+      path: 'answers.healthStatus',
+    });
+  }
+
   for (const [workoutIndex, workout] of program.workouts.entries()) {
+    if (allowedDays.size > 0 && workout.dayOfWeek == null) {
+      issues.push({
+        code: 'training-day-unassigned',
+        severity: 'warning',
+        message: workout.name + " is not assigned to one of the trainee's available weekdays.",
+        path: 'workouts.' + workoutIndex + '.dayOfWeek',
+      });
+    } else if (workout.dayOfWeek != null && !allowedDays.has(workout.dayOfWeek)) {
+      issues.push({
+        code: 'training-day-unavailable',
+        severity: 'error',
+        message: workout.name + ' is assigned to an unavailable weekday.',
+        path: 'workouts.' + workoutIndex + '.dayOfWeek',
+      });
+    } else if (workout.dayOfWeek != null && usedDays.has(workout.dayOfWeek)) {
+      issues.push({
+        code: 'duplicate-training-day',
+        severity: 'warning',
+        message: 'More than one workout is assigned to weekday ' + workout.dayOfWeek + '.',
+        path: 'workouts.' + workoutIndex + '.dayOfWeek',
+      });
+    }
+    if (workout.dayOfWeek != null) {
+      usedDays.add(workout.dayOfWeek);
+    }
     const sessionSets: Record<string, number> = {};
     const seenMuscles = new Set<string>();
     let seconds = 0;
@@ -179,6 +215,28 @@ export function validateProgramDesign(
       code: 'volume-increase-during-under-recovery',
       severity: 'error',
       message: `Systemic recovery is flagged for load reduction, but the draft raises total primary-muscle sets from ${sourceTotal} to ${candidateTotal}.`,
+    });
+  }
+
+  if (
+    context.answers.availableDays &&
+    context.answers.weeklyFrequency &&
+    context.answers.weeklyFrequency > context.answers.availableDays.length
+  ) {
+    issues.push({
+      code: 'schedule-capacity-mismatch',
+      severity: 'error',
+      message: 'Weekly frequency exceeds the number of available weekdays.',
+    });
+  }
+  if (
+    context.answers.availableDays &&
+    program.workouts.length > context.answers.availableDays.length
+  ) {
+    issues.push({
+      code: 'workouts-exceed-available-days',
+      severity: 'error',
+      message: 'The draft contains more workouts than available weekdays.',
     });
   }
 

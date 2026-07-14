@@ -2,10 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 
 // Supersets slice 1 (issue #146): pair two exercises in the program builder
 // (A1/A2 labels), then run the workout - the session runner presents the pair
-// consecutively with the superset badge, auto-advances A1 -> A2 after a set,
-// and Next cycles back into the group while it has sets remaining. Setup data
-// is seeded through the authenticated API (the browser context shares cookies
-// with page.request).
+// consecutively in the exercise strip and auto-advances A1 -> A2 after a set.
+// Setup data is seeded through the authenticated API (the browser context
+// shares cookies with page.request).
 
 async function seedPairableWorkout(
   page: Page,
@@ -95,9 +94,11 @@ test('a lifter can pair two exercises as a superset and run the A1/A2 flow', asy
   expect(sessionRes.ok()).toBeTruthy();
   const session = await sessionRes.json();
 
-  // Runner: A1 first, with the superset badge.
+  // Runner: A1 is the current exercise in the connected exercise strip.
   await page.goto(`/session/${session.id}`);
-  await expect(page.getByText('Superset A1')).toBeVisible();
+  const benchStep = page.getByRole('button', { name: '1. E2E Bench' });
+  const rowStep = page.getByRole('button', { name: '2. E2E Row' });
+  await expect(benchStep).toHaveAttribute('aria-current', 'step');
   await expect(page.getByRole('heading', { name: 'E2E Bench' })).toBeVisible();
 
   // Log a working set on A1. The runner switches to A2 immediately while the
@@ -105,15 +106,15 @@ test('a lifter can pair two exercises as a superset and run the A1/A2 flow', asy
   // input and must not navigate again.
   await confirmStrengthSet(page, 1);
   await expect(page.getByTestId('rest-remaining')).toBeVisible();
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
   await expect(page.getByRole('heading', { name: 'E2E Row' })).toBeVisible();
   await page.getByRole('button', { name: /skip/i }).click();
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
   await expect(page.getByRole('heading', { name: 'E2E Row' })).toBeVisible();
 
-  // Next from the last member cycles back into the group while sets remain.
-  await page.getByRole('button', { name: /next/i }).click();
-  await expect(page.getByText('Superset A1')).toBeVisible();
+  // The exercise strip replaces the old Previous/Next footer navigation.
+  await benchStep.click();
+  await expect(benchStep).toHaveAttribute('aria-current', 'step');
   await expect(page.getByRole('heading', { name: 'E2E Bench' })).toBeVisible();
 });
 
@@ -147,7 +148,9 @@ test('a superset gives a short rest between members and a full rest after the gr
   const session = await sessionRes.json();
 
   await page.goto(`/session/${session.id}`);
-  await expect(page.getByText('Superset A1')).toBeVisible();
+  const benchStep = page.getByRole('button', { name: '1. Rest Bench' });
+  const rowStep = page.getByRole('button', { name: '2. Rest Row' });
+  await expect(benchStep).toHaveAttribute('aria-current', 'step');
 
   // Reads the big countdown number on the rest timer.
   const restValue = page.getByTestId('rest-remaining');
@@ -161,29 +164,29 @@ test('a superset gives a short rest between members and a full rest after the gr
   await confirmStrengthSet(page, 1);
   await expect(restValue).toBeVisible();
   expect(Number(await restValue.textContent())).toBeLessThanOrEqual(20);
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: /skip/i }).click();
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
 
   // A2 set 1 -> transition (A1 still owes its 2nd set).
   await confirmStrengthSet(page, 1);
   await expect(restValue).toBeVisible();
   expect(Number(await restValue.textContent())).toBeLessThanOrEqual(20);
-  await expect(page.getByText('Superset A1')).toBeVisible();
+  await expect(benchStep).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: /skip/i }).click();
-  await expect(page.getByText('Superset A1')).toBeVisible();
+  await expect(benchStep).toHaveAttribute('aria-current', 'step');
 
   // A1 set 2 -> transition (A2 still owes its 2nd set).
   await confirmStrengthSet(page, 2);
   await expect(restValue).toBeVisible();
   expect(Number(await restValue.textContent())).toBeLessThanOrEqual(20);
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: /skip/i }).click();
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
 
   // A2 set 2 -> group complete: the FULL rest runs (> 20s) before the repeat.
   await confirmStrengthSet(page, 2);
   await expect(restValue).toBeVisible();
   expect(Number(await restValue.textContent())).toBeGreaterThan(20);
-  await expect(page.getByText('Superset A2')).toBeVisible();
+  await expect(rowStep).toHaveAttribute('aria-current', 'step');
 });

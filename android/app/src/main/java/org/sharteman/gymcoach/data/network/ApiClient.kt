@@ -8,10 +8,13 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.sharteman.gymcoach.data.model.ApiErrorResponse
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
+import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncBatchResponse
 import java.io.IOException
@@ -21,6 +24,7 @@ interface MobileApi {
     val json: Json
     suspend fun login(baseUrl: String, request: LoginRequest): LoginResponse
     suspend fun bootstrap(baseUrl: String, token: String): BootstrapResponse
+    suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot
     suspend fun sync(baseUrl: String, token: String, request: SyncBatchRequest): SyncBatchResponse
     suspend fun createWebSession(baseUrl: String, token: String): List<String>
     suspend fun logout(baseUrl: String, token: String)
@@ -51,6 +55,11 @@ class ApiClient : MobileApi {
         token = token,
     )
 
+    override suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot = get(
+        url = "${baseUrl.trimEnd('/')}/api/mobile/progress",
+        token = token,
+    )
+
     override suspend fun sync(baseUrl: String, token: String, request: SyncBatchRequest): SyncBatchResponse =
         post(
             url = "${baseUrl.trimEnd('/')}/api/mobile/sync",
@@ -65,9 +74,17 @@ class ApiClient : MobileApi {
             .post(ByteArray(0).toRequestBody(JSON_MEDIA_TYPE))
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string())
+            if (!response.isSuccessful) {
+                throw apiException(response, response.body?.string().orEmpty())
+            }
             response.headers("Set-Cookie").also { cookies ->
-                if (cookies.isEmpty()) throw ApiException(response.code, "Server did not return a web session cookie.")
+                if (cookies.isEmpty()) {
+                    throw ApiException(
+                        statusCode = response.code,
+                        serverMessage = "Server did not return a web session cookie.",
+                        errorCode = "MISSING_WEB_SESSION",
+                    )
+                }
             }
         }
     }
@@ -85,7 +102,7 @@ class ApiClient : MobileApi {
         val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw ApiException(response.code, body)
+            if (!response.isSuccessful) throw apiException(response, body)
             json.decodeFromString<T>(body)
         }
     }
@@ -99,16 +116,31 @@ class ApiClient : MobileApi {
                 .build()
             client.newCall(request).execute().use { response ->
                 val responseBody = response.body?.string().orEmpty()
-                if (!response.isSuccessful) throw ApiException(response.code, responseBody)
+                if (!response.isSuccessful) throw apiException(response, responseBody)
                 json.decodeFromString<T>(responseBody)
             }
         }
+
+    private fun apiException(response: Response, responseBody: String): ApiException {
+        val envelope = runCatching {
+            json.decodeFromString<ApiErrorResponse>(responseBody)
+        }.getOrNull()
+        return ApiException(
+            statusCode = response.code,
+            serverMessage = envelope?.error,
+            errorCode = envelope?.code,
+            retryAfterSeconds = response.header("Retry-After")?.toIntOrNull(),
+        )
+    }
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
 
-class ApiException(val statusCode: Int, responseBody: String?) : IOException(
-    responseBody?.takeIf { it.isNotBlank() } ?: "HTTP $statusCode",
-)
+class ApiException(
+    val statusCode: Int,
+    val serverMessage: String?,
+    val errorCode: String? = null,
+    val retryAfterSeconds: Int? = null,
+) : IOException(serverMessage?.takeIf { it.isNotBlank() } ?: "HTTP $statusCode")

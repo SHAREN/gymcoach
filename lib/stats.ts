@@ -127,6 +127,8 @@ export interface ExerciseChartPoint {
   sessionStartedAt: Date;
   maxWeight: number;
   topSetReps: number; // reps of the best set (max weight)
+  maxReps: number;
+  totalReps: number;
   estimated1RM: number;
   totalVolume: number;
 }
@@ -154,11 +156,15 @@ export function exerciseProgress(
     const topReps = Math.max(
       ...sessionSets.filter((s) => s.weight === maxWeight).map((s) => s.reps),
     );
+    const maxReps = Math.max(...sessionSets.map((s) => s.reps));
+    const totalReps = sessionSets.reduce((sum, s) => sum + s.reps, 0);
     points.push({
       date: startedAt.toISOString().slice(0, 10),
       sessionStartedAt: startedAt,
       maxWeight,
       topSetReps: topReps,
+      maxReps,
+      totalReps,
       estimated1RM: +estimate1RM(maxWeight, topReps).toFixed(1),
       totalVolume: totalVolume(sessionSets),
     });

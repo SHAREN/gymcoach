@@ -1,5 +1,5 @@
 export const history = {
-  title: 'History',
+  title: 'Calendar',
   noFiltered: 'No finished session matches these filters.',
   emptyTitle: 'No sessions logged yet',
   emptyDescription:
@@ -9,14 +9,21 @@ export const history = {
   cardio: 'Cardio',
   volumeShort: '{weight} vol.',
   minutes: '{count} min',
+  calendar: {
+    previousMonth: 'Previous month',
+    nextMonth: 'Next month',
+    today: 'Today',
+    workoutCount: '{count, plural, =0 {No workouts} one {# workout} other {# workouts}}',
+    dayLabel: '{date}. {count}.',
+    noWorkouts: 'No completed workouts on this day.',
+    openSession: 'Open {name} at {time}',
+  },
   filters: {
     title: 'Filters:',
     program: 'Program',
     allPrograms: 'All programs',
-    month: 'Month',
-    allMonths: 'All months',
     clear: 'Clear',
-    csvTitle: 'Download the CSV of sets for the active filters',
+    csvTitle: 'Download the CSV of sets for the visible month and active program',
   },
   detail: {
     downloadTcx: 'Download .tcx',

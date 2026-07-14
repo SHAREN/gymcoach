@@ -6,7 +6,28 @@ export const progress = {
   firstSession: 'Log your first session',
   dashboard: {
     maxLoad: 'Max load and estimated 1RM',
+    exerciseProgress: 'Exercise progress',
     chooseExercise: 'Choose an exercise',
+    metric: 'Metric',
+    period: 'Period',
+    metricSeries: '{metric} ({unit})',
+    metrics: {
+      maxWeight: 'Maximum load',
+      estimated1RM: 'Estimated 1RM',
+      totalVolume: 'Total volume',
+      topSetReps: 'Reps at maximum load',
+      maxReps: 'Maximum reps in a set',
+      totalReps: 'Total reps per workout',
+    },
+    ranges: {
+      '1w': 'Last 7 days',
+      '1m': 'Last month',
+      '2m': 'Last 2 months',
+      '4m': 'Last 4 months',
+      '6m': 'Last 6 months',
+      '1y': 'Last year',
+      all: 'All time',
+    },
     maxLoadSeries: 'Max load ({unit})',
     oneRmSeries: 'Estimated 1RM ({unit})',
     trainingLoads: 'Training loads',
@@ -26,6 +47,7 @@ export const progress = {
     noProgressAdvice:
       'No estimated 1RM progress over the last {count} sessions completed within the last {weeks} weeks. Consider a deload, rep-range change, or exercise swap.',
     noExerciseData: 'No data for this exercise.',
+    noExerciseDataInRange: 'No data for this exercise in the selected period.',
     show: 'Show',
     hide: 'Hide',
     loadingDescription:

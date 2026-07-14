@@ -35,7 +35,12 @@ import {
 import { SetValuePicker } from '@/components/session/set-value-picker';
 import { SetControlsDialog } from '@/components/session/set-controls-dialog';
 import { WeightInventoryEditor } from '@/components/session/weight-inventory-editor';
-import { nextPlannedSetIsDropSet, targetDropSets } from '@/lib/planned-sets';
+import {
+  nextPlannedSetIsDropSet,
+  projectSetsToTarget,
+  remainingPlannedSets,
+  targetDropSets,
+} from '@/lib/planned-sets';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -117,6 +122,7 @@ function initialDraft(
   pe: Props['programExercise'],
   sets: PendingSet[],
   lastPerformance: SerializedLastPerformance | undefined,
+  recommendation: IntraSetRecommendation | null,
   returnRecommendation: ReturnRecommendation | null,
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
@@ -132,6 +138,14 @@ function initialDraft(
       weight: returnRecommendation.suggestedWeight ?? 0,
       reps: pe.targetRepsMin,
       rir: returnRecommendation.targetRIR,
+    };
+  }
+
+  if (loggedSets.length === 0 && recommendation != null) {
+    return {
+      weight: recommendation.weight,
+      reps: recommendation.reps,
+      rir: recommendation.rir,
     };
   }
 
@@ -200,12 +214,17 @@ export function EditableSetsTable({
   const t = useTranslations('session.editableSets');
   const inputT = useTranslations('session.input');
   const locale = useLocale();
+  const visibleSets = useMemo(
+    () => projectSetsToTarget(programExercise, sets).visible,
+    [programExercise, sets],
+  );
   const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
   const [draft, setDraft] = useState<DraftSet>(() =>
     initialDraft(
       programExercise,
-      sets,
+      visibleSets,
       lastPerformance,
+      recommendation,
       returnRecommendation,
       readiness,
       deloadActive,
@@ -241,8 +260,9 @@ export function EditableSetsTable({
     setDraft(
       initialDraft(
         programExercise,
-        sets,
+        visibleSets,
         lastPerformance,
+        recommendation,
         returnRecommendation,
         readiness,
         deloadActive,
@@ -260,10 +280,12 @@ export function EditableSetsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     programExercise.id,
+    programExercise.targetSets,
+    programExercise.targetDropSets,
     returnRecommendation?.mode,
     returnRecommendation?.suggestedWeight,
     returnRecommendation?.targetRIR,
-    sets.length,
+    visibleSets.length,
   ]);
 
   useEffect(() => {
@@ -294,14 +316,15 @@ export function EditableSetsTable({
     }
   }, [editingSet, sets, updatingSetId]);
 
-  const loggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
+  const allLoggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
+  const loggedSets = useMemo(() => visibleSets.filter((set) => !set.isWarmup), [visibleSets]);
   const currentNumber = loggedSets.length + 1;
   const dropSetCount = targetDropSets(programExercise);
   const plannedRows = programExercise.targetSets + dropSetCount;
-  const minPlannedRows = Math.max(1 + dropSetCount, loggedSets.length);
+  const minPlannedRows = 1 + dropSetCount;
   const maxPlannedRows = 20 + dropSetCount;
-  const totalRows = Math.max(plannedRows, currentNumber);
-  const isNextDropSet = nextPlannedSetIsDropSet(programExercise, sets);
+  const hasActiveRow = remainingPlannedSets(programExercise, visibleSets) > 0;
+  const isNextDropSet = nextPlannedSetIsDropSet(programExercise, visibleSets);
   const displayWeight =
     unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight;
   const gridColumns = metrics.length > 1 ? DUAL_METRIC_GRID_COLUMNS : SINGLE_METRIC_GRID_COLUMNS;
@@ -503,7 +526,7 @@ export function EditableSetsTable({
   }
 
   async function undoLastSet() {
-    const lastSet = loggedSets.at(-1);
+    const lastSet = allLoggedSets.at(-1);
     if (!lastSet || !onDeleteSet || disabled || setControlsBusy) return;
 
     setSetControlsBusy(true);
@@ -726,132 +749,137 @@ export function EditableSetsTable({
           );
         })}
 
-        <div
-          className={`grid ${gridColumns} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
-        >
-          {recommendation && !isNextDropSet ? (
+        {hasActiveRow && (
+          <div
+            className={`grid ${gridColumns} items-center gap-0.5 border-b border-border bg-primary/5 px-1 py-2 sm:gap-1 sm:px-2`}
+          >
+            {recommendation && !isNextDropSet ? (
+              <button
+                type="button"
+                data-testid="apply-set-recommendation"
+                onClick={applyRecommendation}
+                disabled={disabled || !canApplyRecommendation}
+                aria-label={t('applyRecommendation', { number: currentNumber })}
+                title={t('applyRecommendation', { number: currentNumber })}
+                className="relative mx-auto flex size-6 items-center justify-center rounded-md text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-default disabled:opacity-100"
+              >
+                {currentNumber}
+                {canApplyRecommendation && (
+                  <span
+                    data-testid="set-recommendation-dot"
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-sky-500 ring-2 ring-background"
+                  />
+                )}
+              </button>
+            ) : (
+              <span
+                className="flex items-center justify-center gap-0.5 text-center text-sm font-semibold text-primary"
+                title={isNextDropSet ? t('dropSetNumber', { number: currentNumber }) : undefined}
+              >
+                {isNextDropSet && <Droplet className="size-3.5 fill-current" />}
+                {currentNumber}
+              </span>
+            )}
             <button
               type="button"
-              data-testid="apply-set-recommendation"
-              onClick={applyRecommendation}
-              disabled={disabled || !canApplyRecommendation}
-              aria-label={t('applyRecommendation', { number: currentNumber })}
-              title={t('applyRecommendation', { number: currentNumber })}
-              className="relative mx-auto flex size-6 items-center justify-center rounded-md text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-default disabled:opacity-100"
+              onClick={() => openPicker('weight')}
+              aria-label={t('weight', { number: currentNumber, unit })}
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-1 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-2 sm:text-base"
             >
-              {currentNumber}
-              {canApplyRecommendation && (
-                <span
-                  data-testid="set-recommendation-dot"
-                  aria-hidden
-                  className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-sky-500 ring-2 ring-background"
-                />
-              )}
+              {displayWeight}
             </button>
-          ) : (
-            <span
-              className="flex items-center justify-center gap-0.5 text-center text-sm font-semibold text-primary"
-              title={isNextDropSet ? t('dropSetNumber', { number: currentNumber }) : undefined}
+            <button
+              type="button"
+              onClick={() => openPicker('reps')}
+              aria-label={t('reps', { number: currentNumber })}
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0.5 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-1 sm:text-base"
             >
-              {isNextDropSet && <Droplet className="size-3.5 fill-current" />}
-              {currentNumber}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => openPicker('weight')}
-            aria-label={t('weight', { number: currentNumber, unit })}
-            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-1 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-2 sm:text-base"
-          >
-            {displayWeight}
-          </button>
-          <button
-            type="button"
-            onClick={() => openPicker('reps')}
-            aria-label={t('reps', { number: currentNumber })}
-            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0.5 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-1 sm:text-base"
-          >
-            {draft.reps}
-          </button>
-          <select
-            aria-label={t('rir', { number: currentNumber })}
-            value={draft.rir ?? ''}
-            onFocus={() => setEditingSet(null)}
-            onChange={(event) => {
-              setDraft((current) => ({
-                ...current,
-                rir: event.target.value === '' ? null : Number(event.target.value),
-              }));
-              setAppliedRecommendationKey(null);
-            }}
-            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-sm font-semibold sm:h-11 sm:px-1 sm:text-base"
-          >
-            <option value="">–</option>
-            {[0, 1, 2, 3, 4, 5].map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-          {metrics.map((metric) => (
-            <span
-              key={metric}
-              data-testid={`active-set-metric-${metric}`}
-              className="min-w-0 whitespace-nowrap text-center text-[0.625rem] font-medium tabular-nums leading-tight text-muted-foreground sm:text-sm"
+              {draft.reps}
+            </button>
+            <select
+              aria-label={t('rir', { number: currentNumber })}
+              value={draft.rir ?? ''}
+              onFocus={() => setEditingSet(null)}
+              onChange={(event) => {
+                setDraft((current) => ({
+                  ...current,
+                  rir: event.target.value === '' ? null : Number(event.target.value),
+                }));
+                setAppliedRecommendationKey(null);
+              }}
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-sm font-semibold sm:h-11 sm:px-1 sm:text-base"
             >
-              {formatSetMetric(metric, draft, unit, locale)}
-            </span>
-          ))}
-          <Button
-            type="button"
-            size="icon"
-            onClick={confirmRow}
-            disabled={disabled || submitting || draft.reps <= 0}
-            aria-label={t('confirm', { number: currentNumber })}
-            className="size-10 justify-self-center sm:size-11"
-          >
-            {submitting ? (
-              <Loader2 className="size-5 animate-spin" />
-            ) : (
-              <Check className="size-5 sm:size-6" />
-            )}
-          </Button>
-        </div>
-
-        {Array.from({ length: Math.max(0, totalRows - currentNumber) }, (_, index) => {
-          const rowNumber = currentNumber + index + 1;
-          const isUpcomingDropSet =
-            rowNumber > programExercise.targetSets && rowNumber <= plannedRows;
-          const previous = lastPerformance?.sets[rowNumber - 1];
-          return (
-            <div
-              key={`upcoming-${rowNumber}`}
-              className={`grid ${gridColumns} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
-            >
-              <span className="flex items-center justify-center gap-0.5">
-                {isUpcomingDropSet && <Droplet className="size-3 fill-current" />}
-                {rowNumber}
-              </span>
-              <span>
-                {previous
-                  ? formatWeight(previous.weight, unit, { decimals: 2, group: false, locale })
-                  : '–'}
-              </span>
-              <span>{previous?.reps ?? '–'}</span>
-              <span>{previous?.rir ?? '–'}</span>
-              {metrics.map((metric) => (
-                <span
-                  key={metric}
-                  data-testid={`upcoming-set-${rowNumber}-metric-${metric}`}
-                  className="text-[0.625rem] sm:text-sm"
-                >
-                  {previous ? formatSetMetric(metric, previous, unit, locale) : '–'}
-                </span>
+              <option value="">–</option>
+              {[0, 1, 2, 3, 4, 5].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
               ))}
-              <span />
-            </div>
-          );
-        })}
+            </select>
+            {metrics.map((metric) => (
+              <span
+                key={metric}
+                data-testid={`active-set-metric-${metric}`}
+                className="min-w-0 whitespace-nowrap text-center text-[0.625rem] font-medium tabular-nums leading-tight text-muted-foreground sm:text-sm"
+              >
+                {formatSetMetric(metric, draft, unit, locale)}
+              </span>
+            ))}
+            <Button
+              type="button"
+              size="icon"
+              onClick={confirmRow}
+              disabled={disabled || submitting || draft.reps <= 0}
+              aria-label={t('confirm', { number: currentNumber })}
+              className="size-10 justify-self-center sm:size-11"
+            >
+              {submitting ? (
+                <Loader2 className="size-5 animate-spin" />
+              ) : (
+                <Check className="size-5 sm:size-6" />
+              )}
+            </Button>
+          </div>
+        )}
+
+        {Array.from(
+          { length: hasActiveRow ? Math.max(0, plannedRows - currentNumber) : 0 },
+          (_, index) => {
+            const rowNumber = currentNumber + index + 1;
+            const isUpcomingDropSet =
+              rowNumber > programExercise.targetSets && rowNumber <= plannedRows;
+            const previous = lastPerformance?.sets[rowNumber - 1];
+            return (
+              <div
+                key={`upcoming-${rowNumber}`}
+                className={`grid ${gridColumns} items-center gap-0.5 border-b border-border px-1 py-3 text-center text-xs text-muted-foreground last:border-b-0 sm:gap-1 sm:px-2 sm:text-sm [&>span]:min-w-0 [&>span]:whitespace-nowrap`}
+              >
+                <span className="flex items-center justify-center gap-0.5">
+                  {isUpcomingDropSet && <Droplet className="size-3 fill-current" />}
+                  {rowNumber}
+                </span>
+                <span>
+                  {previous
+                    ? formatWeight(previous.weight, unit, { decimals: 2, group: false, locale })
+                    : '–'}
+                </span>
+                <span>{previous?.reps ?? '–'}</span>
+                <span>{previous?.rir ?? '–'}</span>
+                {metrics.map((metric) => (
+                  <span
+                    key={metric}
+                    data-testid={`upcoming-set-${rowNumber}-metric-${metric}`}
+                    className="text-[0.625rem] sm:text-sm"
+                  >
+                    {previous ? formatSetMetric(metric, previous, unit, locale) : '–'}
+                  </span>
+                ))}
+                <span />
+              </div>
+            );
+          },
+        )}
       </div>
 
       <SetControlsDialog
@@ -860,7 +888,7 @@ export function EditableSetsTable({
         minSets={minPlannedRows}
         maxSets={maxPlannedRows}
         busy={setControlsBusy}
-        canUndo={loggedSets.length > 0 && onDeleteSet != null}
+        canUndo={allLoggedSets.length > 0 && onDeleteSet != null}
         onOpenChange={(open) => {
           if (!setControlsBusy) setSetControlsOpen(open);
         }}

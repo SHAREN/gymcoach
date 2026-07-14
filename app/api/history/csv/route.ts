@@ -3,8 +3,14 @@ import { db } from '@/lib/db';
 import { handleApiError, requireApiUserId } from '@/lib/api';
 import { csvEscape, HISTORY_CSV_HEADERS } from '@/lib/csv';
 import { effectiveWeight, estimate1RM, setVolume } from '@/lib/stats';
+import {
+  getDateKeyInTimeZone,
+  getMonthQueryRange,
+  normalizeTimeZone,
+  parseMonthKey,
+} from '@/lib/history-calendar';
 
-// GET /api/history/csv?programId=...&month=YYYY-MM
+// GET /api/history/csv?programId=...&month=YYYY-MM&timeZone=Area/City
 // Returns a CSV (UTF-8 + BOM for Excel) with one row per non-warmup set.
 // Same filters as the /history page.
 export async function GET(req: Request) {
@@ -13,20 +19,15 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const programId = url.searchParams.get('programId');
     const month = url.searchParams.get('month');
+    const timeZone = normalizeTimeZone(url.searchParams.get('timeZone'));
 
     const where: Record<string, unknown> = {
       userId,
       finishedAt: { not: null },
     };
     if (programId) where.programId = programId;
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [yStr, mStr] = month.split('-');
-      const y = Number(yStr);
-      const m = Number(mStr);
-      where.startedAt = {
-        gte: new Date(Date.UTC(y, m - 1, 1)),
-        lt: new Date(Date.UTC(y, m, 1)),
-      };
+    if (parseMonthKey(month)) {
+      where.startedAt = getMonthQueryRange(month!);
     }
 
     const [sessions, user] = await Promise.all([
@@ -52,21 +53,22 @@ export async function GET(req: Request) {
       }),
     ]);
     const bodyweight = user?.bodyweight ?? null;
+    const visibleSessions = parseMonthKey(month)
+      ? sessions.filter(
+          (session) => getDateKeyInTimeZone(session.startedAt, timeZone).slice(0, 7) === month,
+        )
+      : sessions;
 
     const lines: string[] = [HISTORY_CSV_HEADERS.join(',')];
 
-    for (const s of sessions) {
+    for (const s of visibleSessions) {
       const durationMin =
         s.finishedAt && s.startedAt
           ? Math.round((s.finishedAt.getTime() - s.startedAt.getTime()) / 60000)
           : '';
-      const dateOnly = s.startedAt.toISOString().slice(0, 10);
+      const dateOnly = getDateKeyInTimeZone(s.startedAt, timeZone);
       for (const set of s.sets) {
-        const eff = effectiveWeight(
-          set.weight,
-          set.exercise.usesBodyweight,
-          bodyweight,
-        );
+        const eff = effectiveWeight(set.weight, set.exercise.usesBodyweight, bodyweight);
         const effSet = { weight: eff, reps: set.reps, isWarmup: set.isWarmup };
         const row = [
           s.id,

@@ -38,13 +38,11 @@ test('a lifter can preview and confirm a Hevy CSV import', async ({ page }) => {
   await expect(page.getByText('Strong weight unit')).not.toBeVisible();
 
   // Upload the file: the dry-run preview appears, nothing imported yet.
-  await page
-    .locator('input[type="file"][accept=".csv,text/csv"]')
-    .setInputFiles({
-      name: 'hevy.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from(HEVY_CSV, 'utf-8'),
-    });
+  await page.locator('input[type="file"][accept=".csv,text/csv"]').setInputFiles({
+    name: 'hevy.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(HEVY_CSV, 'utf-8'),
+  });
 
   const preview = page.getByTestId('import-preview');
   await expect(preview).toBeVisible();
@@ -56,7 +54,7 @@ test('a lifter can preview and confirm a Hevy CSV import', async ({ page }) => {
   await page.getByRole('button', { name: /confirm import/i }).click();
   await expect(page.getByTestId('import-preview')).not.toBeVisible();
 
-  await page.goto('/history');
-  await expect(page.getByText('May 02, 2026')).toBeVisible();
+  await page.goto('/history?month=2026-05&day=2026-05-02');
+  await expect(page.getByRole('button', { name: /May 2, 2026\. 1 workout/ })).toBeVisible();
   await expect(page.getByText('2 sets')).toBeVisible();
 });

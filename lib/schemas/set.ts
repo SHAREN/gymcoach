@@ -8,8 +8,10 @@ import {
   MAX_HR_MAX,
   MAX_HR_MIN,
 } from '@/lib/cardio';
+import { databaseIdSchema } from '@/lib/schemas/database-id';
 
 export const setInputSchema = z.object({
+  id: databaseIdSchema.optional(),
   exerciseId: z.string().min(1),
   setNumber: z.coerce.number().int().min(1).max(50),
   weight: z.coerce.number().min(0).max(500),

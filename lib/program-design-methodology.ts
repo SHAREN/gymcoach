@@ -1,4 +1,4 @@
-export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-13.2';
+export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-13.3';
 
 export const PROGRAM_DESIGN_RULES = {
   authority: [
@@ -11,6 +11,8 @@ export const PROGRAM_DESIGN_RULES = {
     'Individualize training from goals, experience, performance and recovery.',
     'Progressive overload is required over time but is not linear every session.',
     'Use RIR or RPE with objective performance instead of fixed percentages alone.',
+    'Require a feasible schedule, session duration and actual equipment before prescribing a program.',
+    'Use a structured safety status and never treat illness, injury, surgery or unusual pain as an ordinary programming variable.',
     'Most hypertrophy work should stop short of failure; failure is selective and more conservative on compound movements.',
     'Distribute high weekly volume across sessions because per-session returns diminish.',
     'Do not convert strength from a related exercise into an exact load for another movement.',
@@ -59,6 +61,10 @@ Engineering heuristics:
 - Use six weeks as the default phase length when the trainee gives no event date or preferred duration.
 - Treat exact date windows, readiness cutoffs, e1RM equations and fatigue coefficients as revisable product rules.
 
-Required planning inputs are the goal, realistic weekly schedule, training experience, session-duration limit, equipment access and current pain or movement constraints. Extending a block also requires the post-block recovery checklist.
+Source-backed intake principle: a usable program requires the goal, training experience, realistic schedule, session-duration limit, actual equipment and a current safety/constraint status. Ordinary return after a scheduling gap uses recent exposure and tolerated performance; illness, injury, surgery, unusual pain and medical restrictions are not automatic-programming inputs.
+
+Engineering product rule: require weekly frequency, specific available weekdays, session duration, equipment and one structured safety status. When ordinary training is cleared with limitations, require the approved limitations. When medical clearance is needed, block automatic generation and refer the trainee to an appropriate qualified professional. Extending or revising a block also requires the post-block recovery checklist.
+
+Recommended, non-blocking questions cover exact goal priorities, schedule constraints, exercise preferences, concurrent sport/cardio/physical work, recent training outside GymCoach, movement/RIR familiarity and changes since the source program. Missing optional context lowers specificity; it must never be invented. Rolling history, session RPE, recorded rest, personal volume targets and physical gym inventory are supplied when available.
 
 Never claim to calculate exact muscle catabolism, glycogen depletion, CNS fatigue or an overtraining threshold. Use the supplied local-recovery, systemic-recovery, volume-pressure, RIR-adherence, session-density, performance-trend and data-confidence signals instead. Metrics listed as unavailable must not be invented. Explain every material change and keep generated programs as drafts until the trainee confirms them.`;

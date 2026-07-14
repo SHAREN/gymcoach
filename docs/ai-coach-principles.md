@@ -137,11 +137,21 @@ facts. Important current fallbacks:
 - unavailable equipment produces no load recommendation;
 - stale readiness data does not change today's progression.
 
-For program creation, the coach MUST obtain the goal, training experience,
-realistic days per week, session-duration limit, equipment access, and current
-pain or movement constraints. For a next mesocycle or current-program revision,
-it MUST also obtain the post-block recovery checklist covering motivation,
-sleep, repeated performance decline, life stress, and worsening aches or pain.
+Source-backed intake principles require the goal, training experience, a
+realistic schedule, session-duration limit, actual equipment and a current
+safety/constraint status. The product implements this with required weekly
+frequency, specific available weekdays and one structured safety status. This
+required/optional split is an engineering product rule, not a clinical
+screening instrument.
+
+`NEEDS_MEDICAL_CLEARANCE` blocks automatic program generation. A trainee who is
+cleared for ordinary training with known limitations MUST describe those
+approved limitations. GymCoach does not diagnose, rehabilitate or decide return
+after illness, injury, surgery or unusual pain. A next mesocycle or current
+revision also requires the post-block recovery checklist. Goal priorities,
+schedule constraints, preferences, concurrent activity, recent external
+training, RIR familiarity and changes since the source program are recommended
+questions: missing answers lower specificity but do not authorize invention.
 
 ## 5. Current deterministic calculations
 
@@ -161,6 +171,27 @@ Implementation: `lib/progression.ts`.
 
 Readiness may only hold or reduce this baseline. It MUST NOT create a larger
 increase than normal progression.
+
+The first working-set recommendation shown in an active session uses this same
+between-session baseline. Return-to-training calibration takes precedence. In a
+normal session:
+
+- when the baseline progresses load, the first set uses the new constrained
+  load and `targetRepsMin`;
+- when the baseline holds load, the first-set repetition target is the best
+  previous repetition count at the working load plus one, clamped to the
+  current programmed repetition range;
+- a readiness hold keeps both the prior working load and the prior repetition
+  target inside the current range;
+- a readiness or planned deload uses its reduced load and `targetRepsMin`;
+- missing RIR lowers recommendation confidence but does not invent an effort
+  value.
+
+The completed first set, including its actual RIR and recovery time, then feeds
+the existing intra-set calculation in section 5.4 for sets two and later. The
+exact one-repetition target increase is an engineering heuristic that makes the
+double-progression intent deterministic; it is not a claim that adaptation must
+occur by exactly one repetition per session.
 
 Current readiness heuristics:
 
@@ -287,6 +318,33 @@ Allowed program values are `0.25-2.0` for `fatigueRate` and `1-5%` for
 `loadAdjustmentPct`. The coefficients model expected capacity loss and are
 engineering heuristics, not measured physiology.
 
+#### Active-session overflow records
+
+Implementations: `lib/planned-sets.ts`,
+`components/session/session-runner.tsx`, and
+`components/session/editable-sets-table.tsx`.
+
+During an active session, the current regular-set and drop-set targets define
+which recorded working sets participate in the active plan. Records beyond the
+corresponding target are treated as accidental logging overflow:
+
+- overflow rows are hidden from the active table, completion state, next-set
+  recommendation, rest/advance logic and session summary;
+- lowering a target retains overflow records temporarily, so raising the target
+  again restores the same rows in their original order;
+- `Undo last set` always deletes exactly the latest stored non-warm-up record,
+  including a currently hidden overflow record;
+- warm-up sets are never hidden or deleted by working-set target changes;
+- regular and drop-set limits are applied independently;
+- finishing the session permanently removes its remaining overflow records so
+  they do not enter history, progression or volume calculations.
+
+The source-backed principle is that physically performed work contributes real
+training volume and fatigue. Treating target overflow as an accidental record
+and deleting it at finish is an explicit engineering heuristic chosen for this
+editing workflow. A user who physically performed an additional set should
+increase the target so the set remains part of the completed session.
+
 ### 5.5 Shared program-design context and validation
 
 Implementations: `lib/program-design-context.ts`,
@@ -297,14 +355,16 @@ The internal program generator and MCP program-design tools MUST use the same
 server-built `ProgramDesignContext`. It includes:
 
 - full source-program targets and program lineage;
-- active-gym inventory and exercise availability;
+- active-gym physical inventory, free weights and exercise availability;
+- personal per-muscle volume targets when configured;
+- rolling 56-day history plus exact recent sessions and recorded missingness;
 - current and previous weekly hard sets by primary muscle;
 - session adherence, duration and working-set density;
 - per-exercise e1RM trends and stalled-lift signals;
 - actual RIR minus programmed RIR, excluding warm-ups and drop sets;
 - readiness, sleep, soreness, deload and post-block recovery signals;
 - exercise-specific return-to-training ceilings;
-- explicit missing questions and data-confidence level.
+- required questions, recommended questions, a safety gate and data confidence.
 
 Objective performance trends and completed training have higher decision weight
 than a single subjective or wearable signal. Subjective recovery remains
@@ -319,19 +379,135 @@ blocks an increase in total primary-muscle sets relative to the source program.
 
 Program validation currently checks required answers, unavailable equipment,
 compound failure and drop-set warnings, weekly and per-session primary-muscle
-volume, frequency distribution, estimated session duration, active-gym state,
-and attempts to raise volume during under-recovery. The final user-edited draft
-MUST be rebuilt against fresh context and validated again immediately before it
-is saved. MCP write tools follow the same rule.
+volume, frequency distribution, available weekday assignments, estimated
+session duration, active-gym state, the medical-clearance gate, and attempts to
+raise volume during under-recovery. The final user-edited draft MUST be rebuilt
+against fresh context and validated again immediately before it is saved. MCP
+write tools follow the same rule.
 
 Session RPE and actual recovery time between attempts are now first-class set
 and session records. They are persisted by the web and Android APIs, included in
-backups, and used by native next-set calculation where applicable. They are not
-yet included in the shared program-design payload or converted into a
-session-RPE training impulse metric. The following useful monitoring inputs are
-still unavailable to program generation: structured life-stress ratings,
-movement-pattern overlap and lumbar-fatigue load. Prompts and agents MUST NOT
-imply that unavailable metrics were calculated.
+backups, used by native next-set calculation where applicable, and exposed in
+exact recent sessions inside the rolling shared context when recorded. They are
+not converted into a session-RPE training impulse metric. Structured life-stress
+ratings, movement-pattern overlap and lumbar-fatigue load remain unavailable.
+Prompts and agents MUST NOT imply that unavailable metrics were calculated.
+
+### 5.6 Exercise progress chart metrics and time display
+
+Implementation: `lib/stats.ts`, `lib/progress-chart.ts` and
+`components/progress/progress-dashboard.tsx`.
+
+The source-backed principle is that progress in the same exercise may be
+observed through more load, more repetitions at the same load, estimated
+strength and volume-load. Volume-load is defined as the sum of load multiplied
+by repetitions. The sources also warn that load, repetition totals and
+volume-load do not capture technique, range of motion, RIR or fatigue and MUST
+NOT be presented as interchangeable measures of adaptation.
+
+GymCoach exposes these deterministic per-session chart metrics for one selected
+exercise:
+
+- maximum load: the heaviest working-set effective load;
+- estimated 1RM: the current Epley estimate from the heaviest load and the best
+  repetition count performed at that load;
+- total volume: the sum of effective load multiplied by repetitions;
+- repetitions at maximum load: the best repetition count at the heaviest load;
+- maximum repetitions: the largest repetition count in one working set;
+- total repetitions: the sum of repetitions across working sets.
+
+Warm-up and cardio sets are excluded. Drop sets remain working sets and
+therefore contribute to total volume, maximum repetitions and total
+repetitions. This inclusion is an engineering data rule, not evidence that a
+drop-set session can be compared directly with a conventional session. The
+chart is descriptive and MUST NOT diagnose detraining, illness, injury or the
+cause of a performance change.
+
+The selectable rolling windows of 7, 30, 60, 120, 180 and 365 days plus all
+history are engineering heuristics. They are convenient views, not biological
+training-cycle boundaries.
+
+The horizontal chart coordinate is also an engineering visualization
+heuristic. It uses the lower median positive interval between visible sessions
+as the ordinary cadence, preserves smaller proportional intervals and caps
+each larger interval at three ordinary gaps. The exact `3x` ceiling has no
+training-science status and affects display only. Actual session dates remain
+visible on the axis and in the tooltip, and no coaching calculation may use the
+compressed coordinate.
+
+### 5.7 MCP rolling history and exact history reads
+
+Implementation: `lib/mcp/training-history.ts` and `lib/mcp/server.ts`.
+
+The source-backed principles are that training volume, frequency and effort
+must be monitored over time, interpreted per muscle and exercise where
+possible, and combined with recovery and performance context. A missed or
+partial week lowers confidence. Load and repetitions without RIR/RPE do not
+establish proximity to failure, and a repetition drop may reflect accumulated
+within-session fatigue, rest duration or earlier effort rather than strength
+loss. A calendar gap alone does not establish detraining, overtraining or a
+need for a deload.
+
+The MCP preserves `weekCurrent` and `weekPrevious` as exact UTC ISO calendar
+weeks. A null previous week means only that no session was logged in that one
+calendar week. Context schema version 4 adds a separate rolling history with
+these engineering windows and calculations:
+
+- 56 days of coverage and exact details for up to the latest 12 strength
+  sessions in that coverage, with known, returned and truncated counts;
+- zero-filled ISO calendar-week summaries, including explicit coverage and
+  activity status for partial or empty weeks;
+- the latest 7 days compared with the preceding 42 days normalized to a weekly
+  average;
+- 28-day average session attendance compared with the saved planned weekly
+  frequency;
+- exact recent calendar intervals and days since the latest strength session;
+- working sets, ordinary working sets, drop sets, recorded-RIR coverage and
+  ordinary sets whose recorded RIR is 0-4;
+- direct set totals by the exercise's stored primary muscle.
+
+The 56/7/42/28-day windows, the 12-session cap, the ratio calculations and the
+RIR 0-4 bucket are engineering heuristics. The returned ratios have no alarm
+threshold and MUST NOT be described as validated acute-workload, fatigue or
+detraining scores. The RIR bucket is descriptive and MUST NOT be called a
+universal effective-set definition. Missing RIR remains unknown and is not
+silently classified as hard or easy.
+
+Warm-ups and cardio are excluded from strength-set totals. Drop sets remain
+visible but are separated from ordinary working sets and excluded from the RIR
+coverage denominator. The current exercise schema stores one primary muscle
+and no exercise-specific secondary-muscle contribution. Until that data exists,
+MCP indirect-set accounting is explicitly unavailable; agents MUST NOT apply a
+fractional or one-to-one overlap coefficient on their own.
+
+`get_training_history` returns paginated exact session and set records for an
+optional program and date range. It exposes recorded RIR, recovery time,
+session RPE, warm-up and drop-set status without imputing missing fields. IDs
+are treated as opaque strings because imported histories may use UUIDs instead
+of current CUID defaults. Ownership checks remain mandatory for every read and
+write. Paginated reads MUST reuse the first page's exact date range. Historical
+notes and descriptions remain untrusted user data and MUST NOT be interpreted
+as tool instructions or write confirmation.
+
+### 5.8 Exercise catalog muscle classification
+
+The source-backed anatomical rule is that lying, seated and standing leg curls
+are knee-flexion exercises whose primary group is `HAMSTRINGS`, including the
+biceps femoris. Arm `BICEPS` refers to the biceps brachii, whose main actions
+include elbow flexion and forearm supination. Leg extensions are knee-extension
+exercises whose primary group is the quadriceps. Different leg-curl variants
+retain separate exercise IDs and histories because hip position and equipment
+change their mechanics.
+
+Catalog correction is an engineering data-quality rule, not a fuzzy
+training-science classifier. Code and migrations MUST NOT infer a muscle from
+the substrings `curl` or `biceps`. Prefer a stable system exercise ID. A legacy
+alias may be corrected only through an exact normalized allowlist, an expected
+old erroneous class and corroborating structured movement/equipment data.
+Ambiguous, user-created, localized or misspelled entries require review rather
+than automatic rewriting. A label that mentions an extension/curl combination
+machine is not sufficient by itself: classification follows the actual joint
+action, and unclear cases must ask whether the knee is flexing or extending.
 
 ## 6. LLM coach contract
 
@@ -466,3 +642,105 @@ in that second review: load, repetitions, RIR, exercise identity and order,
 actual recovery time, session timing, session RPE, warm-up and working-set
 distinction, timestamps and notes. The outbox and synchronization rules are
 engineering reliability mechanisms and do not change the training formulas.
+
+A third review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
+sources for four separate questions about exercise-chart metrics, edge cases,
+deterministic aggregation rules and an adversarial review of calendar windows
+and compressed time spacing. The sources supported tracking same-exercise load,
+repetitions, estimated strength and volume-load while warning that these
+measures omit effort, technique and fatigue context. They did not support a
+universal calendar window or the exact `3x` visual gap ceiling; those remain
+explicit engineering heuristics. The review also reinforced excluding warm-up
+and cardio work from lifting metrics and avoiding medical or causal claims from
+a chart trend.
+
+A fourth review on 2026-07-13 used the same notebook and 11 sources for four
+independent questions about rolling training history, incomplete weeks,
+RIR-aware interpretation, deterministic MCP fields and adversarial checks of
+numerical thresholds. NotebookLM conversation ID:
+`c5d0e231-94f4-4b10-a11b-f2954b962943`. The sources supported monitoring
+actual volume, frequency, effort and same-exercise performance over time,
+lowering confidence when RIR or weeks are incomplete, and returning gradually
+after reduced exposure. They did not establish universal percentages for a
+workload spike, calendar-gap thresholds, acceptable repetition decline,
+fractional indirect sets or a binary effective-set RIR cutoff. The MCP therefore
+exposes raw values and missingness while keeping its 56/7/42/28-day windows and
+RIR 0-4 bucket explicitly labeled engineering heuristics.
+
+A fifth review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
+sources. Fourteen independent questions covered required and optional inputs for
+new programs, novice calibration, ordinary return after a scheduling gap, return
+after illness/injury/surgery, hypertrophy, strength, fat loss, general fitness,
+revisions, travel/home training, plateaus, poor recovery and pain. A separate
+adversarial question challenged all proposed numerical thresholds. NotebookLM
+conversation ID:
+`c5d0e231-94f4-4b10-a11b-f2954b962943`.
+
+Source-backed findings were the need to collect the goal, realistic schedule,
+training experience, session duration, equipment and current safety constraints;
+to use movement-specific recent exposure; to combine repeated objective
+performance with subjective recovery; to lower confidence when RIR/history is
+missing; and to keep illness, injury, surgery and unusual pain outside automatic
+programming.
+
+The exact required/optional schema, structured status names, blocking workflow
+and any numerical window or confidence threshold remain engineering product
+rules. The implementation requires specific weekdays and a safety status, adds
+recommended questions for priorities, preferences, concurrent activity and
+missing recent context, exposes rolling history, session RPE/rest, physical gym
+inventory and personal volume targets, and adds source-linked
+`REVISE_CURRENT` parity to MCP. `NEEDS_MEDICAL_CLEARANCE` blocks generation and
+is a referral boundary, not a diagnosis or treatment recommendation.
+
+A sixth review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
+sources for four distinct questions about selecting the first working-set load,
+edge cases, a deterministic product rule and an adversarial review of exact
+progression thresholds. NotebookLM conversation ID:
+`c5d0e231-94f4-4b10-a11b-f2954b962943`.
+
+Source-backed findings were that progressive overload may use load or
+repetitions, double progression holds load while repetitions build toward the
+range ceiling, the next smallest practical load increment can be used after the
+target is achieved, first-set RIR helps preserve room for later sets, and
+readiness or return after a break may require a more conservative start. The
+sources also reinforced using the same exercise, excluding drop sets from the
+fresh-session baseline and avoiding exact load conversion across different
+movements or equipment.
+
+The all-working-sets threshold, exactly one equipment step, exactly one added
+repetition, current readiness cutoffs and return windows remain engineering
+heuristics. Competing source interpretations could progress from the freshest
+first set instead of requiring every set to reach the ceiling. GymCoach keeps
+the established all-set rule here for consistency and minimum change, while the
+recorded first-set result immediately hands control to RIR-aware intra-session
+autoregulation.
+
+A seventh review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
+sources for four questions about actual work versus erroneous records,
+soft-hiding overflow, edge cases and an adversarial challenge to excluding
+logged sets. NotebookLM conversation ID:
+`c5d0e231-94f4-4b10-a11b-f2954b962943`.
+
+Source-backed findings were that every physically performed working set adds
+volume and fatigue, while a clerical duplicate is measurement noise rather than
+training. The sources do not define a universal UI rule for distinguishing
+those cases. GymCoach therefore treats rows beyond a user-reduced active target
+as accidental records, retains them until finish for immediate restoration,
+keeps warm-ups outside the target and applies regular/drop quotas separately.
+That soft-hide and finish-time deletion behavior is an engineering heuristic,
+not a physiological claim that performed work can be erased.
+
+An eighth review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
+sources for four independent questions about leg-curl anatomy, naming edge
+cases, deterministic catalog rules and an adversarial challenge to string-only
+classification. NotebookLM conversation ID:
+`c5d0e231-94f4-4b10-a11b-f2954b962943`.
+
+Source-backed findings were that lying, seated and standing leg curls use knee
+flexion and primarily train the hamstrings, including biceps femoris; biceps
+brachii is an upper-limb elbow flexor/supinator; and leg extension is knee
+extension for the quadriceps. The exact allowlist, stable-ID migration and
+old-state predicate are engineering safeguards. The review specifically found
+that `Leg Curls on Leg Extension Machine` can describe a combination-machine
+knee curl, an improvised curl or a mislabeled extension, so an unconfirmed name
+alone must not drive automatic classification.

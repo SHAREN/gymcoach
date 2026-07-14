@@ -14,10 +14,15 @@ describe('sessionUpdateSchema', () => {
     expect(sessionUpdateSchema.safeParse({}).success).toBe(true);
   });
 
-  it('trims notes and accepts a finish flag', () => {
-    const parsed = sessionUpdateSchema.parse({ notes: '  good session  ', finish: true });
+  it('trims notes and accepts finish-time overflow ids', () => {
+    const parsed = sessionUpdateSchema.parse({
+      notes: '  good session  ',
+      finish: true,
+      discardSetIds: ['set-4'],
+    });
     expect(parsed.notes).toBe('good session');
     expect(parsed.finish).toBe(true);
+    expect(parsed.discardSetIds).toEqual(['set-4']);
   });
 
   it('rejects notes longer than 2000 characters', () => {

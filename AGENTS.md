@@ -8,6 +8,33 @@ Before changing or explaining any training calculation, also read
 `docs/ai-coach-principles.md`. It is the normative contract for source-backed
 principles, engineering heuristics, current formulas and safety boundaries.
 
+## Canonical runtime and deployment
+
+- GymCoach must have exactly one canonical runtime on the Home PC:
+  `http://192.168.0.119:3030`. The public production URL
+  `https://gymcoach7.sharteman.duckdns.org` must proxy to that runtime.
+- Temporary development or preview ports are allowed only while work is in
+  progress. After a feature passes its applicable verification gates, deploy
+  the completed version to the canonical `3030` runtime before reporting the
+  work complete. Do not leave the latest version available only on a temporary
+  port, branch or working copy.
+- Before deploying, identify the exact checkout, commit, container and image
+  currently backing `3030`. Inspect every relevant clone, worktree and branch
+  for concurrent or newer changes, including `git status`, recent commits and
+  diffs against the intended deployment source.
+- Never replace newer work by copying whole files from a stale checkout or by
+  rebuilding from an outdated branch. Integrate concurrent changes deliberately
+  with an appropriate merge, rebase, cherry-pick or reviewed patch. Resolve
+  conflicts according to behavior, preserve both valid change sets and rerun
+  all affected verification gates after integration.
+- Keep the previous working image or runtime state available for rollback.
+  Deploy the integrated version, then health-check both
+  `http://192.168.0.119:3030` and
+  `https://gymcoach7.sharteman.duckdns.org` before removing temporary runtimes.
+- Final deployment verification must confirm that `3030` is serving the latest
+  integrated version and that no other GymCoach containers or listeners remain
+  on temporary host ports such as `3031`, `3032` or `3033`.
+
 ## Mandatory training-science research workflow
 
 Any question, design decision, algorithm, prompt, recommendation, or code change
@@ -59,3 +86,23 @@ rest, but it must not diagnose or treat illness or injury. Training-related
 pain, post-illness return, and medical red flags require conservative product
 language and referral to an appropriate qualified professional. NotebookLM
 research does not replace medical clearance.
+
+## Android APK publishing gate
+
+After any change to Android application code, resources, Gradle configuration
+or Android version metadata, run the Android debug assembly before reporting
+completion:
+
+```powershell
+cd android
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+```
+
+`assembleDebug` automatically runs `publishDebugApk`, creating an immutable
+hash-qualified APK in `data/android-release` and atomically replacing
+`latest.json`. Verify that the published version, size and SHA-256 match the
+newly built APK. Do not leave the web download pointing at a stale Android
+build.
+
+Pure web changes do not require a new APK because the Android WebView loads the
+web interface from the configured server.

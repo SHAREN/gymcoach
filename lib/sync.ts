@@ -36,7 +36,7 @@ async function doFlush(): Promise<FlushResult> {
   const db = getDB();
   const pending = await db.pendingSets
     .where('status')
-    .anyOf(['pending', 'failed'])
+    .anyOf(['pending', 'failed', 'syncing'])
     .sortBy('createdAt');
 
   let flushed = 0;
@@ -60,6 +60,7 @@ async function doFlush(): Promise<FlushResult> {
             updatesExistingSet
               ? { weight: item.weight, reps: item.reps, rir: item.rir }
               : {
+                  id: item.localId,
                   exerciseId: item.exerciseId,
                   setNumber: item.setNumber,
                   weight: item.weight,
@@ -109,7 +110,10 @@ async function doFlush(): Promise<FlushResult> {
     }
   }
 
-  const remaining = await db.pendingSets.where('status').anyOf(['pending', 'failed']).count();
+  const remaining = await db.pendingSets
+    .where('status')
+    .anyOf(['pending', 'failed', 'syncing'])
+    .count();
   return { flushed, failed, pending: remaining };
 }
 

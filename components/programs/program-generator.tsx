@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
 import type {
   ProgramDesignAnswers,
+  ProgramHealthStatus,
   ProgramDesignMode,
   TrainingExperience,
 } from '@/lib/schemas/program-design';
@@ -254,11 +255,23 @@ export function ProgramGenerator() {
                   answers={answers}
                   onChange={setAnswers}
                   labels={{
+                    healthStatus: t('generator.healthStatus'),
+                    healthNoConcerns: t('generator.healthNoConcerns'),
+                    healthClearedLimitations: t('generator.healthClearedLimitations'),
+                    healthNeedsClearance: t('generator.healthNeedsClearance'),
                     trainingExperience: t('generator.trainingExperience'),
                     beginner: t('generator.experienceBeginner'),
                     intermediate: t('generator.experienceIntermediate'),
                     advanced: t('generator.experienceAdvanced'),
                     weeklyFrequency: t('generator.weeklyFrequency'),
+                    availableDays: t('generator.availableDays'),
+                    monday: t('generator.monday'),
+                    tuesday: t('generator.tuesday'),
+                    wednesday: t('generator.wednesday'),
+                    thursday: t('generator.thursday'),
+                    friday: t('generator.friday'),
+                    saturday: t('generator.saturday'),
+                    sunday: t('generator.sunday'),
                     sessionDuration: t('generator.sessionDuration'),
                     limitations: t('generator.limitations'),
                     limitationsPlaceholder: t('generator.limitationsPlaceholder'),
@@ -474,11 +487,23 @@ function ProgramDesignQuestionField({
   answers: ProgramDesignAnswers;
   onChange: (answers: ProgramDesignAnswers) => void;
   labels: {
+    healthStatus: string;
+    healthNoConcerns: string;
+    healthClearedLimitations: string;
+    healthNeedsClearance: string;
     trainingExperience: string;
     beginner: string;
     intermediate: string;
     advanced: string;
     weeklyFrequency: string;
+    availableDays: string;
+    monday: string;
+    tuesday: string;
+    wednesday: string;
+    thursday: string;
+    friday: string;
+    saturday: string;
+    sunday: string;
     sessionDuration: string;
     limitations: string;
     limitationsPlaceholder: string;
@@ -493,6 +518,31 @@ function ProgramDesignQuestionField({
     postBlockAches: string;
   };
 }) {
+  if (question.id === 'healthStatus') {
+    return (
+      <div className="space-y-1.5">
+        <Label>{labels.healthStatus}</Label>
+        <Select
+          value={answers.healthStatus}
+          onValueChange={(value) =>
+            onChange({ ...answers, healthStatus: value as ProgramHealthStatus })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder={labels.healthStatus} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="NO_RELEVANT_CONCERNS">{labels.healthNoConcerns}</SelectItem>
+            <SelectItem value="CLEARED_WITH_LIMITATIONS">
+              {labels.healthClearedLimitations}
+            </SelectItem>
+            <SelectItem value="NEEDS_MEDICAL_CLEARANCE">{labels.healthNeedsClearance}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+
   if (question.id === 'trainingExperience') {
     return (
       <div className="space-y-1.5">
@@ -555,6 +605,41 @@ function ProgramDesignQuestionField({
       </div>
     );
   }
+  if (question.id === 'availableDays') {
+    const days = [
+      [1, labels.monday],
+      [2, labels.tuesday],
+      [3, labels.wednesday],
+      [4, labels.thursday],
+      [5, labels.friday],
+      [6, labels.saturday],
+      [7, labels.sunday],
+    ] as const;
+    return (
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">{labels.availableDays}</legend>
+        {days.map(([day, label]) => (
+          <label key={day} className="flex min-h-tap items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={answers.availableDays?.includes(day) ?? false}
+              onChange={(event) =>
+                onChange({
+                  ...answers,
+                  availableDays: event.target.checked
+                    ? [...(answers.availableDays ?? []), day].sort((a, b) => a - b)
+                    : answers.availableDays?.filter((value) => value !== day),
+                })
+              }
+              className="h-4 w-4"
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+      </fieldset>
+    );
+  }
+
   if (question.id === 'equipmentAccess') {
     return (
       <div className="space-y-1.5">

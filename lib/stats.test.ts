@@ -132,12 +132,16 @@ describe('exerciseProgress', () => {
       date: '2026-04-20',
       maxWeight: 80,
       topSetReps: 10,
+      maxReps: 10,
+      totalReps: 19,
       totalVolume: 80 * 10 + 80 * 9,
     });
     expect(points[1]).toMatchObject({
       date: '2026-04-27',
       maxWeight: 82.5,
       topSetReps: 8,
+      maxReps: 8,
+      totalReps: 8,
     });
   });
 });

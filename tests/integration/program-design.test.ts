@@ -71,6 +71,8 @@ describe('buildProgramDesignContext', () => {
       sourceProgramId: program.id,
       answers: {
         trainingExperience: 'INTERMEDIATE',
+        healthStatus: 'NO_RELEVANT_CONCERNS',
+        availableDays: [1, 3, 5],
         sessionDurationMin: 75,
         limitations: 'none',
         postBlockAssessment: {
@@ -110,8 +112,10 @@ describe('buildProgramDesignContext', () => {
     });
 
     expect(context.missingQuestions.map((question) => question.id)).toEqual([
+      'healthStatus',
       'trainingExperience',
       'weeklyFrequency',
+      'availableDays',
       'sessionDurationMin',
       'limitations',
       'equipmentAccess',
@@ -136,6 +140,8 @@ describe('buildProgramDesignContext', () => {
       mode: 'NEXT_MESOCYCLE',
       answers: {
         trainingExperience: 'INTERMEDIATE',
+        healthStatus: 'NO_RELEVANT_CONCERNS',
+        availableDays: [1, 3, 5],
         sessionDurationMin: 60,
         limitations: 'none',
         equipmentAccess: 'Home gym with barbell and dumbbells',
@@ -164,6 +170,8 @@ describe('buildProgramDesignContext', () => {
       mode: 'NEW_PROGRAM',
       answers: {
         trainingExperience: 'INTERMEDIATE',
+        healthStatus: 'NO_RELEVANT_CONCERNS',
+        availableDays: [1, 2, 4, 5],
         weeklyFrequency: 4,
         sessionDurationMin: 60,
         limitations: 'none',
@@ -194,6 +202,8 @@ describe('buildProgramDesignContext', () => {
       mode: 'NEXT_MESOCYCLE',
       answers: {
         trainingExperience: 'INTERMEDIATE',
+        healthStatus: 'NO_RELEVANT_CONCERNS',
+        availableDays: [1, 3, 5],
         sessionDurationMin: 60,
         limitations: 'none',
         equipmentAccess: 'Barbell and rack',

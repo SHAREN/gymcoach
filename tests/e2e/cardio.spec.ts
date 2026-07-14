@@ -45,9 +45,7 @@ async function seedCardioWorkout(page: Page): Promise<{ sessionId: string }> {
   return { sessionId: session.id };
 }
 
-test('a trainee can log a cardio set (duration + distance) in a live session', async ({
-  page,
-}) => {
+test('a trainee can log a cardio set (duration + distance) in a live session', async ({ page }) => {
   // Sign up through the API (fresh user; the cookie lands in the context). A
   // unique X-Forwarded-For keeps this spec in its own register rate-limit
   // bucket - the suite's UI signups use up the 5/min per-IP budget.
@@ -78,7 +76,8 @@ test('a trainee can log a cardio set (duration + distance) in a live session', a
   await expect(page.getByText('12:30 · 2.5 km')).toBeVisible();
 
   // The post-session summary shows the cardio totals for the exercise.
-  await page.getByRole('button', { name: 'Finish' }).click();
+  await page.getByRole('button', { name: 'Manage Conditioning' }).click();
+  await page.getByRole('button', { name: 'Complete' }).click();
   await expect(page.getByText('Session summary')).toBeVisible();
   await expect(page.getByText(/1\/1 sets · 12:30 · 2\.5 km/)).toBeVisible();
   await page.getByRole('button', { name: 'Finish the session' }).click();

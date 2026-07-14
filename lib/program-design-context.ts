@@ -2,10 +2,12 @@ import { db } from '@/lib/db';
 import { buildCoachPayload, type CoachPayload } from '@/lib/coach';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 import { PROGRAM_DESIGN_METHODOLOGY_VERSION } from '@/lib/program-design-methodology';
+import { buildMcpTrainingHistorySummary } from '@/lib/mcp/training-history';
 import type {
   PostBlockAssessment,
   ProgramDesignAnswers,
   ProgramDesignMode,
+  ProgramHealthStatus,
   TrainingExperience,
 } from '@/lib/schemas/program-design';
 import type { Prisma } from '@/lib/prisma-client';
@@ -26,6 +28,18 @@ const activeGymInclude = {
   exerciseConfigs: {
     include: { exercise: { select: { id: true, name: true } } },
   },
+  equipment: {
+    orderBy: { name: 'asc' as const },
+    select: {
+      id: true,
+      name: true,
+      equipmentType: true,
+      description: true,
+      quantity: true,
+      weightOptions: true,
+      exerciseLinks: { select: { exerciseId: true } },
+    },
+  },
 } satisfies Prisma.GymInclude;
 
 type SourceProgramRow = Prisma.ProgramGetPayload<{ include: typeof sourceProgramInclude }>;
@@ -38,12 +52,22 @@ export interface ProgramDesignQuestion {
     | 'trainingExperience'
     | 'weeklyFrequency'
     | 'sessionDurationMin'
+    | 'healthStatus'
+    | 'availableDays'
+    | 'scheduleConstraints'
     | 'limitations'
     | 'equipmentAccess'
+    | 'preferences'
+    | 'recentTrainingBackground'
+    | 'goalPriorities'
+    | 'concurrentTraining'
+    | 'techniqueAndRirFamiliarity'
+    | 'changesSinceLastProgram'
     | 'postBlockAssessment';
   prompt: string;
-  input: 'select' | 'number' | 'text' | 'checklist';
-  required: true;
+  input: 'select' | 'number' | 'text' | 'checklist' | 'multi-select';
+  required: boolean;
+  reason?: string;
   options?: Array<{ value: string; label: string }>;
   items?: Array<{ value: keyof PostBlockAssessment; label: string }>;
   min?: number;
@@ -60,14 +84,28 @@ export interface ProgramDesignContext {
     trainingExperience: TrainingExperience | null;
     weeklyFrequency: number | null;
     sessionDurationMin: number | null;
+    healthStatus: ProgramHealthStatus | null;
     phaseLengthWeeks: number;
+    availableDays: number[] | null;
+    scheduleConstraints: string | null;
     limitations: string | null;
     equipmentAccess: string | null;
     preferences: string | null;
+    recentTrainingBackground: string | null;
+    goalPriorities: string | null;
+    concurrentTraining: string | null;
+    techniqueAndRirFamiliarity: string | null;
+    changesSinceLastProgram: string | null;
     postBlockAssessment: PostBlockAssessment | null;
   };
   missingQuestions: ProgramDesignQuestion[];
+  recommendedQuestions: ProgramDesignQuestion[];
   profile: CoachPayload['userProfile'];
+  safety: {
+    healthStatus: ProgramHealthStatus | null;
+    canGenerateProgram: boolean;
+    blockingReasons: string[];
+  };
   recovery: {
     systemic: { level: RecoveryLevel; reasons: string[] };
     byMuscle: Record<string, { level: RecoveryLevel; reasons: string[] }>;
@@ -80,8 +118,13 @@ export interface ProgramDesignContext {
       string,
       { weeklySets: number; frequency: number; maxSetsInOneWorkout: number }
     >;
+    personalVolumeTargets: Record<
+      string,
+      { minimumEffectiveVolume: number; maximumRecoverableVolume: number }
+    >;
   };
   history: {
+    rolling: Awaited<ReturnType<typeof buildMcpTrainingHistorySummary>>;
     currentWeek: CoachPayload['weekCurrent'];
     previousWeek: CoachPayload['weekPrevious'];
     actualHardSetsByMuscle: {
@@ -189,6 +232,15 @@ interface ActiveGymSummary {
   dumbbellWeights: number[];
   plateWeights: number[];
   barWeights: number[];
+  equipment: Array<{
+    id: string;
+    name: string;
+    equipmentType: string;
+    description: string | null;
+    quantity: number;
+    weightOptions: number[];
+    exerciseIds: string[];
+  }>;
   exerciseConfigs: Array<{
     exerciseId: string;
     exerciseName: string;
@@ -232,6 +284,7 @@ export async function buildProgramDesignContext({
   answers = {},
 }: BuildProgramDesignContextInput): Promise<ProgramDesignContext> {
   const coachPromise = buildCoachPayload(userId);
+  const trainingHistoryPromise = buildMcpTrainingHistorySummary(userId);
   const sourceProgramPromise = db.program.findFirst({
     where: sourceProgramId ? { id: sourceProgramId, userId } : { userId, isActive: true },
     include: sourceProgramInclude,
@@ -239,6 +292,10 @@ export async function buildProgramDesignContext({
   const userContextPromise = db.user.findUnique({
     where: { id: userId },
     select: {
+      volumeTargets: {
+        orderBy: { muscleGroup: 'asc' },
+        select: { muscleGroup: true, mev: true, mrv: true },
+      },
       activeGym: {
         include: activeGymInclude,
       },
@@ -259,8 +316,9 @@ export async function buildProgramDesignContext({
     },
   });
 
-  const [coach, sourceRow, userContext, exercises] = await Promise.all([
+  const [coach, trainingHistory, sourceRow, userContext, exercises] = await Promise.all([
     coachPromise,
+    trainingHistoryPromise,
     sourceProgramPromise,
     userContextPromise,
     exercisesPromise,
@@ -304,11 +362,14 @@ export async function buildProgramDesignContext({
   const resolvedWeeklyFrequency = answers.weeklyFrequency ?? coach.userProfile.weeklyFrequency;
   const resolvedLimitations = nonEmpty(answers.limitations);
   const resolvedEquipmentAccess = nonEmpty(answers.equipmentAccess);
+  const resolvedHealthStatus = answers.healthStatus ?? null;
   const missingQuestions = buildMissingQuestions({
     mode,
     trainingExperience: answers.trainingExperience ?? null,
     weeklyFrequency: resolvedWeeklyFrequency,
     sessionDurationMin: answers.sessionDurationMin ?? inferredDuration,
+    availableDays: answers.availableDays ?? null,
+    healthStatus: resolvedHealthStatus,
     limitations: resolvedLimitations,
     equipmentAccess: gym || resolvedEquipmentAccess ? 'known' : null,
     postBlockAssessment: answers.postBlockAssessment ?? null,
@@ -322,6 +383,19 @@ export async function buildProgramDesignContext({
   const expectedSessions = resolvedWeeklyFrequency ? resolvedWeeklyFrequency * 2 : null;
   const historyWeeks = distinctHistoryWeeks(coach.recentProgress);
   const rirAdherence = calculateRirAdherence(coach, source);
+  const recommendedQuestions = buildRecommendedQuestions({
+    mode,
+    answers,
+    historyWeeks,
+    setsWithRir: rirAdherence.setsWithRir,
+  });
+  const safety = programSafety(resolvedHealthStatus);
+  const personalVolumeTargets = Object.fromEntries(
+    (userContext?.volumeTargets ?? []).map((target) => [
+      target.muscleGroup,
+      { minimumEffectiveVolume: target.mev, maximumRecoverableVolume: target.mrv },
+    ]),
+  );
   const returnToTraining = await buildReturnRecommendations({
     userId,
     sourceRow,
@@ -340,22 +414,33 @@ export async function buildProgramDesignContext({
       trainingExperience: answers.trainingExperience ?? null,
       weeklyFrequency: resolvedWeeklyFrequency,
       sessionDurationMin: answers.sessionDurationMin ?? inferredDuration,
+      healthStatus: resolvedHealthStatus,
       phaseLengthWeeks: answers.phaseLengthWeeks ?? 6,
+      availableDays: answers.availableDays ?? null,
+      scheduleConstraints: nonEmpty(answers.scheduleConstraints),
       limitations: resolvedLimitations,
       equipmentAccess: resolvedEquipmentAccess,
       preferences: nonEmpty(answers.preferences),
+      recentTrainingBackground: nonEmpty(answers.recentTrainingBackground),
+      goalPriorities: nonEmpty(answers.goalPriorities),
+      concurrentTraining: nonEmpty(answers.concurrentTraining),
+      techniqueAndRirFamiliarity: nonEmpty(answers.techniqueAndRirFamiliarity),
+      changesSinceLastProgram: nonEmpty(answers.changesSinceLastProgram),
       postBlockAssessment: answers.postBlockAssessment ?? null,
     },
     missingQuestions,
+    recommendedQuestions,
     profile: coach.userProfile,
+    safety,
     recovery: {
       systemic: systemicRecovery(coach, answers.postBlockAssessment ?? null),
       byMuscle,
       latestReadiness: coach.latestReadiness,
       fatigue: coach.fatigue,
     },
-    program: { source, targetVolumeByMuscle },
+    program: { source, targetVolumeByMuscle, personalVolumeTargets },
     history: {
+      rolling: trainingHistory,
       currentWeek: coach.weekCurrent,
       previousWeek: coach.weekPrevious,
       actualHardSetsByMuscle: {
@@ -380,9 +465,7 @@ export async function buildProgramDesignContext({
       })),
       returnToTraining,
       unavailableMetrics: [
-        'Session RPE and session training impulse are not recorded yet.',
         'Life stress is only available when the trainee reports it in notes or the post-block checklist.',
-        'Actual inter-set rest is not included in the program-design payload yet.',
         'Movement-pattern overlap and lumbar-fatigue load are not modeled yet.',
       ],
     },
@@ -446,6 +529,15 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
     dumbbellWeights: gym.dumbbellWeights,
     plateWeights: gym.plateWeights,
     barWeights: gym.barWeights,
+    equipment: gym.equipment.map((item) => ({
+      id: item.id,
+      name: item.name,
+      equipmentType: item.equipmentType,
+      description: item.description,
+      quantity: item.quantity,
+      weightOptions: item.weightOptions,
+      exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
+    })),
     exerciseConfigs: gym.exerciseConfigs.map((config) => ({
       exerciseId: config.exerciseId,
       exerciseName: config.exercise.name,
@@ -660,11 +752,30 @@ function buildMissingQuestions(input: {
   trainingExperience: TrainingExperience | null;
   weeklyFrequency: number | null;
   sessionDurationMin: number | null;
+  availableDays: number[] | null;
+  healthStatus: ProgramHealthStatus | null;
   limitations: string | null;
   equipmentAccess: string | null;
   postBlockAssessment: PostBlockAssessment | null;
 }): ProgramDesignQuestion[] {
   const questions: ProgramDesignQuestion[] = [];
+  if (!input.healthStatus) {
+    questions.push({
+      id: 'healthStatus',
+      prompt:
+        'Which safety status applies before ordinary training programming? Do not self-diagnose; choose medical clearance when illness, injury, surgery, unusual pain, or clinician restrictions may affect training.',
+      input: 'select',
+      required: true,
+      options: [
+        { value: 'NO_RELEVANT_CONCERNS', label: 'No relevant health or pain concerns' },
+        {
+          value: 'CLEARED_WITH_LIMITATIONS',
+          label: 'Cleared for ordinary training with known limitations',
+        },
+        { value: 'NEEDS_MEDICAL_CLEARANCE', label: 'Medical clearance is needed' },
+      ],
+    });
+  }
   if (!input.trainingExperience) {
     questions.push({
       id: 'trainingExperience',
@@ -688,6 +799,23 @@ function buildMissingQuestions(input: {
       max: 7,
     });
   }
+  if (!input.availableDays) {
+    questions.push({
+      id: 'availableDays',
+      prompt: 'Which specific weekdays are realistically available for training?',
+      input: 'multi-select',
+      required: true,
+      options: [
+        { value: '1', label: 'Monday' },
+        { value: '2', label: 'Tuesday' },
+        { value: '3', label: 'Wednesday' },
+        { value: '4', label: 'Thursday' },
+        { value: '5', label: 'Friday' },
+        { value: '6', label: 'Saturday' },
+        { value: '7', label: 'Sunday' },
+      ],
+    });
+  }
   if (!input.sessionDurationMin) {
     questions.push({
       id: 'sessionDurationMin',
@@ -701,8 +829,7 @@ function buildMissingQuestions(input: {
   if (!input.limitations) {
     questions.push({
       id: 'limitations',
-      prompt:
-        'Are there current pains, movements to avoid, or other constraints? Enter "none" when there are none.',
+      prompt: 'Are there current movement or load constraints? Enter "none" when there are none.',
       input: 'text',
       required: true,
     });
@@ -734,6 +861,102 @@ function buildMissingQuestions(input: {
     });
   }
   return questions;
+}
+
+function buildRecommendedQuestions(input: {
+  mode: ProgramDesignMode;
+  answers: ProgramDesignAnswers;
+  historyWeeks: number;
+  setsWithRir: number;
+}): ProgramDesignQuestion[] {
+  const questions: ProgramDesignQuestion[] = [];
+  if (!nonEmpty(input.answers.scheduleConstraints)) {
+    questions.push({
+      id: 'scheduleConstraints',
+      prompt:
+        'Are back-to-back days, variable session lengths, travel, or fixed unavailable times relevant?',
+      input: 'text',
+      required: false,
+      reason: 'Improves schedule fit without blocking a draft.',
+    });
+  }
+  if (!nonEmpty(input.answers.goalPriorities)) {
+    questions.push({
+      id: 'goalPriorities',
+      prompt: 'Which muscles, lifts, outcomes, or dates have the highest priority?',
+      input: 'text',
+      required: false,
+      reason: 'Makes a broad goal specific enough to rank trade-offs.',
+    });
+  }
+  if (!nonEmpty(input.answers.preferences)) {
+    questions.push({
+      id: 'preferences',
+      prompt: 'Which exercises should be kept, preferred, or avoided for non-medical reasons?',
+      input: 'text',
+      required: false,
+      reason: 'Improves adherence and avoids confusing preference with pain.',
+    });
+  }
+  if (!nonEmpty(input.answers.concurrentTraining)) {
+    questions.push({
+      id: 'concurrentTraining',
+      prompt:
+        'What other sport, cardio, or physically demanding work must this program fit around?',
+      input: 'text',
+      required: false,
+      reason: 'Captures recovery demands that GymCoach may not have logged.',
+    });
+  }
+  if (input.historyWeeks === 0 && !nonEmpty(input.answers.recentTrainingBackground)) {
+    questions.push({
+      id: 'recentTrainingBackground',
+      prompt: 'What training was completed recently outside the available GymCoach history?',
+      input: 'text',
+      required: false,
+      reason: 'Missing recent exposure lowers confidence in starting volume and load.',
+    });
+  }
+  if (
+    (input.answers.trainingExperience === 'BEGINNER' || input.setsWithRir === 0) &&
+    !nonEmpty(input.answers.techniqueAndRirFamiliarity)
+  ) {
+    questions.push({
+      id: 'techniqueAndRirFamiliarity',
+      prompt: 'Which key movements are familiar, and how comfortable are you estimating RIR?',
+      input: 'text',
+      required: false,
+      reason: 'New movements and unfamiliar RIR need more conservative calibration.',
+    });
+  }
+  if (input.mode !== 'NEW_PROGRAM' && !nonEmpty(input.answers.changesSinceLastProgram)) {
+    questions.push({
+      id: 'changesSinceLastProgram',
+      prompt:
+        'What changed in goals, schedule, equipment, symptoms, or preferences since the source program?',
+      input: 'text',
+      required: false,
+      reason: 'Keeps revisions minimal and tied to an explicit reason.',
+    });
+  }
+  return questions;
+}
+
+function programSafety(healthStatus: ProgramHealthStatus | null): ProgramDesignContext['safety'] {
+  if (healthStatus === 'NEEDS_MEDICAL_CLEARANCE') {
+    return {
+      healthStatus,
+      canGenerateProgram: false,
+      blockingReasons: [
+        'Automatic training programming is unavailable until an appropriate qualified professional has cleared ordinary training.',
+      ],
+    };
+  }
+  return {
+    healthStatus,
+    canGenerateProgram: healthStatus != null,
+    blockingReasons: [],
+  };
 }
 
 function distinctHistoryWeeks(progress: CoachPayload['recentProgress']): number {

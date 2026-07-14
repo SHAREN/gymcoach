@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -34,20 +35,32 @@ import org.sharteman.gymcoach.data.repository.GymCoachRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WebPanelScreen(repository: GymCoachRepository, online: Boolean, onBack: () -> Unit) {
+fun WebPanelScreen(
+    repository: GymCoachRepository,
+    online: Boolean,
+    startPath: String = "/",
+    onBack: () -> Unit,
+) {
     var webView by remember { mutableStateOf<WebView?>(null) }
-    var ready by remember { mutableStateOf(false) }
+    var ready by remember { mutableStateOf(!online) }
     val allowedHost = remember(repository.serverUrl) { Uri.parse(repository.serverUrl).host }
+    val startUrl = remember(repository.serverUrl, startPath) {
+        repository.serverUrl.trimEnd('/') + "/" + startPath.trimStart('/')
+    }
 
     LaunchedEffect(online) {
-        if (!online) return@LaunchedEffect
+        if (!online) {
+            ready = true
+            return@LaunchedEffect
+        }
         runCatching { repository.createWebSessionCookies() }.onSuccess { cookies ->
             val manager = CookieManager.getInstance()
             manager.setAcceptCookie(true)
             cookies.forEach { manager.setCookie(repository.serverUrl, it) }
             manager.flush()
-            ready = true
+            webView?.reload()
         }
+        ready = true
     }
     BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
     DisposableEffect(Unit) {
@@ -67,14 +80,17 @@ fun WebPanelScreen(repository: GymCoachRepository, online: Boolean, onBack: () -
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (!online) {
-                Text(stringResource(R.string.web_offline))
-            } else if (ready) {
+            if (ready) {
                 AndroidView(
                     factory = { context ->
                         WebView(context).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.cacheMode = if (online) {
+                                WebSettings.LOAD_DEFAULT
+                            } else {
+                                WebSettings.LOAD_CACHE_ELSE_NETWORK
+                            }
                             settings.allowFileAccess = false
                             settings.allowContentAccess = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -91,12 +107,21 @@ fun WebPanelScreen(repository: GymCoachRepository, online: Boolean, onBack: () -
                                     return true
                                 }
                             }
-                            loadUrl(repository.serverUrl)
+                            loadUrl(startUrl)
                             webView = this
+                        }
+                    },
+                    update = { view ->
+                        view.settings.cacheMode = if (online) {
+                            WebSettings.LOAD_DEFAULT
+                        } else {
+                            WebSettings.LOAD_CACHE_ELSE_NETWORK
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+            } else {
+                CircularProgressIndicator()
             }
         }
     }

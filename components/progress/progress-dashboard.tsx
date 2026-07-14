@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useTransition, useMemo } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useFormatter, useTranslations } from 'next-intl';
 import {
   Bar,
@@ -34,6 +34,13 @@ import {
 } from '@/lib/stats';
 import { roundWeight, toDisplayWeight, unitLabel } from '@/lib/units';
 import { computeLoadingTable } from '@/lib/loading-table';
+import {
+  buildCompressedExerciseTimeline,
+  filterExercisePointsByRange,
+  pickProgressChartTicks,
+  progressChartRanges,
+  type ProgressChartRange,
+} from '@/lib/progress-chart';
 import { ExerciseGoalCard, type GoalView } from '@/components/progress/exercise-goal-card';
 import { VolumeTargetEditor } from '@/components/progress/volume-target-editor';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
@@ -132,6 +139,26 @@ const MUSCLE_COLORS: Record<string, string> = {
   LOWER_BACK: '#475569',
 };
 
+const PROGRESS_METRICS = [
+  'maxWeight',
+  'estimated1RM',
+  'totalVolume',
+  'topSetReps',
+  'maxReps',
+  'totalReps',
+] as const;
+
+type ProgressMetric = (typeof PROGRESS_METRICS)[number];
+
+const METRIC_META: Record<ProgressMetric, { kind: 'weight' | 'reps'; color: string }> = {
+  maxWeight: { kind: 'weight', color: 'hsl(var(--primary))' },
+  estimated1RM: { kind: 'weight', color: '#a855f7' },
+  totalVolume: { kind: 'weight', color: '#10b981' },
+  topSetReps: { kind: 'reps', color: '#f59e0b' },
+  maxReps: { kind: 'reps', color: '#0ea5e9' },
+  totalReps: { kind: 'reps', color: '#f43f5e' },
+};
+
 export function ProgressDashboard({
   exercises,
   selectedExerciseId,
@@ -153,6 +180,8 @@ export function ProgressDashboard({
   const router = useRouter();
   const search = useSearchParams();
   const [isPending, startTransition] = useTransition();
+  const [progressMetric, setProgressMetric] = useState<ProgressMetric>('maxWeight');
+  const [progressRange, setProgressRange] = useState<ProgressChartRange>('all');
   const shortDate = (iso: string) =>
     format.dateTime(new Date(iso), { day: '2-digit', month: '2-digit' });
   const muscleGroupLabel = (group: string) => {
@@ -230,32 +259,97 @@ export function ProgressDashboard({
       .sort((a, b) => b.sets - a.sets);
   }, [volumeLandmarks]);
 
-  const exerciseChartData = exercisePoints.map((p) => ({
-    ...p,
-    label: shortDate(p.sessionStartedAt.toString()),
-    maxWeight: toDisplay(p.maxWeight),
-    estimated1RM: toDisplay(p.estimated1RM),
-  }));
+  const visibleExercisePoints = useMemo(
+    () => filterExercisePointsByRange(exercisePoints, progressRange),
+    [exercisePoints, progressRange],
+  );
+  const metricMeta = METRIC_META[progressMetric];
+  const metricLabel = t(`metrics.${progressMetric}`);
+  const metricSeriesName =
+    metricMeta.kind === 'weight'
+      ? t('metricSeries', { metric: metricLabel, unit: unitSuffix })
+      : metricLabel;
+  const exerciseChartData = useMemo(
+    () =>
+      buildCompressedExerciseTimeline(visibleExercisePoints).map((point) => ({
+        ...point,
+        axisLabel: shortDate(point.sessionStartedAt.toString()),
+        tooltipDate: format.dateTime(new Date(point.sessionStartedAt), {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric',
+        }),
+        value:
+          metricMeta.kind === 'weight' ? toDisplay(point[progressMetric]) : point[progressMetric],
+      })),
+    // toDisplay and shortDate are pure functions of the listed dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [format, metricMeta.kind, progressMetric, unit, visibleExercisePoints],
+  );
+  const progressChartTicks = useMemo(
+    () => pickProgressChartTicks(exerciseChartData),
+    [exerciseChartData],
+  );
+  const axisLabels = useMemo(
+    () => new Map(exerciseChartData.map((point) => [point.chartX, point.axisLabel])),
+    [exerciseChartData],
+  );
+  const tooltipLabels = useMemo(
+    () => new Map(exerciseChartData.map((point) => [point.chartX, point.tooltipDate])),
+    [exerciseChartData],
+  );
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Max load and 1RM per exercise */}
+      {/* Selectable per-session progress metric for one exercise. */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold">{t('maxLoad')}</h2>
+          <h2 className="text-base font-semibold">{t('exerciseProgress')}</h2>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Select
+                value={selectedExerciseId ?? ''}
+                onValueChange={selectExercise}
+                disabled={isPending}
+              >
+                <SelectTrigger className="h-9" aria-label={t('chooseExercise')}>
+                  <SelectValue placeholder={t('chooseExercise')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {exercises.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {exerciseName(e.name)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Select
-              value={selectedExerciseId ?? ''}
-              onValueChange={selectExercise}
-              disabled={isPending}
+              value={progressMetric}
+              onValueChange={(value) => setProgressMetric(value as ProgressMetric)}
             >
-              <SelectTrigger className="h-9 w-auto min-w-[12rem]">
-                <SelectValue placeholder={t('chooseExercise')} />
+              <SelectTrigger className="h-9 min-w-0" aria-label={t('metric')}>
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {exercises.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {exerciseName(e.name)}
+                {PROGRESS_METRICS.map((metric) => (
+                  <SelectItem key={metric} value={metric}>
+                    {t(`metrics.${metric}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={progressRange}
+              onValueChange={(value) => setProgressRange(value as ProgressChartRange)}
+            >
+              <SelectTrigger className="h-9 min-w-0" aria-label={t('period')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {progressChartRanges.map((range) => (
+                  <SelectItem key={range} value={range}>
+                    {t(`ranges.${range}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -269,18 +363,39 @@ export function ProgressDashboard({
         </CardHeader>
         <CardContent>
           {exerciseChartData.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">{t('noExerciseData')}</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {exercisePoints.length === 0 ? t('noExerciseData') : t('noExerciseDataInRange')}
+            </p>
           ) : (
             <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                minWidth={0}
+                initialDimension={{ width: 320, height: 256 }}
+              >
                 <LineChart
                   data={exerciseChartData}
                   margin={{ top: 5, right: 10, bottom: 0, left: -10 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
+                  <XAxis
+                    dataKey="chartX"
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    ticks={progressChartTicks}
+                    tickFormatter={(value: number) => axisLabels.get(value) ?? ''}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis allowDecimals={metricMeta.kind === 'weight'} tick={{ fontSize: 11 }} />
                   <Tooltip
+                    labelFormatter={(value) => tooltipLabels.get(Number(value)) ?? ''}
+                    formatter={(value) => [
+                      format.number(Number(value), {
+                        maximumFractionDigits: metricMeta.kind === 'weight' ? 1 : 0,
+                      }),
+                      metricSeriesName,
+                    ]}
                     contentStyle={{
                       background: 'hsl(var(--popover))',
                       border: '1px solid hsl(var(--border))',
@@ -288,23 +403,14 @@ export function ProgressDashboard({
                       fontSize: 12,
                     }}
                   />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Line
                     type="monotone"
-                    dataKey="maxWeight"
-                    name={t('maxLoadSeries', { unit: unitSuffix })}
-                    stroke="hsl(var(--primary))"
+                    dataKey="value"
+                    name={metricSeriesName}
+                    stroke={metricMeta.color}
                     strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="estimated1RM"
-                    name={t('oneRmSeries', { unit: unitSuffix })}
-                    stroke="#a855f7"
-                    strokeDasharray="4 4"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
+                    dot={{ r: 3, fill: metricMeta.color }}
+                    activeDot={{ r: 5 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -379,7 +485,12 @@ export function ProgressDashboard({
             <p className="py-8 text-center text-sm text-muted-foreground">{t('noWeeklyData')}</p>
           ) : (
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                minWidth={0}
+                initialDimension={{ width: 320, height: 288 }}
+              >
                 <BarChart
                   data={weeklyChartData}
                   margin={{ top: 5, right: 10, bottom: 0, left: -10 }}

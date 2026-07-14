@@ -38,7 +38,7 @@ const withPWA = require('@ducanh2912/next-pwa').default({
         // Static assets: CacheFirst (long-lived).
         urlPattern: ({ url }) =>
           url.pathname.startsWith('/_next/static/') ||
-          /\.(?:png|svg|webp|ico|woff2?)$/.test(url.pathname),
+          /\.(?:png|jpe?g|svg|webp|ico|woff2?)$/.test(url.pathname),
         handler: 'CacheFirst',
         options: {
           cacheName: 'static-assets',
@@ -56,6 +56,15 @@ const nextConfig = {
   reactStrictMode: true,
   async headers() {
     return [
+      {
+        source: '/exercise-media/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
       {
         source: '/sw.js',
         headers: [

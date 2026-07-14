@@ -21,6 +21,15 @@ export const settings = {
   barWeight: 'Bar weight ({unit})',
   platesPerSide: 'Plates per side ({unit})',
   platesPlaceholder: 'e.g. 25, 20, 15, 10, 5, 2.5, 1.25',
+  androidApp: {
+    title: 'Android app',
+    description: 'Download the latest self-hosted GymCoach APK for this server.',
+    version: 'Latest version: {version}',
+    download: 'Download Android APK',
+    originHint:
+      'The link uses the address you opened GymCoach from, including a local network address.',
+    unavailable: 'No Android APK has been published on this server yet.',
+  },
   gyms: {
     title: 'Gyms and equipment',
     description:

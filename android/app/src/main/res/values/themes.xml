@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GymCoach" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.GymCoach" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F7F8FA</item>
-        <item name="android:navigationBarColor">#F7F8FA</item>
+        <item name="android:windowBackground">#090B0A</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#090B0A</item>
+        <item name="android:navigationBarColor">#090B0A</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

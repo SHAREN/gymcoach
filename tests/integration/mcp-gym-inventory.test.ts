@@ -79,6 +79,7 @@ describe('GymCoach MCP gym inventory', () => {
     });
     const exercise = await db.exercise.create({
       data: {
+        id: '550e8400-e29b-41d4-a716-446655440100',
         userId: user.id,
         name: 'Chest Press',
         muscleGroup: 'CHEST',

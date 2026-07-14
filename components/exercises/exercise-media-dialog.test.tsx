@@ -4,6 +4,25 @@ import { describe, expect, it } from 'vitest';
 import { ExerciseMediaDialog } from './exercise-media-dialog';
 
 describe('ExerciseMediaDialog', () => {
+  it('uses the first local frame as the compact catalog thumbnail', () => {
+    render(
+      <ExerciseMediaDialog
+        exerciseName="Barbell bench press"
+        displayName="Barbell bench press"
+        equipmentType="BARBELL"
+        compact
+      />,
+    );
+
+    const trigger = screen.getByRole('button', {
+      name: 'View technique for Barbell bench press',
+    });
+    expect(trigger.querySelector('img')).toHaveAttribute(
+      'src',
+      expect.stringContaining('Barbell_Bench_Press_-_Medium_Grip/0.jpg'),
+    );
+  });
+
   it('shows the local start and finish frames with source information', async () => {
     const user = userEvent.setup();
     render(

@@ -58,8 +58,10 @@ async function seedMixedSession() {
   return { user, session };
 }
 
-async function exportRows(): Promise<{ header: string[]; rows: string[][] }> {
-  const res = await getCsv(new Request('http://test.local/api/history/csv'));
+async function exportRows(
+  url = 'http://test.local/api/history/csv',
+): Promise<{ header: string[]; rows: string[][] }> {
+  const res = await getCsv(new Request(url));
   expect(res.status).toBe(200);
   const body = (await res.text()).replace(/^﻿/, '');
   // Numeric-only cells in these fixtures: a plain split is safe.
@@ -112,5 +114,42 @@ describe('GET /api/history/csv - cardio columns (issue #144)', () => {
     expect(strengthRow![header.indexOf('external_load_kg')]).toBe('100');
     expect(strengthRow![header.indexOf('reps')]).toBe('5');
     expect(strengthRow![header.indexOf('volume_kg')]).toBe('500');
+  });
+
+  it('uses the browser timezone for month filtering and the local date column', async () => {
+    const user = await db.user.create({
+      data: { email: 'csv-timezone@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: { userId: user.id, name: 'Press', muscleGroup: 'CHEST', category: 'COMPOUND' },
+    });
+    const session = await db.session.create({
+      data: {
+        userId: user.id,
+        startedAt: new Date('2026-05-01T00:30:00Z'),
+        finishedAt: new Date('2026-05-01T01:00:00Z'),
+      },
+    });
+    await db.set.create({
+      data: {
+        sessionId: session.id,
+        exerciseId: exercise.id,
+        setNumber: 1,
+        weight: 50,
+        reps: 5,
+      },
+    });
+    actAs(user.id);
+
+    const april = await exportRows(
+      'http://test.local/api/history/csv?month=2026-04&timeZone=America%2FLos_Angeles',
+    );
+    expect(april.rows).toHaveLength(1);
+    expect(april.rows[0]?.[april.header.indexOf('session_date')]).toBe('2026-04-30');
+
+    const may = await exportRows(
+      'http://test.local/api/history/csv?month=2026-05&timeZone=America%2FLos_Angeles',
+    );
+    expect(may.rows).toHaveLength(0);
   });
 });

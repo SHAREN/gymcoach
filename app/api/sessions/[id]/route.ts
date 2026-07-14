@@ -48,13 +48,24 @@ export async function PUT(req: Request, props: Params) {
     const session = await ensureOwnership(params.id, userId);
     const data = await parseJsonBody(req, sessionUpdateSchema);
 
-    const updated = await db.session.update({
-      where: { id: params.id },
-      data: {
-        notes: data.notes ?? session.notes,
-        finishedAt: data.finish ? new Date() : session.finishedAt,
-        ...(data.sessionRpe !== undefined ? { sessionRpe: data.sessionRpe } : {}),
-      },
+    const updated = await db.$transaction(async (tx) => {
+      if (data.finish && data.discardSetIds?.length) {
+        await tx.set.deleteMany({
+          where: {
+            sessionId: params.id,
+            id: { in: data.discardSetIds },
+          },
+        });
+      }
+
+      return tx.session.update({
+        where: { id: params.id },
+        data: {
+          notes: data.notes ?? session.notes,
+          finishedAt: data.finish ? new Date() : session.finishedAt,
+          ...(data.sessionRpe !== undefined ? { sessionRpe: data.sessionRpe } : {}),
+        },
+      });
     });
     return NextResponse.json(updated);
   } catch (err) {

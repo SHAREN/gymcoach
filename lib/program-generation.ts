@@ -49,7 +49,6 @@ export async function generateProgram(
   userId: string,
   request: ProgramDesignRequest,
 ): Promise<ProgramGenerationResult> {
-  const provider = getLlmProvider();
   const context = await buildProgramDesignContext({
     userId,
     goal: request.goal,
@@ -66,6 +65,11 @@ export async function generateProgram(
     };
   }
 
+  if (!context.safety.canGenerateProgram) {
+    throw new LlmError(400, context.safety.blockingReasons.join(' '));
+  }
+
+  const provider = getLlmProvider();
   const userMessage = `ProgramDesignContext (JSON):\n${JSON.stringify(context, null, 2)}`;
 
   const { text } = await provider.complete({

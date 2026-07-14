@@ -14,3 +14,12 @@ docker/postgres-data
 coverage
 .turbo
 .vercel
+backups
+.codex-remote-attachments
+.codex-tmp-*
+.tmp-*
+*.dump
+*.bak
+.ai-bridge
+android
+data/android-release

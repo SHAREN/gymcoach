@@ -10,6 +10,10 @@ describe('setInputSchema', () => {
     expect(parsed.isDropSet).toBe(false);
   });
 
+  it('accepts an optional client-generated id for idempotent offline retries', () => {
+    expect(setInputSchema.parse({ ...valid, id: 'loc_set_123' }).id).toBe('loc_set_123');
+  });
+
   it('coerces numeric strings', () => {
     const parsed = setInputSchema.parse({
       exerciseId: 'ex1',

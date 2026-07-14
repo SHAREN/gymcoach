@@ -22,9 +22,11 @@ import { DeleteSessionButton } from '@/components/history/delete-session-button'
 import { ActivityTrackChart } from '@/components/history/activity-track-chart';
 import { getExerciseDisplayName } from '@/i18n/exercise-names';
 import { getTrainingDisplayName } from '@/i18n/training-names';
+import { buildHistoryHref, parseMonthKey } from '@/lib/history-calendar';
 
 interface Params {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ month?: string; day?: string; programId?: string }>;
 }
 
 export default async function HistorySessionPage(props: Params) {
@@ -33,7 +35,7 @@ export default async function HistorySessionPage(props: Params) {
   const exerciseT = await getTranslations('exercises');
   const locale = await getLocale();
   const format = await getFormatter();
-  const params = await props.params;
+  const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
   const auth = await requireSession();
 
   const [session, user] = await Promise.all([
@@ -69,6 +71,14 @@ export default async function HistorySessionPage(props: Params) {
   }
   const bodyweight = user?.bodyweight ?? null;
   const unit = user?.unit ?? 'KG';
+  const returnMonth = parseMonthKey(searchParams.month);
+  const historyHref = returnMonth
+    ? buildHistoryHref({
+        month: searchParams.month!,
+        day: searchParams.day,
+        programId: searchParams.programId,
+      })
+    : '/history';
 
   // Group sets by exercise (keeping the order of the first set per exercise).
   const exerciseOrder: string[] = [];
@@ -114,7 +124,7 @@ export default async function HistorySessionPage(props: Params) {
       <div className="mx-auto flex max-w-2xl flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
           <Button asChild variant="ghost" size="sm" className="-ml-2">
-            <Link href="/history">
+            <Link href={historyHref}>
               <ArrowLeft className="size-4" />
               <span className="ml-1">{t('title')}</span>
             </Link>

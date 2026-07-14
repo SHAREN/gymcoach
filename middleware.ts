@@ -13,6 +13,8 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/logout',
+  '/api/android/latest',
+  '/api/android/download',
 ]);
 
 export async function middleware(req: NextRequest) {

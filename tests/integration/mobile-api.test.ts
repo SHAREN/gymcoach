@@ -67,7 +67,10 @@ async function seedUser(email: string, password = 'secret123') {
     },
   });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
-  return { user, exercise, workout: program.workouts[0]!, gym };
+  const programExercise = await db.programExercise.findFirstOrThrow({
+    where: { workoutId: program.workouts[0]!.id },
+  });
+  return { user, exercise, workout: program.workouts[0]!, programExercise, gym };
 }
 
 async function loginDevice(email: string, password = 'secret123') {
@@ -96,15 +99,130 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
       activeProgram: { name: 'Offline block' },
+      exerciseHistoryByExerciseId: {},
     });
     expect(body.activeProgram.workouts[0].exercises[0]).toMatchObject({
       exerciseId: seeded.exercise.id,
       targetSets: 3,
       targetRIR: 2,
     });
+  });
+
+  it('returns up to 12 recent completed strength sessions per exercise', async () => {
+    const seeded = await seedUser('mobile-history@test.dev');
+    const cardio = await db.exercise.create({
+      data: {
+        userId: seeded.user.id,
+        name: 'Running',
+        muscleGroup: 'OTHER',
+        category: 'CARDIO',
+        equipmentType: 'OTHER',
+      },
+    });
+
+    for (let index = 0; index < 14; index += 1) {
+      const startedAt = new Date(Date.UTC(2026, 0, index + 1, 10));
+      await db.session.create({
+        data: {
+          id: `mobile_history_session_${index.toString().padStart(2, '0')}`,
+          userId: seeded.user.id,
+          workoutId: seeded.workout.id,
+          startedAt,
+          finishedAt: new Date(startedAt.getTime() + 3_600_000),
+          sets: {
+            create: [
+              {
+                exerciseId: seeded.exercise.id,
+                setNumber: 1,
+                weight: 20,
+                reps: 10,
+                rir: 4,
+                isWarmup: true,
+                completedAt: new Date(startedAt.getTime() + 60_000),
+              },
+              {
+                exerciseId: seeded.exercise.id,
+                setNumber: 3,
+                weight: 80 + index,
+                reps: 6,
+                rir: 1,
+                isDropSet: true,
+                completedAt: new Date(startedAt.getTime() + 180_000),
+              },
+              {
+                exerciseId: seeded.exercise.id,
+                setNumber: 2,
+                weight: 75 + index,
+                reps: 8,
+                rir: 2,
+                completedAt: new Date(startedAt.getTime() + 120_000),
+              },
+              {
+                exerciseId: cardio.id,
+                setNumber: 1,
+                weight: 0,
+                reps: 1,
+                durationSec: 1_800,
+                completedAt: new Date(startedAt.getTime() + 240_000),
+              },
+            ],
+          },
+        },
+      });
+    }
+
+    const openStartedAt = new Date('2026-02-01T10:00:00.000Z');
+    await db.session.create({
+      data: {
+        id: 'mobile_history_open_session',
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        startedAt: openStartedAt,
+        sets: {
+          create: {
+            exerciseId: seeded.exercise.id,
+            setNumber: 1,
+            weight: 100,
+            reps: 5,
+            rir: 0,
+            completedAt: new Date(openStartedAt.getTime() + 60_000),
+          },
+        },
+      },
+    });
+
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const response = await bootstrap(
+      new Request('http://test.local/api/mobile/bootstrap', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const history = body.exerciseHistoryByExerciseId[seeded.exercise.id];
+
+    expect(history).toHaveLength(12);
+    expect(history.map((session: { sessionId: string }) => session.sessionId)).toEqual(
+      Array.from(
+        { length: 12 },
+        (_, offset) => `mobile_history_session_${(13 - offset).toString().padStart(2, '0')}`,
+      ),
+    );
+    expect(history[0]).toEqual({
+      sessionId: 'mobile_history_session_13',
+      startedAt: '2026-01-14T10:00:00.000Z',
+      sets: [
+        { setNumber: 2, weight: 88, reps: 8, rir: 2, isDropSet: false },
+        { setNumber: 3, weight: 93, reps: 6, rir: 1, isDropSet: true },
+      ],
+    });
+    expect(body.exerciseHistoryByExerciseId[cardio.id]).toBeUndefined();
+    expect(
+      history.some((session: { sessionId: string }) => session.sessionId.includes('open')),
+    ).toBe(false);
   });
 
   it('applies an offline workout exactly once and preserves client timestamps', async () => {
@@ -237,6 +355,111 @@ describe('Android mobile API', () => {
       error: 'Invalid workout.',
     });
     expect(await db.session.count({ where: { userId: owner.user.id } })).toBe(0);
+  });
+
+  it('updates an owned planned set count exactly once without changing other fields', async () => {
+    const seeded = await seedUser('mobile-target-sets@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const operation = {
+      operationId: 'target_sets_update_01',
+      type: 'UPDATE_TARGET_SETS',
+      programExerciseId: seeded.programExercise.id,
+      previousTargetSets: 3,
+      targetSets: 5,
+    };
+
+    const first = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect(first.status).toBe(200);
+    expect((await first.json()).results[0]).toMatchObject({
+      operationId: operation.operationId,
+      status: 'APPLIED',
+      result: {
+        entityType: 'PROGRAM_EXERCISE',
+        entityId: seeded.programExercise.id,
+        previousTargetSets: 3,
+        targetSets: 5,
+        changed: true,
+      },
+    });
+
+    const repeated = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await repeated.json()).results[0]).toMatchObject({
+      status: 'DUPLICATE',
+      result: { previousTargetSets: 3, targetSets: 5, changed: true },
+    });
+
+    const saved = await db.programExercise.findUniqueOrThrow({
+      where: { id: seeded.programExercise.id },
+    });
+    expect(saved).toMatchObject({
+      targetSets: 5,
+      targetRepsMin: seeded.programExercise.targetRepsMin,
+      targetRepsMax: seeded.programExercise.targetRepsMax,
+      targetRIR: seeded.programExercise.targetRIR,
+      restSec: seeded.programExercise.restSec,
+    });
+  });
+
+  it('rejects stale or foreign planned set updates', async () => {
+    const owner = await seedUser('mobile-target-owner@test.dev');
+    const stranger = await seedUser('mobile-target-stranger@test.dev');
+    const { accessToken } = await loginDevice(owner.user.email);
+
+    const stale = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'target_sets_stale_01',
+              type: 'UPDATE_TARGET_SETS',
+              programExerciseId: owner.programExercise.id,
+              previousTargetSets: 4,
+              targetSets: 5,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await stale.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: expect.stringContaining('changed from 4 to 3'),
+    });
+
+    const foreign = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'target_sets_foreign_01',
+              type: 'UPDATE_TARGET_SETS',
+              programExerciseId: stranger.programExercise.id,
+              previousTargetSets: 3,
+              targetSets: 5,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await foreign.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'Program exercise not found.',
+    });
+    expect(
+      (await db.programExercise.findUniqueOrThrow({ where: { id: owner.programExercise.id } }))
+        .targetSets,
+    ).toBe(3);
+    expect(
+      (await db.programExercise.findUniqueOrThrow({ where: { id: stranger.programExercise.id } }))
+        .targetSets,
+    ).toBe(3);
   });
 
   it('stops an ordered batch after the first rejected operation', async () => {

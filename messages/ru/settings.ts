@@ -24,6 +24,15 @@ export const settings = {
   barWeight: 'Вес грифа ({unit})',
   platesPerSide: 'Блины с каждой стороны ({unit})',
   platesPlaceholder: 'например: 25, 20, 15, 10, 5, 2.5, 1.25',
+  androidApp: {
+    title: 'Приложение Android',
+    description: 'Скачайте последнюю APK-версию GymCoach для этого сервера.',
+    version: 'Последняя версия: {version}',
+    download: 'Скачать APK для Android',
+    originHint:
+      'Ссылка использует адрес, по которому открыт GymCoach, включая адрес в локальной сети.',
+    unavailable: 'На этом сервере APK для Android ещё не опубликован.',
+  },
   gyms: {
     title: 'Залы и оборудование',
     description:

@@ -222,6 +222,71 @@ async function applyOperationInTransaction(
         deleted: true,
       };
     }
+    case 'UPDATE_TARGET_SETS': {
+      const current = await tx.programExercise.findFirst({
+        where: {
+          id: operation.programExerciseId,
+          workout: { program: { userId } },
+        },
+        select: { id: true, targetSets: true },
+      });
+      if (!current) throw new ApiError(404, 'Program exercise not found.');
+
+      if (current.targetSets === operation.targetSets) {
+        return {
+          entityType: 'PROGRAM_EXERCISE',
+          entityId: current.id,
+          previousTargetSets: current.targetSets,
+          targetSets: current.targetSets,
+          changed: false,
+        };
+      }
+      if (current.targetSets !== operation.previousTargetSets) {
+        throw new ApiError(
+          409,
+          `Target set count changed from ${operation.previousTargetSets} to ${current.targetSets}. Refresh the program and try again.`,
+        );
+      }
+
+      const updated = await tx.programExercise.updateMany({
+        where: {
+          id: current.id,
+          targetSets: operation.previousTargetSets,
+        },
+        data: { targetSets: operation.targetSets },
+      });
+      if (updated.count !== 1) {
+        const latest = await tx.programExercise.findFirst({
+          where: {
+            id: operation.programExerciseId,
+            workout: { program: { userId } },
+          },
+          select: { targetSets: true },
+        });
+        if (!latest) throw new ApiError(404, 'Program exercise not found.');
+        if (latest.targetSets === operation.targetSets) {
+          return {
+            entityType: 'PROGRAM_EXERCISE',
+            entityId: current.id,
+            previousTargetSets: latest.targetSets,
+            targetSets: latest.targetSets,
+            changed: false,
+          };
+        }
+        throw new ApiError(
+          409,
+          `Target set count changed from ${operation.previousTargetSets} to ${latest.targetSets}. Refresh the program and try again.`,
+        );
+      }
+
+      return {
+        entityType: 'PROGRAM_EXERCISE',
+        entityId: current.id,
+        previousTargetSets: current.targetSets,
+        targetSets: operation.targetSets,
+        changed: true,
+      };
+    }
     case 'FINISH_SESSION': {
       const existing = await tx.session.findFirst({ where: { id: operation.sessionId, userId } });
       if (!existing) throw new ApiError(404, 'Session not found.');

@@ -10,11 +10,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         BootstrapCacheEntity::class,
+        ProgressCacheEntity::class,
         LocalSessionEntity::class,
         LocalSetEntity::class,
         SyncOutboxEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -28,7 +29,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 context.applicationContext,
                 GymCoachDatabase::class.java,
                 "gymcoach-android.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -36,6 +37,18 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_sync_outbox_operationId " +
                         "ON sync_outbox(operationId)",
+                )
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS progress_cache (" +
+                        "`key` INTEGER NOT NULL, " +
+                        "payloadJson TEXT NOT NULL, " +
+                        "updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`key`))",
                 )
             }
         }

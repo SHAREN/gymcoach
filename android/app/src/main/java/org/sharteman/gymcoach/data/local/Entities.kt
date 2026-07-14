@@ -12,6 +12,13 @@ data class BootstrapCacheEntity(
     val updatedAtEpochMs: Long,
 )
 
+@Entity(tableName = "progress_cache")
+data class ProgressCacheEntity(
+    @PrimaryKey val key: Int = 1,
+    val payloadJson: String,
+    val updatedAtEpochMs: Long,
+)
+
 @Entity(
     tableName = "local_sessions",
     indices = [Index("workoutId"), Index("finishedAt")],

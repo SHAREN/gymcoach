@@ -1,5 +1,10 @@
 import type { Exercise, ProgramExercise, SetAutoregulationMode } from '@/lib/prisma-client';
-import { weightIncrement } from '@/lib/progression';
+import {
+  suggestNextWeight,
+  weightIncrement,
+  type ReadinessSignal,
+  type SuggestionReason,
+} from '@/lib/progression';
 import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
@@ -34,7 +39,12 @@ export type IntraSetRecommendationReason =
   | 'adjust-reps'
   | 'reduce-load'
   | 'increase-load'
-  | 'bodyweight-adjust-reps';
+  | 'bodyweight-adjust-reps'
+  | 'progress-load'
+  | 'progress-reps'
+  | 'readiness-hold'
+  | 'readiness-deload'
+  | 'planned-deload';
 
 export interface IntraSetRecommendation {
   mode: SetAutoregulationMode;
@@ -62,6 +72,87 @@ interface RecommendationInput {
   // Optional session-only ceiling used while recalibrating after a long break.
   maxWeight?: number | null;
   loadConstraints?: GymLoadConstraints | null;
+}
+
+interface FirstWorkingSetRecommendationInput {
+  programExercise: ProgramExercise & { exercise: Exercise };
+  previousSets: IntraSetCompletedSet[];
+  readiness?: ReadinessSignal | null;
+  plannedDeload?: boolean;
+  loadConstraints?: GymLoadConstraints | null;
+}
+
+export function recommendFirstWorkingSet({
+  programExercise,
+  previousSets,
+  readiness,
+  plannedDeload = false,
+  loadConstraints,
+}: FirstWorkingSetRecommendationInput): IntraSetRecommendation | null {
+  if (programExercise.exercise.category === 'CARDIO') return null;
+
+  const workingSets = previousSets.filter((set) => !set.isWarmup && !set.isDropSet);
+  if (workingSets.length === 0) return null;
+
+  const suggestion = suggestNextWeight(
+    programExercise,
+    workingSets,
+    readiness,
+    plannedDeload,
+    loadConstraints,
+  );
+  if (suggestion.weight == null || suggestion.workingWeight == null) return null;
+
+  const repsAtWorkingWeight = Math.max(
+    ...workingSets.filter((set) => set.weight === suggestion.workingWeight).map((set) => set.reps),
+  );
+  const { reps, reason } = firstSetTarget(
+    suggestion.reason,
+    repsAtWorkingWeight,
+    programExercise.targetRepsMin,
+    programExercise.targetRepsMax,
+  );
+  const knownRirSets = workingSets.filter((set) => set.rir != null).length;
+
+  return {
+    mode: programExercise.autoregulationMode,
+    weight: suggestion.weight,
+    reps,
+    rir: programExercise.targetRIR,
+    reason,
+    predictedRepsAtSameLoad: reps,
+    fatigueLoss: 0,
+    confidence:
+      knownRirSets !== workingSets.length ? 'low' : workingSets.length >= 3 ? 'high' : 'medium',
+  };
+}
+
+function firstSetTarget(
+  suggestionReason: SuggestionReason,
+  previousReps: number,
+  targetRepsMin: number,
+  targetRepsMax: number,
+): { reps: number; reason: IntraSetRecommendationReason } {
+  if (suggestionReason === 'progression') {
+    return { reps: targetRepsMin, reason: 'progress-load' };
+  }
+  if (suggestionReason === 'readiness-deload') {
+    return { reps: targetRepsMin, reason: 'readiness-deload' };
+  }
+  if (suggestionReason === 'planned-deload') {
+    return { reps: targetRepsMin, reason: 'planned-deload' };
+  }
+
+  const boundedPrevious = clamp(previousReps, targetRepsMin, targetRepsMax);
+  if (suggestionReason === 'readiness-hold') {
+    return { reps: boundedPrevious, reason: 'readiness-hold' };
+  }
+
+  const progressedReps = clamp(previousReps + 1, targetRepsMin, targetRepsMax);
+  return {
+    reps: progressedReps,
+    reason: progressedReps > previousReps ? 'progress-reps' : 'hold-load',
+  };
 }
 
 export function defaultIntraSetConfig(

@@ -1,6 +1,6 @@
 export const navigation = {
   home: 'Home',
-  history: 'History',
+  history: 'Calendar',
   progress: 'Progress',
   coach: 'Coach',
   chat: 'Chat',

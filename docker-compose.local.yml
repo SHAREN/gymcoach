@@ -1,0 +1,13 @@
+# Local override for Renat's Home PC install.
+# Use with:
+# docker compose -f docker-compose.prod.yml -f docker-compose.local.yml up -d --build
+
+services:
+  app:
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-demo}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+    # Replace the VPS-only 3010 binding instead of merging both host ports.
+    ports: !override
+      - '0.0.0.0:3030:3000'

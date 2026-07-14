@@ -29,6 +29,26 @@ export const session = {
   setUpdateError: 'Could not update the set.',
   finished: 'Session finished.',
   finishError: 'Could not finish the session.',
+  finishSyncError: 'Some sets are not saved yet. Check the connection and try again.',
+  controls: {
+    open: 'Manage {name}',
+    cancel: 'Cancel',
+    description: 'Session timing and actions.',
+    start: 'Start',
+    duration: 'Duration',
+    complete: 'Complete',
+    pause: 'Pause',
+    paused: 'Session paused. You can resume it from the home page.',
+    reset: 'Reset',
+    resetTitle: 'Reset this session?',
+    resetDescription:
+      'All sets recorded in this session will be permanently deleted. This cannot be undone.',
+    resetWait: 'Reset in {seconds}s',
+    resetConfirm: 'Reset session',
+    resetting: 'Resetting...',
+    resetSuccess: 'Session reset.',
+    resetError: 'Could not reset the session.',
+  },
   rest: {
     title: 'Rest',
     seconds: 's',
@@ -44,6 +64,13 @@ export const session = {
       'reduce-load': 'Reduce the load to preserve the programmed target.',
       'increase-load': 'The previous set was easier than planned; add one load step.',
       'bodyweight-adjust-reps': 'Load cannot be reduced below bodyweight; adjust reps instead.',
+      'progress-load':
+        'The previous session reached the top of the programmed range; add one available load step.',
+      'progress-reps':
+        'Keep the previous working load and target one more repetition within the programmed range.',
+      'readiness-hold': "Today's readiness calls for holding the previous working load.",
+      'readiness-deload': "Today's readiness reduces the first-set load.",
+      'planned-deload': 'The planned deload reduces the first-set load.',
     },
   },
   returnToTraining: {

@@ -8,6 +8,7 @@ import { ProfileSection } from '@/components/settings/profile-section';
 import { ImportSection } from '@/components/settings/import-section';
 import { GymProfilesSection } from '@/components/settings/gym-profiles-section';
 import { McpSection } from '@/components/settings/mcp-section';
+import { AndroidAppSection } from '@/components/settings/android-app-section';
 
 export default async function SettingsPage() {
   const t = await getTranslations('settings');
@@ -69,6 +70,8 @@ export default async function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <AndroidAppSection />
 
         <ProfileSection
           initial={{

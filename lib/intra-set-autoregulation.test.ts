@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
-import { defaultIntraSetConfig, recommendNextIntraSet } from '@/lib/intra-set-autoregulation';
+import {
+  defaultIntraSetConfig,
+  recommendFirstWorkingSet,
+  recommendNextIntraSet,
+} from '@/lib/intra-set-autoregulation';
 
 const squat: Exercise = {
   id: 'squat',
@@ -55,6 +59,74 @@ describe('intra-set autoregulation defaults', () => {
     expect(defaultIntraSetConfig(squat).fatigueRate).toBeGreaterThan(
       defaultIntraSetConfig(curl).fatigueRate,
     );
+  });
+});
+
+describe('recommendFirstWorkingSet', () => {
+  it('adds one load step and resets reps when every prior working set hit the top', () => {
+    const result = recommendFirstWorkingSet({
+      programExercise: makePe(squat),
+      previousSets: [
+        { weight: 100, reps: 12, rir: 2 },
+        { weight: 100, reps: 12, rir: 2 },
+        { weight: 100, reps: 12, rir: 2 },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      weight: 102.5,
+      reps: 8,
+      rir: 2,
+      reason: 'progress-load',
+      fatigueLoss: 0,
+      confidence: 'high',
+    });
+  });
+
+  it('holds the working load and targets one more rep inside the program range', () => {
+    const result = recommendFirstWorkingSet({
+      programExercise: makePe(squat),
+      previousSets: [
+        { weight: 100, reps: 10, rir: 2 },
+        { weight: 100, reps: 9, rir: 1 },
+        { weight: 100, reps: 8, rir: 1 },
+        { weight: 80, reps: 15, rir: 0, isDropSet: true },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      weight: 100,
+      reps: 11,
+      rir: 2,
+      reason: 'progress-reps',
+    });
+  });
+
+  it('does not increase the load or reps when recent readiness requires a hold', () => {
+    const result = recommendFirstWorkingSet({
+      programExercise: makePe(squat),
+      previousSets: [
+        { weight: 100, reps: 12, rir: 2 },
+        { weight: 100, reps: 12, rir: 2 },
+        { weight: 100, reps: 12, rir: 2 },
+      ],
+      readiness: { readiness: 2, soreness: null, ageHours: 4 },
+    });
+
+    expect(result).toMatchObject({
+      weight: 100,
+      reps: 12,
+      reason: 'readiness-hold',
+    });
+  });
+
+  it('lowers confidence when previous RIR is missing', () => {
+    const result = recommendFirstWorkingSet({
+      programExercise: makePe(curl),
+      previousSets: [{ weight: 20, reps: 10, rir: null }],
+    });
+
+    expect(result?.confidence).toBe('low');
   });
 });
 

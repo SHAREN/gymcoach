@@ -65,11 +65,23 @@ export function ExerciseMediaDialog({
             type="button"
             variant="ghost"
             size="icon"
-            className="min-h-tap min-w-tap"
+            className="relative size-14 shrink-0 overflow-hidden rounded-md border bg-muted p-0 hover:bg-muted"
             aria-label={t('open', { name: displayName })}
             title={t('button')}
           >
-            <CirclePlay className="size-4" />
+            {media ? (
+              <Image
+                src={media.frames[0]}
+                alt=""
+                fill
+                unoptimized
+                sizes="56px"
+                className="object-cover transition-transform hover:scale-105"
+                aria-hidden="true"
+              />
+            ) : (
+              <CirclePlay className="size-4 text-muted-foreground" />
+            )}
           </Button>
         ) : (
           <Button

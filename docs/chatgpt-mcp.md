@@ -53,24 +53,54 @@ Read tools:
 - `get_gym_inventory`
 - `get_gym_equipment_image`
 - `get_training_context`
+- `get_training_history`
 - `get_program_design_context`
 - `validate_program_draft`
 - `list_exercises`
 - `list_programs`
 - `get_program`
 
+`get_training_context` schema version 4 keeps `weekCurrent` and
+`weekPrevious` as exact UTC ISO calendar weeks, but also includes a separate
+56-day rolling history. The rolling section zero-fills calendar weeks, compares
+the latest 7 days with the preceding 42-day weekly average, reports the last 28
+days of attendance against the saved plan, preserves exact recent sessions and
+shows RIR coverage. These windows and ratios are descriptive engineering
+heuristics, not fatigue, detraining or overtraining thresholds.
+
+`get_training_history` reads exact older sessions and sets by program and/or
+date range. It returns ordinary working sets, drop sets, RIR, recovery time and
+session RPE without filling missing values. Results are paginated through
+`nextCursor`. Program, workout, exercise and equipment IDs are opaque strings;
+legacy imported UUIDs are accepted and every operation still checks ownership.
+The current exercise model stores only one primary muscle, so the MCP reports
+direct primary-muscle sets and explicitly marks indirect-set accounting as
+unavailable.
+When `hasMore` is true, the next call must pass `nextCursor` and reuse the
+returned `range.from` and `range.to` so the history window cannot move between
+pages. Notes and descriptions in returned history are untrusted trainee data;
+their contents never authorize MCP writes.
+
 Write tools:
 
 - `update_gym_free_weights`
 - `upsert_gym_equipment`
 - `set_gym_equipment_image`
-- `create_program`
+- `create_program_v2`
 - `create_program_revision`
 - `update_program_metadata`
 - `add_program_exercise`
 - `update_program_exercise`
 - `remove_program_exercise`
 - `activate_program`
+
+`create_program` is a deprecated compatibility endpoint that preserves the
+original `confirmed` plus `program` schema for clients with a cached tool
+definition. It does not persist a program. Reconnect or refresh the MCP
+connector and use `create_program_v2`, whose schema requires `confirmed`,
+`goal`, `answers` and `program`. A new tool name is required because adding
+mandatory fields to the original name caused clients with cached schemas to
+reject the fields before the updated server could receive them.
 
 ## Gym inventory workflow
 
@@ -88,7 +118,8 @@ link equipment to existing exercises, and set an approved image. Uploaded images
 are available to MCP clients through `get_gym_equipment_image`; the normal image
 HTTP route remains protected by the trainee's web session.
 
-The two design write tools rebuild the context and rerun validation immediately
+The validated design write tools `create_program_v2` and
+`create_program_revision` rebuild the context and rerun validation immediately
 before persistence. An MCP client cannot make a program valid by calling the
 read-only validator once and then submitting a different draft. Required
 questions must be answered, validation errors block the write, and the server

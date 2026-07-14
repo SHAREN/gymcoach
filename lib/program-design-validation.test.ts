@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { summarizeMcpTrainingHistory } from '@/lib/mcp/training-history';
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import type { ProgramDesignContext } from '@/lib/program-design-context';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
@@ -14,13 +15,23 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       trainingExperience: 'INTERMEDIATE',
       weeklyFrequency: 3,
       sessionDurationMin: 75,
+      healthStatus: 'NO_RELEVANT_CONCERNS',
       phaseLengthWeeks: 6,
+      availableDays: [1, 3, 5],
+      scheduleConstraints: null,
       limitations: 'none',
       equipmentAccess: null,
       preferences: null,
+      recentTrainingBackground: null,
+      goalPriorities: null,
+      concurrentTraining: null,
+      techniqueAndRirFamiliarity: null,
+      changesSinceLastProgram: null,
       postBlockAssessment: null,
     },
     missingQuestions: [],
+    recommendedQuestions: [],
+    safety: { healthStatus: 'NO_RELEVANT_CONCERNS', canGenerateProgram: true, blockingReasons: [] },
     profile: {
       displayName: null,
       sex: null,
@@ -41,8 +52,14 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         deloadActive: false,
       },
     },
-    program: { source: null, targetVolumeByMuscle: {} },
+    program: { source: null, targetVolumeByMuscle: {}, personalVolumeTargets: {} },
     history: {
+      rolling: summarizeMcpTrainingHistory([], {
+        from: new Date('2026-05-15T00:00:00.000Z'),
+        to: new Date('2026-07-13T00:00:00.000Z'),
+        now: new Date('2026-07-13T00:00:00.000Z'),
+        plannedWeeklyFrequency: 3,
+      }),
       currentWeek: { weekStart: '2026-07-13', sessions: [] },
       previousWeek: null,
       actualHardSetsByMuscle: { currentWeek: {}, previousWeek: {} },
@@ -73,6 +90,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       dumbbellWeights: [10, 12, 14],
       plateWeights: [1.25, 2.5, 5],
       barWeights: [20],
+      equipment: [],
       exerciseConfigs: [],
     },
     availableExercises: [
@@ -174,6 +192,7 @@ describe('program-design validation', () => {
       },
       program: {
         source: null,
+        personalVolumeTargets: {},
         targetVolumeByMuscle: {
           CHEST: { weeklySets: 6, frequency: 2, maxSetsInOneWorkout: 3 },
         },
@@ -295,5 +314,28 @@ describe('program-design validation', () => {
         'compound-drop-set',
       ]),
     );
+  });
+
+  it('blocks automatic programming when medical clearance is needed', () => {
+    const result = validateProgramDesign(
+      program([]),
+      context({
+        safety: {
+          healthStatus: 'NEEDS_MEDICAL_CLEARANCE',
+          canGenerateProgram: false,
+          blockingReasons: ['Medical clearance is required.'],
+        },
+      }),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.code)).toContain('medical-clearance-required');
+  });
+
+  it('rejects a workout assigned outside the available weekdays', () => {
+    const draft = program([]);
+    draft.workouts[0]!.dayOfWeek = 2;
+    const result = validateProgramDesign(draft, context());
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.code)).toContain('training-day-unavailable');
   });
 });

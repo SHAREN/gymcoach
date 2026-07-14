@@ -9,7 +9,28 @@ export const progress = {
   firstSession: 'Записать первую тренировку',
   dashboard: {
     maxLoad: 'Максимальный вес и расчётный 1ПМ',
+    exerciseProgress: 'Динамика упражнения',
     chooseExercise: 'Выберите упражнение',
+    metric: 'Метрика',
+    period: 'Период',
+    metricSeries: '{metric} ({unit})',
+    metrics: {
+      maxWeight: 'Максимальный вес',
+      estimated1RM: 'Расчётный 1ПМ',
+      totalVolume: 'Общий объём',
+      topSetReps: 'Повторы с максимальным весом',
+      maxReps: 'Максимум повторов в подходе',
+      totalReps: 'Всего повторов за тренировку',
+    },
+    ranges: {
+      '1w': 'Последние 7 дней',
+      '1m': 'Последний месяц',
+      '2m': 'Последние 2 месяца',
+      '4m': 'Последние 4 месяца',
+      '6m': 'Последние 6 месяцев',
+      '1y': 'Последний год',
+      all: 'Всё время',
+    },
     maxLoadSeries: 'Максимальный вес ({unit})',
     oneRmSeries: 'Расчётный 1ПМ ({unit})',
     trainingLoads: 'Тренировочные веса',
@@ -24,11 +45,11 @@ export const progress = {
     belowMev: 'Ниже MEV',
     inRange: 'В диапазоне',
     aboveMrv: 'Выше MRV',
-    noProgress:
-      'Расчётный 1ПМ не вырос по итогам последних {count} тренировок за {weeks} недель.',
+    noProgress: 'Расчётный 1ПМ не вырос по итогам последних {count} тренировок за {weeks} недель.',
     noProgressAdvice:
       'Расчётный 1ПМ не вырос по итогам последних {count} тренировок за {weeks} недель. Рассмотрите разгрузку, смену диапазона повторов или упражнения.',
     noExerciseData: 'Для этого упражнения пока нет данных.',
+    noExerciseDataInRange: 'За выбранный период данных по этому упражнению нет.',
     show: 'Показать',
     hide: 'Скрыть',
     loadingDescription:

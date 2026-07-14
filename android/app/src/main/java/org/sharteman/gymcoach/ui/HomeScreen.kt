@@ -13,9 +13,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.AlertDialog
@@ -45,6 +47,7 @@ import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.repository.SyncIssue
+import org.sharteman.gymcoach.data.repository.SyncIssueKind
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,10 +62,14 @@ fun HomeScreen(
     onSync: () -> Unit,
     onRetrySyncIssue: () -> Unit,
     onDiscardSyncIssue: () -> Unit,
+    onProgress: () -> Unit,
     onWebPanel: () -> Unit,
+    currentVersion: String,
+    onDownloadUpdate: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -73,6 +80,18 @@ fun HomeScreen(
                     }
                     IconButton(onClick = onWebPanel, enabled = online) {
                         Icon(Icons.Outlined.Language, contentDescription = stringResource(R.string.web_panel))
+                    }
+                    IconButton(onClick = onProgress) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.TrendingUp,
+                            contentDescription = stringResource(R.string.progress_title),
+                        )
+                    }
+                    IconButton(onClick = { showUpdateDialog = true }, enabled = online) {
+                        Icon(
+                            Icons.Outlined.SystemUpdateAlt,
+                            contentDescription = stringResource(R.string.update_app),
+                        )
                     }
                     IconButton(onClick = onLogout, enabled = pendingCount == 0) {
                         Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = stringResource(R.string.logout))
@@ -132,13 +151,30 @@ fun HomeScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
-                            Text(syncIssue.message, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                if (syncIssue.kind == SyncIssueKind.SESSION_NOT_FOUND) {
+                                    stringResource(R.string.sync_issue_session_not_found)
+                                } else {
+                                    syncIssue.message
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = onRetrySyncIssue) {
-                                    Text(stringResource(R.string.retry))
+                                if (syncIssue.canRetry) {
+                                    Button(onClick = onRetrySyncIssue) {
+                                        Text(stringResource(R.string.retry))
+                                    }
                                 }
                                 TextButton(onClick = { confirmDiscard = true }) {
-                                    Text(stringResource(R.string.discard_change))
+                                    Text(
+                                        stringResource(
+                                            if (syncIssue.kind == SyncIssueKind.SESSION_NOT_FOUND) {
+                                                R.string.discard_session_changes
+                                            } else {
+                                                R.string.discard_change
+                                            },
+                                        ),
+                                    )
                                 }
                             }
                         }
@@ -179,8 +215,28 @@ fun HomeScreen(
     if (confirmDiscard) {
         AlertDialog(
             onDismissRequest = { confirmDiscard = false },
-            title = { Text(stringResource(R.string.discard_change)) },
-            text = { Text(stringResource(R.string.discard_change_warning)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (syncIssue?.kind == SyncIssueKind.SESSION_NOT_FOUND) {
+                            R.string.discard_session_changes
+                        } else {
+                            R.string.discard_change
+                        },
+                    ),
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (syncIssue?.kind == SyncIssueKind.SESSION_NOT_FOUND) {
+                            R.string.discard_session_changes_warning
+                        } else {
+                            R.string.discard_change_warning
+                        },
+                    ),
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -191,6 +247,30 @@ fun HomeScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmDiscard = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+    if (showUpdateDialog) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            title = { Text(stringResource(R.string.update_app)) },
+            text = {
+                Text(stringResource(R.string.update_app_description, currentVersion))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUpdateDialog = false
+                        onDownloadUpdate()
+                    },
+                ) {
+                    Text(stringResource(R.string.download_latest_apk))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateDialog = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             },

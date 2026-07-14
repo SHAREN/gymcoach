@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@/prisma/generated/client';
 import { db } from '@/lib/db';
 import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
@@ -38,26 +39,53 @@ export async function POST(req: Request, props: Params) {
     }
     const isCardio = exercise.category === 'CARDIO';
 
-    const created = await db.set.create({
-      data: {
-        sessionId: params.id,
-        exerciseId: data.exerciseId,
-        setNumber: data.setNumber,
-        // Cardio sets store weight = 0 / reps = 1 by convention (the columns
-        // are NOT NULL); the UI never shows them for CARDIO exercises.
-        weight: isCardio ? 0 : data.weight,
-        reps: isCardio ? 1 : data.reps,
-        rir: isCardio ? null : (data.rir ?? null),
-        durationSec: isCardio ? data.durationSec : null,
-        distanceM: isCardio ? (data.distanceM ?? null) : null,
-        avgHr: isCardio ? (data.avgHr ?? null) : null,
-        maxHr: isCardio ? (data.maxHr ?? null) : null,
-        notes: data.notes ?? null,
-        isWarmup: data.isWarmup ?? false,
-        isDropSet: data.isDropSet ?? false,
-        recoverySec: data.recoverySec ?? null,
-      },
-    });
+    const createData = {
+      ...(data.id ? { id: data.id } : {}),
+      sessionId: params.id,
+      exerciseId: data.exerciseId,
+      setNumber: data.setNumber,
+      // Cardio sets store weight = 0 / reps = 1 by convention (the columns
+      // are NOT NULL); the UI never shows them for CARDIO exercises.
+      weight: isCardio ? 0 : data.weight,
+      reps: isCardio ? 1 : data.reps,
+      rir: isCardio ? null : (data.rir ?? null),
+      durationSec: isCardio ? (data.durationSec ?? null) : null,
+      distanceM: isCardio ? (data.distanceM ?? null) : null,
+      avgHr: isCardio ? (data.avgHr ?? null) : null,
+      maxHr: isCardio ? (data.maxHr ?? null) : null,
+      notes: data.notes ?? null,
+      isWarmup: data.isWarmup ?? false,
+      isDropSet: data.isDropSet ?? false,
+      recoverySec: data.recoverySec ?? null,
+    };
+
+    if (data.id) {
+      const existing = await db.set.findUnique({ where: { id: data.id } });
+      if (existing) {
+        assertIdempotentSet(existing, createData, params.id);
+        return NextResponse.json(existing);
+      }
+    }
+
+    let created;
+    try {
+      created = await db.set.create({
+        data: createData,
+      });
+    } catch (error) {
+      if (
+        data.id &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await db.set.findUnique({ where: { id: data.id } });
+        if (existing) {
+          assertIdempotentSet(existing, createData, params.id);
+          return NextResponse.json(existing);
+        }
+      }
+      throw error;
+    }
     // Best-effort: the set is already committed, so a failure here must never
     // fail the request (a 500 would make the offline sync retry the POST and
     // duplicate the set). An unstamped goal self-heals on the next achieving
@@ -71,5 +99,46 @@ export async function POST(req: Request, props: Params) {
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     return handleApiError(err);
+  }
+}
+
+function assertIdempotentSet(
+  existing: {
+    sessionId: string;
+    exerciseId: string;
+    setNumber: number;
+    weight: number;
+    reps: number;
+    rir: number | null;
+    durationSec: number | null;
+    distanceM: number | null;
+    avgHr: number | null;
+    maxHr: number | null;
+    notes: string | null;
+    isWarmup: boolean;
+    isDropSet: boolean;
+    recoverySec: number | null;
+  },
+  expected: Omit<typeof existing, never> & { id?: string },
+  sessionId: string,
+) {
+  const matches =
+    existing.sessionId === sessionId &&
+    existing.exerciseId === expected.exerciseId &&
+    existing.setNumber === expected.setNumber &&
+    existing.weight === expected.weight &&
+    existing.reps === expected.reps &&
+    existing.rir === expected.rir &&
+    existing.durationSec === expected.durationSec &&
+    existing.distanceM === expected.distanceM &&
+    existing.avgHr === expected.avgHr &&
+    existing.maxHr === expected.maxHr &&
+    existing.notes === expected.notes &&
+    existing.isWarmup === expected.isWarmup &&
+    existing.isDropSet === expected.isDropSet &&
+    existing.recoverySec === expected.recoverySec;
+
+  if (!matches) {
+    throw new ApiError(409, 'Set ID was already used with different data.');
   }
 }

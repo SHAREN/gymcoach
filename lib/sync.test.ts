@@ -70,4 +70,69 @@ describe('flushPendingSets', () => {
       expect.objectContaining({ status: 'synced', serverId: 'server-1' }),
     );
   });
+
+  it('retries an interrupted first-set POST with the same client id', async () => {
+    const set: PendingSet = {
+      localId: 'loc_interrupted_set_1',
+      sessionId: 'session-1',
+      exerciseId: 'exercise-1',
+      setNumber: 1,
+      weight: 100,
+      reps: 8,
+      rir: 2,
+      durationSec: null,
+      distanceM: null,
+      notes: null,
+      isWarmup: false,
+      isDropSet: false,
+      createdAt: 1,
+      status: 'syncing',
+      serverId: null,
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+    };
+    const update = vi.fn().mockResolvedValue(1);
+    const query = {
+      sortBy: vi.fn().mockResolvedValue([set]),
+      count: vi.fn().mockResolvedValue(0),
+    };
+    const pendingSets = {
+      where: vi.fn().mockReturnValue({ anyOf: vi.fn().mockReturnValue(query) }),
+      update,
+    };
+    vi.mocked(getDB).mockReturnValue({ pendingSets } as never);
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'loc_interrupted_set_1' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await flushPendingSets();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/sessions/session-1/sets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 'loc_interrupted_set_1',
+        exerciseId: 'exercise-1',
+        setNumber: 1,
+        weight: 100,
+        reps: 8,
+        rir: 2,
+        durationSec: null,
+        distanceM: null,
+        notes: null,
+        isWarmup: false,
+        isDropSet: false,
+      }),
+    });
+    expect(update).toHaveBeenLastCalledWith(
+      'loc_interrupted_set_1',
+      expect.objectContaining({ status: 'synced', serverId: 'loc_interrupted_set_1' }),
+    );
+  });
 });

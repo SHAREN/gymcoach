@@ -9,6 +9,8 @@ export const sessionUpdateSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
   // If true, sets finishedAt to now.
   finish: z.boolean().optional(),
+  // Exact overflow records discarded when the active session is finalized.
+  discardSetIds: z.array(z.string().min(1)).max(200).optional(),
   sessionRpe: z.coerce.number().int().min(1).max(10).optional().nullable(),
 });
 

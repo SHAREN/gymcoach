@@ -46,10 +46,29 @@ const completedSet: PendingSet = {
 const completedSet2: PendingSet = {
   ...completedSet,
   localId: 'local-2',
+  serverId: 'server-2',
   setNumber: 2,
   weight: 95,
   reps: 9,
   rir: 1,
+};
+const completedSet3: PendingSet = {
+  ...completedSet,
+  localId: 'local-3',
+  serverId: 'server-3',
+  setNumber: 3,
+  weight: 92.5,
+  reps: 8,
+  rir: 1,
+};
+const completedSet4: PendingSet = {
+  ...completedSet,
+  localId: 'local-4',
+  serverId: 'server-4',
+  setNumber: 4,
+  weight: 90,
+  reps: 8,
+  rir: 0,
 };
 
 afterEach(() => {
@@ -147,13 +166,65 @@ describe('EditableSetsTable', () => {
     fireEvent.click(firstCompletedCheck);
 
     expect(screen.getByTestId('set-count-value')).toHaveTextContent('2');
-    expect(screen.getByRole('button', { name: 'Decrease total sets' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Decrease total sets' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Undo last set' }));
 
     await waitFor(() => expect(onDeleteSet).toHaveBeenCalledWith(completedSet2));
     await waitFor(() =>
       expect(screen.queryByTestId('set-controls-dialog')).not.toBeInTheDocument(),
     );
+  });
+
+  it('soft-hides overflow rows, restores them, and undoes only the latest stored row', async () => {
+    const onDeleteSet = vi.fn().mockResolvedValue(true);
+    const props = {
+      sets: [completedSet, completedSet2, completedSet3, completedSet4],
+      lastPerformance: undefined,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      onSubmit: vi.fn(),
+      onUpdateSet: vi.fn(),
+      onDeleteSet,
+      onTargetSetsChange: vi.fn().mockResolvedValue(undefined),
+    };
+    const view = render(
+      <EditableSetsTable
+        {...props}
+        programExercise={{ ...(programExercise as object), targetSets: 4 } as never}
+      />,
+    );
+
+    expect(screen.getByTestId('completed-set-4')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm set 5' })).not.toBeInTheDocument();
+
+    view.rerender(
+      <EditableSetsTable
+        {...props}
+        programExercise={{ ...(programExercise as object), targetSets: 3 } as never}
+      />,
+    );
+
+    expect(screen.queryByTestId('completed-set-4')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm set 4' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set 3 repetitions' })).toHaveTextContent('8');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 3' }));
+    expect(screen.getByTestId('set-count-value')).toHaveTextContent('3');
+    expect(screen.getByRole('button', { name: 'Decrease total sets' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo last set' }));
+
+    await waitFor(() => expect(onDeleteSet).toHaveBeenCalledTimes(1));
+    expect(onDeleteSet).toHaveBeenCalledWith(completedSet4);
+
+    view.rerender(
+      <EditableSetsTable
+        {...props}
+        programExercise={{ ...(programExercise as object), targetSets: 4 } as never}
+      />,
+    );
+    expect(screen.getByTestId('completed-set-4')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set 3 repetitions' })).toHaveTextContent('8');
   });
 
   it('shows volume alone or paired with one rep-max estimate', async () => {
@@ -345,6 +416,47 @@ describe('EditableSetsTable', () => {
       expect(screen.getByRole('button', { name: 'Apply recommendation to set 3' })).toBeEnabled(),
     );
     expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
+  });
+
+  it('prefills and exposes a previous-session recommendation for the first set', () => {
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={{
+          sessionId: 'previous-session',
+          sessionStartedAt: '2026-07-01T10:00:00.000Z',
+          sets: [
+            { weight: 100, reps: 10, rir: 2, isDropSet: false },
+            { weight: 100, reps: 9, rir: 1, isDropSet: false },
+            { weight: 100, reps: 8, rir: 1, isDropSet: false },
+          ],
+          maxWeight: 100,
+          repsAtMaxWeight: 10,
+          cardio: null,
+        }}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        recommendation={{
+          ...recommendation,
+          weight: 100,
+          reps: 11,
+          rir: 2,
+          reason: 'progress-reps',
+          fatigueLoss: 0,
+          confidence: 'high',
+        }}
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Apply recommendation to set 1' })).toBeEnabled();
+    expect(screen.getByTestId('set-recommendation-dot')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('100');
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('11');
+    expect(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' })).toHaveValue('2');
   });
 
   it('saves completed-set edits immediately without a row confirmation button', async () => {

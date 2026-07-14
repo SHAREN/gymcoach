@@ -4,10 +4,84 @@ import { getLastPerformances } from '@/lib/last-performance';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 1;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 2;
 export const MOBILE_CALCULATION_VERSION = '2026-07-13';
+export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
+
+interface MobileExerciseHistoryRow {
+  exerciseId: string;
+  sessionId: string;
+  startedAt: Date;
+  setNumber: number;
+  weight: number;
+  reps: number;
+  rir: number | null;
+  isDropSet: boolean;
+}
+
+interface MobileExerciseHistorySession {
+  sessionId: string;
+  startedAt: string;
+  sets: Array<{
+    setNumber: number;
+    weight: number;
+    reps: number;
+    rir: number | null;
+    isDropSet: boolean;
+  }>;
+}
 
 export async function buildMobileBootstrap(userId: string) {
+  const exerciseHistoryRowsPromise = db.$queryRaw<MobileExerciseHistoryRow[]>`
+      WITH exercise_sessions AS (
+        SELECT DISTINCT
+          logged_set."exerciseId" AS "exerciseId",
+          logged_set."sessionId" AS "sessionId",
+          training_session."startedAt" AS "startedAt"
+        FROM "Set" AS logged_set
+        INNER JOIN "Session" AS training_session
+          ON training_session.id = logged_set."sessionId"
+        INNER JOIN "Exercise" AS exercise
+          ON exercise.id = logged_set."exerciseId"
+        WHERE training_session."userId" = ${userId}
+          AND training_session."finishedAt" IS NOT NULL
+          AND logged_set."isWarmup" = false
+          AND exercise.category <> 'CARDIO'
+      ),
+      ranked_exercise_sessions AS (
+        SELECT
+          "exerciseId",
+          "sessionId",
+          "startedAt",
+          ROW_NUMBER() OVER (
+            PARTITION BY "exerciseId"
+            ORDER BY "startedAt" DESC, "sessionId" DESC
+          ) AS session_rank
+        FROM exercise_sessions
+      )
+      SELECT
+        ranked."exerciseId" AS "exerciseId",
+        ranked."sessionId" AS "sessionId",
+        ranked."startedAt" AS "startedAt",
+        logged_set."setNumber" AS "setNumber",
+        logged_set.weight,
+        logged_set.reps,
+        logged_set.rir,
+        logged_set."isDropSet" AS "isDropSet"
+      FROM ranked_exercise_sessions AS ranked
+      INNER JOIN "Set" AS logged_set
+        ON logged_set."sessionId" = ranked."sessionId"
+        AND logged_set."exerciseId" = ranked."exerciseId"
+      WHERE ranked.session_rank <= ${MOBILE_EXERCISE_HISTORY_SESSION_LIMIT}
+        AND logged_set."isWarmup" = false
+      ORDER BY
+        ranked."exerciseId" ASC,
+        ranked."startedAt" DESC,
+        ranked."sessionId" DESC,
+        logged_set."setNumber" ASC,
+        logged_set."completedAt" ASC,
+        logged_set.id ASC
+    `;
   const [user, activeProgram, gyms, openSessions, latestReadiness, catalog] = await Promise.all([
     db.user.findUnique({
       where: { id: userId },
@@ -66,6 +140,7 @@ export async function buildMobileBootstrap(userId: string) {
     }),
   ]);
   if (!user) throw new Error('User not found.');
+  const exerciseHistoryRows = await exerciseHistoryRowsPromise;
 
   const activeGym = gyms.find((gym) => gym.id === user.activeGymId) ?? null;
   const programExercises = activeProgram?.workouts.flatMap((workout) => workout.exercises) ?? [];
@@ -113,6 +188,26 @@ export async function buildMobileBootstrap(userId: string) {
           ageHours: readinessAgeHours,
         }
       : null;
+  const exerciseHistoryByExerciseId: Record<string, MobileExerciseHistorySession[]> = {};
+  for (const row of exerciseHistoryRows) {
+    const exerciseSessions = (exerciseHistoryByExerciseId[row.exerciseId] ??= []);
+    let session = exerciseSessions.at(-1);
+    if (!session || session.sessionId !== row.sessionId) {
+      session = {
+        sessionId: row.sessionId,
+        startedAt: row.startedAt.toISOString(),
+        sets: [],
+      };
+      exerciseSessions.push(session);
+    }
+    session.sets.push({
+      setNumber: row.setNumber,
+      weight: row.weight,
+      reps: row.reps,
+      rir: row.rir,
+      isDropSet: row.isDropSet,
+    });
+  }
 
   return {
     schemaVersion: MOBILE_BOOTSTRAP_SCHEMA_VERSION,
@@ -132,6 +227,7 @@ export async function buildMobileBootstrap(userId: string) {
     catalog,
     openSessions,
     lastPerformances: serializedPerformances,
+    exerciseHistoryByExerciseId,
     returnRecommendationsByWorkout: Object.fromEntries(returnEntries),
     readiness,
   };

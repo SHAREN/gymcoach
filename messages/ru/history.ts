@@ -2,24 +2,32 @@ import { history as english } from '../en/history';
 import type { MessageShape } from '@/i18n/message-types';
 
 export const history = {
-  title: 'История',
+  title: 'Календарь',
   noFiltered: 'Завершённых тренировок по этим фильтрам нет.',
-  emptyTitle: 'История пока пуста',
+  emptyTitle: 'Календарь пока пуст',
   emptyDescription:
-    'Завершите первую тренировку, и здесь появятся её объём, подходы и длительность.',
+    'Завершите первую тренировку, и она появится в календаре с объёмом, подходами и длительностью.',
   firstSession: 'Записать первую тренировку',
   freeSession: 'Свободная тренировка',
   cardio: 'Кардио',
   volumeShort: 'объём {weight}',
   minutes: '{count} мин',
+  calendar: {
+    previousMonth: 'Предыдущий месяц',
+    nextMonth: 'Следующий месяц',
+    today: 'Сегодня',
+    workoutCount:
+      '{count, plural, =0 {Тренировок нет} one {# тренировка} few {# тренировки} many {# тренировок} other {# тренировки}}',
+    dayLabel: '{date}. {count}.',
+    noWorkouts: 'В этот день завершённых тренировок нет.',
+    openSession: 'Открыть тренировку «{name}» в {time}',
+  },
   filters: {
     title: 'Фильтры:',
     program: 'Программа',
     allPrograms: 'Все программы',
-    month: 'Месяц',
-    allMonths: 'Все месяцы',
     clear: 'Сбросить',
-    csvTitle: 'Скачать CSV подходов с учётом активных фильтров',
+    csvTitle: 'Скачать CSV подходов за видимый месяц с учётом программы',
   },
   detail: {
     downloadTcx: 'Скачать .tcx',

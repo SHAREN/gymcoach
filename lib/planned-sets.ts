@@ -16,6 +16,11 @@ export interface PlannedSetCounts {
   drop: number;
 }
 
+export interface PlannedSetProjection<T extends PlannedSetLike> {
+  visible: T[];
+  overflow: T[];
+}
+
 export function plannedSetCounts(sets: readonly PlannedSetLike[]): PlannedSetCounts {
   let regular = 0;
   let drop = 0;
@@ -29,6 +34,43 @@ export function plannedSetCounts(sets: readonly PlannedSetLike[]): PlannedSetCou
 
 export function targetDropSets(target: PlannedSetTarget): number {
   return Math.max(0, target.targetDropSets ?? 0);
+}
+
+export function projectSetsToTarget<T extends PlannedSetLike>(
+  target: PlannedSetTarget,
+  sets: readonly T[],
+): PlannedSetProjection<T> {
+  const visible: T[] = [];
+  const overflow: T[] = [];
+  let regular = 0;
+  let drop = 0;
+  const dropTarget = targetDropSets(target);
+
+  for (const set of sets) {
+    if (set.isWarmup) {
+      visible.push(set);
+      continue;
+    }
+
+    if (set.isDropSet) {
+      if (drop < dropTarget) {
+        visible.push(set);
+        drop += 1;
+      } else {
+        overflow.push(set);
+      }
+      continue;
+    }
+
+    if (regular < target.targetSets) {
+      visible.push(set);
+      regular += 1;
+    } else {
+      overflow.push(set);
+    }
+  }
+
+  return { visible, overflow };
 }
 
 export function remainingPlannedSets(

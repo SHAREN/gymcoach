@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Flag, MessageSquare, X } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import type {
   Exercise,
   Program,
@@ -18,9 +18,7 @@ import type {
 } from '@/lib/prisma-client';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { acquireWakeLock, bindWakeLockToVisibility, releaseWakeLock } from '@/lib/wake-lock';
 import { vibrate, VIBRATION_PATTERNS } from '@/lib/vibrate';
 import { generateLocalId, getDB, type PendingSet } from '@/lib/indexeddb';
@@ -31,23 +29,31 @@ import {
   readinessForSuggestion,
   type ReadinessSignal,
 } from '@/lib/progression';
-import { recommendNextIntraSet, type IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
+import {
+  recommendFirstWorkingSet,
+  recommendNextIntraSet,
+  type IntraSetRecommendation,
+} from '@/lib/intra-set-autoregulation';
 import {
   buildSupersetView,
   isSupersetTransitionRest,
   nextAutoAdvanceIndex,
-  nextNavIndex,
   SUPERSET_TRANSITION_REST_SEC,
 } from '@/lib/supersets';
 import { isReadinessAutoRegulationEnabled } from '@/lib/preferences';
-import { bindAutoSync, flushPendingSets, queueSet } from '@/lib/sync';
-import { hydrateFromServerSets } from '@/lib/sync-hydration';
+import { flushPendingSets, queueSet } from '@/lib/sync';
+import {
+  hasUnsyncedSets,
+  hydrateFromServerSets,
+  localSetIdsForDeletion,
+} from '@/lib/sync-hydration';
 import { ExerciseCard } from '@/components/session/exercise-card';
 import { SetsList } from '@/components/session/sets-list';
 import { SessionExerciseMenu } from '@/components/session/session-exercise-menu';
 import { SetInput } from '@/components/session/set-input';
 import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
+import { SessionControlsDialog } from '@/components/session/session-controls-dialog';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { EditableSetsTable } from '@/components/session/editable-sets-table';
@@ -60,6 +66,7 @@ import {
   DROP_SET_TRANSITION_REST_SEC,
   isPlannedExerciseComplete,
   nextPlannedSetIsDropSet,
+  projectSetsToTarget,
   remainingPlannedSets,
 } from '@/lib/planned-sets';
 
@@ -113,6 +120,41 @@ type Mode =
     }
   | { kind: 'summary' };
 
+function sortExerciseSets(sets: PendingSet[]): PendingSet[] {
+  return sets.sort(
+    (a, b) =>
+      a.setNumber - b.setNumber || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId),
+  );
+}
+
+function projectSessionSets(
+  sets: readonly PendingSet[],
+  targetsByExerciseId: ReadonlyMap<string, ProgramExerciseWithExercise>,
+): { visible: PendingSet[]; overflow: PendingSet[] } {
+  const byExercise = new Map<string, PendingSet[]>();
+  for (const set of sets) {
+    const exerciseSets = byExercise.get(set.exerciseId) ?? [];
+    exerciseSets.push(set);
+    byExercise.set(set.exerciseId, exerciseSets);
+  }
+
+  const visible: PendingSet[] = [];
+  const overflow: PendingSet[] = [];
+  for (const [exerciseId, exerciseSets] of byExercise) {
+    sortExerciseSets(exerciseSets);
+    const target = targetsByExerciseId.get(exerciseId);
+    if (!target) {
+      visible.push(...exerciseSets);
+      continue;
+    }
+    const projected = projectSetsToTarget(target, exerciseSets);
+    visible.push(...projected.visible);
+    overflow.push(...projected.overflow);
+  }
+
+  return { visible, overflow };
+}
+
 export function SessionRunner({
   session,
   lastPerformances,
@@ -155,6 +197,10 @@ export function SessionRunner({
   );
   const effectiveProgramExerciseById = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
+    [effectiveProgramExercises],
+  );
+  const effectiveProgramExerciseByExerciseId = useMemo(
+    () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
     [effectiveProgramExercises],
   );
 
@@ -213,17 +259,34 @@ export function SessionRunner({
   // Hydrate IndexedDB with the server sets, then enable auto-sync.
   useEffect(() => {
     setAutoRegulate(isReadinessAutoRegulationEnabled());
+    let cancelled = false;
     void (async () => {
-      await hydrateFromServerSets(session.id, session.sets);
-      setHydrated(true);
+      let serverSets = session.sets;
+      let pruneMissingSynced = false;
+
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        await flushPendingSets();
+        const response = await fetch(`/api/sessions/${session.id}`, { cache: 'no-store' }).catch(
+          () => null,
+        );
+        if (response?.ok) {
+          const fresh = (await response.json()) as { sets?: PrismaSet[] };
+          if (Array.isArray(fresh.sets)) {
+            serverSets = fresh.sets;
+            pruneMissingSynced = true;
+          }
+        }
+      }
+
+      await hydrateFromServerSets(session.id, serverSets, { pruneMissingSynced });
+      if (!cancelled) setHydrated(true);
     })();
     void acquireWakeLock();
     const cleanupVisibility = bindWakeLockToVisibility();
-    const cleanupSync = bindAutoSync();
     return () => {
+      cancelled = true;
       void releaseWakeLock();
       cleanupVisibility();
-      cleanupSync();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -233,24 +296,47 @@ export function SessionRunner({
     async () => {
       const db = getDB();
       const items = await db.pendingSets.where('sessionId').equals(session.id).toArray();
-      items.sort((a, b) => a.exerciseId.localeCompare(b.exerciseId) || a.setNumber - b.setNumber);
+      items.sort(
+        (a, b) =>
+          a.exerciseId.localeCompare(b.exerciseId) ||
+          a.setNumber - b.setNumber ||
+          a.createdAt - b.createdAt ||
+          a.localId.localeCompare(b.localId),
+      );
       return items;
     },
     [session.id],
     [] as PendingSet[],
   );
 
-  const setsByExercise = useMemo(() => {
+  const allSetsByExercise = useMemo(() => {
     const out = new Map<string, PendingSet[]>();
     for (const s of liveSets) {
       if (!out.has(s.exerciseId)) out.set(s.exerciseId, []);
       out.get(s.exerciseId)!.push(s);
     }
     for (const arr of out.values()) {
-      arr.sort((a, b) => a.setNumber - b.setNumber);
+      sortExerciseSets(arr);
     }
     return out;
   }, [liveSets]);
+
+  const setsByExercise = useMemo(() => {
+    const out = new Map<string, PendingSet[]>();
+    for (const [exerciseId, exerciseSets] of allSetsByExercise) {
+      const target = effectiveProgramExerciseByExerciseId.get(exerciseId);
+      out.set(
+        exerciseId,
+        target ? projectSetsToTarget(target, exerciseSets).visible : exerciseSets,
+      );
+    }
+    return out;
+  }, [allSetsByExercise, effectiveProgramExerciseByExerciseId]);
+
+  const visibleSets = useMemo(
+    () => projectSessionSets(liveSets, effectiveProgramExerciseByExerciseId).visible,
+    [effectiveProgramExerciseByExerciseId, liveSets],
+  );
 
   const programExerciseByExerciseId = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
@@ -263,9 +349,22 @@ export function SessionRunner({
   ): IntraSetRecommendation | null {
     const completedSets = setsByExercise.get(pe.exerciseId) ?? [];
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
-    if (!lastWorkingSet) return null;
+    if (!lastWorkingSet) {
+      const returnRecommendation = returnRecommendations[pe.id];
+      if (returnRecommendation && returnRecommendation.mode !== 'normal') return null;
 
-    const interveningSet = liveSets
+      const previousPerformance = lastPerformances[pe.exerciseId];
+      if (!previousPerformance) return null;
+      return recommendFirstWorkingSet({
+        programExercise: pe,
+        previousSets: previousPerformance.sets,
+        readiness: effectiveReadiness,
+        plannedDeload: deloadActive,
+        loadConstraints: loadConstraintsFor(pe),
+      });
+    }
+
+    const interveningSet = visibleSets
       .filter(
         (set) =>
           !set.isWarmup &&
@@ -331,15 +430,6 @@ export function SessionRunner({
     return out;
   }, [lastPerformances]);
 
-  const completedExerciseCount = useMemo(() => {
-    let count = 0;
-    for (const pe of effectiveProgramExercises) {
-      const exerciseSets = setsByExercise.get(pe.exerciseId) ?? [];
-      if (isPlannedExerciseComplete(pe, exerciseSets)) count += 1;
-    }
-    return count;
-  }, [effectiveProgramExercises, setsByExercise]);
-
   const completedExerciseIds = useMemo(() => {
     const completed = new Set<string>();
     for (const pe of effectiveProgramExercises) {
@@ -348,11 +438,6 @@ export function SessionRunner({
     }
     return completed;
   }, [effectiveProgramExercises, setsByExercise]);
-
-  const progressPct =
-    programExercises.length === 0
-      ? 0
-      : Math.round((completedExerciseCount / programExercises.length) * 100);
 
   async function handleValidate(values: {
     weight: number;
@@ -366,7 +451,8 @@ export function SessionRunner({
   }) {
     if (!currentPE || !currentTarget) return;
     const existing = setsByExercise.get(currentPE.exerciseId) ?? [];
-    const setNumber = (existing.at(-1)?.setNumber ?? 0) + 1;
+    const allExisting = allSetsByExercise.get(currentPE.exerciseId) ?? [];
+    const setNumber = (allExisting.at(-1)?.setNumber ?? 0) + 1;
 
     // Optimistic write: immediate insert into IndexedDB (status pending),
     // instant display via useLiveQuery, and a background POST attempt.
@@ -510,7 +596,12 @@ export function SessionRunner({
           return false;
         }
       }
-      await db.pendingSets.delete(current.localId);
+      const sessionSets = await db.pendingSets
+        .where('sessionId')
+        .equals(current.sessionId)
+        .toArray();
+      const localIds = localSetIdsForDeletion(current, sessionSets);
+      await db.pendingSets.bulkDelete(localIds.length > 0 ? localIds : [current.localId]);
       toast.success(t('setDeleted'));
       return true;
     } catch {
@@ -526,20 +617,67 @@ export function SessionRunner({
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         await flushPendingSets();
       }
+      const db = getDB();
+      const persistedSets = await db.pendingSets.where('sessionId').equals(session.id).toArray();
+      const projection = projectSessionSets(persistedSets, effectiveProgramExerciseByExerciseId);
+      if (hasUnsyncedSets(projection.visible)) {
+        toast.error(t('finishSyncError'));
+        return;
+      }
+      const overflowSets = projection.overflow;
+      if (overflowSets.some((set) => !set.serverId)) {
+        toast.error(t('finishError'));
+        return;
+      }
+      const discardSetIds = [
+        ...new Set(overflowSets.flatMap((set) => (set.serverId ? [set.serverId] : []))),
+      ];
       const res = await fetch(`/api/sessions/${session.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ finish: true }),
+        body: JSON.stringify({ finish: true, discardSetIds }),
       });
       if (!res.ok) {
         toast.error(t('finishError'));
         return;
+      }
+      if (overflowSets.length > 0) {
+        await db.pendingSets.bulkDelete(overflowSets.map((set) => set.localId));
       }
       toast.success(t('finished'));
       router.replace('/');
       router.refresh();
     } finally {
       setClosing(false);
+    }
+  }
+
+  function handlePauseSession() {
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      void flushPendingSets();
+    }
+    toast.success(t('controls.paused'));
+    router.replace('/');
+    router.refresh();
+  }
+
+  async function handleResetSession(): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/sessions/${session.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        toast.error(t('controls.resetError'));
+        return false;
+      }
+
+      const db = getDB();
+      await db.pendingSets.where('sessionId').equals(session.id).delete();
+      toast.success(t('controls.resetSuccess'));
+      router.replace('/');
+      router.refresh();
+      return true;
+    } catch {
+      toast.error(t('controls.resetError'));
+      return false;
     }
   }
 
@@ -588,29 +726,11 @@ export function SessionRunner({
     setMode({ ...mode, endsAt: mode.endsAt + 30_000 });
   }
 
-  function goPrev() {
-    selectExercise(Math.max(0, currentIdx - 1));
-    setMode({ kind: 'input' });
-  }
-  // Next is linear for standalone exercises (unchanged) and cycles within a
-  // superset group before advancing past it (issue #146).
-  const remainingNow = (pe: ProgramExerciseWithExercise) =>
-    remainingPlannedSets(
-      effectiveProgramExerciseById.get(pe.id) ?? pe,
-      setsByExercise.get(pe.exerciseId) ?? [],
-    );
-  const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
-  function goNext() {
-    if (navNextIdx == null) return;
-    selectExercise(navNextIdx);
-    setMode({ kind: 'input' });
-  }
-
   if (mode.kind === 'summary') {
     return (
       <SessionSummary
         session={session}
-        sets={liveSets}
+        sets={visibleSets}
         programExercises={effectiveProgramExercises}
         unit={unit}
         priorSets={priorSetsByExercise}
@@ -631,6 +751,7 @@ export function SessionRunner({
 
   const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
+  const allCurrentSets = allSetsByExercise.get(currentPE.exerciseId) ?? [];
   const currentReturnRecommendation = returnRecommendations[currentPE.id];
   const currentRecommendation = nextPlannedSetIsDropSet(currentTarget, currentSets)
     ? null
@@ -656,38 +777,18 @@ export function SessionRunner({
 
   return (
     <main className="flex flex-1 flex-col">
-      {/* Sticky header with progress and exit button */}
+      {/* Compact day controls and direct exercise navigation. */}
       <div className="sticky top-[97px] z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-xs text-muted-foreground">{trainingName(workout.name)}</p>
-            <p className="text-sm font-semibold tabular-nums">
-              {currentIdx + 1} / {programExercises.length}
-            </p>
-            {supersetView.labels.has(currentPE.id) && (
-              <Badge variant="secondary" className="mt-1">
-                {t('superset', { label: supersetView.labels.get(currentPE.id) ?? '' })}
-              </Badge>
-            )}
-            {deloadActive && (
-              <Badge variant="secondary" className="mt-1 text-emerald-700 dark:text-emerald-400">
-                {t('deloadWeek')}
-              </Badge>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            asChild
-            className="text-muted-foreground"
-            aria-label={t('quit')}
-          >
-            <Link href="/">
-              <X className="size-4" />
-            </Link>
-          </Button>
+        <div className="flex justify-end">
+          <SessionControlsDialog
+            workoutName={trainingName(workout.name)}
+            startedAt={session.startedAt}
+            statusLabel={deloadActive ? t('deloadWeek') : null}
+            onComplete={() => setMode({ kind: 'summary' })}
+            onPause={handlePauseSession}
+            onReset={handleResetSession}
+          />
         </div>
-        <Progress value={progressPct} className="mt-2 h-1.5" />
         <SessionExerciseStrip
           exercises={programExercises}
           currentIndex={currentIdx}
@@ -762,7 +863,7 @@ export function SessionRunner({
           <>
             <EditableSetsTable
               programExercise={currentTarget}
-              sets={currentSets}
+              sets={allCurrentSets}
               lastPerformance={lastPerf}
               readiness={effectiveReadiness}
               deloadActive={deloadActive}
@@ -804,40 +905,6 @@ export function SessionRunner({
             <span className="ml-2">{t('askCoach')}</span>
           </Link>
         </Button>
-
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goPrev}
-            disabled={currentIdx === 0 || mode.kind !== 'input'}
-            className="min-h-tap"
-          >
-            <ChevronLeft className="size-4" />
-            <span className="ml-1">{t('previous')}</span>
-          </Button>
-
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => setMode({ kind: 'summary' })}
-            className="min-h-tap"
-          >
-            <Flag className="size-4" />
-            <span className="ml-2">{t('finish')}</span>
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goNext}
-            disabled={navNextIdx == null || mode.kind !== 'input'}
-            className="min-h-tap"
-          >
-            <span className="mr-1">{t('next')}</span>
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
       </div>
     </main>
   );

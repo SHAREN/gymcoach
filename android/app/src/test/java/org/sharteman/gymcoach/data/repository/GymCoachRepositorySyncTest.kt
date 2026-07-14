@@ -1,5 +1,6 @@
 package org.sharteman.gymcoach.data.repository
 
+import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -13,14 +14,22 @@ import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
+import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileSetPayload
+import org.sharteman.gymcoach.data.model.MobileProgressExerciseDto
+import org.sharteman.gymcoach.data.model.MobileProgressPointDto
+import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.MobileUser
 import org.sharteman.gymcoach.data.model.ProfileDto
+import org.sharteman.gymcoach.data.model.ProgramDto
+import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.SessionDto
 import org.sharteman.gymcoach.data.model.SetDto
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
@@ -29,12 +38,71 @@ import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.SyncOperationResult
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
+import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
+import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
 import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 
 class GymCoachRepositorySyncTest {
+    @Test
+    fun refreshProgressSavesTheLatestSnapshotInTheOfflineCache() = runTest {
+        val fixture = fixture()
+        val expected = progressSnapshot(generatedAt = "2026-07-14T08:00:00Z")
+        fixture.api.progressResponse = expected
+
+        val actual = fixture.repository.refreshProgress()
+
+        assertEquals(expected, actual)
+        assertEquals(1, fixture.api.progressCalls)
+        val cached = requireNotNull(fixture.dao.getProgress())
+        assertEquals(
+            expected,
+            fixture.api.json.decodeFromString<MobileProgressSnapshot>(cached.payloadJson),
+        )
+        assertTrue(cached.updatedAtEpochMs > 0)
+    }
+
+    @Test
+    fun failedProgressRefreshPreservesTheExistingOfflineCache() = runTest {
+        val fixture = fixture()
+        val existing = progressSnapshot(generatedAt = "2026-07-13T08:00:00Z")
+        fixture.dao.saveProgress(
+            ProgressCacheEntity(
+                payloadJson = fixture.api.json.encodeToString(existing),
+                updatedAtEpochMs = 1234L,
+            ),
+        )
+        fixture.api.progressFailure = IOException("progress unavailable")
+
+        val result = runCatching { fixture.repository.refreshProgress() }
+
+        assertTrue(result.exceptionOrNull() is IOException)
+        assertEquals(1, fixture.api.progressCalls)
+        val cached = requireNotNull(fixture.dao.getProgress())
+        assertEquals(1234L, cached.updatedAtEpochMs)
+        assertEquals(
+            existing,
+            fixture.api.json.decodeFromString<MobileProgressSnapshot>(cached.payloadJson),
+        )
+    }
+
+    @Test
+    fun successfulWorkoutSyncAttemptsProgressRefreshWithoutDependingOnIt() = runTest {
+        val fixture = fixture()
+        val operation = DeleteSetOperation("operation_progress_refresh", "set_progress_refresh")
+        fixture.dao.enqueue(fixture.outbox(operation))
+        fixture.api.progressFailure = IOException("progress unavailable")
+
+        val synced = fixture.repository.syncPending()
+
+        assertTrue(synced)
+        assertEquals(1, fixture.api.syncCalls.size)
+        assertEquals(1, fixture.api.progressCalls)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
     @Test
     fun syncsAnOutboxLargerThanOneServerBatchInOrder() = runTest {
         val fixture = fixture()
@@ -176,6 +244,80 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
+    fun updatingTargetSetsOptimisticallyUpdatesCachedBootstrapAndQueuesTheChange() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+        fixture.repository.refreshBootstrap()
+
+        fixture.repository.updateTargetSets("program_exercise_1", 5)
+
+        assertEquals(5, fixture.dao.cachedTargetSets())
+        val queue = fixture.dao.queuedOperations()
+        assertEquals(1, queue.size)
+        val operation = fixture.decodeTargetSetsOperation(queue.single())
+        assertEquals("program_exercise_1", operation.programExerciseId)
+        assertEquals(3, operation.previousTargetSets)
+        assertEquals(5, operation.targetSets)
+    }
+
+    @Test
+    fun pendingTargetSetsOverrideSurvivesAStaleBootstrapRefresh() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+        fixture.repository.refreshBootstrap()
+        fixture.repository.updateTargetSets("program_exercise_1", 5)
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+
+        val refreshed = fixture.repository.refreshBootstrap()
+
+        assertEquals(5, findProgramExerciseTargetSets(refreshed, "program_exercise_1"))
+        assertEquals(5, fixture.dao.cachedTargetSets())
+        assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun targetSetsOutsideTheSupportedRangeNeverChangeCacheOrOutbox() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+        fixture.repository.refreshBootstrap()
+
+        val zeroResult = runCatching {
+            fixture.repository.updateTargetSets("program_exercise_1", 0)
+        }
+        val twentyOneResult = runCatching {
+            fixture.repository.updateTargetSets("program_exercise_1", 21)
+        }
+
+        assertTrue(zeroResult.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(twentyOneResult.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(3, fixture.dao.cachedTargetSets())
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun discardingRejectedTargetSetsRollsBackButKeepsALaterQueuedOverride() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+        fixture.repository.refreshBootstrap()
+        fixture.repository.updateTargetSets("program_exercise_1", 5)
+        fixture.repository.updateTargetSets("program_exercise_1", 6)
+        val queuedBeforeDiscard = fixture.dao.queuedOperations()
+        val rejected = queuedBeforeDiscard.first()
+        val later = queuedBeforeDiscard.last()
+        fixture.dao.markOperationBlocked(rejected.operationId, "Invalid target sets.")
+        fixture.api.bootstrapResponse = bootstrapWithTargetSets(3)
+
+        fixture.repository.discardBlockedChange()
+
+        val remaining = fixture.dao.queuedOperations()
+        assertEquals(listOf(later.operationId), remaining.map { it.operationId })
+        val laterOperation = fixture.decodeTargetSetsOperation(remaining.single())
+        assertEquals(5, laterOperation.previousTargetSets)
+        assertEquals(6, laterOperation.targetSets)
+        assertEquals(6, fixture.dao.cachedTargetSets())
+    }
+
+    @Test
     fun expiredAuthenticationKeepsTheOutboxAndRequiresLoginAgain() = runTest {
         val fixture = fixture()
         fixture.dao.enqueue(fixture.outbox(DeleteSetOperation("operation_auth", "set_auth")))
@@ -188,6 +330,25 @@ class GymCoachRepositorySyncTest {
         val queue = fixture.dao.queuedOperations()
         assertEquals(1, queue.size)
         assertEquals("FAILED", queue.single().status)
+    }
+
+    @Test
+    fun failedInitialBootstrapDoesNotPersistTheNewLogin() = runTest {
+        val fixture = fixture()
+        fixture.accountStore.clearAccount()
+        fixture.api.bootstrapFailure = IOException("offline")
+
+        val result = runCatching {
+            fixture.repository.login(
+                email = "user@example.com",
+                password = "secret",
+                serverUrl = "https://example.test",
+            )
+        }
+
+        assertTrue(result.exceptionOrNull() is LoginInitializationException)
+        assertFalse(fixture.accountStore.isAuthenticated)
+        assertEquals(null, fixture.accountStore.userEmail)
     }
 
     @Test
@@ -239,6 +400,162 @@ class GymCoachRepositorySyncTest {
         assertEquals(null, fixture.dao.getSet(set.id))
     }
 
+    @Test
+    fun discardingAMissingSessionSetRemovesTheWholeOrphanedSessionChain() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_deleted_on_server",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        val firstSet = LocalSetEntity(
+            id = "set_orphaned_1",
+            sessionId = session.id,
+            exerciseId = "exercise_1",
+            setNumber = 1,
+            weight = 80.0,
+            reps = 10,
+            rir = 2,
+            completedAt = "2026-07-13T10:05:00Z",
+        )
+        val secondSet = firstSet.copy(
+            id = "set_orphaned_2",
+            setNumber = 2,
+            completedAt = "2026-07-13T10:08:00Z",
+        )
+        val otherSession = session.copy(id = "session_unrelated")
+        val otherSet = firstSet.copy(
+            id = "set_unrelated",
+            sessionId = otherSession.id,
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.saveSet(firstSet)
+        fixture.dao.saveSet(secondSet)
+        fixture.dao.saveSession(otherSession)
+        fixture.dao.saveSet(otherSet)
+        val firstUpsert = UpsertSetOperation(
+            operationId = "operation_orphaned_1",
+            set = MobileSetPayload(
+                id = firstSet.id,
+                sessionId = session.id,
+                exerciseId = firstSet.exerciseId,
+                setNumber = firstSet.setNumber,
+                weight = firstSet.weight,
+                reps = firstSet.reps,
+                rir = firstSet.rir,
+                completedAt = firstSet.completedAt,
+            ),
+        )
+        val secondUpsert = UpsertSetOperation(
+            operationId = "operation_orphaned_2",
+            set = MobileSetPayload(
+                id = secondSet.id,
+                sessionId = session.id,
+                exerciseId = secondSet.exerciseId,
+                setNumber = secondSet.setNumber,
+                weight = secondSet.weight,
+                reps = secondSet.reps,
+                rir = secondSet.rir,
+                completedAt = secondSet.completedAt,
+            ),
+        )
+        val finish = FinishSessionOperation(
+            operationId = "operation_orphaned_finish",
+            sessionId = session.id,
+            finishedAt = "2026-07-13T11:00:00Z",
+        )
+        val unrelatedUpsert = UpsertSetOperation(
+            operationId = "operation_unrelated",
+            set = MobileSetPayload(
+                id = otherSet.id,
+                sessionId = otherSession.id,
+                exerciseId = otherSet.exerciseId,
+                setNumber = otherSet.setNumber,
+                weight = otherSet.weight,
+                reps = otherSet.reps,
+                rir = otherSet.rir,
+                completedAt = otherSet.completedAt,
+            ),
+        )
+        fixture.dao.enqueue(fixture.outbox(firstUpsert))
+        fixture.dao.enqueue(fixture.outbox(secondUpsert))
+        fixture.dao.enqueue(fixture.outbox(finish))
+        fixture.dao.enqueue(fixture.outbox(unrelatedUpsert))
+        fixture.dao.markOperationBlocked(firstUpsert.operationId, "Session not found.")
+
+        fixture.repository.discardBlockedChange()
+
+        assertEquals(
+            listOf(unrelatedUpsert.operationId),
+            fixture.dao.queuedOperations().map { it.operationId },
+        )
+        assertEquals(null, fixture.dao.getSession(session.id))
+        assertEquals(null, fixture.dao.getSet(firstSet.id))
+        assertEquals(null, fixture.dao.getSet(secondSet.id))
+        assertEquals(otherSession, fixture.dao.getSession(otherSession.id))
+        assertEquals(otherSet, fixture.dao.getSet(otherSet.id))
+    }
+
+    @Test
+    fun discardingAnOrdinaryRejectedSetKeepsOtherSessionChanges() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_with_one_bad_set",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        val firstSet = LocalSetEntity(
+            id = "set_bad",
+            sessionId = session.id,
+            exerciseId = "exercise_1",
+            setNumber = 1,
+            weight = 80.0,
+            reps = 10,
+            rir = 2,
+            completedAt = "2026-07-13T10:05:00Z",
+        )
+        val secondSet = firstSet.copy(id = "set_good", setNumber = 2)
+        fixture.dao.saveSession(session)
+        fixture.dao.saveSet(firstSet)
+        fixture.dao.saveSet(secondSet)
+        val badUpsert = UpsertSetOperation(
+            operationId = "operation_bad_set",
+            set = MobileSetPayload(
+                id = firstSet.id,
+                sessionId = session.id,
+                exerciseId = firstSet.exerciseId,
+                setNumber = firstSet.setNumber,
+                weight = firstSet.weight,
+                reps = firstSet.reps,
+                rir = firstSet.rir,
+                completedAt = firstSet.completedAt,
+            ),
+        )
+        val goodUpsert = UpsertSetOperation(
+            operationId = "operation_good_set",
+            set = MobileSetPayload(
+                id = secondSet.id,
+                sessionId = session.id,
+                exerciseId = secondSet.exerciseId,
+                setNumber = secondSet.setNumber,
+                weight = secondSet.weight,
+                reps = secondSet.reps,
+                rir = secondSet.rir,
+                completedAt = secondSet.completedAt,
+            ),
+        )
+        fixture.dao.enqueue(fixture.outbox(badUpsert))
+        fixture.dao.enqueue(fixture.outbox(goodUpsert))
+        fixture.dao.markOperationBlocked(badUpsert.operationId, "Invalid repetitions.")
+
+        fixture.repository.discardBlockedChange()
+
+        assertEquals(listOf(goodUpsert.operationId), fixture.dao.queuedOperations().map { it.operationId })
+        assertEquals(session, fixture.dao.getSession(session.id))
+    }
+
     private fun fixture(): Fixture {
         val dao = InMemoryDao()
         val api = TestApi()
@@ -253,12 +570,74 @@ class GymCoachRepositorySyncTest {
         return Fixture(dao, api, accountStore, repository)
     }
 
-    private fun bootstrap(openSessions: List<SessionDto> = emptyList()) = BootstrapResponse(
+    private fun bootstrap(
+        openSessions: List<SessionDto> = emptyList(),
+        activeProgram: ProgramDto? = null,
+    ) = BootstrapResponse(
         schemaVersion = 1,
         calculationVersion = "test",
         serverTime = "2026-07-13T12:00:00Z",
         profile = ProfileDto(id = "user_1", email = "user@example.com"),
+        activeProgram = activeProgram,
         openSessions = openSessions,
+    )
+
+    private fun bootstrapWithTargetSets(targetSets: Int) = bootstrap(
+        activeProgram = ProgramDto(
+            id = "program_1",
+            name = "Test program",
+            phase = "HYPERTROPHY",
+            workouts = listOf(
+                WorkoutDto(
+                    id = "workout_1",
+                    programId = "program_1",
+                    name = "Workout A",
+                    order = 1,
+                    exercises = listOf(
+                        ProgramExerciseDto(
+                            id = "program_exercise_1",
+                            workoutId = "workout_1",
+                            exerciseId = "exercise_1",
+                            order = 1,
+                            targetSets = targetSets,
+                            targetRepsMin = 8,
+                            targetRepsMax = 12,
+                            targetRIR = 2,
+                            restSec = 120,
+                            exercise = ExerciseDto(
+                                id = "exercise_1",
+                                name = "Bench press",
+                                muscleGroup = "CHEST",
+                                category = "STRENGTH",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    private fun progressSnapshot(generatedAt: String) = MobileProgressSnapshot(
+        schemaVersion = 1,
+        generatedAt = generatedAt,
+        exercises = listOf(
+            MobileProgressExerciseDto(
+                id = "exercise_progress_1",
+                name = "Bench press",
+                muscleGroup = "CHEST",
+                points = listOf(
+                    MobileProgressPointDto(
+                        sessionStartedAt = "2026-07-12T10:00:00Z",
+                        maxWeight = 80.0,
+                        estimated1RM = 101.3,
+                        totalVolume = 2400.0,
+                        topSetReps = 8,
+                        maxReps = 10,
+                        totalReps = 30,
+                    ),
+                ),
+            ),
+        ),
     )
 
     private data class Fixture(
@@ -272,6 +651,9 @@ class GymCoachRepositorySyncTest {
             type = operation::class.simpleName.orEmpty(),
             payloadJson = api.json.encodeToString<SyncOperation>(operation),
         )
+
+        fun decodeTargetSetsOperation(entity: SyncOutboxEntity): UpdateTargetSetsOperation =
+            api.json.decodeFromString<SyncOperation>(entity.payloadJson) as UpdateTargetSetsOperation
     }
 
     private class TestAccountStore : AccountStore {
@@ -315,6 +697,13 @@ class GymCoachRepositorySyncTest {
 
         override val json = jsonConfig
         var bootstrapResponse = bootstrapStatic()
+        var bootstrapFailure: Throwable? = null
+        var progressResponse = MobileProgressSnapshot(
+            schemaVersion = 1,
+            generatedAt = "2026-07-13T12:00:00Z",
+        )
+        var progressFailure: Throwable? = null
+        var progressCalls = 0
         val syncCalls = mutableListOf<SyncBatchRequest>()
         var syncFailure: Throwable? = null
         var syncHandler: (SyncBatchRequest) -> SyncBatchResponse = { request ->
@@ -330,7 +719,15 @@ class GymCoachRepositorySyncTest {
             accessToken = "gma_test_token",
             user = MobileUser("user_1", request.email),
         )
-        override suspend fun bootstrap(baseUrl: String, token: String) = bootstrapResponse
+        override suspend fun bootstrap(baseUrl: String, token: String): BootstrapResponse {
+            bootstrapFailure?.let { throw it }
+            return bootstrapResponse
+        }
+        override suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot {
+            progressCalls += 1
+            progressFailure?.let { throw it }
+            return progressResponse
+        }
         override suspend fun sync(
             baseUrl: String,
             token: String,
@@ -347,6 +744,7 @@ class GymCoachRepositorySyncTest {
 
     private class InMemoryDao : GymCoachDao {
         private val bootstrapFlow = MutableStateFlow<BootstrapCacheEntity?>(null)
+        private val progressFlow = MutableStateFlow<ProgressCacheEntity?>(null)
         private val sessions = linkedMapOf<String, LocalSessionEntity>()
         private val sets = linkedMapOf<String, LocalSetEntity>()
         private val outbox = mutableListOf<SyncOutboxEntity>()
@@ -359,6 +757,11 @@ class GymCoachRepositorySyncTest {
         override suspend fun getBootstrap() = bootstrapFlow.value
         override suspend fun saveBootstrap(entity: BootstrapCacheEntity) {
             bootstrapFlow.value = entity
+        }
+        override fun observeProgress(): Flow<ProgressCacheEntity?> = progressFlow
+        override suspend fun getProgress() = progressFlow.value
+        override suspend fun saveProgress(entity: ProgressCacheEntity) {
+            progressFlow.value = entity
         }
         override fun observeOpenSessions(): Flow<List<LocalSessionEntity>> = openSessionsFlow
         override suspend fun getOpenSessions() = sessions.values.filter { it.finishedAt == null }
@@ -427,6 +830,9 @@ class GymCoachRepositorySyncTest {
         override suspend fun clearBootstrap() {
             bootstrapFlow.value = null
         }
+        override suspend fun clearProgress() {
+            progressFlow.value = null
+        }
         override suspend fun clearSessions() {
             sessions.clear()
             sets.clear()
@@ -435,6 +841,11 @@ class GymCoachRepositorySyncTest {
         override suspend fun clearOutbox() {
             outbox.clear()
             publishPending()
+        }
+
+        suspend fun cachedTargetSets(): Int? = getBootstrap()?.let { cached ->
+            val decoded = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(cached.payloadJson)
+            findProgramExerciseTargetSets(decoded, "program_exercise_1")
         }
 
         private fun updateOperation(operationId: String, transform: (SyncOutboxEntity) -> SyncOutboxEntity) {
