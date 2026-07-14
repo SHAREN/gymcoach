@@ -30,6 +30,40 @@ import org.sharteman.gymcoach.data.programs.WorkoutInput
 
 class OfflineProgramsSyncTest {
     @Test
+    fun `offline exercise edit preserves cached training dates`() {
+        val trainingDates = listOf("2026-07-01T08:00:00Z", "2026-07-03T08:00:00Z")
+        val snapshot = CatalogSnapshot(
+            exercises = listOf(
+                ExerciseDto(
+                    id = "exercise_1",
+                    name = "Bench press",
+                    muscleGroup = "CHEST",
+                    category = "COMPOUND",
+                    trainingDates = trainingDates,
+                ),
+            ),
+        )
+        val mutation = UpdateExerciseMutation(
+            operationId = "op_00000000000000000000000000000001",
+            exerciseId = "exercise_1",
+            input = ExerciseInput(
+                name = "Updated bench press",
+                muscleGroup = "CHEST",
+                category = "COMPOUND",
+                defaultRestSec = 120,
+                notes = null,
+                usesBodyweight = false,
+                equipmentType = "BARBELL",
+            ),
+        )
+
+        val updated = applyCatalogMutations(snapshot, listOf(mutation)).exercises.single()
+
+        assertEquals("Updated bench press", updated.name)
+        assertEquals(trainingDates, updated.trainingDates)
+    }
+
+    @Test
     fun `offline catalog survives repository restart and deleting a local program removes dependents`() = runTest {
         val persistence = InMemoryOfflinePersistence()
         val account = "https://example.test|user_1"

@@ -268,7 +268,11 @@ fun applyCatalogMutation(base: CatalogSnapshot, mutation: OfflineMutation): Cata
             mutation.input.toDto(mutation.exerciseId),
     )
     is UpdateExerciseMutation -> {
-        val updated = mutation.input.toDto(mutation.exerciseId)
+        val current = base.exercises.firstOrNull { it.id == mutation.exerciseId }
+        val updated = mutation.input.toDto(mutation.exerciseId).copy(
+            userId = current?.userId,
+            trainingDates = current?.trainingDates.orEmpty(),
+        )
         base.copy(
             exercises = base.exercises.map { if (it.id == mutation.exerciseId) updated else it },
             programs = base.programs.map { program ->
