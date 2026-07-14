@@ -8,6 +8,8 @@
     <string name="settings_native_fallback_server">Fallback LAN server</string>
     <string name="settings_native_fallback_server_hint">Opened automatically only when the primary server is unavailable.</string>
     <string name="settings_native_server_saved">Server addresses saved. Active connection selected automatically.</string>
+    <string name="settings_native_profile_unavailable">Profile data could not be loaded. Existing server data was not changed.</string>
+    <string name="settings_native_retry_load">Retry loading</string>
     <string name="settings_native_profile">Profile</string>
     <string name="settings_native_display_name">Display name</string>
     <string name="settings_native_bodyweight">Bodyweight, kg</string>

@@ -143,6 +143,7 @@ fun SettingsScreen(
         runCatching { repository.load() }
             .onSuccess { loaded ->
                 snapshot = loaded
+                activeServerUrl = account.serverUrl
                 profileDraft = loaded.profile.toDraft()
                 val selected = loaded.gymList.gyms.firstOrNull { it.id == preferredGymId }
                     ?: loaded.gymList.gyms.firstOrNull { it.id == loaded.gymList.activeGymId }
@@ -275,6 +276,27 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) { CircularProgressIndicator() }
+        } else if (snapshot == null) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                MessageBanner(
+                    error = error ?: stringResource(R.string.settings_native_profile_unavailable),
+                    feedback = null,
+                )
+                OutlinedButton(
+                    onClick = { scope.launch { refresh() } },
+                    enabled = !busy,
+                    modifier = Modifier.testTag("settings-retry-load"),
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Text(
+                        stringResource(R.string.settings_native_retry_load),
+                        Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding).testTag("settings-native-screen"),
@@ -817,7 +839,7 @@ private fun ProfileSection(
             value = draft.displayName,
             onValueChange = { onChange(draft.copy(displayName = it)) },
             label = { Text(stringResource(R.string.settings_native_display_name)) },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("settings-profile-display-name"),
             singleLine = true,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -825,14 +847,14 @@ private fun ProfileSection(
                 value = draft.bodyweight,
                 onValueChange = { onChange(draft.copy(bodyweight = it)) },
                 label = { Text(stringResource(R.string.settings_native_bodyweight)) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("settings-profile-bodyweight"),
                 singleLine = true,
             )
             OutlinedTextField(
                 value = draft.heightCm,
                 onValueChange = { onChange(draft.copy(heightCm = it)) },
                 label = { Text(stringResource(R.string.settings_native_height)) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("settings-profile-height"),
                 singleLine = true,
             )
         }
@@ -840,7 +862,7 @@ private fun ProfileSection(
             value = draft.weeklyFrequency,
             onValueChange = { onChange(draft.copy(weeklyFrequency = it)) },
             label = { Text(stringResource(R.string.settings_native_frequency)) },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("settings-profile-frequency"),
             singleLine = true,
         )
         ChoiceDropdown(
