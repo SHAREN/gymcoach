@@ -87,6 +87,63 @@ pain, post-illness return, and medical red flags require conservative product
 language and referral to an appropriate qualified professional. NotebookLM
 research does not replace medical clearance.
 
+## Automatic development orchestration
+
+A concrete request to add, change, fix, refactor, or remove project behavior
+automatically authorizes the full local Beads and Codex workflow. The user does
+not need to mention Project Dispatcher or type capture-issue, triage-inbox,
+next-task, execute-task, or verify-task explicitly.
+
+Questions, explanations, read-only reviews, and diagnostics without an
+implementation request do not create tasks.
+
+For every implementation request, the coordinating Codex task must:
+
+1. Capture the request in Beads through capture-issue.
+2. Triage it through triage-inbox with testable acceptance criteria, scope,
+   risks, dependencies, and affected files or contracts.
+3. Ask the user only when a material product decision, expected behavior,
+   safety rule, or required external authority remains unresolved.
+4. Split independently deliverable work into separate linked Beads tasks and
+   represent required ordering or overlap as dependencies.
+5. Record the local integration base before dispatch. For every READY task,
+   automatically create a dedicated Codex task, Git Worktree, and task branch,
+   then dispatch execute-task with the Beads task ID.
+6. Run independent tasks concurrently when their files, APIs, schemas, shared
+   contracts, training formulas, deployment surfaces, and required ordering do
+   not overlap.
+7. Serialize overlapping or uncertain work. If overlap is discovered after
+   execution starts, pause the newer task and block it on the earlier task.
+8. Run verify-task as a separate pass for every implementation. Failed
+   verification returns the task to its single write-owning implementation
+   agent; the verifier must not become a second writer.
+9. After all required task branches pass verification, integrate their verified
+   commits in dependency order into a dedicated local integration branch and
+   Worktree, then rerun all applicable repository gates against the combined
+   result.
+10. Report the overall request complete only after the integrated local result
+    passes its required gates and any separately authorized deployment gate.
+
+The coordinating task owns decomposition, dispatch, dependency management,
+progress monitoring, and final integration. It must not edit implementation
+files in child task Worktrees. Each task and Worktree has exactly one
+write-owning implementation agent; parallel agents inside a task are limited to
+read-only research, review, or verification.
+
+New requests received while work is active are captured and scheduled without
+interrupting active work. A P0 interrupts active work only after the user
+explicitly confirms both the P0 classification and the interruption.
+
+Automation ends at verified local integration. Unless the user explicitly
+requests it, do not push branches, create or merge a pull request, merge into
+main or master, deploy, restart production services, or synchronize Beads data
+remotely. When deployment is required by this file but has not been authorized,
+report the integrated result as ready for deployment rather than complete.
+
+If Codex cannot programmatically create the required Codex task or Worktree,
+leave the Beads task READY and report the exact missing manual action. Never
+fall back to implementing multiple tasks in one Worktree.
+
 ## Development task workflow
 
 - Beads is the source of truth for project tasks. Follow
@@ -110,8 +167,10 @@ research does not replace medical clearance.
 - One implementation task has one write-owning agent. Do not run multiple
   agents that edit the same task or Worktree. Read-only research, review, and
   verification may be delegated in parallel.
-- The Project Dispatcher is queue-only. It may capture, triage, and select work
-  while implementations run, but it must not edit product code or claim a task.
+- The Project Dispatcher is code-read-only but acts as the default coordinator.
+  It may capture, triage, select, decompose, create child Worktree tasks,
+  dispatch work, monitor results, and integrate verified commits. It must not
+  edit product code or claim an implementation task itself.
 - One task must produce one focused diff.
 - Do not expand task scope. Capture unrelated findings as separate linked
   tasks.

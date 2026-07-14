@@ -101,7 +101,7 @@ Keep one long-lived Codex task named:
 Project Dispatcher
 ```
 
-Use it only for queue operations:
+Use it as the default code-read-only coordinator:
 
 ```text
 $capture-issue
@@ -110,7 +110,35 @@ $next-task
 ```
 
 Capturing a Beads task must not create a visible Codex task, switch branches,
-claim work, or interrupt an active implementation.
+claim work, or interrupt an active implementation. After successful triage,
+an explicit implementation request may automatically create and dispatch a
+separate Codex Worktree task.
+
+## Automatic Request Routing
+
+For a concrete implementation request, the user may describe the desired
+change in ordinary language. Explicit skill commands are optional. The
+coordinator automatically:
+
+1. captures the request in Beads;
+2. triages it to READY when the requirements are sufficiently clear;
+3. decomposes independent deliverables into linked tasks;
+4. records dependencies for overlapping or ordered work;
+5. creates a dedicated Codex task, Worktree, and branch for each READY task;
+6. dispatches execute-task for each task;
+7. runs independent tasks concurrently and ordered tasks serially;
+8. dispatches a separate verify-task pass;
+9. integrates verified commits in dependency order into a local integration
+   branch and Worktree;
+10. reruns the applicable gates against the combined result.
+
+The coordinator asks the user only when a material decision or new authority
+is required. Questions, explanations, read-only reviews, and diagnostics do not
+enter the implementation lifecycle automatically.
+
+Automation does not include push, pull-request creation or merge, merging into
+main or master, remote Beads synchronization, production deployment, or service
+restart unless the user explicitly requests those actions.
 
 ## Built-In Codex Integration
 
@@ -227,17 +255,15 @@ not claim or start the task.
 
 ## Start Implementation
 
-The user creates a new task in the Codex app:
-
-1. Choose the GymCoach project.
-2. Choose the Worktree environment.
-3. Name the task:
+The coordinator normally creates the implementation task automatically after
+triage. It chooses the GymCoach project, creates a Worktree from the recorded
+integration base, and names the task:
 
 ```text
 TASK-ID - Short task title
 ```
 
-4. Send:
+It then sends:
 
 ```text
 $execute-task TASK-ID
@@ -400,8 +426,10 @@ references, but Beads remains authoritative for task status and dependencies.
 
 ## Manual Boundaries
 
-- The user creates visible Codex tasks and chooses Worktree mode manually.
-- Creating a Beads task does not create a Codex task.
+- Capture alone does not create a Codex task. A clear implementation request
+  creates one automatically only after the Beads task reaches READY.
+- If the current Codex surface cannot create tasks or Worktrees, the user must
+  perform the exact creation action reported by the coordinator.
 - New or changed Codex hooks require project trust and may require review
   through /hooks plus a Codex restart.
 - Beads remote synchronization is explicit. This setup does not push
