@@ -46,7 +46,7 @@ describe('profile route - coachNote (issue #188)', () => {
       'Shoulder is bothering me, go easy on pressing.',
     );
 
-    const getRes = await getProfile();
+    const getRes = await getProfile(new Request('http://test.local/api/profile'));
     expect((await getRes.json()).coachNote).toBe(
       'Shoulder is bothering me, go easy on pressing.',
     );

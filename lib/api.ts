@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Prisma } from '@/prisma/generated/client';
 import { getCurrentUserId } from '@/lib/auth';
+import { authenticateMobileRequest } from '@/lib/mobile-auth';
 
 // ============================================================
 // Helpers for the API routes
@@ -18,7 +19,11 @@ export class ApiError extends Error {
   }
 }
 
-export async function requireApiUserId(): Promise<string> {
+export async function requireApiUserId(req?: Request): Promise<string> {
+  if (req) {
+    const mobilePrincipal = await authenticateMobileRequest(req);
+    if (mobilePrincipal) return mobilePrincipal.userId;
+  }
   const userId = await getCurrentUserId();
   if (!userId) {
     throw new ApiError(401, 'Unauthorized');

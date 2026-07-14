@@ -15,9 +15,9 @@ const PROFILE_SELECT = {
   unit: true,
 } as const;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const user = await db.user.findUnique({
       where: { id: userId },
       select: PROFILE_SELECT,
@@ -30,7 +30,7 @@ export async function GET() {
 
 export async function PATCH(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const data = await parseJsonBody(req, profileUpdateSchema);
     const updated = await db.user.update({
       where: { id: userId },

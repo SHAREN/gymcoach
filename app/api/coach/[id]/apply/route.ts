@@ -16,7 +16,7 @@ interface Params {
 export async function POST(req: Request, props: Params) {
   const params = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const { adjustments } = await parseJsonBody(req, applyAdjustmentsSchema);
 
     const coachSession = await db.coachSession.findUnique({

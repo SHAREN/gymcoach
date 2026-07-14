@@ -8,9 +8,9 @@ import { isoWeekStart } from '@/lib/stats';
 // POST /api/coach: generates a new debrief for the current week.
 // The structured payload is computed server-side then sent to the configured
 // LLM provider. The markdown response is stored in CoachSession.
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     const payload = await buildCoachPayload(userId);
     const { markdown, modelUsed, promptText } = await callCoach(payload);
@@ -45,9 +45,9 @@ export async function POST() {
 }
 
 // GET /api/coach: debrief history (the last 20).
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     const items = await db.coachSession.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },

@@ -7,21 +7,38 @@ import { getLlmProvider, LlmError } from '@/lib/llm';
 import { buildCoachPayload, buildCurrentSessionContext } from '@/lib/coach';
 import { CHAT_SYSTEM_PROMPT } from '@/lib/prompts/chat-system-prompt';
 import { deriveConversationTitle } from '@/lib/chat';
+import { databaseIdSchema } from '@/lib/schemas/database-id';
 
 const bodySchema = z.object({
   conversationId: z.string().cuid().optional(),
   message: z.string().trim().min(1).max(4000),
   // In-session chat (issue #111): attaches the live workout as context. The
   // session must belong to the caller; a foreign or unknown id is ignored.
-  sessionId: z.string().cuid().optional(),
+  sessionId: databaseIdSchema.optional(),
 });
+
+// GET /api/coach/chat: conversation summaries for native and web clients.
+export async function GET(req: Request) {
+  try {
+    const userId = await requireApiUserId(req);
+    const conversations = await db.conversation.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      select: { id: true, title: true, updatedAt: true },
+    });
+    return NextResponse.json(conversations);
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
 
 // POST /api/coach/chat: appends a user message and streams the assistant reply
 // (text/plain chunks). The conversation id is returned in the X-Conversation-Id
 // header. The assistant message is persisted once the stream completes.
 export async function POST(req: Request) {
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
 
     const rl = rateLimit(`chat:${userId}`, 30, 60_000);
     if (!rl.ok) {

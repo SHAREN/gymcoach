@@ -13,10 +13,10 @@ async function ensureOwnership(id: string, userId: string) {
 }
 
 // GET /api/coach/chat/[id]: messages of a conversation (owner only).
-export async function GET(_req: Request, props: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     await ensureOwnership(params.id, userId);
     const messages = await db.message.findMany({
       where: { conversationId: params.id },
@@ -30,10 +30,10 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
 }
 
 // DELETE /api/coach/chat/[id]: deletes a conversation and its messages.
-export async function DELETE(_req: Request, props: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const userId = await requireApiUserId();
+    const userId = await requireApiUserId(req);
     await ensureOwnership(params.id, userId);
     await db.conversation.delete({ where: { id: params.id } });
     return NextResponse.json({ ok: true });
