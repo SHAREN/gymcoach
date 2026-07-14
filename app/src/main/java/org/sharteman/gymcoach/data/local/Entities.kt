@@ -77,5 +77,41 @@ data class SyncOutboxEntity(
     val status: String = "PENDING",
     val attempts: Int = 0,
     val lastError: String? = null,
+    val lastRetryRequestedAtEpochMs: Long = 0,
+    val createdAtEpochMs: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "offline_read_cache",
+    indices = [Index("accountKey"), Index("domain")],
+)
+data class OfflineReadCacheEntity(
+    @PrimaryKey val cacheKey: String,
+    val accountKey: String,
+    val domain: String,
+    val payloadJson: String,
+    val updatedAtEpochMs: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "offline_mutation_outbox",
+    indices = [
+        Index("accountKey"),
+        Index("status"),
+        Index("nextAttemptAtEpochMs"),
+        Index(value = ["operationId"], unique = true),
+    ],
+)
+data class OfflineMutationEntity(
+    @PrimaryKey(autoGenerate = true) val sequence: Long = 0,
+    val operationId: String,
+    val accountKey: String,
+    val domain: String,
+    val type: String,
+    val payloadJson: String,
+    val status: String = "PENDING",
+    val attempts: Int = 0,
+    val nextAttemptAtEpochMs: Long = 0,
+    val lastError: String? = null,
     val createdAtEpochMs: Long = System.currentTimeMillis(),
 )

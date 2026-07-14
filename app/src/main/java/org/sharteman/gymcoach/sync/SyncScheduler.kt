@@ -2,6 +2,7 @@ package org.sharteman.gymcoach.sync
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -16,10 +17,13 @@ object SyncScheduler {
         .build()
 
     fun scheduleNow(context: Context) {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(connected).build()
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(connected)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+            .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             "gymcoach-sync-now",
-            ExistingWorkPolicy.KEEP,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
             request,
         )
     }

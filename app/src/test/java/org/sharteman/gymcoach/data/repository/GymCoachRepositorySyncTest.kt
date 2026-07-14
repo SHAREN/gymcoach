@@ -3,6 +3,7 @@ package org.sharteman.gymcoach.data.repository
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -556,18 +557,98 @@ class GymCoachRepositorySyncTest {
         assertEquals(session, fixture.dao.getSession(session.id))
     }
 
+    @Test
+    fun retryingSessionNotFoundRecordsTheRequestAndSchedulesARealSync() = runTest {
+        val fixture = fixture()
+        val operation = UpsertSetOperation(
+            operationId = "operation_retry_missing_session",
+            set = MobileSetPayload(
+                id = "set_retry_missing_session",
+                sessionId = "session_retry_missing",
+                exerciseId = "exercise_1",
+                setNumber = 1,
+                weight = 80.0,
+                reps = 8,
+                rir = 2,
+                completedAt = "2026-07-14T10:05:00Z",
+            ),
+        )
+        fixture.dao.enqueue(fixture.outbox(operation))
+        fixture.dao.markOperationBlocked(operation.operationId, "Session not found.")
+        assertTrue(requireNotNull(fixture.repository.syncIssue.first()).canRetry)
+
+        fixture.repository.retryBlockedChange()
+
+        val retried = fixture.dao.queuedOperations().single()
+        assertEquals("PENDING", retried.status)
+        assertEquals(null, retried.lastError)
+        assertTrue(retried.lastRetryRequestedAtEpochMs > 0)
+        assertEquals(1, fixture.syncCounter.count)
+    }
+
+    @Test
+    fun discardingMissingSessionConflictRemovesAllEightDependentsAfterRestart() = runTest {
+        val fixture = fixture()
+        val sessionId = "session_missing_after_cancel"
+        repeat(7) { index ->
+            val operation = UpsertSetOperation(
+                operationId = "operation_missing_$index",
+                set = MobileSetPayload(
+                    id = "set_missing_$index",
+                    sessionId = sessionId,
+                    exerciseId = "exercise_1",
+                    setNumber = index + 1,
+                    weight = 80.0,
+                    reps = 8,
+                    rir = 2,
+                    completedAt = "2026-07-14T10:0${index}:00Z",
+                ),
+            )
+            fixture.dao.enqueue(fixture.outbox(operation))
+        }
+        val finish = FinishSessionOperation(
+            operationId = "operation_missing_finish",
+            sessionId = sessionId,
+            finishedAt = "2026-07-14T11:00:00Z",
+        )
+        fixture.dao.enqueue(fixture.outbox(finish))
+        fixture.dao.markOperationBlocked(
+            fixture.dao.queuedOperations().first().operationId,
+            "Session not found.",
+        )
+
+        fixture.repository.discardBlockedChange()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals(null, fixture.dao.getSession(sessionId))
+        assertEquals(null, fixture.dao.observeBlockedOperation().first())
+
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = { fixture.syncCounter.count++ },
+            schedulePeriodicSync = {},
+        )
+        restarted.refreshBootstrap()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals(null, fixture.dao.observeBlockedOperation().first())
+    }
+
     private fun fixture(): Fixture {
         val dao = InMemoryDao()
         val api = TestApi()
         val accountStore = TestAccountStore()
+        val syncCounter = SyncCounter()
         val repository = GymCoachRepository(
             dao = dao,
             accountStore = accountStore,
             api = api,
-            scheduleSyncNow = {},
+            scheduleSyncNow = { syncCounter.count++ },
             schedulePeriodicSync = {},
         )
-        return Fixture(dao, api, accountStore, repository)
+        return Fixture(dao, api, accountStore, repository, syncCounter)
     }
 
     private fun bootstrap(
@@ -645,6 +726,7 @@ class GymCoachRepositorySyncTest {
         val api: TestApi,
         val accountStore: TestAccountStore,
         val repository: GymCoachRepository,
+        val syncCounter: SyncCounter,
     ) {
         fun outbox(operation: SyncOperation) = SyncOutboxEntity(
             operationId = operation.operationId,
@@ -655,6 +737,8 @@ class GymCoachRepositorySyncTest {
         fun decodeTargetSetsOperation(entity: SyncOutboxEntity): UpdateTargetSetsOperation =
             api.json.decodeFromString<SyncOperation>(entity.payloadJson) as UpdateTargetSetsOperation
     }
+
+    private class SyncCounter(var count: Int = 0)
 
     private class TestAccountStore : AccountStore {
         override val deviceId = "device_test_0001"
@@ -818,8 +902,14 @@ class GymCoachRepositorySyncTest {
         override suspend fun markOperationBlocked(operationId: String, error: String) {
             updateOperation(operationId) { it.copy(status = "BLOCKED", attempts = it.attempts + 1, lastError = error) }
         }
-        override suspend fun retryOperation(operationId: String) {
-            updateOperation(operationId) { it.copy(status = "PENDING", lastError = null) }
+        override suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long) {
+            updateOperation(operationId) {
+                it.copy(
+                    status = "PENDING",
+                    lastError = null,
+                    lastRetryRequestedAtEpochMs = requestedAtEpochMs,
+                )
+            }
         }
         override suspend fun recoverInterruptedOperations() {
             outbox.indices.forEach { index ->

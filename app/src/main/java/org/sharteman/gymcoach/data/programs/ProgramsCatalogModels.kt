@@ -89,3 +89,32 @@ interface ProgramsCatalogDataSource {
     suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto
     suspend fun deleteExercise(id: String)
 }
+
+data class ClientMutationMetadata(
+    val operationId: String,
+    val clientEntityId: String? = null,
+)
+
+interface ProgramsCatalogRemoteDataSource : ProgramsCatalogDataSource {
+    suspend fun createProgram(
+        input: ProgramInput,
+        metadata: ClientMutationMetadata,
+    ): ManagedProgramDto
+
+    suspend fun createWorkout(
+        programId: String,
+        input: WorkoutInput,
+        metadata: ClientMutationMetadata,
+    ): WorkoutDto
+
+    suspend fun createProgramExercise(
+        workoutId: String,
+        input: ProgramExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ProgramExerciseDto
+
+    suspend fun createExercise(
+        input: ExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ExerciseDto
+}

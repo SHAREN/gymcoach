@@ -17,7 +17,11 @@ import org.sharteman.gymcoach.data.model.MobileVolumeTargetClearRequest
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetRequest
 import java.util.concurrent.TimeUnit
 
-class HistoryProgressApiClient {
+fun interface HistoryMutationRemote {
+    suspend fun deleteHistorySession(baseUrl: String, token: String, sessionId: String)
+}
+
+class HistoryProgressApiClient : HistoryMutationRemote {
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -44,7 +48,7 @@ class HistoryProgressApiClient {
         return execute(Request.Builder().url(url).bearer(token).get().build())
     }
 
-    suspend fun deleteHistorySession(baseUrl: String, token: String, sessionId: String) {
+    override suspend fun deleteHistorySession(baseUrl: String, token: String, sessionId: String) {
         executeWithoutBody(
             Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/api/mobile/history/$sessionId")

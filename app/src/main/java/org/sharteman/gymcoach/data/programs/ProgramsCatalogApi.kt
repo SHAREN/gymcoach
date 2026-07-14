@@ -24,7 +24,7 @@ class ProgramsCatalogApi(
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build(),
-) : ProgramsCatalogDataSource {
+) : ProgramsCatalogRemoteDataSource {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -38,6 +38,16 @@ class ProgramsCatalogApi(
     override suspend fun createProgram(input: ProgramInput): ManagedProgramDto =
         request("POST", "/api/mobile/programs", json.encodeToString(input))
 
+    override suspend fun createProgram(
+        input: ProgramInput,
+        metadata: ClientMutationMetadata,
+    ): ManagedProgramDto = request(
+        "POST",
+        "/api/mobile/programs",
+        json.encodeToString(input),
+        metadata,
+    )
+
     override suspend fun updateProgram(id: String, input: ProgramInput): ManagedProgramDto =
         request("PUT", "/api/mobile/programs/$id", json.encodeToString(input))
 
@@ -50,6 +60,17 @@ class ProgramsCatalogApi(
 
     override suspend fun createWorkout(programId: String, input: WorkoutInput): WorkoutDto =
         request("POST", "/api/mobile/programs/$programId/workouts", json.encodeToString(input))
+
+    override suspend fun createWorkout(
+        programId: String,
+        input: WorkoutInput,
+        metadata: ClientMutationMetadata,
+    ): WorkoutDto = request(
+        "POST",
+        "/api/mobile/programs/$programId/workouts",
+        json.encodeToString(input),
+        metadata,
+    )
 
     override suspend fun updateWorkout(id: String, input: WorkoutInput): WorkoutDto =
         request("PUT", "/api/mobile/workouts/$id", json.encodeToString(input))
@@ -65,6 +86,17 @@ class ProgramsCatalogApi(
         "POST",
         "/api/mobile/workouts/$workoutId/program-exercises",
         json.encodeToString(input),
+    )
+
+    override suspend fun createProgramExercise(
+        workoutId: String,
+        input: ProgramExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ProgramExerciseDto = request(
+        "POST",
+        "/api/mobile/workouts/$workoutId/program-exercises",
+        json.encodeToString(input),
+        metadata,
     )
 
     override suspend fun updateProgramExercise(
@@ -85,6 +117,16 @@ class ProgramsCatalogApi(
     override suspend fun createExercise(input: ExerciseInput): ExerciseDto =
         request("POST", "/api/mobile/exercises", json.encodeToString(input))
 
+    override suspend fun createExercise(
+        input: ExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ExerciseDto = request(
+        "POST",
+        "/api/mobile/exercises",
+        json.encodeToString(input),
+        metadata,
+    )
+
     override suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto =
         request("PUT", "/api/mobile/exercises/$id", json.encodeToString(input))
 
@@ -92,11 +134,20 @@ class ProgramsCatalogApi(
         request<MutationResult>("DELETE", "/api/mobile/exercises/$id")
     }
 
-    private suspend inline fun <reified T> request(method: String, path: String, body: String? = null): T =
+    private suspend inline fun <reified T> request(
+        method: String,
+        path: String,
+        body: String? = null,
+        metadata: ClientMutationMetadata? = null,
+    ): T =
         withContext(Dispatchers.IO) {
             val builder = Request.Builder()
                 .url("${baseUrl.trimEnd('/')}$path")
                 .header("Authorization", "Bearer $token")
+            metadata?.let {
+                builder.header("Idempotency-Key", it.operationId)
+                it.clientEntityId?.let { entityId -> builder.header("X-Client-Entity-Id", entityId) }
+            }
             when (method) {
                 "GET" -> builder.get()
                 "POST" -> builder.post((body ?: "{}").toRequestBody(JSON_MEDIA_TYPE))

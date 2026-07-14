@@ -3,6 +3,7 @@ package org.sharteman.gymcoach
 import android.app.Application
 import org.sharteman.gymcoach.data.local.GymCoachDatabase
 import org.sharteman.gymcoach.data.network.ApiClient
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.sync.SyncScheduler
@@ -15,6 +16,7 @@ class GymCoachApplication : Application() {
         super.onCreate()
         val database = GymCoachDatabase.get(this)
         val accountStore = SecureAccountStore(this)
+        OfflineRuntime.initialize(this) { SyncScheduler.scheduleNow(this) }
         repository = GymCoachRepository(
             dao = database.dao(),
             accountStore = accountStore,

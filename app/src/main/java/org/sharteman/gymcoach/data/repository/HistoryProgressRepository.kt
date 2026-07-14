@@ -8,11 +8,22 @@ import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetClearRequest
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetRequest
 import org.sharteman.gymcoach.data.network.HistoryProgressApiClient
+import org.sharteman.gymcoach.data.offline.DeleteHistorySessionMutation
+import org.sharteman.gymcoach.data.offline.NetworkStatus
+import org.sharteman.gymcoach.data.offline.OFFLINE_DOMAIN_HISTORY
+import org.sharteman.gymcoach.data.offline.OfflineMutationController
+import org.sharteman.gymcoach.data.offline.OfflinePersistence
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.offline.accountKey
+import org.sharteman.gymcoach.data.offline.historyCacheKey
+import org.sharteman.gymcoach.data.offline.offlineJson
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.SecureAccountStore
+import java.io.IOException
+import java.util.UUID
 
 interface HistoryProgressDataSource {
-    fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot?
+    suspend fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot?
     suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot
     suspend fun deleteHistorySession(sessionId: String)
     suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int)
@@ -21,31 +32,72 @@ interface HistoryProgressDataSource {
     suspend fun clearVolumeTarget(muscleGroup: String)
     suspend fun startDeload()
     suspend fun endDeload()
+    suspend fun retryOfflineChange(operationId: String): Boolean = false
+    suspend fun discardOfflineChange(operationId: String): Boolean = false
 }
 
 class HistoryProgressRepository(
     context: Context,
     private val accountStore: AccountStore = SecureAccountStore(context.applicationContext),
     private val api: HistoryProgressApiClient = HistoryProgressApiClient(),
+    private val offlinePersistence: OfflinePersistence? = OfflineRuntime.persistence(),
+    private val networkStatus: NetworkStatus = OfflineRuntime.networkStatus() ?: NetworkStatus { true },
+    private val scheduleSync: () -> Unit = { OfflineRuntime.scheduleSync() },
 ) : HistoryProgressDataSource {
     private val cache = HistoryReadCache(context.applicationContext, api)
 
-    override fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot? {
+    override suspend fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot? {
         val account = credentials()
-        return cache.read(account.userId, month, programId)
+        val key = accountKey(account.serverUrl, account.userId)
+        val cacheKey = historyCacheKey(key, month, programId)
+        val stored = offlinePersistence?.readCache(cacheKey)
+        val legacy = cache.read(account.userId, month, programId)
+        val snapshot = stored
+            ?.let { runCatching { offlineJson.decodeFromString<MobileHistorySnapshot>(it) }.getOrNull() }
+            ?: legacy
+        if (stored == null && legacy != null) {
+            offlinePersistence?.saveCache(
+                key,
+                OFFLINE_DOMAIN_HISTORY,
+                cacheKey,
+                offlineJson.encodeToString(legacy),
+            )
+        }
+        return snapshot?.let { applyPendingHistoryDeletes(key, it) }
     }
 
     override suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot {
         val account = credentials()
-        return api.history(account.serverUrl, account.token, month, programId).also {
-            cache.write(account.userId, month, programId, it)
+        if (!networkStatus.isConnected()) {
+            return cachedHistory(month, programId)
+                ?: throw IOException("No network connection and no cached history data.")
         }
+        val accountKey = accountKey(account.serverUrl, account.userId)
+        val remote = api.history(account.serverUrl, account.token, month, programId).also {
+            cache.write(account.userId, month, programId, it)
+            offlinePersistence?.saveCache(
+                accountKey,
+                OFFLINE_DOMAIN_HISTORY,
+                historyCacheKey(accountKey, month, programId),
+                offlineJson.encodeToString(it),
+            )
+        }
+        return applyPendingHistoryDeletes(accountKey, remote)
     }
 
     override suspend fun deleteHistorySession(sessionId: String) {
         val account = credentials()
-        api.deleteHistorySession(account.serverUrl, account.token, sessionId)
-        cache.clearUser(account.userId)
+        val persistence = offlinePersistence
+        if (persistence == null) {
+            api.deleteHistorySession(account.serverUrl, account.token, sessionId)
+            cache.clearUser(account.userId)
+            return
+        }
+        persistence.enqueue(
+            accountKey(account.serverUrl, account.userId),
+            DeleteHistorySessionMutation(operationId(), sessionId),
+        )
+        scheduleSync()
     }
 
     override suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int) {
@@ -89,6 +141,26 @@ class HistoryProgressRepository(
         val account = credentials()
         api.endDeload(account.serverUrl, account.token)
     }
+
+    override suspend fun retryOfflineChange(operationId: String): Boolean =
+        offlinePersistence?.let { OfflineMutationController(it, scheduleSync).retry(operationId) } ?: false
+
+    override suspend fun discardOfflineChange(operationId: String): Boolean =
+        offlinePersistence?.let { OfflineMutationController(it, scheduleSync).discard(operationId) } ?: false
+
+    private suspend fun applyPendingHistoryDeletes(
+        accountKey: String,
+        snapshot: MobileHistorySnapshot,
+    ): MobileHistorySnapshot {
+        val deletedSessionIds = offlinePersistence?.operations(accountKey).orEmpty()
+            .mapNotNull { (it.mutation as? DeleteHistorySessionMutation)?.sessionId }
+            .toSet()
+        return if (deletedSessionIds.isEmpty()) snapshot else snapshot.copy(
+            sessions = snapshot.sessions.filterNot { it.id in deletedSessionIds },
+        )
+    }
+
+    private fun operationId() = "op_${UUID.randomUUID().toString().replace("-", "")}"
 
     private fun credentials(): Credentials {
         val userId = accountStore.userId ?: throw MobileAuthenticationRequiredException()

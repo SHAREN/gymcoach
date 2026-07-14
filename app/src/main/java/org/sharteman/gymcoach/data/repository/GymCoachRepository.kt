@@ -29,6 +29,7 @@ import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.normalizeServerUrl
@@ -60,7 +61,7 @@ class GymCoachRepository(
                 operationId = it.operationId,
                 message = it.lastError ?: "Server rejected a queued change.",
                 kind = kind,
-                canRetry = kind != SyncIssueKind.SESSION_NOT_FOUND,
+                canRetry = true,
             )
         }
     }
@@ -92,7 +93,10 @@ class GymCoachRepository(
         val accountChanged = previousIdentity != null &&
             (previousIdentity != response.user.id && previousIdentity != response.user.email ||
                 accountStore.serverUrl != candidateServerUrl)
-        if (accountChanged) dao.clearAccountData()
+        if (accountChanged) {
+            dao.clearAccountData()
+            OfflineRuntime.clearCurrentAccountData()
+        }
         accountStore.serverUrl = candidateServerUrl
         accountStore.setAccessToken(response.accessToken)
         accountStore.userId = response.user.id
@@ -104,18 +108,17 @@ class GymCoachRepository(
 
     suspend fun logout() = syncMutex.withLock {
         check(dao.queuedOperations().isEmpty()) { "Sync pending changes before signing out." }
+        check(!OfflineRuntime.hasPendingChanges()) { "Sync pending offline changes before signing out." }
         val token = accountStore.getAccessToken()
         if (token != null) runCatching { api.logout(accountStore.serverUrl, token) }
+        OfflineRuntime.clearCurrentAccountData()
         accountStore.clearAccount()
         dao.clearAccountData()
     }
 
     suspend fun retryBlockedChange() = syncMutex.withLock {
         val blocked = dao.queuedOperations().firstOrNull { it.status == "BLOCKED" } ?: return@withLock
-        if (syncIssueKind(blocked.lastError) == SyncIssueKind.SESSION_NOT_FOUND) {
-            return@withLock
-        }
-        dao.retryOperation(blocked.operationId)
+        dao.retryOperation(blocked.operationId, System.currentTimeMillis())
         scheduleSyncNow()
     }
 
@@ -130,6 +133,14 @@ class GymCoachRepository(
             is UpsertSetOperation -> operation.set.sessionId
             is FinishSessionOperation -> operation.sessionId
             is DeleteSetOperation -> dao.getSet(operation.setId)?.sessionId
+                ?: queue.asSequence()
+                    .mapNotNull { entry ->
+                        runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }.getOrNull()
+                    }
+                    .filterIsInstance<UpsertSetOperation>()
+                    .firstOrNull { it.set.id == operation.setId }
+                    ?.set
+                    ?.sessionId
             is UpdateTargetSetsOperation -> null
             null -> null
         }

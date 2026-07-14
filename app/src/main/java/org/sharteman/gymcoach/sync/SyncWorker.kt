@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import org.sharteman.gymcoach.GymCoachApplication
 import org.sharteman.gymcoach.data.network.ApiException
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
 import java.io.IOException
 
@@ -15,7 +16,9 @@ class SyncWorker(
     override suspend fun doWork(): Result {
         val repository = (applicationContext as GymCoachApplication).repository
         return try {
-            if (repository.syncPending()) Result.success() else Result.failure()
+            val workoutAccepted = repository.syncPending()
+            val offlineAccepted = OfflineRuntime.syncPending()
+            if (workoutAccepted && offlineAccepted) Result.success() else Result.failure()
         } catch (_: MobileAuthenticationRequiredException) {
             Result.failure()
         } catch (error: ApiException) {
