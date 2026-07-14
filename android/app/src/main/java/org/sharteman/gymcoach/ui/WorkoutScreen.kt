@@ -2,7 +2,6 @@ package org.sharteman.gymcoach.ui
 
 import android.content.Context
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -756,8 +755,8 @@ private fun ExerciseSummaryCard(
                         exercise.exercise.name,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        modifier = Modifier.basicMarquee(),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         formatMuscleGroup(exercise.exercise.muscleGroup),
