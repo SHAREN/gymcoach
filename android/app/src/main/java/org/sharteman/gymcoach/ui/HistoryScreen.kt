@@ -1,0 +1,696 @@
+package org.sharteman.gymcoach.ui
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.model.MobileHistoryCardioDto
+import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
+import org.sharteman.gymcoach.data.model.MobileHistorySessionDto
+import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
+import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
+import org.sharteman.gymcoach.data.repository.HistoryProgressDataSource
+import org.sharteman.gymcoach.training.roundWeight
+import org.sharteman.gymcoach.training.toDisplayWeight
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryScreen(
+    onBack: () -> Unit,
+    dataSource: HistoryProgressDataSource? = null,
+) {
+    val context = LocalContext.current
+    val defaultRepository = remember(context) { HistoryProgressRepository(context) }
+    val repository = dataSource ?: defaultRepository
+    val scope = rememberCoroutineScope()
+    var monthKey by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+    var programId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedDay by rememberSaveable { mutableStateOf("") }
+    var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var snapshot by remember { mutableStateOf<MobileHistorySnapshot?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var showingCache by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshNonce by remember { mutableStateOf(0) }
+    var programDialogOpen by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(monthKey, programId, refreshNonce) {
+        val cached = repository.cachedHistory(monthKey, programId)
+        if (cached != null) {
+            snapshot = cached
+            showingCache = true
+        }
+        loading = true
+        error = null
+        runCatching { repository.refreshHistory(monthKey, programId) }
+            .onSuccess {
+                snapshot = it
+                showingCache = false
+            }
+            .onFailure { throwable ->
+                error = throwable.message ?: context.getString(R.string.history_load_error)
+            }
+        loading = false
+    }
+
+    val sessionsByDay = remember(snapshot?.sessions, monthKey) {
+        nativeHistorySessionsByDay(snapshot?.sessions.orEmpty(), monthKey)
+    }
+    LaunchedEffect(monthKey, sessionsByDay.keys) {
+        if (!selectedDay.startsWith(monthKey)) {
+            selectedDay = defaultNativeHistoryDay(monthKey, sessionsByDay)
+        } else if (selectedDay.isBlank()) {
+            selectedDay = defaultNativeHistoryDay(monthKey, sessionsByDay)
+        }
+    }
+    val selectedSession = snapshot?.sessions?.firstOrNull { it.id == selectedSessionId }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        if (selectedSession == null) stringResource(R.string.history_native_title)
+                        else selectedSession.workoutName ?: stringResource(R.string.history_free_session),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = {
+                        if (selectedSessionId != null) selectedSessionId = null else onBack()
+                    }) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.previous),
+                        )
+                    }
+                },
+                actions = {
+                    if (selectedSession == null) {
+                        IconButton(onClick = { refreshNonce++ }, enabled = !loading) {
+                            Icon(
+                                Icons.Outlined.Refresh,
+                                contentDescription = stringResource(R.string.sync_now),
+                            )
+                        }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        if (selectedSession != null) {
+            HistorySessionDetail(
+                session = selectedSession,
+                unit = snapshot?.unit ?: "KG",
+                modifier = Modifier.padding(padding),
+                onDelete = {
+                    scope.launch {
+                        loading = true
+                        runCatching { repository.deleteHistorySession(selectedSession.id) }
+                            .onSuccess {
+                                selectedSessionId = null
+                                refreshNonce++
+                            }
+                            .onFailure { error = it.message ?: context.getString(R.string.history_delete_error) }
+                        loading = false
+                    }
+                },
+            )
+        } else {
+            HistoryCalendarContent(
+                snapshot = snapshot,
+                monthKey = monthKey,
+                selectedDay = selectedDay,
+                sessionsByDay = sessionsByDay,
+                programId = programId,
+                loading = loading,
+                showingCache = showingCache,
+                error = error,
+                modifier = Modifier.padding(padding),
+                onPreviousMonth = {
+                    monthKey = YearMonth.parse(monthKey).minusMonths(1).toString()
+                    selectedDay = ""
+                },
+                onNextMonth = {
+                    monthKey = YearMonth.parse(monthKey).plusMonths(1).toString()
+                    selectedDay = ""
+                },
+                onToday = {
+                    monthKey = YearMonth.now().toString()
+                    selectedDay = LocalDate.now().toString()
+                },
+                onSelectDay = { selectedDay = it },
+                onOpenProgramFilter = { programDialogOpen = true },
+                onOpenSession = { selectedSessionId = it },
+            )
+        }
+    }
+
+    if (programDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { programDialogOpen = false },
+            title = { Text(stringResource(R.string.history_filter_program)) },
+            text = {
+                LazyColumn(modifier = Modifier.fillMaxWidth().height(380.dp)) {
+                    item {
+                        TextButton(
+                            onClick = {
+                                programId = null
+                                selectedDay = ""
+                                programDialogOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.history_all_programs)) }
+                    }
+                    items(snapshot?.programs.orEmpty(), key = { it.id }) { program ->
+                        TextButton(
+                            onClick = {
+                                programId = program.id
+                                selectedDay = ""
+                                programDialogOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(program.name) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { programDialogOpen = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun HistoryCalendarContent(
+    snapshot: MobileHistorySnapshot?,
+    monthKey: String,
+    selectedDay: String,
+    sessionsByDay: Map<String, List<MobileHistorySessionDto>>,
+    programId: String?,
+    loading: Boolean,
+    showingCache: Boolean,
+    error: String?,
+    modifier: Modifier,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onToday: () -> Unit,
+    onSelectDay: (String) -> Unit,
+    onOpenProgramFilter: () -> Unit,
+    onOpenSession: (String) -> Unit,
+) {
+    val month = YearMonth.parse(monthKey)
+    val locale = Locale.getDefault()
+    val grid = remember(monthKey, locale) { buildNativeHistoryMonthGrid(monthKey, locale) }
+    val weekdayNames = remember(grid, locale) {
+        grid.take(7).map { it.date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale) }
+    }
+    val selectedSessions = sessionsByDay[selectedDay].orEmpty()
+    val selectedProgramName = snapshot?.programs?.firstOrNull { it.id == programId }?.name
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().testTag("history-native-list"),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (loading) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+        if (showingCache) item { StatusCard(stringResource(R.string.history_offline_cache)) }
+        error?.let { item { StatusCard(it, error = true) } }
+        item {
+            OutlinedButton(
+                onClick = onOpenProgramFilter,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Icon(Icons.Outlined.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(selectedProgramName ?: stringResource(R.string.history_all_programs))
+            }
+        }
+        item {
+            Card(
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+            ) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onPreviousMonth) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                                contentDescription = stringResource(R.string.history_previous_month),
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                month.atDay(1).format(DateTimeFormatter.ofPattern("LLLL yyyy", locale)),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            TextButton(onClick = onToday) { Text(stringResource(R.string.history_today)) }
+                        }
+                        IconButton(onClick = onNextMonth) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                                contentDescription = stringResource(R.string.history_next_month),
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        weekdayNames.forEach { name ->
+                            Text(
+                                name,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    grid.chunked(7).forEach { week ->
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            week.forEach { day ->
+                                val dateKey = day.date.toString()
+                                val count = sessionsByDay[dateKey]?.size ?: 0
+                                val selected = dateKey == selectedDay
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(52.dp)
+                                        .padding(2.dp)
+                                        .background(
+                                            when {
+                                                selected -> MaterialTheme.colorScheme.primaryContainer
+                                                day.inMonth -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                                else -> Color.Transparent
+                                            },
+                                            RoundedCornerShape(7.dp),
+                                        )
+                                        .clickable(enabled = day.inMonth) { onSelectDay(dateKey) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (day.inMonth) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(day.date.dayOfMonth.toString(), style = MaterialTheme.typography.bodySmall)
+                                            if (count > 0) {
+                                                Text(
+                                                    count.toString(),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Text(
+                formatHistoryDayTitle(selectedDay),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (!snapshot?.hasAnyHistory.orFalse()) {
+            item { StatusCard(stringResource(R.string.history_empty)) }
+        } else if (selectedSessions.isEmpty()) {
+            item { StatusCard(stringResource(R.string.history_no_sessions_day)) }
+        } else {
+            items(selectedSessions, key = { it.id }) { session ->
+                HistorySessionCard(session, snapshot?.unit ?: "KG", onOpenSession)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistorySessionCard(
+    session: MobileHistorySessionDto,
+    unit: String,
+    onOpenSession: (String) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("history-session-${session.id}")
+            .clickable { onOpenSession(session.id) },
+        shape = RoundedCornerShape(9.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                session.workoutName ?: session.exercises.firstOrNull { it.category == "CARDIO" }?.name
+                    ?: stringResource(R.string.history_free_session),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                formatHistoryTime(session.startedAt),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            session.programName?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
+            if (session.cardio != null) {
+                Text(formatCardioSummary(session.cardio), style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(
+                    stringResource(
+                        R.string.history_session_summary,
+                        session.workingSets,
+                        formatHistoryWeight(session.volume, unit),
+                        session.durationMin,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistorySessionDetail(
+    session: MobileHistorySessionDto,
+    unit: String,
+    modifier: Modifier,
+    onDelete: () -> Unit,
+) {
+    var deleteDialog by rememberSaveable { mutableStateOf(false) }
+    LazyColumn(
+        modifier = modifier.fillMaxSize().testTag("history-session-detail"),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Card {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    session.programName?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                    Text(formatHistoryDateTime(session.startedAt), fontWeight = FontWeight.SemiBold)
+                    HistoryDetailSummaryRow(stringResource(R.string.history_sets), session.workingSets.toString())
+                    HistoryDetailSummaryRow(stringResource(R.string.history_exercises), session.exercises.size.toString())
+                    HistoryDetailSummaryRow(
+                        stringResource(R.string.history_total_volume),
+                        formatHistoryWeight(session.volume, unit),
+                    )
+                    HistoryDetailSummaryRow(
+                        stringResource(R.string.history_duration),
+                        stringResource(R.string.history_minutes_value, session.durationMin),
+                    )
+                    session.sessionRpe?.let {
+                        HistoryDetailSummaryRow(stringResource(R.string.history_session_rpe), "$it/10")
+                    }
+                }
+            }
+        }
+        session.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+            item {
+                Card {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(stringResource(R.string.history_notes), fontWeight = FontWeight.SemiBold)
+                        Text(notes)
+                    }
+                }
+            }
+        }
+        items(session.exercises, key = { it.id }) { exercise ->
+            HistoryExerciseCard(exercise, unit)
+        }
+        item {
+            OutlinedButton(
+                onClick = { deleteDialog = true },
+                modifier = Modifier.fillMaxWidth().testTag("history-delete-session"),
+            ) {
+                Icon(Icons.Outlined.Delete, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.history_delete_button))
+            }
+        }
+    }
+
+    if (deleteDialog) {
+        AlertDialog(
+            onDismissRequest = { deleteDialog = false },
+            title = { Text(stringResource(R.string.history_delete_title)) },
+            text = { Text(stringResource(R.string.history_delete_description)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteDialog = false
+                        onDelete()
+                    },
+                    modifier = Modifier.testTag("history-delete-confirm"),
+                ) { Text(stringResource(R.string.history_delete_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteDialog = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String) {
+    Card(
+        shape = RoundedCornerShape(9.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(exercise.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Text(muscleGroupLabel(exercise.muscleGroup), style = MaterialTheme.typography.labelSmall)
+            }
+            if (exercise.category == "CARDIO") {
+                exercise.cardio?.let { Text(formatCardioSummary(it), style = MaterialTheme.typography.bodySmall) }
+                CardioSetHeader()
+            } else {
+                Text(
+                    stringResource(
+                        R.string.history_exercise_strength_summary,
+                        formatHistoryWeight(exercise.volume, unit),
+                        formatHistoryWeight(exercise.estimated1RM, unit),
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                StrengthSetHeader(unit)
+            }
+            exercise.sets.forEach { set ->
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                if (exercise.category == "CARDIO") {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        HistoryCell(set.setNumber.toString(), 0.5f)
+                        HistoryCell(formatDurationSeconds(set.durationSec), 1f)
+                        HistoryCell(formatDistanceMeters(set.distanceM), 1f)
+                        HistoryCell(set.avgHr?.let { "$it" } ?: "-", 0.8f)
+                        HistoryCell(set.maxHr?.let { "$it" } ?: "-", 0.8f)
+                    }
+                } else {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        HistoryCell(set.setNumber.toString(), 0.45f)
+                        HistoryCell(formatHistoryWeight(set.effectiveWeight, unit), 1.25f)
+                        HistoryCell(set.reps.toString(), 0.7f)
+                        HistoryCell(set.rir?.toString() ?: "-", 0.6f)
+                        HistoryCell(setTypeLabel(set.isWarmup, set.isDropSet), 1.1f)
+                    }
+                    if (exercise.usesBodyweight && set.weight != set.effectiveWeight) {
+                        Text(
+                            stringResource(
+                                R.string.history_external_load,
+                                formatHistoryWeight(set.weight, unit),
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                set.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                    Text(
+                        stringResource(R.string.history_set_note, set.setNumber, note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StrengthSetHeader(unit: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        HistoryCell("#", 0.45f, header = true)
+        HistoryCell(unit.lowercase(Locale.getDefault()), 1.25f, header = true)
+        HistoryCell(stringResource(R.string.history_reps), 0.7f, header = true)
+        HistoryCell("RIR", 0.6f, header = true)
+        HistoryCell(stringResource(R.string.history_type), 1.1f, header = true)
+    }
+}
+
+@Composable
+private fun CardioSetHeader() {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        HistoryCell("#", 0.5f, header = true)
+        HistoryCell(stringResource(R.string.history_duration_short), 1f, header = true)
+        HistoryCell(stringResource(R.string.history_distance_short), 1f, header = true)
+        HistoryCell(stringResource(R.string.history_avg_hr), 0.8f, header = true)
+        HistoryCell(stringResource(R.string.history_max_hr), 0.8f, header = true)
+    }
+}
+
+@Composable
+private fun RowScope.HistoryCell(value: String, weight: Float, header: Boolean = false) {
+    Text(
+        value,
+        modifier = Modifier.weight(weight).padding(vertical = 3.dp),
+        style = if (header) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+        fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
+private fun StatusCard(message: String, error: Boolean = false) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (error) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Text(message, modifier = Modifier.fillMaxWidth().padding(14.dp), textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun setTypeLabel(warmup: Boolean, dropSet: Boolean): String = stringResource(
+    when {
+        warmup -> R.string.history_warmup
+        dropSet -> R.string.history_drop_set
+        else -> R.string.history_working_set
+    },
+)
+
+private fun Boolean?.orFalse(): Boolean = this == true
+
+@Composable
+private fun HistoryDetailSummaryRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+    }
+}
+
+private fun formatHistoryWeight(valueKg: Double, unit: String): String {
+    val value = roundWeight(toDisplayWeight(valueKg, unit), 1)
+    val number = if (value % 1.0 == 0.0) value.toInt().toString()
+    else String.format(Locale.getDefault(), "%.1f", value).trimEnd('0').trimEnd('.', ',')
+    return "$number ${unit.lowercase(Locale.getDefault())}"
+}
+
+private fun formatHistoryDayTitle(value: String): String = runCatching {
+    LocalDate.parse(value).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.getDefault()))
+}.getOrElse { value }
+
+private fun formatHistoryTime(value: String): String = runCatching {
+    Instant.parse(value).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
+}.getOrElse { value.take(16) }
+
+private fun formatHistoryDateTime(value: String): String = runCatching {
+    Instant.parse(value).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", Locale.getDefault()))
+}.getOrElse { value }
+
+private fun formatDurationSeconds(value: Int?): String {
+    val seconds = value ?: return "-"
+    return "%d:%02d".format(seconds / 60, seconds % 60)
+}
+
+private fun formatDistanceMeters(value: Double?): String = when {
+    value == null || value <= 0 -> "-"
+    value >= 1000 -> String.format(Locale.getDefault(), "%.2f km", value / 1000.0)
+    else -> "${value.toInt()} m"
+}
+
+private fun formatCardioSummary(value: MobileHistoryCardioDto): String = listOfNotNull(
+    formatDurationSeconds(value.durationSec),
+    formatDistanceMeters(value.distanceM).takeUnless { it == "-" },
+    value.avgHr?.let { "$it bpm" },
+).joinToString(" · ")

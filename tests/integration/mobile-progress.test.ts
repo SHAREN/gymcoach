@@ -295,16 +295,17 @@ describe('GET /api/mobile/progress', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.schemaVersion).toBe(2);
+    expect(body.schemaVersion).toBe(3);
     expect(new Date(body.generatedAt).toISOString()).toBe(body.generatedAt);
     expect(body.exercises.map((exercise: { name: string }) => exercise.name)).toEqual([
       'Bench Press',
       'Pull-up',
     ]);
-    expect(body.exercises[0]).toEqual({
+    expect(body.exercises[0]).toMatchObject({
       id: bench.id,
       name: 'Bench Press',
       muscleGroup: 'CHEST',
+      usesBodyweight: false,
       points: [
         {
           sessionStartedAt: oldStartedAt.toISOString(),
@@ -335,10 +336,11 @@ describe('GET /api/mobile/progress', () => {
         },
       ],
     });
-    expect(body.exercises[1]).toEqual({
+    expect(body.exercises[1]).toMatchObject({
       id: pullup.id,
       name: 'Pull-up',
       muscleGroup: 'BACK_WIDTH',
+      usesBodyweight: true,
       points: [
         {
           sessionStartedAt: recentStartedAt.toISOString(),
@@ -406,6 +408,22 @@ describe('GET /api/mobile/progress', () => {
       distanceKm: 5,
       sessions: 1,
     });
+    expect(body.unit).toBe('KG');
+    expect(body.exercises[0].bestEstimated1RM).toBe(96);
+    expect(body.exercises[0].loadingTable).toHaveLength(8);
+    expect(body.exercises[0].recap).toMatchObject({
+      sessions: 2,
+      firstWeight: 60,
+      lastWeight: 80,
+      weightDelta: 20,
+      stalled: false,
+    });
+    expect(body.records.map((record: { exerciseName: string }) => record.exerciseName)).toEqual([
+      'Bench Press',
+      'Old Only Lift',
+      'Pull-up',
+    ]);
+    expect(body.deload).toMatchObject({ active: false, recommended: false });
   });
 
   it('returns null conditioning when the user has never logged cardio', async () => {

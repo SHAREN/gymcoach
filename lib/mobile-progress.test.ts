@@ -64,6 +64,7 @@ describe('buildMobileExerciseSeries', () => {
         id: 'pullup',
         name: 'Pull-up',
         muscleGroup: 'BACK_WIDTH',
+        usesBodyweight: true,
         points: [
           {
             sessionStartedAt: '2026-07-01T10:00:00.000Z',
@@ -84,6 +85,21 @@ describe('buildMobileExerciseSeries', () => {
             totalReps: 16,
           },
         ],
+        bestEstimated1RM: 0,
+        loadingTable: [],
+        goal: null,
+        recap: {
+          sessions: 0,
+          firstWeight: 0,
+          firstDate: '',
+          lastWeight: 0,
+          lastDate: '',
+          weightDelta: 0,
+          firstEstimated1RM: 0,
+          lastEstimated1RM: 0,
+          estimated1RMDelta: 0,
+          stalled: false,
+        },
       },
     ]);
   });
