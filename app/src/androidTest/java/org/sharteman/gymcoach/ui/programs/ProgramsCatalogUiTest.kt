@@ -4,8 +4,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import java.util.Locale
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -54,6 +57,29 @@ class ProgramsCatalogUiTest {
         composeRule.onNodeWithTag("exercise-search").performTextInput("row")
         composeRule.onNodeWithText("Barbell Row").assertIsDisplayed()
         composeRule.onNodeWithText("Bench Press").assertDoesNotExist()
+    }
+
+    @Test
+    fun rendersRussianExerciseNamesAndAttributes() {
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ru"))
+            composeRule.setContent {
+                GymCoachTheme {
+                    ExerciseCatalogScreen(
+                        dataSource = FakeProgramsCatalogDataSource(),
+                        serverUrl = "https://example.test",
+                        onBack = {},
+                    )
+                }
+            }
+
+            composeRule.onNodeWithText("Жим лёжа").assertIsDisplayed()
+            composeRule.onNodeWithText("Грудь").assertIsDisplayed()
+            composeRule.onAllNodesWithText("Базовое • Штанга").onFirst().assertIsDisplayed()
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
     }
 }
 

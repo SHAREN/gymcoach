@@ -56,6 +56,7 @@ import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 @Composable
 internal fun GymEquipmentSection(
@@ -331,7 +332,7 @@ private fun EquipmentEditorDialog(
                     ) {
                         exercises.filterNot { it.id in draft.exerciseIds }.forEach { exercise ->
                             DropdownMenuItem(
-                                text = { Text(exercise.name) },
+                                text = { Text(exerciseDisplayName(exercise.name)) },
                                 onClick = {
                                     exercisePickerOpen = false
                                     onChange(draft.copy(exerciseIds = draft.exerciseIds + exercise.id))

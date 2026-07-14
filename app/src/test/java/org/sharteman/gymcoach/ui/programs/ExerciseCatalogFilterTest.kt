@@ -21,4 +21,10 @@ class ExerciseCatalogFilterTest {
     fun `blank optional filters return complete catalog`() {
         assertEquals(exercises, filterCatalogExercises(exercises, " ", null, null))
     }
+
+    @Test
+    fun `searches by localized Russian exercise name`() {
+        val result = filterCatalogExercises(exercises, "жим лёжа", null, null, language = "ru")
+        assertEquals(listOf("1"), result.map { it.id })
+    }
 }

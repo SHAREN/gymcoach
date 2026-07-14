@@ -68,6 +68,7 @@ import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -212,7 +213,8 @@ fun ProgressScreen(
                     )
                     Spacer(Modifier.size(8.dp))
                     Text(
-                        selectedExercise?.name ?: stringResource(R.string.choose_exercise),
+                        selectedExercise?.let { exerciseDisplayName(it.name) }
+                            ?: stringResource(R.string.choose_exercise),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -303,7 +305,7 @@ fun ProgressScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
-                                Text(exercise.name, fontWeight = FontWeight.Medium)
+                                Text(exerciseDisplayName(exercise.name), fontWeight = FontWeight.Medium)
                                 Text(
                                     muscleGroupLabel(exercise.muscleGroup),
                                     style = MaterialTheme.typography.bodySmall,

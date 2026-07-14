@@ -112,6 +112,8 @@ import org.sharteman.gymcoach.training.recommendNextSet
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.setTableMetricEnabled
 import org.sharteman.gymcoach.training.toDisplayWeight
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -661,14 +663,14 @@ private fun ExerciseStrip(
                                     .diskCacheKey(thumbnailUrl)
                                     .crossfade(true)
                                     .build(),
-                                contentDescription = exercise.exercise.name,
+                                contentDescription = exerciseDisplayName(exercise.exercise.name),
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                                 loading = {
-                                    ExerciseThumbnailFallback(exercise.exercise.name, selected)
+                                    ExerciseThumbnailFallback(exerciseDisplayName(exercise.exercise.name), selected)
                                 },
                                 error = {
-                                    ExerciseThumbnailFallback(exercise.exercise.name, selected)
+                                    ExerciseThumbnailFallback(exerciseDisplayName(exercise.exercise.name), selected)
                                 },
                                 success = { SubcomposeAsyncImageContent() },
                             )
@@ -681,7 +683,7 @@ private fun ExerciseStrip(
                                 },
                             ) {}
                         } else {
-                            ExerciseThumbnailFallback(exercise.exercise.name, selected)
+                            ExerciseThumbnailFallback(exerciseDisplayName(exercise.exercise.name), selected)
                         }
                         if (completed) {
                             Surface(
@@ -752,14 +754,14 @@ private fun ExerciseSummaryCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        exercise.exercise.name,
+                        exerciseDisplayName(exercise.exercise.name),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        formatMuscleGroup(exercise.exercise.muscleGroup),
+                        muscleGroupDisplayName(exercise.exercise.muscleGroup),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1744,7 +1746,7 @@ private fun WorkoutSummaryScreen(
                                     },
                                 )
                                 Text(
-                                    exercise.exercise.name,
+                                    exerciseDisplayName(exercise.exercise.name),
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -1832,11 +1834,6 @@ private fun exerciseAbbreviation(name: String): String {
         else -> words.take(3).joinToString("") { it.take(1) }.uppercase(Locale.getDefault())
     }
 }
-
-private fun formatMuscleGroup(value: String): String = value
-    .lowercase(Locale.getDefault())
-    .split('_')
-    .joinToString(" ") { word -> word.replaceFirstChar { it.titlecase(Locale.getDefault()) } }
 
 private fun formatPerformanceDate(value: String): String = runCatching {
     Instant.parse(value).atZone(ZoneId.systemDefault()).format(

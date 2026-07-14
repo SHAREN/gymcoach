@@ -95,6 +95,7 @@ import org.sharteman.gymcoach.data.settings.SettingsSnapshot
 import org.sharteman.gymcoach.data.settings.classifySettingsError
 import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.setTableMetricEnabled
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1189,7 +1190,7 @@ private fun ExerciseDropdown(
     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
         exercises.forEach { exercise ->
             DropdownMenuItem(
-                text = { Text(exercise.name) },
+                text = { Text(exerciseDisplayName(exercise.name)) },
                 onClick = {
                     expanded = false
                     onSelect(exercise.id)

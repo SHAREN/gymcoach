@@ -66,6 +66,7 @@ import org.sharteman.gymcoach.data.coach.CoachRepository
 import org.sharteman.gymcoach.data.coach.firstCoachLine
 import org.sharteman.gymcoach.data.coach.parseCoachResponse
 import org.sharteman.gymcoach.data.coach.withDefaults
+import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 data class CoachUiState(
     val loading: Boolean = true,
@@ -630,7 +631,10 @@ private fun AdjustmentsCard(
                             enabled = !alreadyApplied && !applying,
                         )
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(adjustment.exerciseName, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                exerciseDisplayName(adjustment.exerciseName),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             Text(adjustment.summary, style = MaterialTheme.typography.bodyMedium)
                             adjustment.rationale?.takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall)
