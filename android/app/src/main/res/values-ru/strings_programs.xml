@@ -36,6 +36,7 @@
     <string name="exercise_catalog_title">Каталог упражнений</string>
     <string name="exercise_catalog_search">Поиск упражнений</string>
     <string name="exercise_catalog_empty">По заданным фильтрам упражнений нет.</string>
+    <string name="exercise_trained_days">Тренировочных дней: %1$d</string>
     <string name="exercise_create">Создать упражнение</string>
     <string name="exercise_edit">Изменить упражнение</string>
     <string name="exercise_delete">Удалить упражнение</string>

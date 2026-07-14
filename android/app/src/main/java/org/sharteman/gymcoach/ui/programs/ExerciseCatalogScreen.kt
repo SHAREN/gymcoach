@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -252,6 +253,9 @@ private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen
     val media = remember(exercise.name) {
         runCatching { ExerciseMediaCatalog.load(context).resolve(exercise.name) }.getOrNull()
     }
+    val trainedDays = remember(exercise.trainingDates) {
+        exerciseTrainingDayCount(exercise.trainingDates)
+    }
     Card(onClick = onOpen, modifier = Modifier.fillMaxWidth().testTag("exercise-${exercise.id}")) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
@@ -278,6 +282,23 @@ private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
+                Row(
+                    modifier = Modifier.testTag("exercise-${exercise.id}-trained-days"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.EventAvailable,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        stringResource(R.string.exercise_trained_days, trainedDays),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     muscleGroupDisplayName(exercise.muscleGroup),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -9,11 +9,36 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     const userId = await requireMobileUserId(req);
-    return Response.json(
-      await db.exercise.findMany({
+    const [exercises, exerciseSessions] = await Promise.all([
+      db.exercise.findMany({
         where: { userId },
         orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
       }),
+      db.set.findMany({
+        where: {
+          session: {
+            userId,
+            finishedAt: { not: null },
+          },
+        },
+        distinct: ['exerciseId', 'sessionId'],
+        select: {
+          exerciseId: true,
+          session: { select: { startedAt: true } },
+        },
+      }),
+    ]);
+    const trainingDatesByExercise = new Map<string, string[]>();
+    for (const item of exerciseSessions) {
+      const dates = trainingDatesByExercise.get(item.exerciseId) ?? [];
+      dates.push(item.session.startedAt.toISOString());
+      trainingDatesByExercise.set(item.exerciseId, dates);
+    }
+    return Response.json(
+      exercises.map((exercise) => ({
+        ...exercise,
+        trainingDates: trainingDatesByExercise.get(exercise.id) ?? [],
+      })),
     );
   } catch (error) {
     return handleApiError(error);

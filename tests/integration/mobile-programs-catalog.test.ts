@@ -87,6 +87,73 @@ describe('Android programs and exercise catalog API', () => {
     expect((await listExercises(request('http://test/api/mobile/exercises'))).status).toBe(401);
   });
 
+  it('returns one training timestamp per finished session and exercise', async () => {
+    const { user, token } = await seedMobileUser('mobile-exercise-days@test.dev');
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Training day bench',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+      },
+    });
+    const firstFinished = await db.session.create({
+      data: {
+        userId: user.id,
+        startedAt: new Date('2026-07-01T08:00:00.000Z'),
+        finishedAt: new Date('2026-07-01T09:00:00.000Z'),
+      },
+    });
+    const secondFinished = await db.session.create({
+      data: {
+        userId: user.id,
+        startedAt: new Date('2026-07-01T18:00:00.000Z'),
+        finishedAt: new Date('2026-07-01T19:00:00.000Z'),
+      },
+    });
+    const unfinished = await db.session.create({
+      data: {
+        userId: user.id,
+        startedAt: new Date('2026-07-03T08:00:00.000Z'),
+      },
+    });
+    await db.set.createMany({
+      data: [
+        {
+          sessionId: firstFinished.id,
+          exerciseId: exercise.id,
+          setNumber: 1,
+          weight: 100,
+          reps: 8,
+        },
+        {
+          sessionId: firstFinished.id,
+          exerciseId: exercise.id,
+          setNumber: 2,
+          weight: 100,
+          reps: 8,
+        },
+        {
+          sessionId: secondFinished.id,
+          exerciseId: exercise.id,
+          setNumber: 1,
+          weight: 102.5,
+          reps: 8,
+        },
+        { sessionId: unfinished.id, exerciseId: exercise.id, setNumber: 1, weight: 105, reps: 8 },
+      ],
+    });
+
+    const response = await listExercises(request('http://test/api/mobile/exercises', 'GET', token));
+    const catalog = (await response.json()) as Array<{ id: string; trainingDates: string[] }>;
+
+    expect(response.status).toBe(200);
+    expect(catalog.find((item) => item.id === exercise.id)?.trainingDates.sort()).toEqual([
+      '2026-07-01T08:00:00.000Z',
+      '2026-07-01T18:00:00.000Z',
+    ]);
+  });
+
   it('supports the complete native program and catalog editing flow', async () => {
     const { user, token } = await seedMobileUser();
     const exerciseResponse = await createExercise(

@@ -1,5 +1,10 @@
 package org.sharteman.gymcoach.ui.programs
 
+import android.content.res.Configuration
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -7,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import java.util.Locale
 import org.junit.Rule
@@ -65,16 +71,33 @@ class ProgramsCatalogUiTest {
         try {
             Locale.setDefault(Locale.forLanguageTag("ru"))
             composeRule.setContent {
-                GymCoachTheme {
-                    ExerciseCatalogScreen(
-                        dataSource = FakeProgramsCatalogDataSource(),
-                        serverUrl = "https://example.test",
-                        onBack = {},
-                    )
+                val baseContext = LocalContext.current
+                val baseConfiguration = LocalConfiguration.current
+                val configuration = remember(baseConfiguration) {
+                    Configuration(baseConfiguration).apply { setLocale(Locale("ru")) }
+                }
+                val localizedContext = remember(baseContext, configuration) {
+                    baseContext.createConfigurationContext(configuration)
+                }
+                CompositionLocalProvider(
+                    LocalContext provides localizedContext,
+                    LocalConfiguration provides configuration,
+                ) {
+                    GymCoachTheme {
+                        ExerciseCatalogScreen(
+                            dataSource = FakeProgramsCatalogDataSource(),
+                            serverUrl = "https://example.test",
+                            onBack = {},
+                        )
+                    }
                 }
             }
 
             composeRule.onNodeWithText("Жим лёжа").assertIsDisplayed()
+            composeRule.onNodeWithTag("exercise-bench-trained-days", useUnmergedTree = true)
+                .performScrollTo()
+                .assertIsDisplayed()
+            composeRule.onNodeWithText("Тренировочных дней: 2", useUnmergedTree = true).assertExists()
             composeRule.onNodeWithText("Грудь").assertIsDisplayed()
             composeRule.onAllNodesWithText("Базовое • Штанга").onFirst().assertIsDisplayed()
         } finally {
@@ -91,6 +114,7 @@ private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
         category = "COMPOUND",
         equipmentType = "BARBELL",
         defaultRestSec = 120,
+        trainingDates = listOf("2026-07-01T08:00:00Z", "2026-07-03T08:00:00Z"),
     )
     private val row = ExerciseDto(
         id = "row",

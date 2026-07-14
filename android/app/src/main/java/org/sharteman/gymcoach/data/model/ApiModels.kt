@@ -109,6 +109,7 @@ data class ExerciseDto(
     val notes: String? = null,
     val usesBodyweight: Boolean = false,
     val equipmentType: String = "OTHER",
+    val trainingDates: List<String> = emptyList(),
 )
 
 @Serializable

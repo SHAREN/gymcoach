@@ -11,7 +11,22 @@ export async function GET(req: Request, props: Params) {
   try {
     const { id } = await props.params;
     const userId = await requireMobileUserId(req);
-    return Response.json(await requireOwnedExercise(id, userId));
+    const exercise = await requireOwnedExercise(id, userId);
+    const exerciseSessions = await db.set.findMany({
+      where: {
+        exerciseId: id,
+        session: {
+          userId,
+          finishedAt: { not: null },
+        },
+      },
+      distinct: ['sessionId'],
+      select: { session: { select: { startedAt: true } } },
+    });
+    return Response.json({
+      ...exercise,
+      trainingDates: exerciseSessions.map((item) => item.session.startedAt.toISOString()),
+    });
   } catch (error) {
     return handleApiError(error);
   }

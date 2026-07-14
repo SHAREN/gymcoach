@@ -36,6 +36,7 @@
     <string name="exercise_catalog_title">Exercise catalog</string>
     <string name="exercise_catalog_search">Search exercises</string>
     <string name="exercise_catalog_empty">No exercises match the filters.</string>
+    <string name="exercise_trained_days">Training days: %1$d</string>
     <string name="exercise_create">Create exercise</string>
     <string name="exercise_edit">Edit exercise</string>
     <string name="exercise_delete">Delete exercise</string>
