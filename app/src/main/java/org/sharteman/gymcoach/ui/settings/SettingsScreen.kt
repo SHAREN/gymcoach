@@ -69,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,6 +86,7 @@ import org.sharteman.gymcoach.data.settings.SettingsDataSource
 import org.sharteman.gymcoach.data.settings.SettingsErrorKind
 import org.sharteman.gymcoach.data.settings.SettingsException
 import org.sharteman.gymcoach.data.settings.SettingsGymExerciseConfigDto
+import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsImportFormat
 import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsRepository
@@ -118,6 +120,8 @@ fun SettingsScreen(
     var pendingBackup by remember { mutableStateOf<Pair<String, String>?>(null) }
     var restoreBackup by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deleteGym by remember { mutableStateOf(false) }
+    var equipmentEditor by remember { mutableStateOf<GymEquipmentDraft?>(null) }
+    var equipmentToDelete by remember { mutableStateOf<SettingsGymEquipmentDto?>(null) }
     var busy by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -128,16 +132,16 @@ fun SettingsScreen(
         feedback = null
     }
 
-    suspend fun refresh() {
+    suspend fun refresh(preferredGymId: String? = gymDraft.id) {
         loading = snapshot == null
         error = null
         runCatching { repository.load() }
             .onSuccess { loaded ->
                 snapshot = loaded
                 profileDraft = loaded.profile.toDraft()
-                val selected = loaded.gymList.gyms.firstOrNull {
-                    it.id == loaded.gymList.activeGymId
-                } ?: loaded.gymList.gyms.firstOrNull()
+                val selected = loaded.gymList.gyms.firstOrNull { it.id == preferredGymId }
+                    ?: loaded.gymList.gyms.firstOrNull { it.id == loaded.gymList.activeGymId }
+                    ?: loaded.gymList.gyms.firstOrNull()
                 gymDraft = selected?.toDraft() ?: GymDraft()
                 selectedExerciseId = loaded.exercises.firstOrNull()?.id
                 exerciseWeightText = selectedExerciseId?.let { exerciseId ->
@@ -199,6 +203,43 @@ fun SettingsScreen(
                     feedback = null
                     error = null
                 }.onFailure { showFailure(it) }
+                busy = false
+            }
+        }
+    }
+    val equipmentImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val equipmentId = equipmentEditor?.id
+        val gymId = gymDraft.id
+        if (uri != null && equipmentId != null && gymId != null) {
+            scope.launch {
+                busy = true
+                runCatching {
+                    val selected = readEquipmentImage(context, uri)
+                    repository.uploadGymEquipmentImage(
+                        equipmentId = equipmentId,
+                        imageBase64 = Base64.encodeToString(selected.bytes, Base64.NO_WRAP),
+                        mimeType = selected.mimeType,
+                    )
+                }.onSuccess {
+                    equipmentEditor = null
+                    feedback = context.getString(R.string.settings_equipment_photo_saved)
+                    error = null
+                    refresh(gymId)
+                }.onFailure { failure ->
+                    val validation = failure as? EquipmentImageValidationException
+                    if (validation != null) {
+                        error = context.getString(
+                            when (validation.issue) {
+                                EquipmentImageIssue.TOO_LARGE -> R.string.settings_equipment_image_too_large
+                                EquipmentImageIssue.UNSUPPORTED_TYPE -> R.string.settings_equipment_image_bad_type
+                                EquipmentImageIssue.EMPTY -> R.string.settings_equipment_image_empty
+                            },
+                        )
+                        feedback = null
+                    } else {
+                        showFailure(failure)
+                    }
+                }
                 busy = false
             }
         }
@@ -405,6 +446,85 @@ fun SettingsScreen(
                     )
                 }
                 item {
+                    GymEquipmentSection(
+                        snapshot = snapshot,
+                        gymId = gymDraft.id,
+                        editor = equipmentEditor,
+                        busy = busy,
+                        imageAuthorization = repository.equipmentImageAuthorization(),
+                        onNew = { equipmentEditor = GymEquipmentDraft() },
+                        onEdit = { equipmentEditor = it.toDraft() },
+                        onEditorChange = { equipmentEditor = it },
+                        onDismissEditor = { equipmentEditor = null },
+                        onSave = {
+                            val gymId = gymDraft.id
+                            val draft = equipmentEditor
+                            val input = draft?.toInputOrNull()
+                            if (gymId == null || draft == null || input == null) {
+                                error = context.getString(R.string.settings_equipment_invalid)
+                                feedback = null
+                            } else {
+                                scope.launch {
+                                    busy = true
+                                    runCatching {
+                                        repository.saveGymEquipment(gymId, draft.id, input)
+                                    }.onSuccess {
+                                        equipmentEditor = null
+                                        feedback = context.getString(R.string.settings_equipment_saved)
+                                        error = null
+                                        refresh(gymId)
+                                    }.onFailure { showFailure(it) }
+                                    busy = false
+                                }
+                            }
+                        },
+                        onDelete = { equipmentToDelete = it },
+                        onUploadImage = {
+                            equipmentImageLauncher.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+                        },
+                        onSetImageUrl = {
+                            val gymId = gymDraft.id
+                            val draft = equipmentEditor
+                            val imageUrl = draft?.imageUrl?.let(::validEquipmentImageUrl)
+                            if (gymId == null || draft?.id == null || imageUrl == null) {
+                                error = context.getString(R.string.settings_equipment_image_url_invalid)
+                                feedback = null
+                            } else {
+                                scope.launch {
+                                    busy = true
+                                    runCatching { repository.setGymEquipmentImageUrl(draft.id, imageUrl) }
+                                        .onSuccess {
+                                            equipmentEditor = null
+                                            feedback = context.getString(R.string.settings_equipment_photo_saved)
+                                            error = null
+                                            refresh(gymId)
+                                        }
+                                        .onFailure { showFailure(it) }
+                                    busy = false
+                                }
+                            }
+                        },
+                        onClearImage = {
+                            val gymId = gymDraft.id
+                            val equipmentId = equipmentEditor?.id
+                            if (gymId != null && equipmentId != null) {
+                                scope.launch {
+                                    busy = true
+                                    runCatching { repository.clearGymEquipmentImage(equipmentId) }
+                                        .onSuccess {
+                                            equipmentEditor = null
+                                            feedback = context.getString(R.string.settings_equipment_photo_removed)
+                                            error = null
+                                            refresh(gymId)
+                                        }
+                                        .onFailure { showFailure(it) }
+                                    busy = false
+                                }
+                            }
+                        },
+                    )
+                }
+                item {
                     ImportSection(
                         format = importFormat,
                         unit = importUnit,
@@ -486,6 +606,38 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { deleteGym = false }) {
+                    Text(stringResource(R.string.settings_native_cancel))
+                }
+            },
+        )
+    }
+
+    equipmentToDelete?.let { item ->
+        AlertDialog(
+            onDismissRequest = { equipmentToDelete = null },
+            title = { Text(stringResource(R.string.settings_equipment_delete_title)) },
+            text = { Text(stringResource(R.string.settings_equipment_delete_body, item.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    equipmentToDelete = null
+                    val gymId = gymDraft.id
+                    if (gymId != null) {
+                        scope.launch {
+                            busy = true
+                            runCatching { repository.deleteGymEquipment(item.id) }
+                                .onSuccess {
+                                    feedback = context.getString(R.string.settings_equipment_deleted)
+                                    error = null
+                                    refresh(gymId)
+                                }
+                                .onFailure { showFailure(it) }
+                            busy = false
+                        }
+                    }
+                }) { Text(stringResource(R.string.settings_native_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { equipmentToDelete = null }) {
                     Text(stringResource(R.string.settings_native_cancel))
                 }
             },
@@ -1027,6 +1179,63 @@ private suspend fun writeText(context: Context, uri: Uri, text: String) = withCo
     context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
         output.write(text.toByteArray(Charsets.UTF_8))
     } ?: throw java.io.IOException("Could not write the backup file.")
+}
+
+private const val MAX_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024
+
+private data class SelectedEquipmentImage(val bytes: ByteArray, val mimeType: String)
+
+private enum class EquipmentImageIssue {
+    TOO_LARGE,
+    UNSUPPORTED_TYPE,
+    EMPTY,
+}
+
+private class EquipmentImageValidationException(val issue: EquipmentImageIssue) : Exception()
+
+private suspend fun readEquipmentImage(context: Context, uri: Uri): SelectedEquipmentImage =
+    withContext(Dispatchers.IO) {
+        val output = ByteArrayOutputStream()
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                if (output.size() > MAX_EQUIPMENT_IMAGE_BYTES) {
+                    throw EquipmentImageValidationException(EquipmentImageIssue.TOO_LARGE)
+                }
+            }
+        } ?: throw java.io.IOException("Could not read the selected image.")
+        val bytes = output.toByteArray()
+        if (bytes.isEmpty()) throw EquipmentImageValidationException(EquipmentImageIssue.EMPTY)
+        val detected = detectEquipmentImageMimeType(bytes)
+            ?: throw EquipmentImageValidationException(EquipmentImageIssue.UNSUPPORTED_TYPE)
+        val declared = when (context.contentResolver.getType(uri)?.lowercase()) {
+            "image/jpg" -> "image/jpeg"
+            else -> context.contentResolver.getType(uri)?.lowercase()
+        }
+        if (declared != null && declared !in setOf("image/jpeg", "image/png", "image/webp")) {
+            throw EquipmentImageValidationException(EquipmentImageIssue.UNSUPPORTED_TYPE)
+        }
+        if (declared != null && declared != detected) {
+            throw EquipmentImageValidationException(EquipmentImageIssue.UNSUPPORTED_TYPE)
+        }
+        SelectedEquipmentImage(bytes, detected)
+    }
+
+private fun detectEquipmentImageMimeType(bytes: ByteArray): String? = when {
+    bytes.size >= 3 &&
+        (bytes[0].toInt() and 0xff) == 0xff &&
+        (bytes[1].toInt() and 0xff) == 0xd8 &&
+        (bytes[2].toInt() and 0xff) == 0xff -> "image/jpeg"
+    bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+    ) -> "image/png"
+    bytes.size >= 12 &&
+        bytes.copyOfRange(0, 4).toString(Charsets.US_ASCII) == "RIFF" &&
+        bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII) == "WEBP" -> "image/webp"
+    else -> null
 }
 
 private fun settingsErrorMessage(context: Context, throwable: Throwable, apkCheck: Boolean): String {

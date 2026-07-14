@@ -4,12 +4,20 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.JsonObject
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.settings.AndroidReleaseDto
 import org.sharteman.gymcoach.data.settings.SettingsDataSource
 import org.sharteman.gymcoach.data.settings.SettingsGymDto
+import org.sharteman.gymcoach.data.settings.SettingsEquipmentImageDto
+import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
+import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentInput
+import org.sharteman.gymcoach.data.settings.SettingsGymInventoryDto
 import org.sharteman.gymcoach.data.settings.SettingsGymInput
 import org.sharteman.gymcoach.data.settings.SettingsGymListDto
 import org.sharteman.gymcoach.data.settings.SettingsImportFormat
@@ -18,6 +26,7 @@ import org.sharteman.gymcoach.data.settings.SettingsProfileDto
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
+import org.sharteman.gymcoach.data.model.ExerciseDto
 
 class SettingsScreenTest {
     @get:Rule
@@ -47,17 +56,75 @@ class SettingsScreenTest {
             }.isSuccess
         }
     }
+
+    @Test
+    fun rendersEquipmentThumbnailAndOpensNativeEditor() {
+        val snapshot = FakeSettingsSource().snapshot()
+        composeRule.setContent {
+            var editor by remember { mutableStateOf<GymEquipmentDraft?>(null) }
+            GymCoachTheme(darkTheme = true) {
+                GymEquipmentSection(
+                    snapshot = snapshot,
+                    gymId = "gym-1",
+                    editor = editor,
+                    busy = false,
+                    imageAuthorization = "Bearer test-token",
+                    onNew = { editor = GymEquipmentDraft() },
+                    onEdit = { editor = it.toDraft() },
+                    onEditorChange = { editor = it },
+                    onDismissEditor = { editor = null },
+                    onSave = {},
+                    onDelete = {},
+                    onUploadImage = {},
+                    onSetImageUrl = {},
+                    onClearImage = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("settings-equipment-card-equipment-1").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-add-equipment").performClick()
+        composeRule.onNodeWithTag("settings-equipment-editor").assertIsDisplayed()
+    }
 }
 
 private class FakeSettingsSource : SettingsDataSource {
-    override suspend fun load(): SettingsSnapshot = SettingsSnapshot(
+    fun snapshot(): SettingsSnapshot = SettingsSnapshot(
         profile = SettingsProfileDto(email = "android@test.dev", displayName = "Android"),
         gymList = SettingsGymListDto(
             activeGymId = "gym-1",
             gyms = listOf(SettingsGymDto(id = "gym-1", name = "Basement")),
         ),
-        exercises = emptyList(),
+        exercises = listOf(
+            ExerciseDto(
+                id = "exercise-1",
+                name = "Cable row",
+                muscleGroup = "BACK_THICKNESS",
+                category = "COMPOUND",
+                equipmentType = "CABLE",
+            ),
+        ),
+        gymInventories = mapOf(
+            "gym-1" to SettingsGymInventoryDto(
+                id = "gym-1",
+                name = "Basement",
+                equipment = listOf(
+                    SettingsGymEquipmentDto(
+                        id = "equipment-1",
+                        gymId = "gym-1",
+                        name = "Cable station",
+                        equipmentType = "CABLE",
+                        image = SettingsEquipmentImageDto(
+                            kind = "external",
+                            url = "https://images.example.test/cable.jpg",
+                        ),
+                    ),
+                ),
+            ),
+        ),
     )
+
+    override suspend fun load(): SettingsSnapshot = snapshot()
 
     override suspend fun saveProfile(input: SettingsProfileInput) =
         SettingsProfileDto(email = "android@test.dev", displayName = input.displayName)
@@ -66,6 +133,20 @@ private class FakeSettingsSource : SettingsDataSource {
     override suspend fun updateGym(id: String, input: SettingsGymInput) = SettingsGymDto(id, input.name)
     override suspend fun activateGym(id: String) = Unit
     override suspend fun deleteGym(id: String) = Unit
+    override suspend fun loadGymInventory(gymId: String) = snapshot().gymInventories.getValue(gymId)
+    override suspend fun saveGymEquipment(
+        gymId: String,
+        equipmentId: String?,
+        input: SettingsGymEquipmentInput,
+    ) = Unit
+    override suspend fun deleteGymEquipment(equipmentId: String) = Unit
+    override suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String) = Unit
+    override suspend fun uploadGymEquipmentImage(
+        equipmentId: String,
+        imageBase64: String,
+        mimeType: String,
+    ) = Unit
+    override suspend fun clearGymEquipmentImage(equipmentId: String) = Unit
     override suspend fun latestRelease() = AndroidReleaseDto(
         versionCode = 999,
         versionName = "99.0.0",

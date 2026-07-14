@@ -9,6 +9,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.sharteman.gymcoach.data.settings.SettingsGymDto
+import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
+import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentInput
 import org.sharteman.gymcoach.data.settings.SettingsGymExerciseConfigDto
 import org.sharteman.gymcoach.data.settings.SettingsGymInput
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
@@ -73,6 +75,74 @@ fun GymDraft.toInputOrNull(makeActive: Boolean = false): SettingsGymInput? {
         exerciseConfigs = configs.values.sortedBy { it.exerciseId },
         makeActive = makeActive,
     )
+}
+
+val gymEquipmentTypes = listOf(
+    "DUMBBELL",
+    "BARBELL",
+    "MACHINE",
+    "CABLE",
+    "BODYWEIGHT",
+    "CARDIO",
+    "OTHER",
+)
+
+data class GymEquipmentDraft(
+    val id: String? = null,
+    val name: String = "",
+    val equipmentType: String = "OTHER",
+    val description: String = "",
+    val manufacturer: String = "",
+    val modelName: String = "",
+    val quantity: String = "1",
+    val weightOptions: String = "",
+    val exerciseIds: Set<String> = emptySet(),
+    val imageUrl: String = "",
+    val currentImageKind: String? = null,
+)
+
+fun SettingsGymEquipmentDto.toDraft(): GymEquipmentDraft = GymEquipmentDraft(
+    id = id,
+    name = name,
+    equipmentType = equipmentType,
+    description = description.orEmpty(),
+    manufacturer = manufacturer.orEmpty(),
+    modelName = modelName.orEmpty(),
+    quantity = quantity.toString(),
+    weightOptions = formatWeightList(weightOptions),
+    exerciseIds = exerciseLinks.mapTo(linkedSetOf()) { it.id },
+    imageUrl = imageUrl.orEmpty(),
+    currentImageKind = image?.kind,
+)
+
+fun GymEquipmentDraft.toInputOrNull(): SettingsGymEquipmentInput? {
+    if (name.isBlank() || name.trim().length > 120) return null
+    if (equipmentType !in gymEquipmentTypes) return null
+    if (description.length > 4000 || manufacturer.length > 120 || modelName.length > 120) return null
+    val quantityValue = quantity.trim().toIntOrNull()?.takeIf { it in 1..100 } ?: return null
+    val weights = parseWeightList(weightOptions) ?: return null
+    if (exerciseIds.size > 100) return null
+    return SettingsGymEquipmentInput(
+        name = name.trim(),
+        equipmentType = equipmentType,
+        description = description.trim().ifBlank { null },
+        manufacturer = manufacturer.trim().ifBlank { null },
+        modelName = modelName.trim().ifBlank { null },
+        quantity = quantityValue,
+        weightOptions = weights,
+        exerciseIds = exerciseIds.sorted(),
+    )
+}
+
+fun validEquipmentImageUrl(value: String): String? {
+    val trimmed = value.trim()
+    if (trimmed.length !in 1..2048) return null
+    return trimmed.takeIf {
+        runCatching {
+            val uri = java.net.URI(it)
+            uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()
+        }.getOrDefault(false)
+    }
 }
 
 fun parseWeightList(value: String): List<Double>? {
