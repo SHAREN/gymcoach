@@ -17,6 +17,15 @@ interface GymCoachDao {
     @Upsert
     suspend fun saveBootstrap(entity: BootstrapCacheEntity)
 
+    @Query("SELECT * FROM progress_cache WHERE `key` = 1")
+    fun observeProgress(): Flow<ProgressCacheEntity?>
+
+    @Query("SELECT * FROM progress_cache WHERE `key` = 1")
+    suspend fun getProgress(): ProgressCacheEntity?
+
+    @Upsert
+    suspend fun saveProgress(entity: ProgressCacheEntity)
+
     @Query("SELECT * FROM local_sessions WHERE finishedAt IS NULL ORDER BY startedAt DESC")
     fun observeOpenSessions(): Flow<List<LocalSessionEntity>>
 
@@ -92,6 +101,9 @@ interface GymCoachDao {
     @Query("DELETE FROM bootstrap_cache")
     suspend fun clearBootstrap()
 
+    @Query("DELETE FROM progress_cache")
+    suspend fun clearProgress()
+
     @Query("DELETE FROM local_sessions")
     suspend fun clearSessions()
 
@@ -103,6 +115,7 @@ interface GymCoachDao {
         clearOutbox()
         clearSessions()
         clearBootstrap()
+        clearProgress()
     }
 
     @Transaction
@@ -118,8 +131,32 @@ interface GymCoachDao {
     }
 
     @Transaction
+    suspend fun saveBootstrapAndOperation(
+        bootstrap: BootstrapCacheEntity,
+        operation: SyncOutboxEntity,
+    ) {
+        saveBootstrap(bootstrap)
+        enqueue(operation)
+    }
+
+    @Transaction
+    suspend fun saveBootstrapAndRemoveOperations(
+        bootstrap: BootstrapCacheEntity,
+        operationIds: List<String>,
+    ) {
+        saveBootstrap(bootstrap)
+        removeOperations(operationIds)
+    }
+
+    @Transaction
     suspend fun deleteSetAndOperation(setId: String, operation: SyncOutboxEntity) {
         markSetDeleted(setId)
         enqueue(operation)
+    }
+
+    @Transaction
+    suspend fun discardSessionChanges(sessionId: String, operationIds: List<String>) {
+        removeOperations(operationIds)
+        deleteSessionLocal(sessionId)
     }
 }

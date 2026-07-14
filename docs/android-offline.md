@@ -4,15 +4,23 @@ Status: implementation contract for the native Android client.
 
 ## Product behavior
 
-The Android application is a native Kotlin application, not a packaged web
-page. After the first authenticated bootstrap it can start or resume a cached
-workout without internet access. The trainee can record, edit and delete sets,
-including weight, repetitions, RIR and notes, finish the session, record
-session RPE and receive the deterministic next-set recommendation locally.
+The Android application uses the complete responsive GymCoach web interface as
+its primary screen. This keeps history, progress charts, coach, chat, programs,
+exercise media and settings visually identical to the installed PWA. The
+embedded WebView may reuse production PWA caches when the server is temporarily
+unreachable.
 
-The web panel remains available inside the application when the server can be
-reached. MCP and LLM features are online-only. Their absence must never prevent
-recording or finishing a native workout.
+A native Kotlin and Room workout client remains available as the reliable
+offline fallback. After the first authenticated bootstrap it can start or
+resume a cached workout without internet access. The trainee can record, edit
+and delete sets, including weight, repetitions, RIR and notes, finish the
+session, record session RPE and receive the deterministic next-set
+recommendation locally.
+
+MCP, LLM coach replies and AI program generation are online-only. Their absence
+must never prevent recording or finishing a native workout. Cached coach and
+chat history may be displayed offline, while new requests can only be answered
+after the server becomes reachable.
 
 ## Local source of truth
 
@@ -119,3 +127,40 @@ From `android/`:
 
 The debug APK is produced at
 `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+## Self-hosted APK publishing
+
+Every successful debug APK build automatically publishes the latest APK and
+its validated metadata. From `android/`, this is sufficient:
+
+```powershell
+.\gradlew.bat assembleDebug
+```
+
+The `assembleDebug` task depends on `publishDebugApk`, which only runs after a
+successful `packageDebug` and then invokes the repository publisher. To
+republish an already-built APK manually from the repository root, use:
+
+```powershell
+npm run android:publish-apk
+```
+
+The command copies the APK to an immutable, hash-qualified filename such as
+`data/android-release/gymcoach-2-a5bb6be092ce.apk` and atomically replaces
+`data/android-release/latest.json` with the version code, version name, size,
+publication time, SHA-256 digest and current filename. Generated files are
+ignored by Git.
+
+The web application exposes two public same-origin endpoints:
+
+- `/api/android/latest` for version and digest metadata;
+- `/api/android/download` for the APK download.
+
+Because the web settings page uses a relative URL, the same link works through
+the public HTTPS hostname or through the LAN address used to open GymCoach. The
+Android client builds the URL from the server address saved at login.
+
+`docker-compose.prod.yml` mounts `data/android-release` read-only into the app
+container. An APK must always be signed with the same persistent Android
+signing key as the installed application. Android rejects an update signed by
+a different key even when the package name is unchanged.

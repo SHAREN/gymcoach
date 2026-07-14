@@ -19,6 +19,12 @@ data class LoginResponse(
 )
 
 @Serializable
+data class ApiErrorResponse(
+    val error: String? = null,
+    val code: String? = null,
+)
+
+@Serializable
 data class MobileUser(
     val id: String,
     val email: String,
@@ -36,6 +42,7 @@ data class BootstrapResponse(
     val catalog: List<ExerciseDto> = emptyList(),
     val openSessions: List<SessionDto> = emptyList(),
     val lastPerformances: Map<String, LastPerformanceDto> = emptyMap(),
+    val exerciseHistoryByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
     val returnRecommendationsByWorkout: Map<String, Map<String, ReturnRecommendationDto>> = emptyMap(),
     val readiness: ReadinessDto? = null,
 )
@@ -179,6 +186,22 @@ data class PerformanceSetDto(
 )
 
 @Serializable
+data class ExerciseHistorySessionDto(
+    val sessionId: String,
+    val startedAt: String,
+    val sets: List<ExerciseHistorySetDto> = emptyList(),
+)
+
+@Serializable
+data class ExerciseHistorySetDto(
+    val setNumber: Int,
+    val weight: Double,
+    val reps: Int,
+    val rir: Int? = null,
+    val isDropSet: Boolean = false,
+)
+
+@Serializable
 data class ReturnRecommendationDto(
     val mode: String,
     val exerciseGapDays: Int? = null,
@@ -254,6 +277,15 @@ data class DeleteSetOperation(
 ) : SyncOperation
 
 @Serializable
+@SerialName("UPDATE_TARGET_SETS")
+data class UpdateTargetSetsOperation(
+    override val operationId: String,
+    val programExerciseId: String,
+    val targetSets: Int,
+    val previousTargetSets: Int,
+) : SyncOperation
+
+@Serializable
 @SerialName("FINISH_SESSION")
 data class FinishSessionOperation(
     override val operationId: String,
@@ -278,4 +310,83 @@ data class SyncOperationResult(
     val status: String,
     val result: JsonObject? = null,
     val error: String? = null,
+)
+
+@Serializable
+data class MobileProgressSnapshot(
+    val schemaVersion: Int,
+    val generatedAt: String,
+    val exercises: List<MobileProgressExerciseDto> = emptyList(),
+    val weeklyVolume: List<MobileWeeklyVolumeDto>? = null,
+    val consistency: MobileConsistencyDto? = null,
+    val bodyweightEntries: List<MobileBodyweightEntryDto>? = null,
+    val bodyMeasurements: List<MobileBodyMeasurementDto>? = null,
+    val conditioningWeeks: List<MobileConditioningWeekDto>? = null,
+)
+
+@Serializable
+data class MobileWeeklyVolumeDto(
+    val weekKey: String,
+    val weekStartIso: String,
+    val byMuscleGroup: Map<String, Double> = emptyMap(),
+    val total: Double,
+)
+
+@Serializable
+data class MobileConsistencyDto(
+    val weeks: List<MobileConsistencyWeekDto> = emptyList(),
+    val currentStreak: Int,
+    val weeklyFrequency: Int? = null,
+)
+
+@Serializable
+data class MobileConsistencyWeekDto(
+    val weekKey: String,
+    val weekStartIso: String,
+    val trainedDays: Int,
+    val onStreak: Boolean,
+    val isCurrent: Boolean,
+)
+
+@Serializable
+data class MobileBodyweightEntryDto(
+    val id: String,
+    val weightKg: Double,
+    val measuredAt: String,
+)
+
+@Serializable
+data class MobileBodyMeasurementDto(
+    val id: String,
+    val site: String,
+    val valueCm: Double,
+    val measuredAt: String,
+)
+
+@Serializable
+data class MobileConditioningWeekDto(
+    val weekKey: String,
+    val weekStartIso: String,
+    val minutes: Int,
+    val distanceKm: Double,
+    val sessions: Int,
+)
+
+@Serializable
+data class MobileProgressExerciseDto(
+    val id: String,
+    val name: String,
+    val muscleGroup: String,
+    val points: List<MobileProgressPointDto> = emptyList(),
+)
+
+@Serializable
+data class MobileProgressPointDto(
+    val sessionStartedAt: String,
+    val maxWeight: Double,
+    val estimated1RM: Double,
+    val totalVolume: Double,
+    val topSetReps: Int,
+    val maxReps: Int,
+    val totalReps: Int,
 )

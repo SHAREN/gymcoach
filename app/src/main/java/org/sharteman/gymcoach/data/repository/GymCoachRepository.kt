@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.data.repository
 
 import android.os.Build
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -12,6 +13,7 @@ import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
@@ -19,9 +21,11 @@ import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
+import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncOperation
+import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
@@ -44,13 +48,19 @@ class GymCoachRepository(
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
         cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
     }
+    val progress: Flow<MobileProgressSnapshot?> = dao.observeProgress().map { cached ->
+        cached?.let { runCatching { api.json.decodeFromString<MobileProgressSnapshot>(it.payloadJson) }.getOrNull() }
+    }
     val openSessions: Flow<List<LocalSessionEntity>> = dao.observeOpenSessions()
     val pendingCount: Flow<Int> = dao.observePendingCount()
     val syncIssue: Flow<SyncIssue?> = dao.observeBlockedOperation().map { operation ->
         operation?.let {
+            val kind = syncIssueKind(it.lastError)
             SyncIssue(
                 operationId = it.operationId,
                 message = it.lastError ?: "Server rejected a queued change.",
+                kind = kind,
+                canRetry = kind != SyncIssueKind.SESSION_NOT_FOUND,
             )
         }
     }
@@ -71,6 +81,13 @@ class GymCoachRepository(
                     .ifBlank { "Android device" },
             ),
         )
+        val initialBootstrap = try {
+            api.bootstrap(candidateServerUrl, response.accessToken)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw LoginInitializationException(error)
+        }
         val previousIdentity = accountStore.userId ?: accountStore.userEmail
         val accountChanged = previousIdentity != null &&
             (previousIdentity != response.user.id && previousIdentity != response.user.email ||
@@ -80,7 +97,8 @@ class GymCoachRepository(
         accountStore.setAccessToken(response.accessToken)
         accountStore.userId = response.user.id
         accountStore.userEmail = response.user.email
-        refreshBootstrap()
+        persistBootstrap(initialBootstrap)
+        runCatching { refreshProgress() }
         schedulePeriodicSync()
     }
 
@@ -94,6 +112,9 @@ class GymCoachRepository(
 
     suspend fun retryBlockedChange() = syncMutex.withLock {
         val blocked = dao.queuedOperations().firstOrNull { it.status == "BLOCKED" } ?: return@withLock
+        if (syncIssueKind(blocked.lastError) == SyncIssueKind.SESSION_NOT_FOUND) {
+            return@withLock
+        }
         dao.retryOperation(blocked.operationId)
         scheduleSyncNow()
     }
@@ -104,8 +125,56 @@ class GymCoachRepository(
         val operation = runCatching {
             api.json.decodeFromString<SyncOperation>(blocked.payloadJson)
         }.getOrNull()
-        if (operation is StartSessionOperation) {
-            val sessionId = operation.session.id
+        val sessionId = when (operation) {
+            is StartSessionOperation -> operation.session.id
+            is UpsertSetOperation -> operation.set.sessionId
+            is FinishSessionOperation -> operation.sessionId
+            is DeleteSetOperation -> dao.getSet(operation.setId)?.sessionId
+            is UpdateTargetSetsOperation -> null
+            null -> null
+        }
+        if (operation is UpdateTargetSetsOperation) {
+            val cached = dao.getBootstrap()
+            val decoded = cached?.let {
+                runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull()
+            }
+            if (cached != null && decoded != null) {
+                var reverted = updateProgramExerciseTargetSets(
+                    decoded,
+                    operation.programExerciseId,
+                    operation.previousTargetSets,
+                )
+                queue.asSequence()
+                    .filter { it.sequence > blocked.sequence && it.operationId != blocked.operationId }
+                    .mapNotNull { entry ->
+                        runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
+                            .getOrNull() as? UpdateTargetSetsOperation
+                    }
+                    .filter { it.programExerciseId == operation.programExerciseId }
+                    .forEach { queued ->
+                        reverted = updateProgramExerciseTargetSets(
+                            reverted,
+                            queued.programExerciseId,
+                            queued.targetSets,
+                        )
+                    }
+                dao.saveBootstrapAndRemoveOperations(
+                    cached.copy(
+                        payloadJson = api.json.encodeToString(reverted),
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                    ),
+                    listOf(blocked.operationId),
+                )
+            } else {
+                dao.removeOperations(listOf(blocked.operationId))
+            }
+            runCatching { refreshBootstrap() }
+            scheduleSyncNow()
+            return@withLock
+        }
+        val discardWholeSession = operation is StartSessionOperation ||
+            syncIssueKind(blocked.lastError) == SyncIssueKind.SESSION_NOT_FOUND
+        if (discardWholeSession && sessionId != null) {
             val localSetIds = dao.getAllSets(sessionId).mapTo(mutableSetOf()) { it.id }
             val relatedOperationIds = queue.mapNotNull { entry ->
                 val queued = runCatching {
@@ -116,12 +185,12 @@ class GymCoachRepository(
                     is UpsertSetOperation -> queued.set.sessionId == sessionId
                     is FinishSessionOperation -> queued.sessionId == sessionId
                     is DeleteSetOperation -> queued.setId in localSetIds
+                    is UpdateTargetSetsOperation -> false
                     null -> entry.operationId == blocked.operationId
                 }
                 entry.operationId.takeIf { related }
             }
-            dao.removeOperations(relatedOperationIds)
-            dao.deleteSessionLocal(sessionId)
+            dao.discardSessionChanges(sessionId, relatedOperationIds)
         } else {
             dao.removeOperations(listOf(blocked.operationId))
         }
@@ -132,14 +201,37 @@ class GymCoachRepository(
     suspend fun refreshBootstrap(): BootstrapResponse {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
         val response = api.bootstrap(accountStore.serverUrl, token)
-        dao.saveBootstrap(
-            BootstrapCacheEntity(
+        return persistBootstrap(response)
+    }
+
+    suspend fun refreshProgress(): MobileProgressSnapshot {
+        val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
+        val response = api.progress(accountStore.serverUrl, token)
+        dao.saveProgress(
+            ProgressCacheEntity(
                 payloadJson = api.json.encodeToString(response),
                 updatedAtEpochMs = System.currentTimeMillis(),
             ),
         )
-        importOpenSessions(response)
         return response
+    }
+
+    private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse {
+        val pendingTargetUpdates = dao.queuedOperations().mapNotNull { entry ->
+            runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
+                .getOrNull() as? UpdateTargetSetsOperation
+        }
+        val effective = pendingTargetUpdates.fold(response) { current, operation ->
+            updateProgramExerciseTargetSets(current, operation.programExerciseId, operation.targetSets)
+        }
+        dao.saveBootstrap(
+            BootstrapCacheEntity(
+                payloadJson = api.json.encodeToString(effective),
+                updatedAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
+        importOpenSessions(effective)
+        return effective
     }
 
     suspend fun createWebSessionCookies(): List<String> {
@@ -172,6 +264,31 @@ class GymCoachRepository(
 
     fun observeSession(sessionId: String): Flow<LocalSessionEntity?> = dao.observeSession(sessionId)
     fun observeSets(sessionId: String): Flow<List<LocalSetEntity>> = dao.observeSets(sessionId)
+
+    suspend fun updateTargetSets(programExerciseId: String, targetSets: Int) {
+        require(targetSets in 1..20) { "Target sets must be between 1 and 20." }
+        val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
+        val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+        val previousTargetSets = requireNotNull(
+            findProgramExerciseTargetSets(bootstrap, programExerciseId),
+        ) { "Program exercise was not found in the cached program." }
+        if (previousTargetSets == targetSets) return
+        val updated = updateProgramExerciseTargetSets(bootstrap, programExerciseId, targetSets)
+        val operation = UpdateTargetSetsOperation(
+            operationId = operationId(),
+            programExerciseId = programExerciseId,
+            targetSets = targetSets,
+            previousTargetSets = previousTargetSets,
+        )
+        dao.saveBootstrapAndOperation(
+            cached.copy(
+                payloadJson = api.json.encodeToString(updated),
+                updatedAtEpochMs = System.currentTimeMillis(),
+            ),
+            outbox(operation),
+        )
+        scheduleSyncNow()
+    }
 
     suspend fun addSet(
         sessionId: String,
@@ -348,6 +465,7 @@ class GymCoachRepository(
             if (stopAfterCurrentBatch) break
         }
         runCatching { refreshBootstrap() }
+        runCatching { refreshProgress() }
         allAccepted
     }
 
@@ -457,16 +575,73 @@ internal fun pendingMutationTargets(
         when (operation) {
             is StartSessionOperation -> sessionIds += operation.session.id
             is FinishSessionOperation -> sessionIds += operation.sessionId
-            is UpsertSetOperation -> setIds += operation.set.id
+            is UpsertSetOperation -> {
+                sessionIds += operation.set.sessionId
+                setIds += operation.set.id
+            }
             is DeleteSetOperation -> setIds += operation.setId
+            is UpdateTargetSetsOperation -> Unit
         }
     }
     return PendingMutationTargets(sessionIds, setIds, complete = true)
 }
 
+internal fun findProgramExerciseTargetSets(
+    bootstrap: BootstrapResponse,
+    programExerciseId: String,
+): Int? = bootstrap.activeProgram?.workouts
+    ?.asSequence()
+    ?.flatMap { it.exercises.asSequence() }
+    ?.firstOrNull { it.id == programExerciseId }
+    ?.targetSets
+    ?: bootstrap.openSessions.asSequence()
+        .mapNotNull { it.workout }
+        .flatMap { it.exercises.asSequence() }
+        .firstOrNull { it.id == programExerciseId }
+        ?.targetSets
+
+internal fun updateProgramExerciseTargetSets(
+    bootstrap: BootstrapResponse,
+    programExerciseId: String,
+    targetSets: Int,
+): BootstrapResponse {
+    fun updateWorkout(workout: WorkoutDto): WorkoutDto = workout.copy(
+        exercises = workout.exercises.map { exercise ->
+            if (exercise.id == programExerciseId) exercise.copy(targetSets = targetSets) else exercise
+        },
+    )
+    return bootstrap.copy(
+        activeProgram = bootstrap.activeProgram?.let { program ->
+            program.copy(workouts = program.workouts.map(::updateWorkout))
+        },
+        openSessions = bootstrap.openSessions.map { session ->
+            session.copy(workout = session.workout?.let(::updateWorkout))
+        },
+    )
+}
+
 class MobileAuthenticationRequiredException : IOException("Sign in again to synchronize local data.")
+
+class LoginInitializationException(cause: Throwable) : IOException(
+    "Credentials were accepted, but the initial data load failed.",
+    cause,
+)
 
 data class SyncIssue(
     val operationId: String,
     val message: String,
+    val kind: SyncIssueKind = SyncIssueKind.GENERIC,
+    val canRetry: Boolean = true,
 )
+
+enum class SyncIssueKind {
+    SESSION_NOT_FOUND,
+    GENERIC,
+}
+
+internal fun syncIssueKind(message: String?): SyncIssueKind = when {
+    message?.trim()?.removeSuffix(".")?.equals("Session not found", ignoreCase = true) == true -> {
+        SyncIssueKind.SESSION_NOT_FOUND
+    }
+    else -> SyncIssueKind.GENERIC
+}

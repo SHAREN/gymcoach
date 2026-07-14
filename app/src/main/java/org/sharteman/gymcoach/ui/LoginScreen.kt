@@ -2,14 +2,17 @@ package org.sharteman.gymcoach.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -39,9 +42,8 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
     var password by remember { mutableStateOf("") }
     var server by remember { mutableStateOf(repository.serverUrl) }
     var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<LoginErrorKind?>(null) }
     val scope = rememberCoroutineScope()
-    val loginErrorMessage = stringResource(R.string.login_error)
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -59,7 +61,10 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             OutlinedTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = {
+                    email = it
+                    error = null
+                },
                 label = { Text(stringResource(R.string.email)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 singleLine = true,
@@ -68,7 +73,10 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = password,
-                onValueChange = { password = it },
+                onValueChange = {
+                    password = it
+                    error = null
+                },
                 label = { Text(stringResource(R.string.password)) },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -78,15 +86,18 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = server,
-                onValueChange = { server = it },
+                onValueChange = {
+                    server = it
+                    error = null
+                },
                 label = { Text(stringResource(R.string.server)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            error?.let {
+            error?.let { errorKind ->
                 Spacer(Modifier.height(8.dp))
-                Text(it, color = MaterialTheme.colorScheme.error)
+                LoginErrorBanner(message = loginErrorMessage(errorKind))
             }
             Spacer(Modifier.height(20.dp))
             Button(
@@ -96,7 +107,7 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
                         error = null
                         runCatching { repository.login(email, password, server) }
                             .onSuccess { onLoggedIn() }
-                            .onFailure { error = it.message ?: loginErrorMessage }
+                            .onFailure { error = classifyLoginError(it) }
                         loading = false
                     }
                 },
@@ -115,3 +126,50 @@ fun LoginScreen(repository: GymCoachRepository, onLoggedIn: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun LoginErrorBanner(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(Icons.Outlined.ErrorOutline, contentDescription = null)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    stringResource(R.string.login_error_title),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(message, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun loginErrorMessage(kind: LoginErrorKind): String = stringResource(
+    when (kind) {
+        LoginErrorKind.INVALID_CREDENTIALS -> R.string.login_error_invalid_credentials
+        LoginErrorKind.INVALID_REQUEST -> R.string.login_error_invalid_request
+        LoginErrorKind.RATE_LIMITED -> R.string.login_error_rate_limited
+        LoginErrorKind.MOBILE_API_NOT_FOUND -> R.string.login_error_api_not_found
+        LoginErrorKind.SERVER_ERROR -> R.string.login_error_server
+        LoginErrorKind.HOST_NOT_FOUND -> R.string.login_error_host_not_found
+        LoginErrorKind.SERVER_UNREACHABLE -> R.string.login_error_server_unreachable
+        LoginErrorKind.TIMEOUT -> R.string.login_error_timeout
+        LoginErrorKind.TLS_ERROR -> R.string.login_error_tls
+        LoginErrorKind.INVALID_SERVER_URL -> R.string.login_error_invalid_server_url
+        LoginErrorKind.HTTPS_REQUIRED -> R.string.login_error_https_required
+        LoginErrorKind.CLEARTEXT_NOT_ALLOWED -> R.string.login_error_cleartext
+        LoginErrorKind.INCOMPATIBLE_RESPONSE -> R.string.login_error_incompatible_response
+        LoginErrorKind.INITIAL_SYNC_FAILED -> R.string.login_error_initial_sync
+        LoginErrorKind.NETWORK_ERROR -> R.string.login_error_network
+        LoginErrorKind.UNKNOWN -> R.string.login_error
+    },
+)
