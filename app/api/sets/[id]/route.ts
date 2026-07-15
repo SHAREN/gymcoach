@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { setUpdateSchema } from '@/lib/schemas/set';
 import { rederiveGoalAchievement } from '@/lib/set-goal-sync';
-import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
+import { resolveSetEquipmentUpdate } from '@/lib/set-equipment';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -24,12 +24,14 @@ export async function PATCH(req: Request, props: Params) {
     }
 
     const data = await parseJsonBody(req, setUpdateSchema);
-    const equipmentSnapshot = await resolveSetEquipmentSnapshot(db, {
+    const equipmentSnapshot = await resolveSetEquipmentUpdate(db, {
       userId,
       sessionGymId: set.session.gymId,
       exerciseId: set.exerciseId,
-      gymEquipmentId: data.gymEquipmentId === undefined ? set.gymEquipmentId : data.gymEquipmentId,
       selectedLoadKg: data.weight,
+      existing: set,
+      requestedGymEquipmentId: data.gymEquipmentId,
+      action: data.equipmentSnapshotAction,
     });
     const updated = await db.set.update({
       where: { id: set.id },

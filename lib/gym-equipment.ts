@@ -321,8 +321,16 @@ export async function upsertOwnedGymEquipment(
         : input.weightOptions?.length && input.equipmentType === 'DUMBBELL'
           ? 'FIXED'
           : 'NONE');
-  const effectivePlatePoolId =
+  const retainedPlatePoolId =
     input.platePoolId === undefined ? (current?.platePoolId ?? null) : input.platePoolId;
+  if (inferredLoadType !== 'PLATE_LOADED' && input.platePoolId) {
+    throw new ApiError(400, 'Only plate-loaded equipment may reference a plate pool.');
+  }
+  const effectivePlatePoolId = inferredLoadType === 'PLATE_LOADED' ? retainedPlatePoolId : null;
+  const effectiveWeightOptions = input.weightOptions ?? current?.weightOptions ?? [];
+  if (['FIXED', 'SELECTORIZED'].includes(inferredLoadType) && effectiveWeightOptions.length === 0) {
+    throw new ApiError(400, `${inferredLoadType} equipment requires displayed loads.`);
+  }
   if (effectivePlatePoolId) {
     const pool = await db.gymPlatePool.findFirst({
       where: { id: effectivePlatePoolId, gymId: gym.id },
@@ -349,7 +357,7 @@ export async function upsertOwnedGymEquipment(
             weightOptions: input.weightOptions,
             selectedLoadMultiplier: input.selectedLoadMultiplier,
             baseLoadKg: input.baseLoadKg,
-            platePoolId: input.platePoolId,
+            platePoolId: effectivePlatePoolId,
             loadingSides: input.loadingSides,
           },
         })

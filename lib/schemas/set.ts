@@ -56,12 +56,14 @@ export const setInputSchema = z.object({
 
 export type SetInput = z.infer<typeof setInputSchema>;
 
-export const setUpdateSchema = setInputSchema.pick({
-  weight: true,
-  reps: true,
-  rir: true,
-  gymEquipmentId: true,
-});
+export const setUpdateSchema = setInputSchema
+  .pick({
+    weight: true,
+    reps: true,
+    rir: true,
+    gymEquipmentId: true,
+  })
+  .extend({ equipmentSnapshotAction: z.enum(['REPLACE', 'CLEAR']).optional() });
 
 export type SetUpdateInput = z.infer<typeof setUpdateSchema>;
 

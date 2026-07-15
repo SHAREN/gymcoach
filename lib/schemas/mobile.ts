@@ -30,6 +30,7 @@ const mobileSetSchema = z.object({
   sessionId: opaqueId,
   exerciseId: opaqueId,
   gymEquipmentId: opaqueId.nullable().optional(),
+  equipmentSnapshotAction: z.enum(['REPLACE', 'CLEAR']).optional(),
   setNumber: z.number().int().min(1).max(50),
   weight: z.number().min(0).max(500),
   reps: z.number().int().min(0).max(100),

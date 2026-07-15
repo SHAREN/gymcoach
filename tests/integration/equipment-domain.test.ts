@@ -6,9 +6,12 @@ vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
 const mockUserId = vi.mocked(getCurrentUserId);
 
 import { GET as getInventory } from '@/app/api/gyms/[id]/inventory/route';
+import { PUT as updateEquipment } from '@/app/api/gym-equipment/[id]/route';
 import { POST as createEquipment } from '@/app/api/gyms/[id]/equipment/route';
 import { POST as createPlatePool } from '@/app/api/gyms/[id]/plate-pools/route';
 import { POST as createSet } from '@/app/api/sessions/[id]/sets/route';
+import { PATCH as updateSet } from '@/app/api/sets/[id]/route';
+import { upsertOwnedGymEquipment } from '@/lib/gym-equipment';
 
 function jsonRequest(url: string, body: unknown, method = 'POST') {
   return new Request(url, {
@@ -139,7 +142,8 @@ describe('equipment-first REST domain', () => {
       { params: Promise.resolve({ id: session.id }) },
     );
     expect(setResponse.status).toBe(201);
-    expect(await setResponse.json()).toMatchObject({
+    const createdSet = await setResponse.json();
+    expect(createdSet).toMatchObject({
       gymEquipmentId: cable.id,
       equipmentNameSnapshot: 'Upper cable',
       selectedLoadKg: 50,
@@ -147,6 +151,100 @@ describe('equipment-first REST domain', () => {
       nominalResistanceKg: 25,
       equipmentLoadSnapshot: expect.objectContaining({ loadType: 'SELECTORIZED' }),
     });
+
+    await db.gymEquipment.update({
+      where: { id: cable.id },
+      data: {
+        name: 'Renamed cable',
+        loadType: 'FIXED',
+        selectedLoadMultiplier: 0.25,
+        baseLoadKg: 99,
+        loadingSides: 3,
+      },
+    });
+    const editedResponse = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdSet.id}`,
+        { weight: 60, reps: 10, rir: 1 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdSet.id }) },
+    );
+    expect(editedResponse.status).toBe(200);
+    expect(await editedResponse.json()).toMatchObject({
+      gymEquipmentId: cable.id,
+      equipmentNameSnapshot: 'Upper cable',
+      selectedLoadKg: 60,
+      selectedLoadMultiplierSnapshot: 0.5,
+      nominalResistanceKg: 30,
+      equipmentLoadSnapshot: expect.objectContaining({
+        loadType: 'SELECTORIZED',
+        selectedLoadMultiplier: 0.5,
+        baseLoadKg: 0,
+        loadingSides: 1,
+        selectedLoadKg: 60,
+        nominalResistanceKg: 30,
+      }),
+    });
+
+    await db.gymEquipment.delete({ where: { id: cable.id } });
+    const afterDeleteResponse = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdSet.id}`,
+        { weight: 70, reps: 8, rir: 2 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdSet.id }) },
+    );
+    expect(afterDeleteResponse.status).toBe(200);
+    expect(await afterDeleteResponse.json()).toMatchObject({
+      gymEquipmentId: null,
+      equipmentNameSnapshot: 'Upper cable',
+      selectedLoadKg: 70,
+      selectedLoadMultiplierSnapshot: 0.5,
+      nominalResistanceKg: 35,
+      equipmentLoadSnapshot: expect.objectContaining({
+        loadType: 'SELECTORIZED',
+        selectedLoadKg: 70,
+        nominalResistanceKg: 35,
+      }),
+    });
+
+    const benchStation = await db.gymEquipment.findFirstOrThrow({
+      where: { gymId: gym.id, name: 'Bench station' },
+    });
+    const transitionResponse = await updateEquipment(
+      jsonRequest(
+        `http://test.local/api/gym-equipment/${benchStation.id}`,
+        {
+          name: benchStation.name,
+          equipmentType: benchStation.equipmentType,
+          loadType: 'SELECTORIZED',
+          weightOptions: [10, 20, 30],
+          exerciseIds: [bench.id],
+        },
+        'PUT',
+      ),
+      { params: Promise.resolve({ id: benchStation.id }) },
+    );
+    expect(transitionResponse.status).toBe(200);
+    expect(
+      await db.gymEquipment.findUniqueOrThrow({ where: { id: benchStation.id } }),
+    ).toMatchObject({ loadType: 'SELECTORIZED', platePoolId: null });
+
+    const smith = await db.gymEquipment.findFirstOrThrow({
+      where: { gymId: gym.id, name: 'Smith machine' },
+    });
+    await expect(
+      upsertOwnedGymEquipment(user.id, gym.id, {
+        equipmentId: smith.id,
+        name: smith.name,
+        equipmentType: smith.equipmentType,
+        loadType: 'FIXED',
+        weightOptions: [15, 25],
+        platePoolId: pool.id,
+      }),
+    ).rejects.toThrow('Only plate-loaded equipment may reference a plate pool.');
   });
 
   it('rejects another user exercise link', async () => {

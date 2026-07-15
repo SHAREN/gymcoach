@@ -550,6 +550,14 @@ versioned load-profile snapshot. Later edits to a machine must not rewrite
 historical facts. Deleted equipment may clear the live foreign key, but the
 snapshot remains.
 
+Editing an existing set's weight, repetitions, or RIR keeps the frozen
+equipment name, load type, multiplier, base load, side count, and plate-pool
+configuration. The selected load and nominal estimate may be recalculated from
+the edited weight using that frozen multiplier. Replacing or clearing equipment
+requires the explicit `REPLACE` or `CLEAR` equipment snapshot action; merely
+resending an unchanged equipment ID does not refresh history from current gym
+configuration.
+
 ## 6. LLM coach contract
 
 The LLM is an interpreter and planner around validated GymCoach data. It is not
