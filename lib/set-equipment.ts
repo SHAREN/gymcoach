@@ -1,7 +1,11 @@
 import { ApiError } from '@/lib/api';
 import { Prisma, type Set } from '@/lib/prisma-client';
+import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
 
-type EquipmentReader = Pick<Prisma.TransactionClient, 'gymEquipment'>;
+type EquipmentReader = Pick<
+  Prisma.TransactionClient,
+  'gymEquipment' | 'mobileEquipmentSnapshotRevision'
+>;
 
 export interface SetEquipmentSnapshot {
   gymEquipmentId: string | null;
@@ -60,7 +64,19 @@ export async function resolveSetEquipmentSnapshot(
       selectedLoadMultiplier: true,
       baseLoadKg: true,
       loadingSides: true,
-      platePool: { select: { id: true, name: true, compatibilityKey: true } },
+      weightOptions: true,
+      exerciseLinks: { select: { exerciseId: true } },
+      platePool: {
+        select: {
+          id: true,
+          name: true,
+          compatibilityKey: true,
+          plates: {
+            orderBy: { weightKg: 'asc' },
+            select: { weightKg: true, quantity: true },
+          },
+        },
+      },
     },
   });
   if (!equipment) {
@@ -74,8 +90,10 @@ export async function resolveSetEquipmentSnapshot(
   const multiplier = equipment.selectedLoadMultiplier;
   const nominalResistanceKg =
     equipment.loadType === 'SELECTORIZED' ? round(selectedLoadKg * multiplier) : null;
+  const revisionId = await ensureMobileEquipmentSnapshotRevision(client, equipment);
   const snapshot = {
-    version: 1,
+    version: 2,
+    revisionId,
     gymEquipmentId: equipment.id,
     loadType: equipment.loadType,
     equipmentType: equipment.equipmentType,
@@ -84,7 +102,15 @@ export async function resolveSetEquipmentSnapshot(
     nominalResistanceKg,
     baseLoadKg: equipment.baseLoadKg,
     loadingSides: equipment.loadingSides,
-    platePool: equipment.platePool,
+    weightOptions: equipment.weightOptions,
+    platePool: equipment.platePool
+      ? {
+          id: equipment.platePool.id,
+          name: equipment.platePool.name,
+          compatibilityKey: equipment.platePool.compatibilityKey,
+          plates: equipment.platePool.plates,
+        }
+      : null,
   } satisfies Prisma.InputJsonObject;
 
   return {

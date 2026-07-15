@@ -103,13 +103,14 @@ import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.training.LoadConstraints
+import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
 import org.sharteman.gymcoach.training.ResolvedEquipmentLoadProfile
 import org.sharteman.gymcoach.training.SetRecommendation
 import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.constrainGymWeight
 import org.sharteman.gymcoach.training.constraintsFor
 import org.sharteman.gymcoach.training.formatSetTableMetric
-import org.sharteman.gymcoach.training.frozenEquipmentLoadConstraints
+import org.sharteman.gymcoach.training.frozenEquipmentLoadState
 import org.sharteman.gymcoach.training.fromDisplayWeight
 import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.isAchievableLoad
@@ -965,7 +966,14 @@ private fun loadConstraintsForSet(
     loadConstraints: LoadConstraints,
     set: LocalSetEntity,
 ): LoadConstraints {
-    frozenEquipmentLoadConstraints(set)?.let { return it }
+    when (val frozen = frozenEquipmentLoadState(set)) {
+        FrozenEquipmentLoadState.Invalid -> return LoadConstraints(
+            equipmentType = loadConstraints.equipmentType,
+            isAvailable = false,
+        )
+        FrozenEquipmentLoadState.NoSnapshot -> Unit
+        is FrozenEquipmentLoadState.Supported -> return frozen.constraints
+    }
     if (loadConstraints.equipmentOptions.isEmpty()) return loadConstraints
     val equipmentId = set.gymEquipmentId
     return if (

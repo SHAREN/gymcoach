@@ -181,7 +181,51 @@ describe('equipment-first REST domain', () => {
       selectedLoadKg: 50,
       selectedLoadMultiplierSnapshot: 0.5,
       nominalResistanceKg: 25,
-      equipmentLoadSnapshot: expect.objectContaining({ loadType: 'SELECTORIZED' }),
+      equipmentLoadSnapshot: expect.objectContaining({
+        version: 2,
+        revisionId: expect.any(String),
+        gymEquipmentId: cable.id,
+        loadType: 'SELECTORIZED',
+        weightOptions: [40, 45, 50],
+        platePool: null,
+      }),
+    });
+
+    const plateSetResponse = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
+        exerciseId: bench.id,
+        gymEquipmentId: benchStationForInvalidLink.id,
+        setNumber: 1,
+        weight: 70,
+        reps: 8,
+        rir: 2,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(plateSetResponse.status).toBe(201);
+    await expect(plateSetResponse.json()).resolves.toMatchObject({
+      equipmentLoadSnapshot: {
+        version: 2,
+        revisionId: expect.any(String),
+        gymEquipmentId: benchStationForInvalidLink.id,
+        loadType: 'PLATE_LOADED',
+        equipmentType: 'BARBELL',
+        selectedLoadKg: 70,
+        selectedLoadMultiplier: 1,
+        nominalResistanceKg: null,
+        baseLoadKg: 20,
+        loadingSides: 2,
+        weightOptions: [],
+        platePool: {
+          id: pool.id,
+          name: 'Olympic plates',
+          compatibilityKey: 'olympic_50mm',
+          plates: [
+            { weightKg: 5, quantity: 4 },
+            { weightKg: 20, quantity: 2 },
+          ],
+        },
+      },
     });
 
     const clearEquipmentResponse = await updateSet(

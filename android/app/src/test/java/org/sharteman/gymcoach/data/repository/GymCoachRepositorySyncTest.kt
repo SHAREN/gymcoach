@@ -986,6 +986,7 @@ class GymCoachRepositorySyncTest {
             id = "equipment_cable_1",
             gymId = "gym_1",
             name = "Cable station",
+            snapshotRevisionId = "revision_cable_1",
             equipmentType = "CABLE",
             loadType = "SELECTORIZED",
             weightOptions = listOf(40.0, 45.0, 50.0),
@@ -1035,6 +1036,7 @@ class GymCoachRepositorySyncTest {
             snapshotRevisionId = "revision_watch_1",
             equipmentType = "CABLE",
             loadType = "SELECTORIZED",
+            weightOptions = listOf(45.0, 50.0),
             selectedLoadMultiplier = 0.5,
         )
         val created = fixture.repository.addSet(
@@ -1411,6 +1413,99 @@ class GymCoachRepositorySyncTest {
 
         assertTrue(failure is IllegalArgumentException)
         assertEquals(savedBefore, fixture.dao.getSet(set.id))
+        assertEquals(runtimeBefore, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(queuedBefore, fixture.dao.queuedOperations())
+        assertEquals(commandsBefore, publisher.commands)
+    }
+
+    @Test
+    fun unsupportedMalformedAndMismatchedFrozenSnapshotsFailClosed() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = equipmentFirstBootstrap(equipment)
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val created = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        val validSnapshot = requireNotNull(created.equipmentLoadSnapshotJson)
+        val invalidSnapshots = listOf(
+            validSnapshot.replace("\"version\":2", "\"version\":1"),
+            validSnapshot.replace("\"version\":2", "\"version\":99"),
+            "{not-json",
+            validSnapshot.replace(equipment.id, "different_equipment_id"),
+        )
+
+        invalidSnapshots.forEach { snapshot ->
+            val invalidSet = created.copy(equipmentLoadSnapshotJson = snapshot)
+            fixture.dao.saveSet(invalidSet)
+            val runtimeBefore = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+            val queuedBefore = fixture.dao.queuedOperations()
+
+            val failure = runCatching {
+                fixture.repository.updateSet(invalidSet, weight = 80.0, reps = 11, rir = 1)
+            }.exceptionOrNull()
+
+            assertTrue(failure is IllegalStateException)
+            assertEquals(invalidSet, fixture.dao.getSet(created.id))
+            assertEquals(runtimeBefore, fixture.dao.getActiveWorkoutRuntime(sessionId))
+            assertEquals(queuedBefore, fixture.dao.queuedOperations())
+        }
+    }
+
+    @Test
+    fun trustedFrozenV2SnapshotSurvivesSetNullAndStillRejectsImpossibleLoad() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(watchPublisher = publisher)
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = equipmentFirstBootstrap(equipment)
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val created = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        fixture.dao.saveSet(created.copy(gymEquipmentId = null))
+
+        fixture.repository.updateSet(created, weight = 80.0, reps = 11, rir = 1)
+
+        val accepted = requireNotNull(fixture.dao.getSet(created.id))
+        assertEquals(null, accepted.gymEquipmentId)
+        assertEquals(equipment.snapshotRevisionId, equipmentSnapshotRevision(accepted))
+        assertEquals(80.0, accepted.weight, 0.001)
+        val runtimeBefore = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        val queuedBefore = fixture.dao.queuedOperations()
+        val commandsBefore = publisher.commands.toList()
+
+        val failure = runCatching {
+            fixture.repository.updateSet(accepted, weight = 77.0, reps = 12, rir = 1)
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(accepted, fixture.dao.getSet(created.id))
         assertEquals(runtimeBefore, fixture.dao.getActiveWorkoutRuntime(sessionId))
         assertEquals(queuedBefore, fixture.dao.queuedOperations())
         assertEquals(commandsBefore, publisher.commands)
