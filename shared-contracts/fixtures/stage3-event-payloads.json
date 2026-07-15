@@ -1,0 +1,42 @@
+{
+  "activeExerciseChanged": {
+    "exerciseId": "exercise_60fb3847f9894c1ca50bf708e94f3f3e",
+    "exerciseSessionId": "exercise_session_91d43ed5ea324213912653a12ca0d0ae",
+    "order": 2
+  },
+  "setStarted": {
+    "setId": "mob_set_pending_9f6d823b2c5646bf9fa68d243e8dd7f4",
+    "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",
+    "setNumber": 2,
+    "startedAt": 1784102640000
+  },
+  "setCompleted": {
+    "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+    "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+    "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",
+    "setNumber": 1,
+    "weight": 100,
+    "reps": 8,
+    "rir": 2,
+    "setType": "WORKING",
+    "comment": null,
+    "startedAt": 1784102520000,
+    "completedAt": 1784102580000,
+    "source": "WATCH",
+    "heartRateSummary": {
+      "min": null,
+      "max": null,
+      "average": null,
+      "start": null,
+      "end": null,
+      "sampleCount": 0
+    },
+    "sensorSummary": {},
+    "revision": 7
+  },
+  "setDeleted": {
+    "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+    "deletedAt": 1784102700000,
+    "baseRevision": 7
+  }
+}

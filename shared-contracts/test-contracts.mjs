@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(fileURLToPath(import.meta.url));
 const schemaDir = join(root, 'schemas', 'v1');
 const examplesDir = join(root, 'examples');
+const fixturesDir = join(root, 'fixtures');
 const draft202012 = 'https://json-schema.org/draft/2020-12/schema';
 const p2pMaxBytes = 1_024;
 const p2pTargetBytes = 900;
@@ -439,6 +440,76 @@ snapshot.pendingEvents.forEach((event, index) =>
   validateEvent(event, `SyncSnapshot.pendingEvents[${index}]`),
 );
 assertUniqueEventIds(snapshot.pendingEvents, 'SyncSnapshot.pendingEvents');
+assert.equal(
+  snapshot.workoutSession.sessionId,
+  snapshot.sessionId,
+  'SyncSnapshot workout session must use the envelope sessionId',
+);
+assert.equal(
+  snapshot.workoutSession.revision,
+  snapshot.revision,
+  'SyncSnapshot workout session revision must match the envelope revision',
+);
+assert.ok(
+  snapshot.timestamp >= snapshot.workoutSession.updatedAt,
+  'SyncSnapshot timestamp must not predate the projected workout state',
+);
+assert.ok(
+  snapshot.exerciseSessions.length >= 2,
+  'Stage 3 snapshot fixture must include multiple exercises',
+);
+const exerciseSessionIds = snapshot.exerciseSessions.map((entry) => entry.exerciseSessionId);
+const exerciseIds = snapshot.exerciseSessions.map((entry) => entry.exerciseId);
+const exerciseOrders = snapshot.exerciseSessions.map((entry) => entry.order);
+assert.equal(
+  new Set(exerciseSessionIds).size,
+  exerciseSessionIds.length,
+  'SyncSnapshot exerciseSessionId values must be unique',
+);
+assert.equal(
+  new Set(exerciseOrders).size,
+  exerciseOrders.length,
+  'SyncSnapshot exercise order values must be unique',
+);
+assert.ok(
+  snapshot.exerciseSessions.every((entry) => entry.sessionId === snapshot.sessionId),
+  'SyncSnapshot exercises must link to the envelope session',
+);
+assert.ok(
+  exerciseIds.includes(snapshot.workoutSession.activeExerciseId),
+  'SyncSnapshot activeExerciseId must reference a projected exercise',
+);
+assert.equal(
+  snapshot.exerciseSessions.filter((entry) => entry.status === 'ACTIVE').length,
+  1,
+  'SyncSnapshot must expose one active exercise',
+);
+const setIds = snapshot.setRecords.map((entry) => entry.setId);
+assert.equal(new Set(setIds).size, setIds.length, 'SyncSnapshot setId values must be unique');
+assert.ok(
+  snapshot.setRecords.every(
+    (entry) =>
+      entry.sessionId === snapshot.sessionId &&
+      exerciseSessionIds.includes(entry.exerciseSessionId) &&
+      entry.revision <= snapshot.revision &&
+      entry.startedAt <= entry.completedAt,
+  ),
+  'SyncSnapshot sets must link to projected exercises and valid revisions',
+);
+assert.ok(
+  snapshot.workoutSession.activeSetId && !setIds.includes(snapshot.workoutSession.activeSetId),
+  'Stage 3 fixture must distinguish the active in-progress set from completed sets',
+);
+assert.equal(
+  snapshot.sensorSamples.length,
+  0,
+  'Stage 3 snapshot fixture must not claim sensor support before Stage 4',
+);
+assert.ok(
+  examples.get('sync-snapshot.json').bytes > p2pMaxBytes &&
+    examples.get('sync-snapshot.json').bytes < fileMaxBytes,
+  'Stage 3 snapshot fixture must exercise file delivery rather than direct P2P',
+);
 
 const conflict = examples.get('conflict-record.json').parsed;
 required(
@@ -496,5 +567,33 @@ const batchFits =
     ? examples.get('batch-envelope.json').bytes <= batchLimit
     : examples.get('batch-envelope.json').bytes < batchLimit;
 assert.ok(batchFits, `BatchEnvelope exceeds ${batch.deliveryMode} transport limit`);
+
+const stage3Payloads = JSON.parse(
+  await readFile(join(fixturesDir, 'stage3-event-payloads.json'), 'utf8'),
+);
+required(
+  stage3Payloads.activeExerciseChanged,
+  ['exerciseId', 'exerciseSessionId', 'order'],
+  'ACTIVE_EXERCISE_CHANGED payload',
+);
+assert.ok(
+  stage3Payloads.activeExerciseChanged.order >= 1,
+  'ACTIVE_EXERCISE_CHANGED order must be positive',
+);
+required(
+  stage3Payloads.setStarted,
+  ['setId', 'exerciseSessionId', 'setNumber', 'startedAt'],
+  'SET_STARTED payload',
+);
+assert.ok(stage3Payloads.setStarted.setNumber >= 1, 'SET_STARTED setNumber must be positive');
+assert.ok(stage3Payloads.setStarted.startedAt >= 0, 'SET_STARTED startedAt must be non-negative');
+validateRootShape(
+  stage3Payloads.setCompleted,
+  schemas.get('set-record.schema.json'),
+  'SET_COMPLETED payload',
+);
+required(stage3Payloads.setDeleted, ['setId', 'deletedAt', 'baseRevision'], 'SET_DELETED payload');
+assert.ok(stage3Payloads.setDeleted.deletedAt >= 0, 'SET_DELETED deletedAt must be non-negative');
+assert.ok(stage3Payloads.setDeleted.baseRevision >= 1, 'SET_DELETED baseRevision must be positive');
 
 console.log(`Validated ${schemaFiles.length} schemas and ${exampleFiles.length} examples.`);

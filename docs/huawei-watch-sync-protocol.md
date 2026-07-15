@@ -84,6 +84,9 @@ Required rules:
 - Session, workout, user, exercise, exercise-session, entity, and set IDs are
   opaque stable strings. Existing prefixed Android IDs and server IDs must be
   preserved exactly; they are not required to be UUIDs.
+- `WorkoutSession.workoutProgramId` carries the existing
+  `LocalSessionEntity.workoutId`. It is a wire compatibility name, not a second
+  program or workout entity.
 - Protocol-generated event, ACK, batch, snapshot, conflict, and sample IDs are
   UUIDs.
 - `timestamp` is Unix epoch milliseconds and records when the user action occurred.
@@ -123,6 +126,22 @@ order. Wire replay order is revision, timestamp, then lexical `eventId`.
 | `SYNC_REQUESTED`          | Session ID, known revision, last ACK, pending event IDs or range              | Requests replay or a full snapshot when revisions cannot be reconciled incrementally.                           |
 | `SYNC_SNAPSHOT`           | `snapshotId`, delivery mode, snapshot revision                                | Announces a separately validated `SyncSnapshot` direct/file payload. It never deletes an unmerged local action. |
 | `SYNC_ACKNOWLEDGED`       | `ackId`, acknowledged event IDs, status, revision                             | Journals a processed `SyncAck`; the `SyncAck` envelope remains the normative acknowledgement object.            |
+
+### Stage 3 event payload shapes
+
+The compact Stage 3 payloads are normative and are mirrored in
+`shared-contracts/fixtures/stage3-event-payloads.json`:
+
+- `ACTIVE_EXERCISE_CHANGED`: `exerciseId`, `exerciseSessionId`, and one-based
+  `order`.
+- `SET_STARTED`: `setId`, `exerciseSessionId`, one-based `setNumber`, and
+  absolute `startedAt`.
+- `SET_UPDATED` and `SET_COMPLETED`: the payload is the complete `SetRecord`
+  object directly, without a wrapper field.
+- `SET_DELETED`: `setId`, absolute `deletedAt`, and `baseRevision`.
+
+All domain identifiers remain opaque stable strings. Event handlers reject
+missing fields, invalid numbers, or timestamps before mutating local state.
 
 ## ACK contract
 

@@ -65,6 +65,9 @@ entities may use a different non-UUID format. Implementations must preserve
 these IDs exactly and must not replace them with watch-generated duplicates.
 Only protocol-generated identifiers such as `eventId`, `ackId`, `batchId`,
 `snapshotId`, `conflictId`, and `sampleId` are UUIDs.
+`WorkoutSession.workoutProgramId` maps to the existing
+`LocalSessionEntity.workoutId`; its historical field name does not authorize a
+second workout or program identifier.
 
 1. The producer creates a stable UUID `eventId` once and persists the event in
    its local outbox before attempting delivery.
@@ -113,6 +116,8 @@ outbox. `errorCode` is a sanitized machine-readable string or `null`.
 
 - `schemas/v1/` - authoritative JSON Schemas.
 - `examples/` - valid example documents.
+- `fixtures/stage3-event-payloads.json` - normative compact payload shapes for
+  active exercise and set events.
 - `test-contracts.mjs` - dependency-free structural and protocol-limit checks.
 
 Run the checks with Node.js 20 or newer:
