@@ -298,6 +298,11 @@ required(
   ],
   'SetRecord',
 );
+assert.deepEqual(
+  new Set(schemas.get('set-record.schema.json').properties.rir.type),
+  new Set(['number', 'null']),
+  'SetRecord.rir must preserve historical missing RIR values',
+);
 
 const control = examples.get('control-message.json').parsed;
 validateWireVersion(control, 'ControlMessage');

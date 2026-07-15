@@ -26,7 +26,7 @@
     "setNumber": { "type": "integer", "minimum": 1 },
     "weight": { "type": "number", "minimum": 0 },
     "reps": { "type": "integer", "minimum": 0 },
-    "rir": { "type": "number", "minimum": 0 },
+    "rir": { "type": ["number", "null"], "minimum": 0 },
     "setType": { "type": ["string", "null"] },
     "comment": { "type": ["string", "null"] },
     "startedAt": { "type": "integer", "minimum": 0 },

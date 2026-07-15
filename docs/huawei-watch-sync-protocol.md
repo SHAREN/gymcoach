@@ -142,6 +142,9 @@ The compact Stage 3 payloads are normative and are mirrored in
 
 All domain identifiers remain opaque stable strings. Event handlers reject
 missing fields, invalid numbers, or timestamps before mutating local state.
+Historical snapshot records may carry `rir: null` when the existing set never
+recorded RIR. A watch-originated `SET_COMPLETED` mutation requires an explicit
+integer RIR from 0 to 5.
 
 ## ACK contract
 
