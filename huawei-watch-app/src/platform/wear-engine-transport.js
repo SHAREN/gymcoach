@@ -224,6 +224,7 @@ export class WearEngineTransport {
       if (this.client === client) {
         this.client = null;
         this.connected = false;
+        await this.connectionHandler(ConnectionState.ERROR, normalized);
         if (typeof client.unregisterReceiver === 'function') {
           try {
             await new Promise((resolve, reject) => {
@@ -239,7 +240,6 @@ export class WearEngineTransport {
           }
         }
       }
-      await this.connectionHandler(ConnectionState.ERROR, normalized);
       throw normalized;
     }
   }
