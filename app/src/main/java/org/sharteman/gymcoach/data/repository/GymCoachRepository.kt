@@ -22,6 +22,10 @@ import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.LoginRequest
+import org.sharteman.gymcoach.data.model.MobileFrozenEquipmentLoadSnapshot
+import org.sharteman.gymcoach.data.model.MobileFrozenEquipmentSnapshot
+import org.sharteman.gymcoach.data.model.MobileFrozenPlateInventoryItemSnapshot
+import org.sharteman.gymcoach.data.model.MobileFrozenPlatePoolSnapshot
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
 import org.sharteman.gymcoach.data.model.StartSessionOperation
@@ -200,23 +204,30 @@ class GymCoachRepository(
         val recoverySec = previous?.let {
             Duration.between(Instant.parse(it.completedAt), now).seconds.coerceIn(0, 86_400).toInt()
         }
+        val selectedLoad = equipment?.let { roundLoad(weight) }
+        val storedWeight = selectedLoad ?: weight
         val nominalResistance = equipment
             ?.takeIf { it.loadType == "SELECTORIZED" }
-            ?.let { roundLoad(weight * it.selectedLoadMultiplier) }
+            ?.let { roundLoad(storedWeight * it.selectedLoadMultiplier) }
+        val frozenEquipmentSnapshot = equipment?.let {
+            frozenEquipmentSnapshot(it, requireNotNull(selectedLoad), nominalResistance)
+        }
         val set = LocalSetEntity(
             id = entityId("set"),
             sessionId = sessionId,
             exerciseId = exerciseId,
             gymEquipmentId = equipment?.id,
             equipmentNameSnapshot = equipment?.name,
-            selectedLoadKg = equipment?.let { roundLoad(weight) },
-            selectedLoadMultiplierSnapshot = equipment?.let { roundLoad(it.selectedLoadMultiplier) },
+            selectedLoadKg = selectedLoad,
+            selectedLoadMultiplierSnapshot = equipment?.selectedLoadMultiplier,
             nominalResistanceKg = nominalResistance,
-            equipmentLoadSnapshotJson = equipment?.let {
-                equipmentSnapshotJson(it, roundLoad(weight), nominalResistance)
+            equipmentLoadSnapshotJson = frozenEquipmentSnapshot?.equipmentLoadSnapshot?.let {
+                api.json.encodeToString(it)
+            } ?: equipment?.let {
+                equipmentSnapshotJson(it, requireNotNull(selectedLoad), nominalResistance)
             },
             setNumber = (exerciseSets.maxOfOrNull { it.setNumber } ?: 0) + 1,
-            weight = weight,
+            weight = storedWeight,
             reps = reps,
             rir = rir,
             notes = notes?.trim()?.take(500)?.takeIf { it.isNotEmpty() },
@@ -225,7 +236,7 @@ class GymCoachRepository(
             recoverySec = recoverySec,
             completedAt = now.toString(),
         )
-        dao.saveSetAndOperation(set, outbox(upsertOperation(set)))
+        dao.saveSetAndOperation(set, outbox(upsertOperation(set, frozenEquipmentSnapshot)))
         scheduleSyncNow()
         return set
     }
@@ -235,6 +246,7 @@ class GymCoachRepository(
         require(reps in 1..100) { "Repetitions must be between 1 and 100." }
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
         val selectedLoad = set.selectedLoadKg?.let { roundLoad(weight) }
+        val storedWeight = selectedLoad ?: weight
         val nominalResistance = if (
             selectedLoad != null &&
             set.selectedLoadMultiplierSnapshot != null &&
@@ -248,7 +260,7 @@ class GymCoachRepository(
             set.nominalResistanceKg
         }
         val updated = set.copy(
-            weight = weight,
+            weight = storedWeight,
             reps = reps,
             rir = rir,
             selectedLoadKg = selectedLoad,
@@ -455,13 +467,17 @@ class GymCoachRepository(
         }
     }
 
-    private fun upsertOperation(set: LocalSetEntity) = UpsertSetOperation(
+    private fun upsertOperation(
+        set: LocalSetEntity,
+        frozenEquipmentSnapshot: MobileFrozenEquipmentSnapshot? = null,
+    ) = UpsertSetOperation(
         operationId = operationId(),
         set = MobileSetPayload(
             id = set.id,
             sessionId = set.sessionId,
             exerciseId = set.exerciseId,
             gymEquipmentId = set.gymEquipmentId,
+            frozenEquipmentSnapshot = frozenEquipmentSnapshot,
             setNumber = set.setNumber,
             weight = set.weight,
             reps = set.reps,
@@ -515,6 +531,46 @@ class GymCoachRepository(
             )
         }
     }.toString()
+
+    private fun frozenEquipmentSnapshot(
+        equipment: GymEquipmentDto,
+        selectedLoadKg: Double,
+        nominalResistanceKg: Double?,
+    ): MobileFrozenEquipmentSnapshot? {
+        val revisionId = equipment.snapshotRevisionId ?: return null
+        val loadSnapshot = MobileFrozenEquipmentLoadSnapshot(
+            revisionId = revisionId,
+            gymEquipmentId = equipment.id,
+            loadType = equipment.loadType,
+            equipmentType = equipment.equipmentType,
+            selectedLoadKg = selectedLoadKg,
+            selectedLoadMultiplier = equipment.selectedLoadMultiplier,
+            nominalResistanceKg = nominalResistanceKg,
+            baseLoadKg = equipment.baseLoadKg,
+            loadingSides = equipment.loadingSides,
+            weightOptions = equipment.weightOptions,
+            platePool = equipment.platePool?.let { pool ->
+                MobileFrozenPlatePoolSnapshot(
+                    id = pool.id,
+                    name = pool.name,
+                    compatibilityKey = pool.compatibilityKey,
+                    plates = pool.plates.map { plate ->
+                        MobileFrozenPlateInventoryItemSnapshot(
+                            weightKg = plate.weightKg,
+                            quantity = plate.quantity,
+                        )
+                    },
+                )
+            },
+        )
+        return MobileFrozenEquipmentSnapshot(
+            equipmentNameSnapshot = equipment.name,
+            selectedLoadKg = selectedLoadKg,
+            selectedLoadMultiplierSnapshot = equipment.selectedLoadMultiplier,
+            nominalResistanceKg = nominalResistanceKg,
+            equipmentLoadSnapshot = loadSnapshot,
+        )
+    }
 
     private fun snapshotLoadType(snapshotJson: String?): String? = runCatching {
         snapshotJson?.let { api.json.parseToJsonElement(it).jsonObject["loadType"]?.toString()?.trim('"') }

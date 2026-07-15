@@ -17,7 +17,10 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
+import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
+import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
+import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileSetPayload
@@ -178,22 +181,14 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
-    fun equipmentIdentityAndLoadSnapshotStayWithTheOfflineSetAndOutbox() = runTest {
+    fun newEquipmentSetQueuesCompleteFrozenV2Snapshot() = runTest {
         val fixture = fixture()
-        val equipment = GymEquipmentDto(
-            id = "equipment_cable_1",
-            gymId = "gym_1",
-            name = "Cable station",
-            equipmentType = "CABLE",
-            loadType = "SELECTORIZED",
-            weightOptions = listOf(40.0, 45.0, 50.0),
-            selectedLoadMultiplier = 0.5,
-        )
+        val equipment = plateLoadedEquipment()
 
         val set = fixture.repository.addSet(
             sessionId = "session_1",
             exerciseId = "exercise_1",
-            weight = 50.0,
+            weight = 70.0,
             reps = 10,
             rir = 2,
             notes = null,
@@ -201,21 +196,180 @@ class GymCoachRepositorySyncTest {
         )
 
         assertEquals(equipment.id, set.gymEquipmentId)
-        assertEquals("Cable station", set.equipmentNameSnapshot)
-        assertEquals(50.0, set.selectedLoadKg ?: 0.0, 0.001)
-        assertEquals(25.0, set.nominalResistanceKg ?: 0.0, 0.001)
-        assertTrue(set.equipmentLoadSnapshotJson?.contains("\"loadType\":\"SELECTORIZED\"") == true)
+        assertEquals(equipment.name, set.equipmentNameSnapshot)
+        assertEquals(70.0, set.selectedLoadKg ?: 0.0, 0.001)
+        assertEquals(
+            equipment.selectedLoadMultiplier,
+            set.selectedLoadMultiplierSnapshot ?: 0.0,
+            0.0,
+        )
+        assertEquals(null, set.nominalResistanceKg)
+        assertTrue(set.equipmentLoadSnapshotJson?.contains("\"version\":2") == true)
         val queued = fixture.dao.queuedOperations().single()
         val operation = TestApi.jsonConfig.decodeFromString<SyncOperation>(queued.payloadJson)
             as UpsertSetOperation
+        val frozen = requireNotNull(operation.set.frozenEquipmentSnapshot)
+        val load = frozen.equipmentLoadSnapshot
         assertEquals(equipment.id, operation.set.gymEquipmentId)
-        assertEquals(50.0, operation.set.weight, 0.001)
+        assertEquals(70.0, operation.set.weight, 0.001)
+        assertEquals(equipment.name, frozen.equipmentNameSnapshot)
+        assertEquals(70.0, frozen.selectedLoadKg, 0.001)
+        assertEquals(
+            equipment.selectedLoadMultiplier,
+            frozen.selectedLoadMultiplierSnapshot,
+            0.0,
+        )
+        assertEquals(null, frozen.nominalResistanceKg)
+        assertEquals(2, load.version)
+        assertEquals(equipment.snapshotRevisionId, load.revisionId)
+        assertEquals(equipment.id, load.gymEquipmentId)
+        assertEquals(equipment.loadType, load.loadType)
+        assertEquals(equipment.equipmentType, load.equipmentType)
+        assertEquals(70.0, load.selectedLoadKg, 0.001)
+        assertEquals(equipment.selectedLoadMultiplier, load.selectedLoadMultiplier, 0.0)
+        assertEquals(null, load.nominalResistanceKg)
+        assertEquals(equipment.weightOptions, load.weightOptions)
+        assertEquals(equipment.baseLoadKg, load.baseLoadKg, 0.001)
+        assertEquals(equipment.loadingSides, load.loadingSides)
+        assertEquals(equipment.platePool?.id, load.platePool?.id)
+        assertEquals(equipment.platePool?.name, load.platePool?.name)
+        assertEquals(equipment.platePool?.compatibilityKey, load.platePool?.compatibilityKey)
+        assertEquals(listOf(20.0, 5.0, 1.25), load.platePool?.plates?.map { it.weightKg })
+        assertEquals(listOf(4, null, 8), load.platePool?.plates?.map { it.quantity })
+        assertFalse(queued.payloadJson.contains("equipmentSnapshotAction"))
+    }
 
-        fixture.repository.updateSet(set, weight = 45.0, reps = 11, rir = 2)
+    @Test
+    fun ordinaryOfflineEditOmitsFrozenSnapshotAfterCreate() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment()
+        val set = fixture.repository.addSet(
+            sessionId = "session_1",
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        val createJson = fixture.dao.queuedOperations().single().payloadJson
+
+        fixture.repository.updateSet(set, weight = 80.0, reps = 11, rir = 2)
+        val queued = fixture.dao.queuedOperations()
+        assertEquals(2, queued.size)
+        assertEquals(createJson, queued[0].payloadJson)
+        val create = TestApi.jsonConfig.decodeFromString<SyncOperation>(queued[0].payloadJson)
+            as UpsertSetOperation
+        val edit = TestApi.jsonConfig.decodeFromString<SyncOperation>(queued[1].payloadJson)
+            as UpsertSetOperation
+        assertTrue(create.set.frozenEquipmentSnapshot != null)
+        assertEquals(null, edit.set.frozenEquipmentSnapshot)
+        assertEquals(equipment.id, edit.set.gymEquipmentId)
+        assertEquals(80.0, edit.set.weight, 0.001)
+        assertFalse(queued[1].payloadJson.contains("frozenEquipmentSnapshot"))
+        assertFalse(queued[1].payloadJson.contains("equipmentSnapshotAction"))
         val updated = requireNotNull(fixture.dao.getSet(set.id))
         assertEquals(equipment.id, updated.gymEquipmentId)
-        assertEquals(45.0, updated.selectedLoadKg ?: 0.0, 0.001)
-        assertEquals(22.5, updated.nominalResistanceKg ?: 0.0, 0.001)
+        assertEquals(80.0, updated.selectedLoadKg ?: 0.0, 0.001)
+        assertTrue(updated.equipmentLoadSnapshotJson?.contains(equipment.snapshotRevisionId!!) == true)
+        assertTrue(updated.equipmentLoadSnapshotJson?.contains("\"selectedLoadKg\":80.0") == true)
+    }
+
+    @Test
+    fun equipmentWeightIsCanonicalAcrossSetPayloadAndSnapshot() = runTest {
+        val fixture = fixture()
+        val equipment = GymEquipmentDto(
+            id = "equipment_selector_0001",
+            gymId = "gym_equipment_0001",
+            name = "Precise cable",
+            snapshotRevisionId = "revision_selector_0001",
+            equipmentType = "CABLE",
+            loadType = "SELECTORIZED",
+            weightOptions = listOf(20.0, 25.0),
+            selectedLoadMultiplier = 0.006,
+        )
+
+        val set = fixture.repository.addSet(
+            sessionId = "session_1",
+            exerciseId = "exercise_1",
+            weight = 20.004,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        assertEquals(20.0, set.weight, 0.0)
+        assertEquals(20.0, set.selectedLoadKg ?: 0.0, 0.0)
+        assertEquals(0.12, set.nominalResistanceKg ?: 0.0, 0.0)
+        val create = TestApi.jsonConfig.decodeFromString<SyncOperation>(
+            fixture.dao.queuedOperations().single().payloadJson,
+        ) as UpsertSetOperation
+        val frozen = requireNotNull(create.set.frozenEquipmentSnapshot)
+        assertEquals(20.0, create.set.weight, 0.0)
+        assertEquals(create.set.weight, frozen.selectedLoadKg, 0.0)
+        assertEquals(create.set.weight, frozen.equipmentLoadSnapshot.selectedLoadKg, 0.0)
+        assertEquals(0.006, frozen.selectedLoadMultiplierSnapshot, 0.0)
+        assertEquals(0.12, frozen.nominalResistanceKg ?: 0.0, 0.0)
+
+        fixture.repository.updateSet(set, weight = 25.004, reps = 11, rir = 2)
+        val updated = requireNotNull(fixture.dao.getSet(set.id))
+        assertEquals(25.0, updated.weight, 0.0)
+        assertEquals(25.0, updated.selectedLoadKg ?: 0.0, 0.0)
+        assertEquals(0.15, updated.nominalResistanceKg ?: 0.0, 0.0)
+        val edit = TestApi.jsonConfig.decodeFromString<SyncOperation>(
+            fixture.dao.queuedOperations()[1].payloadJson,
+        ) as UpsertSetOperation
+        assertEquals(25.0, edit.set.weight, 0.0)
+        assertEquals(null, edit.set.frozenEquipmentSnapshot)
+    }
+
+    @Test
+    fun bootstrapEquipmentMutationOrDeletionDoesNotRewriteQueuedCreate() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment()
+        fixture.repository.addSet(
+            sessionId = "session_1",
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        val createJson = fixture.dao.queuedOperations().single().payloadJson
+
+        fixture.api.bootstrapResponse = bootstrap(
+            gyms = listOf(
+                GymDto(
+                    id = equipment.gymId,
+                    name = "Updated gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    equipment = listOf(
+                        equipment.copy(
+                            name = "Changed after offline logging",
+                            snapshotRevisionId = "revision_plate_changed_0001",
+                            selectedLoadMultiplier = 1.5,
+                            baseLoadKg = 99.0,
+                            weightOptions = listOf(10.0),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+        assertEquals(createJson, fixture.dao.queuedOperations().single().payloadJson)
+
+        fixture.api.bootstrapResponse = bootstrap(
+            gyms = listOf(
+                GymDto(
+                    id = equipment.gymId,
+                    name = "Updated gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+        assertEquals(createJson, fixture.dao.queuedOperations().single().payloadJson)
     }
 
     @Test
@@ -244,6 +398,126 @@ class GymCoachRepositorySyncTest {
 
         assertFalse(encoded.contains("gymEquipmentId"))
         assertFalse(encoded.contains("equipmentSnapshotAction"))
+        assertFalse(encoded.contains("frozenEquipmentSnapshot"))
+    }
+
+    @Test
+    fun noEquipmentSetUsesTheLegacySyncPath() = runTest {
+        val fixture = fixture()
+        fixture.repository.addSet(
+            sessionId = "session_legacy",
+            exerciseId = "exercise_legacy",
+            weight = 40.004,
+            reps = 10,
+            rir = 2,
+            notes = null,
+        )
+        val queued = fixture.dao.queuedOperations().single()
+        val operation = TestApi.jsonConfig.decodeFromString<SyncOperation>(queued.payloadJson)
+            as UpsertSetOperation
+        assertEquals(40.004, operation.set.weight, 0.0)
+        assertEquals(null, operation.set.gymEquipmentId)
+        assertEquals(null, operation.set.frozenEquipmentSnapshot)
+        assertFalse(queued.payloadJson.contains("frozenEquipmentSnapshot"))
+
+        assertTrue(fixture.repository.syncPending())
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun schemaV3BootstrapDecodesRevisionAndCompletePlateInventory() {
+        val bootstrapJson = """
+            {
+              "schemaVersion":3,
+              "calculationVersion":"equipment-v1",
+              "serverTime":"2026-07-15T10:00:00Z",
+              "profile":{"id":"user_schema_0001","email":"schema@example.com"},
+              "gyms":[{
+                "id":"gym_schema_0001",
+                "name":"Schema gym",
+                "inventoryMode":"EQUIPMENT_FIRST",
+                "equipment":[{
+                  "id":"equipment_schema_0001",
+                  "gymId":"gym_schema_0001",
+                  "name":"Schema press",
+                  "snapshotRevisionId":"revision_schema_0001",
+                  "equipmentType":"MACHINE",
+                  "loadType":"PLATE_LOADED",
+                  "weightOptions":[5.0,10.0],
+                  "selectedLoadMultiplier":0.333333,
+                  "baseLoadKg":20.0,
+                  "loadingSides":2,
+                  "platePoolId":"plate_pool_schema_0001",
+                  "platePool":{
+                    "id":"plate_pool_schema_0001",
+                    "gymId":"gym_schema_0001",
+                    "name":"Olympic plates",
+                    "compatibilityKey":"olympic_50mm",
+                    "plates":[
+                      {"weightKg":20.0,"quantity":4},
+                      {"weightKg":5.0,"quantity":null}
+                    ]
+                  }
+                }]
+              }]
+            }
+        """.trimIndent()
+
+        val equipment = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(bootstrapJson)
+            .gyms.single().equipment.single()
+        assertEquals("revision_schema_0001", equipment.snapshotRevisionId)
+        assertEquals(0.333333, equipment.selectedLoadMultiplier, 0.0)
+        assertEquals(listOf(5.0, 10.0), equipment.weightOptions)
+        assertEquals(listOf(4, null), equipment.platePool?.plates?.map { it.quantity })
+    }
+
+    @Test
+    fun legacyV1EquipmentPayloadAndBootstrapCacheRemainReadable() {
+        val legacyOperationJson = """
+            {
+              "type":"UPSERT_SET",
+              "operationId":"operation_legacy_equipment",
+              "set":{
+                "id":"set_legacy_equipment",
+                "sessionId":"session_legacy_equipment",
+                "exerciseId":"exercise_legacy_equipment",
+                "gymEquipmentId":"equipment_legacy_0001",
+                "setNumber":1,
+                "weight":40.0,
+                "reps":10,
+                "rir":null,
+                "isWarmup":false,
+                "isDropSet":false,
+                "completedAt":"2026-07-13T10:05:00Z"
+              }
+            }
+        """.trimIndent()
+        val operation = TestApi.jsonConfig.decodeFromString<SyncOperation>(legacyOperationJson)
+            as UpsertSetOperation
+        assertEquals("equipment_legacy_0001", operation.set.gymEquipmentId)
+        assertEquals(null, operation.set.frozenEquipmentSnapshot)
+        val encoded = TestApi.jsonConfig.encodeToString<SyncOperation>(operation)
+        assertFalse(encoded.contains("frozenEquipmentSnapshot"))
+
+        val legacyBootstrapJson = """
+            {
+              "schemaVersion":1,
+              "calculationVersion":"legacy",
+              "serverTime":"2026-07-13T10:00:00Z",
+              "profile":{"id":"user_legacy_0001","email":"legacy@example.com"},
+              "gyms":[{
+                "id":"gym_legacy_0001",
+                "name":"Legacy gym",
+                "equipment":[{
+                  "id":"equipment_legacy_0001",
+                  "gymId":"gym_legacy_0001",
+                  "name":"Legacy machine"
+                }]
+              }]
+            }
+        """.trimIndent()
+        val bootstrap = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(legacyBootstrapJson)
+        assertEquals(null, bootstrap.gyms.single().equipment.single().snapshotRevisionId)
     }
 
     @Test
@@ -366,12 +640,41 @@ class GymCoachRepositorySyncTest {
         return Fixture(dao, api, accountStore, repository)
     }
 
-    private fun bootstrap(openSessions: List<SessionDto> = emptyList()) = BootstrapResponse(
-        schemaVersion = 1,
+    private fun bootstrap(
+        openSessions: List<SessionDto> = emptyList(),
+        gyms: List<GymDto> = emptyList(),
+    ) = BootstrapResponse(
+        schemaVersion = 3,
         calculationVersion = "test",
         serverTime = "2026-07-13T12:00:00Z",
         profile = ProfileDto(id = "user_1", email = "user@example.com"),
+        gyms = gyms,
         openSessions = openSessions,
+    )
+
+    private fun plateLoadedEquipment() = GymEquipmentDto(
+        id = "equipment_plate_0001",
+        gymId = "gym_equipment_0001",
+        name = "Plate-loaded press",
+        snapshotRevisionId = "revision_plate_0001",
+        equipmentType = "MACHINE",
+        loadType = "PLATE_LOADED",
+        weightOptions = listOf(5.0, 10.0),
+        selectedLoadMultiplier = 0.333333,
+        baseLoadKg = 20.0,
+        loadingSides = 2,
+        platePoolId = "plate_pool_0001",
+        platePool = GymPlatePoolDto(
+            id = "plate_pool_0001",
+            gymId = "gym_equipment_0001",
+            name = "Olympic plates",
+            compatibilityKey = "olympic_50mm",
+            plates = listOf(
+                GymPlateInventoryItemDto(weightKg = 20.0, quantity = 4),
+                GymPlateInventoryItemDto(weightKg = 5.0, quantity = null),
+                GymPlateInventoryItemDto(weightKg = 1.25, quantity = 8),
+            ),
+        ),
     )
 
     private data class Fixture(
