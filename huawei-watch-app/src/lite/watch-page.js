@@ -1,21 +1,21 @@
-import { WatchCompanion } from '../../../../../../../src/core/companion.js';
-import { labels } from '../../../../../../../src/core/i18n.js';
-import { createVolatileStorageBackend, WatchStateRepository } from '../../../../../../../src/core/storage.js';
-import { createUnavailableTransport } from '../../../../../../../src/core/transport.js';
+import { WatchCompanion } from '../core/companion.js';
+import { labels } from '../core/i18n.js';
+import { createVolatileStorageBackend, WatchStateRepository } from '../core/storage.js';
+import { createUnavailableTransport } from '../core/transport.js';
 import {
   completedSetsForExercise,
   currentExercise,
-} from '../../../../../../../src/core/workout-state.js';
+} from '../core/workout-state.js';
 import {
   summarizeExercise,
   summarizeWorkout,
-} from '../../../../../../../src/core/workout-summary.js';
+} from '../core/workout-summary.js';
 import {
   createSummarySelection,
   moveSummaryExercise,
   selectSummaryWorkout as updateSummarySelection,
   selectedSummaryExercise,
-} from '../../../../../../../src/core/summary-navigation.js';
+} from '../core/summary-navigation.js';
 
 const platform = globalThis.__gymCoachWatchPlatform || {};
 const repository = new WatchStateRepository(

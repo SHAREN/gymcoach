@@ -1,0 +1,256 @@
+<div class="watch-page">
+  <div if="{{ showHome }}" class="screen home-screen">
+    <div class="top-row">
+      <div class="connection-dot"></div>
+      <text class="connection-text">{{ connectionLabel }}</text>
+      <div class="language-button click-control" onclick="toggleLanguage">
+        <text class="language-button-label">{{ languageButton }}</text>
+      </div>
+    </div>
+
+    <text class="app-title">GymCoach</text>
+
+    <div if="{{ hasWorkout }}" class="home-card active-card" onclick="openWorkout">
+      <text class="home-card-title">{{ activeWorkoutLabel }}</text>
+      <text class="home-card-main">{{ exerciseName }}</text>
+      <text class="home-card-detail">{{ setLabel }} {{ setProgress }} · {{ elapsed }}</text>
+    </div>
+
+    <div if="{{ noWorkout }}" class="home-card empty-card">
+      <text class="home-card-title">{{ activeWorkoutLabel }}</text>
+      <text class="home-card-main home-card-small">{{ noWorkoutLabel }}</text>
+    </div>
+
+    <div if="{{ hasLastWorkout }}" class="home-card last-card" onclick="openLastWorkout">
+      <text class="home-card-title">{{ lastWorkoutLabel }}</text>
+      <text class="home-card-main home-card-small">{{ lastWorkoutSets }}</text>
+      <text class="home-card-detail">{{ lastWorkoutDuration }} · {{ lastWorkoutFinishedAt }}</text>
+    </div>
+
+    <div if="{{ noLastWorkout }}" class="home-card last-card muted-card">
+      <text class="home-card-title">{{ lastWorkoutLabel }}</text>
+      <text class="home-card-detail centered">{{ noLastWorkoutLabel }}</text>
+    </div>
+
+    <div class="home-actions compact-actions">
+      <div class="small-button click-control" onclick="sendPing">
+        <text class="small-button-label dark-button-label">{{ pingLabel }}</text>
+      </div>
+      <div class="small-button secondary click-control" onclick="requestState">
+        <text class="small-button-label">{{ syncLabel }}</text>
+      </div>
+    </div>
+    <div class="diagnostics-button click-control" onclick="openDiagnostics">
+      <text class="diagnostics-button-label">{{ diagnosticsLabel }} · {{ syncStatusLabel }} · {{ pendingLabel }} {{ pendingCount }}</text>
+    </div>
+  </div>
+
+  <div if="{{ showWorkout }}" class="screen workout-screen">
+    <div class="top-row">
+      <div class="back-button click-control" onclick="goHome"><text class="back-button-label">‹</text></div>
+      <text class="compact-title">{{ activeWorkoutLabel }}</text>
+      <text class="elapsed">{{ elapsed }}</text>
+    </div>
+
+    <text class="exercise-name large">{{ exerciseName }}</text>
+    <text class="set-progress">{{ setLabel }} {{ setProgress }}</text>
+    <text if="{{ showCompleteSet }}" class="card-detail">{{ durationLabel }}: {{ setElapsed }}</text>
+    <text class="heart-rate-line">{{ currentHrLabel }}: {{ currentHeartRate }}</text>
+    <div class="target-card">
+      <text class="target-label">{{ targetLabel }}</text>
+      <text class="target-value">{{ targetSummary }}</text>
+    </div>
+
+    <div class="summary-actions">
+      <div class="summary-button click-control" onclick="openExerciseSummary"><text class="summary-button-label">{{ exerciseSummaryLabel }}</text></div>
+      <div class="summary-button click-control" onclick="openWorkoutSummary"><text class="summary-button-label">{{ workoutSummaryLabel }}</text></div>
+    </div>
+
+    <div if="{{ showExerciseNavigation }}" class="exercise-nav">
+      <div class="nav-button click-control" onclick="previousExercise"><text class="summary-button-label">‹ {{ previousLabel }}</text></div>
+      <div class="nav-button click-control" onclick="nextExercise"><text class="summary-button-label">{{ nextLabel }} ›</text></div>
+    </div>
+
+    <div class="wide-button secondary click-control" onclick="openSetEntry"><text class="wide-button-label">{{ editSetLabel }}</text></div>
+    <div if="{{ showPauseButton }}" class="wide-button secondary click-control" onclick="togglePause"><text class="wide-button-label">{{ pauseResumeLabel }}</text></div>
+    <div if="{{ showStartSet }}" class="wide-button click-control" onclick="startSet"><text class="wide-button-label dark-button-label">{{ startSetLabel }}</text></div>
+    <div if="{{ showCompleteSet }}" class="wide-button danger click-control" onclick="completeSet"><text class="wide-button-label">{{ completeSetLabel }}</text></div>
+    <text if="{{ showRemoteActiveSet }}" class="warning-text">{{ activeSetOnPhoneLabel }}</text>
+  </div>
+
+  <div if="{{ showSetEntry }}" class="screen set-screen">
+    <div class="top-row">
+      <div class="back-button click-control" onclick="closeSetEntry"><text class="back-button-label">‹</text></div>
+      <text class="compact-title">{{ editSetLabel }}</text>
+      <text class="elapsed">{{ setProgress }}</text>
+    </div>
+
+    <text class="exercise-name">{{ exerciseName }}</text>
+    <text if="{{ showCompleteSet }}" class="card-detail">{{ durationLabel }}: {{ setElapsed }}</text>
+
+    <div class="number-row">
+      <text class="number-label">{{ weightLabel }}</text>
+      <div class="step-button click-control" onclick="weightDown"><text class="step-button-label">−</text></div>
+      <text class="number-value">{{ draftWeight }}</text>
+      <div class="step-button click-control" onclick="weightUp"><text class="step-button-label">+</text></div>
+    </div>
+
+    <div class="number-row">
+      <text class="number-label">{{ repsLabel }}</text>
+      <div class="step-button click-control" onclick="repsDown"><text class="step-button-label">−</text></div>
+      <text class="number-value">{{ draftReps }}</text>
+      <div class="step-button click-control" onclick="repsUp"><text class="step-button-label">+</text></div>
+    </div>
+
+    <div class="number-row">
+      <text class="number-label">{{ rirLabel }}</text>
+      <div class="step-button click-control" onclick="rirDown"><text class="step-button-label">−</text></div>
+      <text class="number-value">{{ draftRir }}</text>
+      <div class="step-button click-control" onclick="rirUp"><text class="step-button-label">+</text></div>
+    </div>
+
+    <div if="{{ showLastSetActions }}" class="last-set-actions">
+      <div class="last-set-button click-control" onclick="correctLastSet"><text class="last-set-button-label">{{ correctLastSetLabel }}</text></div>
+      <div class="last-set-button delete click-control" onclick="deleteLastSet"><text class="last-set-button-label">{{ deleteLastSetLabel }}</text></div>
+    </div>
+
+    <div class="wide-button click-control" onclick="closeSetEntry"><text class="wide-button-label dark-button-label">{{ backLabel }}</text></div>
+  </div>
+
+  <div if="{{ showRest }}" class="screen rest-screen">
+    <div class="top-row">
+      <text class="compact-title">{{ restLabel }}</text>
+      <text class="heart-rate-compact">{{ currentHeartRate }}</text>
+    </div>
+
+    <text class="rest-countdown">{{ restCountdown }}</text>
+    <text class="exercise-name">{{ exerciseName }}</text>
+    <text class="card-detail">{{ targetSummary }}</text>
+
+    <div class="rest-summary">
+      <text class="summary-value">{{ restMinimumLabel }}: {{ restMinimum }}</text>
+      <text class="summary-value">{{ restAverageLabel }}: {{ restAverage }}</text>
+      <text class="summary-value">{{ restAt30Label }}: {{ restAt30 }}</text>
+      <text class="summary-value">{{ restAt60Label }}: {{ restAt60 }}</text>
+    </div>
+
+    <div class="rest-actions">
+      <div class="rest-button click-control" onclick="skipRest"><text class="rest-button-label">{{ skipLabel }}</text></div>
+      <div class="rest-button click-control" onclick="add15Seconds"><text class="rest-button-label">{{ add15Label }}</text></div>
+      <div class="rest-button click-control" onclick="add30Seconds"><text class="rest-button-label">{{ add30Label }}</text></div>
+    </div>
+    <div class="rest-actions two">
+      <div class="rest-button wide-half click-control" onclick="togglePause"><text class="rest-button-label">{{ pauseResumeLabel }}</text></div>
+      <div class="rest-button wide-half primary click-control" onclick="startNextSet"><text class="rest-button-label dark-button-label">{{ startSetLabel }}</text></div>
+    </div>
+  </div>
+
+  <div if="{{ showExerciseSummary }}" class="screen summary-screen">
+    <div class="top-row">
+      <div class="back-button click-control" onclick="closeSummary"><text class="back-button-label">‹</text></div>
+      <text class="compact-title">{{ exerciseSummaryLabel }}</text>
+      <text class="elapsed">{{ summarySetCount }}</text>
+    </div>
+    <text class="exercise-name summary-name">{{ summaryExerciseName }}</text>
+    <div class="metric-grid">
+      <div class="metric-card">
+        <text class="metric-label">{{ finishedSetsLabel }}</text>
+        <text class="metric-value">{{ summarySetCount }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ totalVolumeLabel }}</text>
+        <text class="metric-value">{{ summaryVolume }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ averageRirLabel }}</text>
+        <text class="metric-value">{{ summaryAverageRir }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ maximumHrLabel }}</text>
+        <text class="metric-value">{{ summaryMaximumHeartRate }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ averageHrLabel }}</text>
+        <text class="metric-value">{{ summaryAverageHeartRate }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ recovery60Label }}</text>
+        <text class="metric-value">{{ summaryRecovery60 }}</text>
+      </div>
+    </div>
+    <div class="exercise-nav summary-nav">
+      <div class="nav-button click-control" onclick="previousSummaryExercise"><text class="summary-button-label">‹ {{ previousLabel }}</text></div>
+      <div class="nav-button click-control" onclick="nextSummaryExercise"><text class="summary-button-label">{{ nextLabel }} ›</text></div>
+    </div>
+    <div class="wide-button secondary click-control" onclick="openWorkoutSummary"><text class="wide-button-label">{{ workoutSummaryLabel }}</text></div>
+  </div>
+
+  <div if="{{ showWorkoutSummary }}" class="screen summary-screen">
+    <div class="top-row">
+      <div class="back-button click-control" onclick="closeSummary"><text class="back-button-label">‹</text></div>
+      <text class="compact-title">{{ workoutSummaryLabel }}</text>
+      <text class="elapsed">{{ workoutSummaryDuration }}</text>
+    </div>
+    <text class="summary-duration">{{ durationLabel }}: {{ workoutSummaryDuration }}</text>
+    <div class="metric-grid workout-metrics">
+      <div class="metric-card">
+        <text class="metric-label">{{ exerciseCountLabel }}</text>
+        <text class="metric-value">{{ workoutExerciseCount }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ finishedSetsLabel }}</text>
+        <text class="metric-value">{{ workoutSetCount }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ totalVolumeLabel }}</text>
+        <text class="metric-value">{{ workoutVolume }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ averageRirLabel }}</text>
+        <text class="metric-value">{{ workoutAverageRir }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ maximumHrLabel }}</text>
+        <text class="metric-value">{{ workoutMaximumHeartRate }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ averageHrLabel }}</text>
+        <text class="metric-value">{{ workoutAverageHeartRate }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ averageRestHrLabel }}</text>
+        <text class="metric-value">{{ workoutAverageRestHeartRate }}</text>
+      </div>
+      <div class="metric-card">
+        <text class="metric-label">{{ recovery60Label }}</text>
+        <text class="metric-value">{{ workoutRecovery60 }}</text>
+      </div>
+    </div>
+    <text class="summary-sync">{{ syncLabel }}: {{ summarySyncStatus }}</text>
+    <div class="wide-button secondary click-control" onclick="openExerciseSummary"><text class="wide-button-label">{{ exerciseSummaryLabel }}</text></div>
+  </div>
+
+  <div if="{{ showDiagnostics }}" class="screen diagnostics-screen">
+    <div class="top-row">
+      <div class="back-button click-control" onclick="goHome"><text class="back-button-label">‹</text></div>
+      <text class="compact-title">{{ diagnosticsLabel }}</text>
+      <div class="connection-dot"></div>
+    </div>
+    <div class="diagnostics-card">
+      <text class="diagnostic-row">{{ phoneConnectionLabel }}: {{ diagnosticConnection }}</text>
+      <text class="diagnostic-row">{{ syncLabel }}: {{ diagnosticSync }}</text>
+      <text class="diagnostic-row">{{ protocolLabel }}: {{ diagnosticProtocol }}</text>
+      <text class="diagnostic-row">{{ pendingLabel }}: {{ diagnosticPending }}</text>
+      <text class="diagnostic-row">{{ conflictsLabel }}: {{ diagnosticConflicts }}</text>
+      <text class="diagnostic-row">{{ lastSyncLabel }}: {{ diagnosticLastSync }}</text>
+    </div>
+    <div if="{{ hasLastError }}" class="error-card">
+      <text class="error-title">{{ lastErrorLabel }}</text>
+      <text class="error-code">{{ diagnosticLastError }}</text>
+    </div>
+    <div if="{{ noLastError }}" class="ok-card">
+      <text class="ok-text">{{ noErrorsLabel }}</text>
+    </div>
+    <div class="wide-button click-control" onclick="requestState"><text class="wide-button-label dark-button-label">{{ syncLabel }}</text></div>
+  </div>
+</div>
