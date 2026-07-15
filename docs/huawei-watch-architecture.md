@@ -1,12 +1,12 @@
 # Huawei Watch GT 4 companion architecture
 
-Status: implemented local architecture through Stage 6, with hardware-dependent adapters still blocked by the official-toolchain and real-device gates in `huawei-watch-testing.md`.
+Status: implemented and locally verified source architecture through Stage 6. Production transport, production watch storage, DevEco/Previewer/HAP evidence and hardware-dependent adapters remain blocked by the official-toolchain and real-device gates in `huawei-watch-testing.md`.
 
 ## Existing Android application
 
 The Android client is a Kotlin, Jetpack Compose, single-activity application. It uses repositories as the boundary between UI and data, OkHttp with Kotlin serialization for the mobile API, Room for offline persistence, and WorkManager for deferred server synchronization. Authentication uses the existing mobile bearer token on the phone. The token is encrypted with Android Keystore and must never be copied to the watch.
 
-Room database `gymcoach-android.db` is currently schema version 7. Its workout source of truth is:
+Room database `gymcoach-android.db` is currently schema version 9. Its workout source of truth is:
 
 - `WorkoutDto`: the workout plan received in the mobile bootstrap.
 - `ProgramExerciseDto`: the planned exercise, order, target sets, repetitions, RIR, rest, and related metadata.
@@ -77,7 +77,7 @@ flowchart LR
         API --> DB
     end
 
-    WTRANSPORT <-->|"messages under 1 KB; files under 4 MB"| PTRANSPORT
+    WTRANSPORT <-->|"900-byte outbound target; 1,024-byte inbound limit; 3.5 MiB file target below 4 MB"| PTRANSPORT
     POUTBOX --> API
 ```
 
@@ -95,9 +95,18 @@ flowchart LR
 | File transport                                 | `watch_file_transfers`                                            | Persist immutable hash-checked multipart envelopes and pair them with their exact event IDs before applying data.                                                                         |
 | Sensor data                                    | `watch_sensor_batches`, `watch_sensor_samples`, set summaries     | Raw samples are written in batches. Heart-rate summaries extend `LocalSetEntity`; rest recovery uses `rest_recovery_summaries`.                                                           |
 
-These tables are implemented by additive migrations through Room schema 7. Instrumentation tests cover migrations 3 to 4, 4 to 5, 5 to 6, and 6 to 7, plus account-data cleanup for the watch inbox, outbox, ACK journal, peer state, conflicts, and file transfers.
+These tables are implemented by additive migrations through Room schema 9. Six API 34 instrumentation tests cover migrations 3 to 4, 4 to 5, 5 to 6, 6 to 7, 7 to 8, and 8 to 9, including durable repair markers, equipment snapshots, and preserved watch state. Account-data cleanup covers the watch inbox, outbox, ACK journal, peer state, conflicts, file transfers, sensor storage, recovery summaries, and repair markers.
 
-On the watch, `WorkoutSession`, `ExerciseSession`, and `SetRecord` are compact local JSON projections backed by Lite Wearable storage. The watch retains the active snapshot, unacknowledged events, inbox receipt IDs, pending sensor batches, and the last acknowledged revision. Storage is bounded by deleting only acknowledged data after a verified snapshot and checksum.
+On the watch, `WorkoutSession`, `ExerciseSession`, and `SetRecord` are compact
+JSON projections behind the storage repository abstraction. The implemented
+retention rules preserve the active snapshot, unacknowledged events, inbox
+receipt IDs, pending sensor batches, and the last acknowledged revision, and
+delete only acknowledged data after a verified snapshot and checksum.
+
+The storage abstractions, replay rules and restart behavior are automated-test
+evidence only. The current production watch entry still uses a volatile storage
+adapter and an unavailable production transport until the official Huawei APIs
+can be compiled and verified.
 
 ## Android integration layers
 
@@ -201,7 +210,7 @@ Raw data is associated with session, exercise, set, phase, sensor type, unit, so
 ## Delivery stages
 
 1. Audit and capability matrix, environment inventory, contracts, and this architecture.
-2. Minimal signed watch app, connection status, ping/pong, Previewer UI, and simulated transport.
+2. Minimal watch source project, connection status, ping/pong, UI intended for official Previewer verification, and simulated transport. A signed HAP remains an external gate.
 3. Active snapshot, exercise changes, set entry, and existing `LocalSetEntity` integration.
 4. Runtime-gated sensors, summaries, absolute timers, and supported vibration.
 5. Durable offline journals, reconnection, revision reconciliation, and conflict diagnostics.
