@@ -3,6 +3,7 @@
     <string name="history_native_title">History</string>
     <string name="history_free_session">Free session</string>
     <string name="history_load_error">Could not load history.</string>
+    <string name="history_offline_unavailable">This month has not been saved for offline use yet.</string>
     <string name="history_delete_error">Could not delete the session.</string>
     <string name="history_offline_cache">Offline copy. Connect to refresh this month.</string>
     <string name="history_filter_program">Program filter</string>
@@ -33,6 +34,9 @@
     <string name="history_distance_short">Distance</string>
     <string name="history_avg_hr">Avg HR</string>
     <string name="history_max_hr">Max HR</string>
+    <string name="history_kilometer_unit">km</string>
+    <string name="history_meter_unit">m</string>
+    <string name="history_heart_rate_value">%1$d bpm</string>
     <string name="history_warmup">Warm-up</string>
     <string name="history_drop_set">Drop set</string>
     <string name="history_working_set">Working</string>

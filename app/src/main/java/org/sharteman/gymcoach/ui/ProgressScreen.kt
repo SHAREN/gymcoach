@@ -127,10 +127,10 @@ fun ProgressScreen(
     var chooserOpen by rememberSaveable { mutableStateOf(false) }
     val exercises = snapshot?.exercises.orEmpty()
     LaunchedEffect(exercises, initialExerciseId) {
-        if (initialExerciseId in exercises.map { it.id }) {
+        val exerciseIds = exercises.mapTo(mutableSetOf()) { it.id }
+        if (initialExerciseId != null) {
             selectedExerciseId = initialExerciseId
-        }
-        if (selectedExerciseId !in exercises.map { it.id }) {
+        } else if (selectedExerciseId !in exerciseIds) {
             selectedExerciseId = exercises.firstOrNull()?.id
         }
     }

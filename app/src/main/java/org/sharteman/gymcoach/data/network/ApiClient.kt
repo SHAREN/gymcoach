@@ -25,7 +25,7 @@ interface MobileApi {
     val json: Json
     suspend fun login(baseUrl: String, request: LoginRequest): LoginResponse
     suspend fun bootstrap(baseUrl: String, token: String): BootstrapResponse
-    suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot
+    suspend fun progress(baseUrl: String, token: String, exerciseId: String? = null): MobileProgressSnapshot
     suspend fun sync(baseUrl: String, token: String, request: SyncBatchRequest): SyncBatchResponse
     suspend fun saveReadiness(baseUrl: String, token: String, request: ReadinessCheckinRequest)
     suspend fun createWebSession(baseUrl: String, token: String): List<String>
@@ -57,8 +57,19 @@ class ApiClient : MobileApi {
         token = token,
     )
 
-    override suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot = get(
-        url = "${baseUrl.trimEnd('/')}/api/mobile/progress",
+    override suspend fun progress(
+        baseUrl: String,
+        token: String,
+        exerciseId: String?,
+    ): MobileProgressSnapshot = get(
+        url = buildString {
+            append(baseUrl.trimEnd('/'))
+            append("/api/mobile/progress")
+            exerciseId?.let {
+                append("?exerciseId=")
+                append(java.net.URLEncoder.encode(it, java.nio.charset.StandardCharsets.UTF_8.toString()))
+            }
+        },
         token = token,
     )
 

@@ -1,11 +1,14 @@
 package org.sharteman.gymcoach.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -85,7 +90,6 @@ import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.formatSetTableMetric
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
-import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.ui.localization.equipmentTypeDisplayName
 import org.sharteman.gymcoach.ui.localization.exerciseCategoryDisplayName
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
@@ -97,6 +101,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseDetailsDialog(
     exercise: ExerciseDto,
@@ -104,10 +109,15 @@ fun ExerciseDetailsDialog(
     fallbackPerformance: LastPerformanceDto?,
     progressPoints: List<MobileProgressPointDto>,
     unit: String,
+    bodyweightKg: Double? = null,
     serverUrl: String,
-    onOpenProgress: (String) -> Unit,
-    onOpenHistory: (String, String) -> Unit,
+    onOpenProgress: ((String) -> Unit)?,
+    onOpenHistory: ((String, String) -> Unit)?,
     onDismiss: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    @StringRes backLabelRes: Int = R.string.back_to_workout,
+    showCloseAction: Boolean = true,
 ) {
     val context = LocalContext.current
     val media = remember(context, exercise.name) {
@@ -116,8 +126,9 @@ fun ExerciseDetailsDialog(
     val effectiveHistory = remember(history, fallbackPerformance) {
         if (history.isNotEmpty()) history else fallbackPerformance?.let(::fallbackHistory).orEmpty()
     }
-    val backToWorkoutLabel = stringResource(R.string.back_to_workout)
+    val backLabel = stringResource(backLabelRes)
     val openTrainingSessionLabel = stringResource(R.string.open_training_session)
+    val displayName = exerciseDisplayName(exercise.name)
     var techniqueOpen by rememberSaveable(exercise.id) { mutableStateOf(false) }
 
     Dialog(
@@ -136,19 +147,37 @@ fun ExerciseDetailsDialog(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = backToWorkoutLabel,
+                            contentDescription = backLabel,
                         )
                     }
                     Text(
-                        exerciseDisplayName(exercise.name),
+                        displayName,
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel))
+                    onEdit?.let { edit ->
+                        IconButton(
+                            onClick = edit,
+                            modifier = Modifier.testTag("exercise-detail-edit"),
+                        ) {
+                            Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
+                        }
+                    }
+                    onDelete?.let { delete ->
+                        IconButton(
+                            onClick = delete,
+                            modifier = Modifier.testTag("exercise-detail-delete"),
+                        ) {
+                            Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete))
+                        }
+                    }
+                    if (showCloseAction) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel))
+                        }
                     }
                 }
                 HorizontalDivider()
@@ -165,14 +194,21 @@ fun ExerciseDetailsDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    exerciseDisplayName(exercise.name),
+                                    displayName,
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.Bold,
                                 )
+                                if (displayName != exercise.name) {
+                                    Text(
+                                        exercise.name,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 Spacer(Modifier.height(8.dp))
-                                Row(
+                                FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
                                     DetailChip(muscleGroupDisplayName(exercise.muscleGroup))
                                     DetailChip(exerciseCategoryDisplayName(exercise.category))
@@ -224,7 +260,7 @@ fun ExerciseDetailsDialog(
                             }
                         }
                     }
-                    item {
+                    if (exercise.category != "CARDIO") item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -244,17 +280,21 @@ fun ExerciseDetailsDialog(
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                 }
-                                OutlinedButton(
-                                    onClick = { onOpenProgress(exercise.id) },
-                                    modifier = Modifier.testTag("exercise-open-full-progress"),
-                                ) {
-                                    Text(stringResource(R.string.open_full_chart))
+                                onOpenProgress?.let { openProgress ->
+                                    OutlinedButton(
+                                        onClick = { openProgress(exercise.id) },
+                                        modifier = Modifier.testTag("exercise-open-full-progress"),
+                                    ) {
+                                        Text(stringResource(R.string.open_full_chart))
+                                    }
                                 }
                             }
                             ExerciseMaxWeightChart(
                                 history = effectiveHistory,
                                 progressPoints = progressPoints,
                                 unit = unit,
+                                usesBodyweight = exercise.usesBodyweight,
+                                bodyweightKg = bodyweightKg,
                             )
                         }
                     }
@@ -275,8 +315,16 @@ fun ExerciseDetailsDialog(
                                     ExerciseHistoryCard(
                                         session = session,
                                         unit = unit,
+                                        isCardio = session.sets.any { set ->
+                                            set.durationSec != null ||
+                                                set.distanceM != null ||
+                                                set.avgHr != null ||
+                                                set.maxHr != null
+                                        } || (session.sets.isEmpty() && exercise.category == "CARDIO"),
                                         openLabel = openTrainingSessionLabel,
-                                        onOpen = { onOpenHistory(session.sessionId, session.startedAt) },
+                                        onOpen = onOpenHistory?.takeUnless { session.localOnly }?.let { openHistory ->
+                                            { openHistory(session.sessionId, session.startedAt) }
+                                        },
                                     )
                                     Spacer(Modifier.height(9.dp))
                                 }
@@ -314,9 +362,18 @@ private fun DetailChip(value: String) {
 
 @Composable
 private fun DetailValueRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+        )
     }
 }
 
@@ -325,24 +382,16 @@ private fun ExerciseMaxWeightChart(
     history: List<ExerciseHistorySessionDto>,
     progressPoints: List<MobileProgressPointDto>,
     unit: String,
+    usesBodyweight: Boolean,
+    bodyweightKg: Double?,
 ) {
-    val points = if (progressPoints.isNotEmpty()) {
-        progressPoints.map { point ->
-            ChartPoint(
-                date = point.sessionStartedAt,
-                value = roundWeight(toDisplayWeight(point.maxWeight, unit), 2),
-            )
-        }
-    } else {
-        history.asReversed().mapNotNull { session ->
-            session.sets.maxOfOrNull { it.weight }?.let { weight ->
-                ChartPoint(
-                    date = session.startedAt,
-                    value = roundWeight(toDisplayWeight(weight, unit), 2),
-                )
-            }
-        }
-    }
+    val points = buildExerciseChartPoints(
+        history = history,
+        progressPoints = progressPoints,
+        unit = unit,
+        usesBodyweight = usesBodyweight,
+        bodyweightKg = bodyweightKg,
+    )
     if (points.isEmpty()) {
         Text(
             stringResource(R.string.no_chart_data),
@@ -436,9 +485,13 @@ private fun ExerciseMaxWeightChart(
 private fun ExerciseHistoryCard(
     session: ExerciseHistorySessionDto,
     unit: String,
+    isCardio: Boolean,
     openLabel: String,
-    onOpen: () -> Unit,
+    onOpen: (() -> Unit)?,
 ) {
+    val context = historyLocaleContext(LocalContext.current)
+    val kilometerUnit = context.getString(R.string.history_kilometer_unit)
+    val meterUnit = context.getString(R.string.history_meter_unit)
     Card(
         modifier = Modifier.testTag("exercise-history-${session.sessionId}"),
         shape = RoundedCornerShape(8.dp),
@@ -453,7 +506,14 @@ private fun ExerciseHistoryCard(
                 Text(formatLongDate(session.startedAt), style = MaterialTheme.typography.labelLarge)
             }
             HorizontalDivider()
-            HistoryTableRow(
+            if (isCardio) CardioHistoryTableRow(
+                "#",
+                stringResource(R.string.history_duration_short),
+                stringResource(R.string.history_distance_short),
+                stringResource(R.string.history_avg_hr),
+                stringResource(R.string.history_max_hr),
+                header = true,
+            ) else HistoryTableRow(
                 "#",
                 unit.uppercase(Locale.getDefault()),
                 "REPS",
@@ -462,7 +522,15 @@ private fun ExerciseHistoryCard(
             )
             session.sets.sortedBy { it.setNumber }.forEachIndexed { index, set ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                HistoryTableRow(
+                if (isCardio) CardioHistoryTableRow(
+                    set.setNumber.toString(),
+                    formatHistoryDuration(set.durationSec),
+                    formatHistoryDistance(set.distanceM, kilometerUnit, meterUnit),
+                    set.avgHr?.toString() ?: "-",
+                    set.maxHr?.toString() ?: "-",
+                    header = false,
+                    rowTag = "exercise-history-cardio-${session.sessionId}-${set.setNumber}",
+                ) else HistoryTableRow(
                     if (set.isDropSet) "D" else (index + 1).toString(),
                     formatWeightValue(roundWeight(toDisplayWeight(set.weight, unit), 2)),
                     set.reps.toString(),
@@ -475,14 +543,42 @@ private fun ExerciseHistoryCard(
                     header = false,
                 )
             }
-            HorizontalDivider()
-            TextButton(
-                onClick = onOpen,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(openLabel)
+            onOpen?.let { open ->
+                HorizontalDivider()
+                TextButton(
+                    onClick = open,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("exercise-open-history-${session.sessionId}"),
+                ) {
+                    Text(openLabel)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun CardioHistoryTableRow(
+    number: String,
+    duration: String,
+    distance: String,
+    avgHr: String,
+    maxHr: String,
+    header: Boolean,
+    rowTag: String? = null,
+) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
+        HistoryCell(number, 0.5f, header)
+        HistoryCell(duration, 1f, header)
+        HistoryCell(
+            distance,
+            1f,
+            header,
+            modifier = rowTag?.let { Modifier.testTag("$it-distance") } ?: Modifier,
+        )
+        HistoryCell(avgHr, 0.8f, header)
+        HistoryCell(maxHr, 0.8f, header)
     }
 }
 
@@ -507,10 +603,11 @@ private fun androidx.compose.foundation.layout.RowScope.HistoryCell(
     value: String,
     cellWeight: Float,
     header: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     Text(
         value,
-        modifier = Modifier.weight(cellWeight),
+        modifier = modifier.weight(cellWeight),
         textAlign = TextAlign.Center,
         style = if (header) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
         fontWeight = if (header) FontWeight.Normal else FontWeight.Medium,
@@ -675,7 +772,42 @@ private fun ExerciseTechniqueDialog(
     }
 }
 
-private data class ChartPoint(val date: String, val value: Double)
+internal fun buildExerciseChartPoints(
+    history: List<ExerciseHistorySessionDto>,
+    progressPoints: List<MobileProgressPointDto>,
+    unit: String,
+    usesBodyweight: Boolean,
+    bodyweightKg: Double?,
+): List<ChartPoint> {
+    fun key(date: String): String = runCatching { Instant.parse(date).toEpochMilli().toString() }
+        .getOrElse { date }
+    val points = linkedMapOf<String, ChartPoint>()
+    progressPoints.forEach { point ->
+        points[key(point.sessionStartedAt)] = ChartPoint(
+            date = point.sessionStartedAt,
+            value = roundWeight(toDisplayWeight(point.maxWeight, unit), 2),
+        )
+    }
+    history.forEach { session ->
+        session.sets.maxOfOrNull { set ->
+            if (usesBodyweight && bodyweightKg != null && bodyweightKg > 0) {
+                bodyweightKg + set.weight
+            } else {
+                set.weight
+            }
+        }?.let { weight ->
+            points[key(session.startedAt)] = ChartPoint(
+                date = session.startedAt,
+                value = roundWeight(toDisplayWeight(weight, unit), 2),
+            )
+        }
+    }
+    return points.values.sortedBy { point ->
+        runCatching { Instant.parse(point.date).toEpochMilli() }.getOrDefault(Long.MIN_VALUE)
+    }
+}
+
+internal data class ChartPoint(val date: String, val value: Double)
 
 private fun fallbackHistory(performance: LastPerformanceDto): List<ExerciseHistorySessionDto> = listOf(
     ExerciseHistorySessionDto(

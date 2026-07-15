@@ -3,6 +3,7 @@
     <string name="history_native_title">История</string>
     <string name="history_free_session">Свободная тренировка</string>
     <string name="history_load_error">Не удалось загрузить историю.</string>
+    <string name="history_offline_unavailable">История за этот месяц ещё не сохранена для работы без сети.</string>
     <string name="history_delete_error">Не удалось удалить тренировку.</string>
     <string name="history_offline_cache">Офлайн-копия. Подключитесь к сети, чтобы обновить этот месяц.</string>
     <string name="history_filter_program">Фильтр по программе</string>
@@ -33,6 +34,9 @@
     <string name="history_distance_short">Дистанция</string>
     <string name="history_avg_hr">Ср. пульс</string>
     <string name="history_max_hr">Макс. пульс</string>
+    <string name="history_kilometer_unit">км</string>
+    <string name="history_meter_unit">м</string>
+    <string name="history_heart_rate_value">%1$d уд/мин</string>
     <string name="history_warmup">Разминка</string>
     <string name="history_drop_set">Дроп-сет</string>
     <string name="history_working_set">Рабочий</string>

@@ -134,6 +134,17 @@ interface GymCoachDao {
     }
 
     @Transaction
+    suspend fun saveFinishedSessionOperationAndBootstrap(
+        session: LocalSessionEntity,
+        operation: SyncOutboxEntity,
+        bootstrap: BootstrapCacheEntity?,
+    ) {
+        saveSession(session)
+        enqueue(operation)
+        bootstrap?.let { saveBootstrap(it) }
+    }
+
+    @Transaction
     suspend fun saveBootstrapAndOperation(
         bootstrap: BootstrapCacheEntity,
         operation: SyncOutboxEntity,
@@ -158,9 +169,14 @@ interface GymCoachDao {
     }
 
     @Transaction
-    suspend fun discardSessionChanges(sessionId: String, operationIds: List<String>) {
+    suspend fun discardSessionChanges(
+        sessionId: String,
+        operationIds: List<String>,
+        bootstrap: BootstrapCacheEntity? = null,
+    ) {
         removeOperations(operationIds)
         deleteSessionLocal(sessionId)
+        bootstrap?.let { saveBootstrap(it) }
     }
 
     @Transaction
@@ -168,9 +184,11 @@ interface GymCoachDao {
         sessionId: String,
         priorOperationIds: List<String>,
         operation: SyncOutboxEntity,
+        bootstrap: BootstrapCacheEntity? = null,
     ) {
         if (priorOperationIds.isNotEmpty()) removeOperations(priorOperationIds)
         deleteSessionLocal(sessionId)
         enqueue(operation)
+        bootstrap?.let { saveBootstrap(it) }
     }
 }

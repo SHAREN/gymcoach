@@ -72,7 +72,7 @@ class HistoryProgressRepository(
         val account = credentials()
         if (!networkStatus.isConnected()) {
             return cachedHistory(month, programId)
-                ?: throw IOException("No network connection and no cached history data.")
+                ?: throw HistoryOfflineCacheMissException()
         }
         val accountKey = accountKey(account.accountKeyServerUrl, account.userId)
         val remote = endpointResolver.execute { baseUrl ->
@@ -180,6 +180,10 @@ class HistoryProgressRepository(
         return Credentials(userId, accountStore.primaryServerUrl, token)
     }
 }
+
+class HistoryOfflineCacheMissException : IOException(
+    "No network connection and no cached history data.",
+)
 
 private data class Credentials(
     val userId: String,

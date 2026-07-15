@@ -504,11 +504,16 @@ fun WorkoutScreen(
                 ?.points
                 .orEmpty(),
             unit = unit,
+            bodyweightKg = bootstrap?.profile?.bodyweight,
             serverUrl = repository.serverUrl,
-            onOpenProgress = { exerciseId ->
-                detailsExercise = null
-                onOpenProgress(exerciseId)
-            },
+            onOpenProgress = if (
+                online || progressSnapshot?.exercises?.any { it.id == exercise.id } == true
+            ) {
+                { exerciseId ->
+                    detailsExercise = null
+                    onOpenProgress(exerciseId)
+                }
+            } else null,
             onOpenHistory = { historySessionId, startedAt ->
                 detailsExercise = null
                 onOpenHistory(historySessionId, startedAt)

@@ -34,6 +34,7 @@
     <string name="program_superset_group">Группа суперсета</string>
     <string name="program_targets_summary">%1$d подх. × %2$d-%3$d, RIR %4$d, отдых %5$d с</string>
     <string name="exercise_catalog_title">Каталог упражнений</string>
+    <string name="back_to_exercise_catalog">Назад к каталогу упражнений</string>
     <string name="exercise_catalog_search">Поиск упражнений</string>
     <string name="exercise_catalog_empty">По заданным фильтрам упражнений нет.</string>
     <string name="exercise_trained_days">Тренировочных дней: %1$d</string>

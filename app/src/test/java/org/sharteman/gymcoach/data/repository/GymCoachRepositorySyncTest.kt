@@ -21,6 +21,7 @@ import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
@@ -68,6 +69,15 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
+    fun targetedProgressRefreshForwardsTheSelectedExerciseId() = runTest {
+        val fixture = fixture()
+
+        fixture.repository.refreshProgress("exercise_old")
+
+        assertEquals(listOf("exercise_old"), fixture.api.progressExerciseIds)
+    }
+
+    @Test
     fun failedProgressRefreshPreservesTheExistingOfflineCache() = runTest {
         val fixture = fixture()
         val existing = progressSnapshot(generatedAt = "2026-07-13T08:00:00Z")
@@ -88,6 +98,109 @@ class GymCoachRepositorySyncTest {
         assertEquals(
             existing,
             fixture.api.json.decodeFromString<MobileProgressSnapshot>(cached.payloadJson),
+        )
+    }
+
+    @Test
+    fun finishedOfflineSessionImmediatelyUpdatesAndPreservesExerciseHistory() = runTest {
+        val fixture = fixture()
+        fixture.dao.saveBootstrap(
+            BootstrapCacheEntity(
+                payloadJson = fixture.api.json.encodeToString(bootstrap()),
+                updatedAtEpochMs = 1L,
+            ),
+        )
+        val session = LocalSessionEntity(
+            id = "session_finished_offline",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.saveSet(
+            LocalSetEntity(
+                id = "set_finished_offline",
+                sessionId = session.id,
+                exerciseId = "exercise_1",
+                setNumber = 1,
+                weight = 82.5,
+                reps = 8,
+                rir = 1,
+                completedAt = "2026-07-15T10:05:00Z",
+            ),
+        )
+
+        fixture.repository.finishSession(session.id, null, 8)
+
+        suspend fun cachedHistory(): List<ExerciseHistorySessionDto> {
+            val cached = requireNotNull(fixture.dao.getBootstrap())
+            return fixture.api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                .exerciseHistoryByExerciseId
+                .getValue("exercise_1")
+        }
+        assertEquals(session.id, cachedHistory().single().sessionId)
+        assertEquals(82.5, cachedHistory().single().sets.single().weight, 0.0)
+
+        fixture.api.bootstrapResponse = bootstrap()
+        fixture.repository.refreshBootstrap()
+        assertEquals(session.id, cachedHistory().single().sessionId)
+
+        fixture.repository.resetSession(session.id)
+        val resetCache = requireNotNull(fixture.dao.getBootstrap())
+        assertFalse(
+            fixture.api.json.decodeFromString<BootstrapResponse>(resetCache.payloadJson)
+                .exerciseHistoryByExerciseId
+                .containsKey("exercise_1"),
+        )
+    }
+
+    @Test
+    fun discardingRejectedOfflineSessionRemovesCachedExerciseHistory() = runTest {
+        val fixture = fixture()
+        val sessionId = "session_discard_history"
+        fixture.dao.saveBootstrap(
+            BootstrapCacheEntity(
+                payloadJson = fixture.api.json.encodeToString(
+                    bootstrap(
+                        exerciseHistoryByExerciseId = mapOf(
+                            "exercise_1" to listOf(
+                                ExerciseHistorySessionDto(
+                                    sessionId = sessionId,
+                                    startedAt = "2026-07-15T10:00:00Z",
+                                    localOnly = true,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                updatedAtEpochMs = 1L,
+            ),
+        )
+        fixture.dao.saveSession(
+            LocalSessionEntity(
+                id = sessionId,
+                workoutId = "workout_1",
+                gymId = null,
+                startedAt = "2026-07-15T10:00:00Z",
+                finishedAt = "2026-07-15T11:00:00Z",
+            ),
+        )
+        val finish = FinishSessionOperation(
+            operationId = "operation_discard_history",
+            sessionId = sessionId,
+            finishedAt = "2026-07-15T11:00:00Z",
+        )
+        fixture.dao.enqueue(fixture.outbox(finish))
+        fixture.dao.markOperationBlocked(finish.operationId, "Session not found.")
+        fixture.api.bootstrapFailure = IOException("offline")
+
+        fixture.repository.discardBlockedChange()
+
+        val cached = requireNotNull(fixture.dao.getBootstrap())
+        assertFalse(
+            fixture.api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                .exerciseHistoryByExerciseId
+                .containsKey("exercise_1"),
         )
     }
 
@@ -812,6 +925,7 @@ class GymCoachRepositorySyncTest {
     private fun bootstrap(
         openSessions: List<SessionDto> = emptyList(),
         activeProgram: ProgramDto? = null,
+        exerciseHistoryByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
     ) = BootstrapResponse(
         schemaVersion = 1,
         calculationVersion = "test",
@@ -819,6 +933,7 @@ class GymCoachRepositorySyncTest {
         profile = ProfileDto(id = "user_1", email = "user@example.com"),
         activeProgram = activeProgram,
         openSessions = openSessions,
+        exerciseHistoryByExerciseId = exerciseHistoryByExerciseId,
     )
 
     private fun bootstrapWithTargetSets(targetSets: Int) = bootstrap(
@@ -946,6 +1061,7 @@ class GymCoachRepositorySyncTest {
         )
         var progressFailure: Throwable? = null
         var progressCalls = 0
+        val progressExerciseIds = mutableListOf<String?>()
         val readinessRequests = mutableListOf<ReadinessCheckinRequest>()
         val syncCalls = mutableListOf<SyncBatchRequest>()
         var syncFailure: Throwable? = null
@@ -966,8 +1082,13 @@ class GymCoachRepositorySyncTest {
             bootstrapFailure?.let { throw it }
             return bootstrapResponse
         }
-        override suspend fun progress(baseUrl: String, token: String): MobileProgressSnapshot {
+        override suspend fun progress(
+            baseUrl: String,
+            token: String,
+            exerciseId: String?,
+        ): MobileProgressSnapshot {
             progressCalls += 1
+            progressExerciseIds += exerciseId
             progressFailure?.let { throw it }
             return progressResponse
         }
