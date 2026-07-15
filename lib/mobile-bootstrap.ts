@@ -76,6 +76,50 @@ export function buildMobileEquipmentHistoryContract(
   };
 }
 
+export function mobileWorkoutGymIds(
+  activeGymId: string | null,
+  openSessions: Array<{ workoutId: string | null; gymId: string | null }>,
+  workoutId: string,
+): string[] {
+  return mobileHistoryGymIds(
+    activeGymId,
+    openSessions.filter((session) => session.workoutId === workoutId),
+  );
+}
+
+export function mobileHistoryGymIds(
+  activeGymId: string | null,
+  openSessions: Array<{ gymId: string | null }>,
+): string[] {
+  return [
+    ...new Set(
+      [activeGymId, ...openSessions.map((session) => session.gymId)].filter(
+        (gymId): gymId is string => gymId != null,
+      ),
+    ),
+  ];
+}
+
+export function mergeMobileEquipmentReturnRecommendations(
+  recommendationsByGym: Array<Record<string, EquipmentReturnRecommendation[]>>,
+): Record<string, EquipmentReturnRecommendation[]> {
+  const merged: Record<string, EquipmentReturnRecommendation[]> = {};
+  for (const recommendations of recommendationsByGym) {
+    for (const [programExerciseId, equipmentRecommendations] of Object.entries(recommendations)) {
+      const byEquipmentId = new Map(
+        (merged[programExerciseId] ?? []).map((item) => [item.gymEquipmentId, item]),
+      );
+      for (const item of equipmentRecommendations) {
+        if (!byEquipmentId.has(item.gymEquipmentId)) {
+          byEquipmentId.set(item.gymEquipmentId, item);
+        }
+      }
+      merged[programExerciseId] = [...byEquipmentId.values()];
+    }
+  }
+  return merged;
+}
+
 export async function buildMobileBootstrap(userId: string) {
   const exerciseHistoryRowsPromise = db.$queryRaw<MobileExerciseHistoryRow[]>`
       WITH exercise_sessions AS (
@@ -224,46 +268,71 @@ export async function buildMobileBootstrap(userId: string) {
   );
 
   const activeGym = gyms.find((gym) => gym.id === user.activeGymId) ?? null;
-  const programExercises = activeProgram?.workouts.flatMap((workout) => workout.exercises) ?? [];
+  const gymsById = new Map(gyms.map((gym) => [gym.id, gym]));
+  const bootstrapWorkouts = [
+    ...(activeProgram?.workouts ?? []),
+    ...openSessions.flatMap((session) => (session.workout ? [session.workout] : [])),
+  ];
+  const workouts = [...new Map(bootstrapWorkouts.map((workout) => [workout.id, workout])).values()];
+  const programExercises = workouts.flatMap((workout) => workout.exercises);
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
-  const performanceTargets = buildEquipmentPerformanceTargets(exerciseIds, activeGym);
+  const historyGymIds = mobileHistoryGymIds(user.activeGymId, openSessions);
+  const historyGyms = historyGymIds
+    .map((gymId) => gymsById.get(gymId))
+    .filter((gym) => gym != null);
+  const performanceTargets = [
+    ...new Map(
+      (historyGyms.length > 0 ? historyGyms : [null])
+        .flatMap((gym) => buildEquipmentPerformanceTargets(exerciseIds, gym))
+        .map((target) => [`${target.exerciseId}\u0000${target.gymEquipmentId ?? ''}`, target]),
+    ).values(),
+  ];
   const now = new Date();
-  const returnEntriesPromise = activeProgram
-    ? Promise.all(
-        activeProgram.workouts.map(
-          async (workout) =>
-            [
+  const returnEntriesPromise =
+    workouts.length > 0
+      ? Promise.all(
+          workouts.map(
+            async (workout) =>
+              [
+                workout.id,
+                await getReturnToTrainingRecommendations({
+                  userId,
+                  programExercises: workout.exercises,
+                  excludeSessionId: null,
+                  now,
+                  bodyweight: user.bodyweight,
+                  gym: activeGym,
+                }),
+              ] as const,
+          ),
+        )
+      : Promise.resolve([]);
+  const equipmentReturnEntriesPromise =
+    workouts.length > 0
+      ? Promise.all(
+          workouts.map(async (workout) => {
+            const workoutGyms = mobileWorkoutGymIds(user.activeGymId, openSessions, workout.id)
+              .map((gymId) => gymsById.get(gymId))
+              .filter((gym) => gym != null);
+            const recommendationsByGym = await Promise.all(
+              (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) =>
+                getReturnToTrainingRecommendationsByEquipment({
+                  userId,
+                  programExercises: workout.exercises,
+                  excludeSessionId: null,
+                  now,
+                  bodyweight: user.bodyweight,
+                  gym,
+                }),
+              ),
+            );
+            return [
               workout.id,
-              await getReturnToTrainingRecommendations({
-                userId,
-                programExercises: workout.exercises,
-                excludeSessionId: null,
-                now,
-                bodyweight: user.bodyweight,
-                gym: activeGym,
-              }),
-            ] as const,
-        ),
-      )
-    : Promise.resolve([]);
-  const equipmentReturnEntriesPromise = activeProgram
-    ? Promise.all(
-        activeProgram.workouts.map(
-          async (workout) =>
-            [
-              workout.id,
-              await getReturnToTrainingRecommendationsByEquipment({
-                userId,
-                programExercises: workout.exercises,
-                excludeSessionId: null,
-                now,
-                bodyweight: user.bodyweight,
-                gym: activeGym,
-              }),
-            ] as const,
-        ),
-      )
-    : Promise.resolve([]);
+              mergeMobileEquipmentReturnRecommendations(recommendationsByGym),
+            ] as const;
+          }),
+        )
+      : Promise.resolve([]);
   const [lastPerformances, equipmentLastPerformances, returnEntries, equipmentReturnEntries] =
     await Promise.all([
       getLastPerformances(userId, exerciseIds, null),

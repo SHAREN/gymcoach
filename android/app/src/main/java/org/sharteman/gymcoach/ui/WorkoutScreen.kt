@@ -100,7 +100,6 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.PerformanceSetDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
-import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
@@ -216,25 +215,41 @@ fun WorkoutScreen(
         if (runtimeIndex >= 0 && runtimeIndex != selectedIndex) selectExercise(runtimeIndex, persist = false)
     }
     val current = exercises.getOrNull(selectedIndex) ?: return
-    val returnRecommendations = bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
+    val legacyReturnRecommendations =
+        bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
     val equipmentReturnRecommendations =
         bootstrap?.returnRecommendationsByEquipmentByWorkout?.get(workout.id).orEmpty()
     val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
-    var selectedEquipmentId by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
-    val inventory = resolveExerciseInventory(current, gym, selectedEquipmentId)
+    var selectedEquipmentByExercise by rememberSaveable {
+        mutableStateOf(emptyMap<String, String>())
+    }
+    val equipmentIdsByExercise = exercises.associate { exercise ->
+        exercise.id to resolveWorkoutEquipmentId(
+            exercise = exercise,
+            gym = gym,
+            sets = allSets,
+            selectedEquipmentId = selectedEquipmentByExercise[exercise.id],
+        )
+    }
+    val effectiveReturnRecommendations = exercises.mapNotNull { exercise ->
+        val recommendation = selectReturnRecommendationForEquipment(
+            recommendations = equipmentReturnRecommendations[exercise.id],
+            fallback = legacyReturnRecommendations[exercise.id],
+            fallbackPerformance = bootstrap?.lastPerformances?.get(exercise.exerciseId),
+            gymEquipmentId = equipmentIdsByExercise[exercise.id],
+        )
+        recommendation?.let { exercise.id to it }
+    }.toMap()
+    val currentEquipmentId = equipmentIdsByExercise[current.id]
+    val inventory = resolveExerciseInventory(current, gym, currentEquipmentId)
     val selectedProfile = selectedEquipment(inventory)
     val legacyLastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
     val lastPerformance = selectLastPerformanceForEquipment(
         performances = bootstrap?.lastPerformancesByEquipment?.get(current.exerciseId),
         fallback = legacyLastPerformance,
-        gymEquipmentId = selectedProfile?.equipmentId,
+        gymEquipmentId = currentEquipmentId,
     )
-    val returnRecommendation = selectReturnRecommendationForEquipment(
-        recommendations = equipmentReturnRecommendations[current.id],
-        fallback = returnRecommendations[current.id],
-        fallbackPerformance = legacyLastPerformance,
-        gymEquipmentId = selectedProfile?.equipmentId,
-    )
+    val returnRecommendation = effectiveReturnRecommendations[current.id]
     val target = current.copy(
         targetSets = returnRecommendation?.targetSets ?: current.targetSets,
         targetDropSets = if (returnRecommendation?.mode != null && returnRecommendation.mode != "normal") 0 else current.targetDropSets,
@@ -248,26 +263,19 @@ fun WorkoutScreen(
     val previousPerformance = lastPerformance?.takeIf {
         it.sessionId != sessionId
     }
-    val plannedRows = target.targetSets + target.targetDropSets
-    val completedWorkingRows = currentSets.count { !it.isWarmup }
-    fun effectivePlannedRows(exercise: ProgramExerciseDto): Int {
-        val adjusted = returnRecommendations[exercise.id]
-        val regular = adjusted?.targetSets ?: exercise.targetSets
-        val drop = if (adjusted?.mode != null && adjusted.mode != "normal") {
-            0
-        } else {
-            exercise.targetDropSets
-        }
-        return regular + drop
-    }
-    val totalPlannedRows = exercises.sumOf(::effectivePlannedRows)
-    val totalCompletedRows = allSets.count { !it.deleted && !it.isWarmup }
-    val completedExerciseIds = exercises.filter { exercise ->
-        val completed = allSets.count {
-            it.exerciseId == exercise.exerciseId && !it.deleted && !it.isWarmup
-        }
-        completed >= effectivePlannedRows(exercise)
-    }.mapTo(mutableSetOf()) { it.exerciseId }
+    val exerciseSetProgress = workoutExerciseSetProgress(
+        exercises = exercises,
+        sets = allSets,
+        returnRecommendations = effectiveReturnRecommendations,
+    )
+    val currentSetProgress = exerciseSetProgress.first { it.programExerciseId == current.id }
+    val plannedRows = currentSetProgress.plannedRows
+    val completedWorkingRows = currentSetProgress.completedRows
+    val totalPlannedRows = exerciseSetProgress.sumOf { it.plannedRows }
+    val totalCompletedRows = exerciseSetProgress.sumOf { it.completedRows }
+    val completedExerciseIds = exerciseSetProgress
+        .filter { progress -> progress.completedRows >= progress.plannedRows }
+        .mapTo(mutableSetOf()) { progress -> progress.exerciseId }
     val unit = bootstrap?.profile?.unit ?: "KG"
     val lastWorking = comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
     val recoverySec = lastWorking?.let {
@@ -303,7 +311,7 @@ fun WorkoutScreen(
             sessionStartedAt = session?.startedAt.orEmpty(),
             sets = allSets,
             exercises = exercises,
-            returnRecommendations = returnRecommendations,
+            exerciseSetProgress = exerciseSetProgress,
             bodyweightKg = bootstrap?.profile?.bodyweight,
             unit = unit,
             onBack = { showSummary = false },
@@ -407,7 +415,10 @@ fun WorkoutScreen(
                         equipment = inventory.equipment,
                         selectedEquipmentId = selectedProfile?.equipmentId,
                         selectionRequired = inventory.requiresEquipmentSelection && selectedProfile == null,
-                        onSelect = { selectedEquipmentId = it },
+                        onSelect = { equipmentId ->
+                            selectedEquipmentByExercise = selectedEquipmentByExercise +
+                                (current.id to equipmentId)
+                        },
                     )
                 }
             }
@@ -2216,12 +2227,15 @@ private fun WorkoutSummaryScreen(
     sessionStartedAt: String,
     sets: List<LocalSetEntity>,
     exercises: List<ProgramExerciseDto>,
-    returnRecommendations: Map<String, ReturnRecommendationDto>,
+    exerciseSetProgress: List<WorkoutExerciseSetProgress>,
     bodyweightKg: Double?,
     unit: String,
     onBack: () -> Unit,
     onFinish: (String?, Int?) -> Unit,
 ) {
+    val progressByProgramExerciseId = remember(exerciseSetProgress) {
+        exerciseSetProgress.associateBy { progress -> progress.programExerciseId }
+    }
     val stats = remember(sets, exercises, bodyweightKg) {
         workoutSummaryStats(sets, exercises, bodyweightKg)
     }
@@ -2297,16 +2311,9 @@ private fun WorkoutSummaryScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         exercises.forEachIndexed { index, exercise ->
-                            val completed = sets.count {
-                                !it.deleted && !it.isWarmup && it.exerciseId == exercise.exerciseId
-                            }
-                            val adjusted = returnRecommendations[exercise.id]
-                            val planned = (adjusted?.targetSets ?: exercise.targetSets) +
-                                if (adjusted?.mode != null && adjusted.mode != "normal") {
-                                    0
-                                } else {
-                                    exercise.targetDropSets
-                                }
+                            val progress = progressByProgramExerciseId.getValue(exercise.id)
+                            val completed = progress.completedRows
+                            val planned = progress.plannedRows
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
