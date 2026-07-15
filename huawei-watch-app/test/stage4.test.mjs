@@ -424,6 +424,18 @@ test('set completion flushes buffered heart rate and starts rest with exact payl
   });
 });
 
+test('exercise navigation is blocked while a set or rest is active', async () => {
+  const source = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = activeSnapshot(source);
+  const clock = mutableClock(snapshot.timestamp + 10_000);
+  const harness = await createHarness({ clock, snapshot });
+
+  await harness.watch.startSet();
+  await assert.rejects(() => harness.watch.changeExercise(1), /Finish the active set/);
+  await harness.watch.completeSet({ weight: 100, reps: 8, rir: 2 });
+  await assert.rejects(() => harness.watch.changeExercise(1), /Finish the active set/);
+});
+
 test('rest supports pause, resume, skip, and starting the next set', async () => {
   const source = await sharedJson('examples/sync-snapshot.json');
   const snapshot = activeSnapshot(source);
@@ -562,4 +574,33 @@ test('REST_FINISHED matches the shared fixture and excludes no invalid values as
     (event) => event.type === WatchEventType.REST_FINISHED,
   );
   assert.deepEqual(finished.payload, payloads.restFinished);
+});
+
+test('expired rest flushes collector samples and records the absolute deadline', async () => {
+  const source = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = activeSnapshot(source);
+  const clock = mutableClock(snapshot.timestamp + 10_000);
+  const collector = new DebugSensorCollector({
+    clock: clock.now,
+    sampleIdGenerator: uuidSequence(500),
+    sensorType: SensorType.HEART_RATE,
+    unit: 'BPM',
+  });
+  const harness = await createHarness({ clock, sensorCollectors: [collector], snapshot });
+
+  await harness.watch.startSet();
+  await harness.watch.completeSet({ weight: 100, reps: 8, rir: 2 });
+  const restEndsAt = harness.watch.getState().activeWorkout.rest.restEndsAt;
+  clock.set(restEndsAt - 1_000);
+  collector.record({ valid: true, value: 132 });
+  clock.set(restEndsAt + 15_000);
+  await harness.watch.checkRestTimer(clock.now());
+
+  const finished = outboundWorkoutEvents(harness.repository).find(
+    (event) => event.type === WatchEventType.REST_FINISHED,
+  );
+  assert.equal(finished.payload.finishedAt, restEndsAt);
+  assert.equal(finished.payload.summary.finishedAt, restEndsAt);
+  assert.equal(finished.payload.summary.sampleCount, 1);
+  assert.equal(finished.payload.summary.end, undefined);
 });

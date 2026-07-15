@@ -232,6 +232,9 @@ export class WatchCompanion {
 
   async changeExercise(offset) {
     const activeWorkout = this.requireActiveWorkout();
+    if (activeWorkout.pendingSet || activeWorkout.rest) {
+      throw new Error('Finish the active set or rest before changing exercise.');
+    }
     const current = currentExercise(activeWorkout);
     const selected = nextExercise(activeWorkout, offset);
     if (selected.exerciseSessionId === current.exerciseSessionId) {
@@ -306,13 +309,18 @@ export class WatchCompanion {
       };
       return validateSetRecord(setRecord);
     });
-    await this.startRest(completedEvent.payload.setId);
+    await this.startRest(
+      completedEvent.payload.setId,
+      completedEvent.payload.exerciseSessionId,
+    );
     return completedEvent;
   }
 
-  async startRest(setId) {
+  async startRest(setId, exerciseSessionId) {
     const activeWorkout = this.requireActiveWorkout();
-    const exercise = currentExercise(activeWorkout);
+    const exercise = activeWorkout.exercises.find(
+      (candidate) => candidate.exerciseSessionId === exerciseSessionId,
+    );
     if (!exercise) {
       throw new Error('No active exercise is available for rest.');
     }
@@ -701,9 +709,11 @@ export class WatchCompanion {
         }
         await this.repository.saveActiveWorkout(activeWorkout);
       }
-      const summary = this.liveRestSummary(now);
+      await this.collectSensorSamples();
+      const finishedAt = activeWorkout.rest.restEndsAt;
+      const summary = this.liveRestSummary(finishedAt);
       await this.emitWorkoutEvent(WatchEventType.REST_FINISHED, {
-        finishedAt: now,
+        finishedAt,
         summary,
       });
     }
