@@ -2,6 +2,7 @@ package org.sharteman.gymcoach.data.repository
 
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -205,6 +206,55 @@ class GymCoachRepositorySyncTest {
         val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
         assertEquals(WatchEventType.WORKOUT_FINISHED.name, watchFinish.eventType)
         assertEquals(3L, watchFinish.revision)
+    }
+
+    @Test
+    fun suspendedWatchPublisherDoesNotBlockLaterPersistedMutation() = runTest {
+        val publishEntered = CompletableDeferred<Unit>()
+        val releasePublisher = CompletableDeferred<Unit>()
+        val restPublished = CompletableDeferred<Unit>()
+        val publisher = RecordingWatchPublisher(
+            afterSetCompleted = {
+                publishEntered.complete(Unit)
+                releasePublisher.await()
+            },
+            afterRestStarted = { restPublished.complete(Unit) },
+        )
+        val fixture = fixture(publisher, backgroundScope)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+
+        val addSet = async {
+            fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+        }
+        publishEntered.await()
+        val persistedSet = fixture.dao.getSets(sessionId).single()
+        assertEquals(2L, fixture.dao.getActiveWorkoutRuntime(sessionId)?.revision)
+        assertTrue(addSet.isCompleted)
+        assertEquals(persistedSet.id, addSet.await().id)
+
+        val startRest = async {
+            fixture.repository.startRest(sessionId, persistedSet.id, 3_000, 123_000)
+        }
+        runCurrent()
+
+        assertTrue(startRest.isCompleted)
+        startRest.await()
+        val runtime = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(3L, runtime.revision)
+        assertEquals(123_000L, runtime.restEndsAtEpochMs)
+        assertEquals(3L, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals(
+            listOf("StartSessionOperation", "UpsertSetOperation"),
+            fixture.dao.queuedOperations().map { it.type },
+        )
+        assertEquals(listOf(2L), publisher.revisions.takeLast(1))
+        assertEquals(listOf("SET_COMPLETED"), publisher.commands.takeLast(1))
+
+        releasePublisher.complete(Unit)
+        restPublished.await()
+        assertEquals(listOf(2L, 3L), publisher.revisions.takeLast(2))
+        assertEquals(listOf("SET_COMPLETED", "REST_STARTED"), publisher.commands.takeLast(2))
     }
 
     @Test
@@ -1238,6 +1288,7 @@ class GymCoachRepositorySyncTest {
 
     private fun fixture(
         watchPublisher: WatchPhoneCommandPublisher = NoOpWatchPhoneCommandPublisher,
+        watchCommandScope: CoroutineScope? = null,
     ): Fixture {
         val dao = InMemoryDao()
         val api = TestApi()
@@ -1250,6 +1301,7 @@ class GymCoachRepositorySyncTest {
             scheduleSyncNow = { syncCounter.count++ },
             schedulePeriodicSync = {},
             watchCommandPublisher = watchPublisher,
+            watchCommandScope = watchCommandScope,
         )
         return Fixture(dao, api, accountStore, repository, syncCounter)
     }
@@ -1347,6 +1399,8 @@ class GymCoachRepositorySyncTest {
 
     private class RecordingWatchPublisher(
         private val fail: Boolean = false,
+        private val afterSetCompleted: suspend () -> Unit = {},
+        private val afterRestStarted: suspend () -> Unit = {},
     ) : WatchPhoneCommandPublisher {
         val commands = mutableListOf<String>()
         val revisions = mutableListOf<Long>()
@@ -1366,7 +1420,10 @@ class GymCoachRepositorySyncTest {
             revision: Long,
             changedAtEpochMs: Long,
         ) = record("EXERCISE", revision)
-        override suspend fun setCompleted(set: LocalSetEntity, revision: Long) = record("SET_COMPLETED", revision)
+        override suspend fun setCompleted(set: LocalSetEntity, revision: Long) {
+            record("SET_COMPLETED", revision)
+            afterSetCompleted()
+        }
         override suspend fun setUpdated(set: LocalSetEntity, revision: Long) = record("SET_UPDATED", revision)
         override suspend fun setDeleted(
             sessionId: String,
@@ -1381,7 +1438,10 @@ class GymCoachRepositorySyncTest {
             revision: Long,
             startedAtEpochMs: Long,
             endsAtEpochMs: Long,
-        ) = record("REST_STARTED", revision)
+        ) {
+            record("REST_STARTED", revision)
+            afterRestStarted()
+        }
         override suspend fun restUpdated(
             sessionId: String,
             revision: Long,

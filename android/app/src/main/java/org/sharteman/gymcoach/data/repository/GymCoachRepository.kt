@@ -2,10 +2,14 @@ package org.sharteman.gymcoach.data.repository
 
 import android.os.Build
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -69,11 +73,22 @@ class GymCoachRepository(
     private val scheduleSyncNow: () -> Unit,
     private val schedulePeriodicSync: () -> Unit,
     private val watchCommandPublisher: WatchPhoneCommandPublisher = NoOpWatchPhoneCommandPublisher,
+    watchCommandScope: CoroutineScope? = null,
 ) {
     private val syncMutex = Mutex()
     private val bootstrapCacheMutex = Mutex()
     private val progressRefreshMutex = Mutex()
     private val watchCommandMutex = Mutex()
+    private val watchCommandQueue = watchCommandScope?.let { scope ->
+        Channel<QueuedWatchCommand>(Channel.UNLIMITED).also { queue ->
+            scope.launch {
+                for (queued in queue) {
+                    queued.released.await()
+                    publishWatchSafely(queued.command)
+                }
+            }
+        }
+    }
     private val endpointResolver = ServerEndpointResolver(accountStore)
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
         cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
@@ -448,7 +463,8 @@ class GymCoachRepository(
         publishToWatch: Boolean = true,
         preserveRest: Boolean = false,
     ): ActiveWorkoutRuntimeEntity? {
-        return watchCommandMutex.withLock {
+        var watchCommand: PreparedWatchCommand? = null
+        val updated = watchCommandMutex.withLock {
             val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock null
             if (current.activeExerciseId == exerciseId && current.updatedBy == updatedBy) return@withLock current
             current.copy(
@@ -473,7 +489,7 @@ class GymCoachRepository(
                     ),
                 )
                 if (publishToWatch && updatedBy == "PHONE") {
-                    publishWatchSafely {
+                    watchCommand = prepareWatchCommand {
                         watchCommandPublisher.activeExerciseChanged(
                             sessionId,
                             exerciseId,
@@ -484,6 +500,8 @@ class GymCoachRepository(
                 }
             }
         }
+        dispatchPreparedWatchCommand(watchCommand)
+        return updated
     }
 
     suspend fun applyWatchRuntimeEvent(
@@ -644,7 +662,8 @@ class GymCoachRepository(
         require(weight.isFinite() && weight in 0.0..500.0) { "Weight must be between 0 and 500." }
         require(reps in 1..100) { "Repetitions must be between 1 and 100." }
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
-        return watchCommandMutex.withLock {
+        var watchCommand: PreparedWatchCommand? = null
+        val set = watchCommandMutex.withLock {
             val currentRuntime = checkNotNull(dao.getActiveWorkoutRuntime(sessionId)) {
                 "Workout is no longer active."
             }
@@ -684,10 +703,14 @@ class GymCoachRepository(
                 runtime = updatedRuntime,
                 marker = watchMarker(updatedRuntime, "SET_COMPLETED"),
             )
-            publishWatchSafely { watchCommandPublisher.setCompleted(set, updatedRuntime.revision) }
-            scheduleSyncNow()
+            watchCommand = prepareWatchCommand {
+                watchCommandPublisher.setCompleted(set, updatedRuntime.revision)
+            }
             set
         }
+        dispatchPreparedWatchCommand(watchCommand)
+        scheduleSyncNow()
+        return set
     }
 
     suspend fun updateSet(set: LocalSetEntity, weight: Double, reps: Int, rir: Int?) {
@@ -695,6 +718,7 @@ class GymCoachRepository(
         require(reps in 1..100) { "Repetitions must be between 1 and 100." }
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
         var saved = false
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val currentRuntime = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
             val current = dao.getSet(set.id) ?: return@withLock
@@ -707,14 +731,20 @@ class GymCoachRepository(
                 runtime = updatedRuntime,
                 marker = watchMarker(updatedRuntime, "SET_UPDATED"),
             )
-            publishWatchSafely { watchCommandPublisher.setUpdated(updated, updatedRuntime.revision) }
+            watchCommand = prepareWatchCommand {
+                watchCommandPublisher.setUpdated(updated, updatedRuntime.revision)
+            }
             saved = true
         }
-        if (saved) scheduleSyncNow()
+        if (saved) {
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncNow()
+        }
     }
 
     suspend fun deleteSet(setId: String) {
         var deleted = false
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val set = dao.getSet(setId)?.takeUnless { it.deleted } ?: return@withLock
             val current = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
@@ -733,7 +763,7 @@ class GymCoachRepository(
                 marker = watchMarker(updated, "SET_DELETED"),
             )
             deleted = true
-            publishWatchSafely {
+            watchCommand = prepareWatchCommand {
                 watchCommandPublisher.setDeleted(
                     set.sessionId,
                     set.id,
@@ -743,12 +773,16 @@ class GymCoachRepository(
                 )
             }
         }
-        if (deleted) scheduleSyncNow()
+        if (deleted) {
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncNow()
+        }
     }
 
     suspend fun finishSession(sessionId: String, notes: String?, sessionRpe: Int?) {
         require(sessionRpe == null || sessionRpe in 1..10) { "Session RPE must be between 1 and 10." }
         var finished = false
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val session = dao.getSession(sessionId) ?: return@withLock
             if (session.finishedAt != null) return@withLock
@@ -803,15 +837,21 @@ class GymCoachRepository(
                 )
             }
             if (watchEvent != null) {
-                publishWatchSafely { watchCommandPublisher.flush(sessionId) }
+                watchCommand = prepareWatchCommand {
+                    watchCommandPublisher.flush(sessionId)
+                }
             }
             finished = true
         }
-        if (finished) scheduleSyncNow()
+        if (finished) {
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncNow()
+        }
     }
 
     suspend fun startRest(sessionId: String, setId: String, startedAtEpochMs: Long, endsAtEpochMs: Long) {
         require(endsAtEpochMs >= startedAtEpochMs)
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             advancePhoneRuntime(sessionId, startedAtEpochMs) { current ->
                 current.copy(
@@ -822,7 +862,7 @@ class GymCoachRepository(
                     restPausedRemainingMs = null,
                 )
             }?.let { runtime ->
-                publishWatchSafely {
+                watchCommand = prepareWatchCommand {
                     watchCommandPublisher.restStarted(
                         sessionId,
                         setId,
@@ -833,11 +873,13 @@ class GymCoachRepository(
                 }
             }
         }
+        dispatchPreparedWatchCommand(watchCommand)
     }
 
     suspend fun updateRest(sessionId: String, endsAtEpochMs: Long, reason: String) {
         require(reason.isNotBlank())
         val changedAt = System.currentTimeMillis()
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
             require(current.restStartedAtEpochMs != null)
@@ -848,7 +890,7 @@ class GymCoachRepository(
                     restDurationSeconds = ((endsAtEpochMs - runtime.restStartedAtEpochMs!!) / 1_000L).toInt(),
                 )
             }?.let { runtime ->
-                publishWatchSafely {
+                watchCommand = prepareWatchCommand {
                     watchCommandPublisher.restUpdated(
                         sessionId,
                         runtime.revision,
@@ -859,15 +901,17 @@ class GymCoachRepository(
                 }
             }
         }
+        dispatchPreparedWatchCommand(watchCommand)
     }
 
     suspend fun finishRest(sessionId: String, finishedAtEpochMs: Long = System.currentTimeMillis()) {
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
             val startedAt = current.restStartedAtEpochMs ?: return@withLock
             advancePhoneRuntime(sessionId, finishedAtEpochMs) { clearRestRuntime(it) }
                 ?.let { runtime ->
-                    publishWatchSafely {
+                    watchCommand = prepareWatchCommand {
                         watchCommandPublisher.restFinished(
                             sessionId,
                             runtime.revision,
@@ -877,19 +921,22 @@ class GymCoachRepository(
                     }
                 }
         }
+        dispatchPreparedWatchCommand(watchCommand)
     }
 
     suspend fun skipRest(sessionId: String, skippedAtEpochMs: Long = System.currentTimeMillis()) {
+        var watchCommand: PreparedWatchCommand? = null
         watchCommandMutex.withLock {
             val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
             if (current.restStartedAtEpochMs == null) return@withLock
             advancePhoneRuntime(sessionId, skippedAtEpochMs) { clearRestRuntime(it) }
                 ?.let { runtime ->
-                    publishWatchSafely {
+                    watchCommand = prepareWatchCommand {
                         watchCommandPublisher.restSkipped(sessionId, runtime.revision, skippedAtEpochMs)
                     }
                 }
         }
+        dispatchPreparedWatchCommand(watchCommand)
     }
 
     suspend fun resetSession(sessionId: String) {
@@ -1209,6 +1256,22 @@ class GymCoachRepository(
         )
     }
 
+    private fun prepareWatchCommand(command: suspend () -> Unit): PreparedWatchCommand {
+        val queue = watchCommandQueue ?: return PreparedWatchCommand(fallback = command)
+        val queued = QueuedWatchCommand(command)
+        return if (queue.trySend(queued).isSuccess) {
+            PreparedWatchCommand(queued = queued)
+        } else {
+            PreparedWatchCommand(fallback = command)
+        }
+    }
+
+    private suspend fun dispatchPreparedWatchCommand(prepared: PreparedWatchCommand?) {
+        prepared ?: return
+        prepared.queued?.released?.complete(Unit)
+        prepared.fallback?.let { publishWatchSafely(it) }
+    }
+
     private suspend fun publishWatchSafely(block: suspend () -> Unit) {
         try {
             block()
@@ -1244,6 +1307,16 @@ class GymCoachRepository(
         restEndsAtEpochMs = null,
         restDurationSeconds = null,
         restPausedRemainingMs = null,
+    )
+
+    private data class QueuedWatchCommand(
+        val command: suspend () -> Unit,
+        val released: CompletableDeferred<Unit> = CompletableDeferred(),
+    )
+
+    private data class PreparedWatchCommand(
+        val queued: QueuedWatchCommand? = null,
+        val fallback: (suspend () -> Unit)? = null,
     )
 
     private fun newActiveRuntime(

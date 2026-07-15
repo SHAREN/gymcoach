@@ -44,6 +44,7 @@ class GymCoachApplication : Application() {
             scheduleSyncNow = { SyncScheduler.scheduleNow(this) },
             schedulePeriodicSync = { SyncScheduler.schedulePeriodic(this) },
             watchCommandPublisher = watchPublisher,
+            watchCommandScope = applicationScope,
         )
         watchSyncPreferences = WatchSyncPreferences(this)
         watchCompanionRuntime = WatchCompanionRuntimeFactory.create(
