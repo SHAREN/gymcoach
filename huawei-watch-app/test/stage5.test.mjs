@@ -416,7 +416,7 @@ test('snapshot reconciliation replays pending set/delete events and restores abs
   assert.equal(cleanHarness.watch.timerState(runtime.timestamp).setElapsedMs, 20_000);
 });
 
-test('repository safely migrates the Stage 2 document to durable Stage 5 records', async () => {
+test('repository safely migrates the Stage 2 document to current durable records', async () => {
   const backend = createVolatileStorageBackend();
   await backend.set(
     'gymcoach.watch.control.v1',
@@ -434,7 +434,8 @@ test('repository safely migrates the Stage 2 document to durable Stage 5 records
   );
   const repository = new WatchStateRepository(backend);
   const migrated = await repository.load();
-  assert.equal(migrated.version, 5);
+  assert.equal(migrated.version, 6);
+  assert.equal(migrated.lastWorkout, null);
   assert.equal(migrated.receiptRecords[0].id, 'legacy-message');
   assert.equal(migrated.receiptRecords[0].canonicalHash, null);
   assert.equal(migrated.state.lastError, 'SERVER_DETAILS_MUST_NOT_SURVIVE_VERBATIM');

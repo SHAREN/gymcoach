@@ -448,12 +448,36 @@ test('rest supports pause, resume, skip, and starting the next set', async () =>
   const clock = mutableClock(snapshot.timestamp + 10_000);
   const harness = await createHarness({ clock, snapshot });
 
-  await harness.watch.startSet();
+  const started = await harness.watch.startSet();
   clock.advance(5_000);
   await harness.watch.completeSet({ weight: 100, reps: 8, rir: 2 });
+  const active = harness.watch.getState().activeWorkout;
+  const restContext = {
+    sessionId: active.session.sessionId,
+    exerciseSessionId: active.exercises[0].exerciseSessionId,
+    setId: started.payload.setId,
+    phase: SensorPhase.REST,
+  };
+  await harness.watch.recordSensorSample(
+    heartRateSample({
+      context: restContext,
+      sampleId: '94000000-0000-4000-8000-000000000001',
+      timestamp: clock.now(),
+      value: 150,
+    }),
+  );
   clock.advance(10_000);
+  await harness.watch.recordSensorSample(
+    heartRateSample({
+      context: restContext,
+      sampleId: '94000000-0000-4000-8000-000000000002',
+      timestamp: clock.now(),
+      value: 130,
+    }),
+  );
   const paused = await harness.watch.togglePause();
   clock.advance(5_000);
+  await harness.transports.watch.disconnect();
   const nextSet = await harness.watch.startNextSetFromRest();
   const events = outboundWorkoutEvents(harness.repository);
   const resumed = events.find((event) => event.type === WatchEventType.WORKOUT_RESUMED);
@@ -466,6 +490,32 @@ test('rest supports pause, resume, skip, and starting the next set', async () =>
   assert.equal(harness.watch.getState().activeWorkout.session.status, 'ACTIVE');
   assert.equal(harness.watch.getState().activeWorkout.rest, null);
   assert.equal(harness.watch.getState().activeWorkout.activeSetId, nextSet.payload.setId);
+  assert.deepEqual(harness.watch.getState().activeWorkout.restSummaries, [
+    {
+      setId: started.payload.setId,
+      startedAt: clock.now() - 15_000,
+      finishedAt: clock.now(),
+      start: 150,
+      min: 130,
+      average: 140,
+      at30Seconds: null,
+      at60Seconds: null,
+      drop30Seconds: null,
+      drop60Seconds: null,
+      sampleCount: 2,
+    },
+  ]);
+  await harness.watch.stop();
+  const restarted = await createHarness({
+    backend: harness.backend,
+    clock,
+    sendSnapshot: false,
+    snapshot,
+  });
+  assert.deepEqual(
+    restarted.watch.getState().activeWorkout.restSummaries,
+    harness.watch.getState().activeWorkout.restSummaries,
+  );
 });
 
 test('absolute rest timer survives sleep, application restart, and transport disconnect', async () => {
@@ -580,6 +630,15 @@ test('REST_FINISHED matches the shared fixture and excludes no invalid values as
     (event) => event.type === WatchEventType.REST_FINISHED,
   );
   assert.deepEqual(finished.payload, payloads.restFinished);
+  assert.deepEqual(harness.watch.getState().activeWorkout.restSummaries, [
+    {
+      setId: payloads.restStarted.setId,
+      ...payloads.restFinished.summary,
+    },
+  ]);
+  await harness.watch.deleteLastSet();
+  assert.deepEqual(harness.watch.getState().activeWorkout.restSummaries, []);
+  assert.equal(harness.watch.getState().activeWorkout.lastRestSummary, null);
 });
 
 test('expired rest flushes collector samples and records the absolute deadline', async () => {

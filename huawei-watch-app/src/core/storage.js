@@ -1,7 +1,7 @@
 import { canonicalSha256 } from './canonical-json.js';
 
 const STORAGE_KEY = 'gymcoach.watch.control.v1';
-const DOCUMENT_VERSION = 5;
+const DOCUMENT_VERSION = 6;
 const MAX_CONFLICTS = 128;
 const MAX_RECEIPTS = 512;
 
@@ -26,6 +26,7 @@ function createEmptyDocument() {
     peerWatermark: null,
     snapshotWatermark: null,
     activeWorkout: null,
+    lastWorkout: null,
     sensorSamples: [],
   };
 }
@@ -189,6 +190,7 @@ export class WatchStateRepository {
 
   async commitSnapshot(snapshotId, activeWorkout, details = {}) {
     this.requireLoaded();
+    archiveFinishedWorkout(this.document, this.document.activeWorkout);
     addReceipt(this.document, snapshotId, {
       canonicalHash: details.canonicalHash ?? null,
       kind: 'SNAPSHOT',
@@ -197,6 +199,7 @@ export class WatchStateRepository {
       status: 'APPLIED',
     });
     this.document.activeWorkout = clone(activeWorkout);
+    archiveFinishedWorkout(this.document, activeWorkout);
     if (details.watermark) {
       this.document.snapshotWatermark = clone(details.watermark);
     }
@@ -215,6 +218,7 @@ export class WatchStateRepository {
     });
     if (activeWorkout !== null && activeWorkout !== undefined) {
       this.document.activeWorkout = clone(activeWorkout);
+      archiveFinishedWorkout(this.document, activeWorkout);
     }
     await this.persist();
   }
@@ -229,6 +233,7 @@ export class WatchStateRepository {
       this.document.outbox.push(clone(event));
     }
     this.document.activeWorkout = clone(activeWorkout);
+    archiveFinishedWorkout(this.document, activeWorkout);
     await this.persist();
   }
 
@@ -268,12 +273,14 @@ export class WatchStateRepository {
       }
     }
     this.document.activeWorkout = clone(activeWorkout);
+    archiveFinishedWorkout(this.document, activeWorkout);
     await this.persist();
   }
 
   async saveActiveWorkout(activeWorkout) {
     this.requireLoaded();
     this.document.activeWorkout = clone(activeWorkout);
+    archiveFinishedWorkout(this.document, activeWorkout);
     await this.persist();
   }
 
@@ -514,8 +521,12 @@ function migrateDocument(parsed) {
     parsed.version = 4;
   }
   if (parsed.version === 4) {
-    parsed.version = DOCUMENT_VERSION;
+    parsed.version = 5;
     parsed.pendingInboundEvents = [];
+  }
+  if (parsed.version === 5) {
+    parsed.version = DOCUMENT_VERSION;
+    parsed.lastWorkout = null;
   }
   if (
     parsed.version !== DOCUMENT_VERSION ||
@@ -558,9 +569,26 @@ function migrateDocument(parsed) {
   if (!Object.prototype.hasOwnProperty.call(parsed, 'activeWorkout')) {
     parsed.activeWorkout = null;
   }
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'lastWorkout')) {
+    parsed.lastWorkout = null;
+  }
   normalizeActiveWorkout(parsed.activeWorkout);
+  normalizeActiveWorkout(parsed.lastWorkout);
+  archiveFinishedWorkout(parsed, parsed.activeWorkout);
   compactReceipts(parsed);
   return parsed;
+}
+
+function archiveFinishedWorkout(document, activeWorkout) {
+  if (!activeWorkout || activeWorkout.session?.status !== 'FINISHED') {
+    return;
+  }
+  const candidateFinishedAt = activeWorkout.session.finishedAt ?? activeWorkout.session.updatedAt;
+  const currentFinishedAt =
+    document.lastWorkout?.session?.finishedAt ?? document.lastWorkout?.session?.updatedAt ?? -1;
+  if (document.lastWorkout === null || candidateFinishedAt >= currentFinishedAt) {
+    document.lastWorkout = clone(activeWorkout);
+  }
 }
 
 function normalizeActiveWorkout(activeWorkout) {
@@ -573,6 +601,9 @@ function normalizeActiveWorkout(activeWorkout) {
   };
   activeWorkout.rest = activeWorkout.rest || null;
   activeWorkout.lastRestSummary = activeWorkout.lastRestSummary || null;
+  activeWorkout.restSummaries = Array.isArray(activeWorkout.restSummaries)
+    ? activeWorkout.restSummaries
+    : [];
   if (activeWorkout.pendingSet) {
     activeWorkout.pendingSet.accumulatedPauseMs =
       activeWorkout.pendingSet.accumulatedPauseMs || 0;

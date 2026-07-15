@@ -79,6 +79,7 @@ export function activeWorkoutFromSnapshot(snapshot) {
         }
       : emptyTiming(),
     lastRestSummary: null,
+    restSummaries: [],
   };
 }
 
@@ -159,6 +160,15 @@ export function completedSetsForExercise(activeWorkout, exerciseSessionId) {
   return activeWorkout.completedSets.filter((set) => set.exerciseSessionId === exerciseSessionId);
 }
 
+export function withRestSummary(activeWorkout, setId, summary) {
+  validateActiveWorkout(activeWorkout);
+  opaque(setId, 'Rest summary setId');
+  validateRestHeartRateSummary(summary);
+  const next = clone(activeWorkout);
+  applyRestSummary(next, setId, summary);
+  return next;
+}
+
 function applyActiveExerciseChanged(activeWorkout, payload) {
   exactPayload(payload, ACTIVE_EXERCISE_FIELDS, 'ACTIVE_EXERCISE_CHANGED');
   opaque(payload.exerciseId, 'ACTIVE_EXERCISE_CHANGED.exerciseId');
@@ -232,6 +242,10 @@ function applySetDeleted(activeWorkout, payload) {
   activeWorkout.completedSets = activeWorkout.completedSets.filter(
     (set) => set.setId !== payload.setId,
   );
+  activeWorkout.restSummaries = (activeWorkout.restSummaries || []).filter(
+    (summary) => summary.setId !== payload.setId,
+  );
+  updateLastRestSummary(activeWorkout);
   if (activeWorkout.activeSetId === payload.setId) {
     activeWorkout.pendingSet = null;
     activeWorkout.activeSetId = null;
@@ -334,8 +348,36 @@ function applyRestFinished(activeWorkout, payload) {
   exactPayload(payload, REST_FINISHED_FIELDS, 'REST_FINISHED');
   nonNegativeInteger(payload.finishedAt, 'REST_FINISHED.finishedAt');
   validateRestHeartRateSummary(payload.summary);
-  activeWorkout.lastRestSummary = clone(payload.summary);
+  if (activeWorkout.rest?.setId) {
+    applyRestSummary(activeWorkout, activeWorkout.rest.setId, payload.summary);
+  }
   activeWorkout.rest = null;
+}
+
+function applyRestSummary(activeWorkout, setId, summary) {
+  const completed = {
+    setId,
+    ...clone(summary),
+  };
+  activeWorkout.restSummaries = (activeWorkout.restSummaries || []).filter(
+    (candidate) => candidate.setId !== completed.setId,
+  );
+  activeWorkout.restSummaries.push(completed);
+  activeWorkout.restSummaries.sort(
+    (left, right) => left.finishedAt - right.finishedAt || left.setId.localeCompare(right.setId),
+  );
+  updateLastRestSummary(activeWorkout);
+}
+
+function updateLastRestSummary(activeWorkout) {
+  const restSummaries = activeWorkout.restSummaries || [];
+  if (restSummaries.length === 0) {
+    activeWorkout.lastRestSummary = null;
+    return;
+  }
+  const summary = clone(restSummaries[restSummaries.length - 1]);
+  delete summary.setId;
+  activeWorkout.lastRestSummary = summary;
 }
 
 function applyRestSkipped(activeWorkout, payload) {
