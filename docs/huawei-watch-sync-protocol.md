@@ -11,7 +11,7 @@ The phone remains the long-term server bridge. The watch is an autonomous record
 ## Versioning
 
 The normative v1 wire envelopes are `ControlMessage`, `WatchEvent`, `SyncAck`,
-`SyncSnapshot`, and `BatchEnvelope`. Each includes:
+`SyncSnapshot`, `BatchEnvelope`, and `SensorBatch`. Each includes:
 
 - `protocolVersion`: the exact string `"1.0"`.
 - `schemaVersion`: the exact integer `1`.
@@ -104,28 +104,28 @@ order. Wire replay order is revision, timestamp, then lexical `eventId`.
 
 ## Event catalog
 
-| Event                     | Required payload                                                              | Application rule                                                                                                |
-| ------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `WORKOUT_STARTED`         | Session projection, compact workout plan, `startedAt`                         | Creates or confirms the existing `LocalSessionEntity`; never creates a second session for the same ID.          |
-| `WORKOUT_PAUSED`          | `pausedAt`                                                                    | Updates active runtime state. Timers remain timestamp-based.                                                    |
-| `WORKOUT_RESUMED`         | `resumedAt`, accumulated pause data                                           | Updates active runtime state without rewriting historical timestamps.                                           |
-| `WORKOUT_FINISHED`        | `finishedAt`, optional notes and session RPE                                  | Finishes the existing session through the repository and server outbox.                                         |
-| `ACTIVE_EXERCISE_CHANGED` | `exerciseId`, `exerciseSessionId`, order                                      | Updates the active pointer after verifying the exercise belongs to the workout.                                 |
-| `SET_STARTED`             | `setId`, `exerciseSessionId`, `setNumber`, `startedAt`                        | Persists active set runtime state; it is not yet a completed `LocalSetEntity`.                                  |
-| `SET_UPDATED`             | Complete editable set projection and base revision                            | Upserts the existing stable set ID through the repository.                                                      |
-| `SET_COMPLETED`           | Complete `SetRecord`, `completedAt`, sensor summary                           | Upserts `LocalSetEntity`, creates the existing server `UPSERT_SET`, and normally starts rest.                   |
-| `SET_DELETED`             | `setId`, deletion timestamp, base revision                                    | Applies the existing set tombstone and server `DELETE_SET`; a concurrent edit creates a conflict.               |
-| `REST_STARTED`            | `setId`, `startedAt`, `restEndsAt`                                            | Stores absolute rest timestamps in active runtime state.                                                        |
-| `REST_UPDATED`            | `restEndsAt`, reason such as add 15 or add 30                                 | Replaces the absolute end timestamp at the new revision.                                                        |
-| `REST_FINISHED`           | `finishedAt`, optional rest sensor summary                                    | Clears active rest after recording its summary.                                                                 |
-| `REST_SKIPPED`            | `skippedAt`                                                                   | Clears active rest and records that it was skipped.                                                             |
-| `SENSOR_BATCH_RECORDED`   | `batchId`, sequence range, delivery mode, event/sample count                  | Registers a `BatchEnvelope`; content uses file delivery when it does not fit safely in one message.             |
-| `HEART_RATE_UPDATED`      | Current valid value, unit, timestamp, phase, validity                         | A throttled UI-status event. Raw samples use sensor batches. Every generated event is still durable until ACK.  |
-| `WATCH_CONNECTED`         | App version, protocol versions, capabilities, session revision, pending count | Starts the handshake. Capability values are runtime observations, not promises.                                 |
-| `WATCH_DISCONNECTED`      | Last connected timestamp and sanitized reason                                 | Phone-side diagnostic event. It does not finish or pause the workout.                                           |
-| `SYNC_REQUESTED`          | Session ID, known revision, last ACK, pending event IDs or range              | Requests replay or a full snapshot when revisions cannot be reconciled incrementally.                           |
-| `SYNC_SNAPSHOT`           | `snapshotId`, delivery mode, snapshot revision                                | Announces a separately validated `SyncSnapshot` direct/file payload. It never deletes an unmerged local action. |
-| `SYNC_ACKNOWLEDGED`       | `ackId`, acknowledged event IDs, status, revision                             | Journals a processed `SyncAck`; the `SyncAck` envelope remains the normative acknowledgement object.            |
+| Event                     | Required payload                                                              | Application rule                                                                                                       |
+| ------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `WORKOUT_STARTED`         | Session projection, compact workout plan, `startedAt`                         | Creates or confirms the existing `LocalSessionEntity`; never creates a second session for the same ID.                 |
+| `WORKOUT_PAUSED`          | `pausedAt`                                                                    | Updates active runtime state. Timers remain timestamp-based.                                                           |
+| `WORKOUT_RESUMED`         | `resumedAt`, accumulated pause data                                           | Updates active runtime state without rewriting historical timestamps.                                                  |
+| `WORKOUT_FINISHED`        | `finishedAt`, optional notes and session RPE                                  | Finishes the existing session through the repository and server outbox.                                                |
+| `ACTIVE_EXERCISE_CHANGED` | `exerciseId`, `exerciseSessionId`, order                                      | Updates the active pointer after verifying the exercise belongs to the workout.                                        |
+| `SET_STARTED`             | `setId`, `exerciseSessionId`, `setNumber`, `startedAt`                        | Persists active set runtime state; it is not yet a completed `LocalSetEntity`.                                         |
+| `SET_UPDATED`             | Complete editable set projection and base revision                            | Upserts the existing stable set ID through the repository.                                                             |
+| `SET_COMPLETED`           | Complete `SetRecord`, `completedAt`, sensor summary                           | Upserts `LocalSetEntity`, creates the existing server `UPSERT_SET`, and normally starts rest.                          |
+| `SET_DELETED`             | `setId`, deletion timestamp, base revision                                    | Applies the existing set tombstone and server `DELETE_SET`; a concurrent edit creates a conflict.                      |
+| `REST_STARTED`            | `setId`, `startedAt`, `restEndsAt`                                            | Stores absolute rest timestamps in active runtime state.                                                               |
+| `REST_UPDATED`            | `restEndsAt`, reason such as add 15 or add 30                                 | Replaces the absolute end timestamp at the new revision.                                                               |
+| `REST_FINISHED`           | `finishedAt`, optional rest sensor summary                                    | Clears active rest after recording its summary.                                                                        |
+| `REST_SKIPPED`            | `skippedAt`                                                                   | Clears active rest and records that it was skipped.                                                                    |
+| `SENSOR_BATCH_RECORDED`   | `batchId`, sequence range, delivery mode, sample count                        | Registers a separately validated `SensorBatch`; content uses file delivery when it does not fit safely in one message. |
+| `HEART_RATE_UPDATED`      | Current valid value, unit, timestamp, phase, validity                         | A throttled UI-status event. Raw samples use sensor batches. Every generated event is still durable until ACK.         |
+| `WATCH_CONNECTED`         | App version, protocol versions, capabilities, session revision, pending count | Starts the handshake. Capability values are runtime observations, not promises.                                        |
+| `WATCH_DISCONNECTED`      | Last connected timestamp and sanitized reason                                 | Phone-side diagnostic event. It does not finish or pause the workout.                                                  |
+| `SYNC_REQUESTED`          | Session ID, known revision, last ACK, pending event IDs or range              | Requests replay or a full snapshot when revisions cannot be reconciled incrementally.                                  |
+| `SYNC_SNAPSHOT`           | `snapshotId`, delivery mode, snapshot revision                                | Announces a separately validated `SyncSnapshot` direct/file payload. It never deletes an unmerged local action.        |
+| `SYNC_ACKNOWLEDGED`       | `ackId`, acknowledged event IDs, status, revision                             | Journals a processed `SyncAck`; the `SyncAck` envelope remains the normative acknowledgement object.                   |
 
 ### Stage 3 event payload shapes
 

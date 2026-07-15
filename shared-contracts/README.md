@@ -11,9 +11,9 @@ simulators.
   `schemaVersion: 1`.
 - JSON Schema dialect: Draft 2020-12.
 - Schema identifiers use `https://gymcoach.local/contracts/watch/v1/...`.
-- `ControlMessage`, `WatchEvent`, `SyncAck`, `SyncSnapshot`, and `BatchEnvelope`
-  carry both wire version fields. Nested domain projections are versioned by the
-  enclosing schema and do not repeat them.
+- `ControlMessage`, `WatchEvent`, `SyncAck`, `SyncSnapshot`, `BatchEnvelope`,
+  and `SensorBatch` carry both wire version fields. Nested domain projections
+  are versioned by the enclosing schema and do not repeat them.
 - Schemas are strict (`additionalProperties: false`). Any field, enum, or
   semantic change requires a new schema version; implementations must not add
   undeclared fields to v1 payloads.
@@ -29,6 +29,8 @@ simulators.
   message or a `FILE` payload.
 - Sensor samples should be buffered and sent in batches. Do not send one
   message for every UI frame or sensor callback.
+- `SensorBatch` is the normative batch/file payload for raw samples. It keeps
+  invalid readings explicit and never substitutes zero for a missing value.
 
 These are protocol operating limits. An implementation must also enforce any
 stricter limit reported by the installed Huawei SDK/runtime.
