@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.offline.CatalogSnapshot
@@ -196,6 +197,45 @@ class ProgramsCatalogRepository private constructor(
     suspend fun retryChange(operationId: String): Boolean = controller()?.retry(operationId) ?: false
 
     suspend fun discardChange(operationId: String): Boolean = controller()?.discard(operationId) ?: false
+
+    suspend fun seedActiveProgram(program: ProgramDto) = mutex.withLock {
+        if (persistence == null || accountKey == null) return@withLock
+
+        val current = loadBase()
+        val cachedProgram = current.programs.firstOrNull { it.id == program.id }
+        val seededProgram = ManagedProgramDto(
+            id = program.id,
+            name = program.name,
+            description = program.description,
+            phase = program.phase,
+            isActive = true,
+            workouts = program.workouts,
+            counts = cachedProgram?.counts ?: ProgramCountsDto(workouts = program.workouts.size),
+        )
+        val programs = current.programs.map { cached ->
+            if (cached.id == program.id) seededProgram else cached.copy(isActive = false)
+        }.let { merged ->
+            if (cachedProgram == null) merged + seededProgram else merged
+        }
+
+        val bootstrapExercises = program.workouts.asSequence()
+            .flatMap { it.exercises.asSequence() }
+            .map { it.exercise }
+            .associateBy { it.id }
+        val exercises = current.exercises.map { cached ->
+            bootstrapExercises[cached.id]?.let { loaded ->
+                if (loaded.trainingDates.isEmpty() && cached.trainingDates.isNotEmpty()) {
+                    loaded.copy(trainingDates = cached.trainingDates)
+                } else {
+                    loaded
+                }
+            } ?: cached
+        } + bootstrapExercises.values.filter { loaded ->
+            current.exercises.none { it.id == loaded.id }
+        }
+
+        saveBase(current.copy(programs = programs, exercises = exercises))
+    }
 
     private suspend fun refreshCatalogPart(
         remoteLoad: suspend (CatalogSnapshot) -> CatalogSnapshot,

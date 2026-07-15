@@ -6,10 +6,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import java.util.Locale
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -93,6 +96,86 @@ class HomeScreenNativeTest {
         assertTrue(programsOpened)
     }
 
+    @Test
+    fun workoutCardOpensDetailsBeforeStartingAndOffersProgramEditing() {
+        var startedWorkoutId: String? = null
+        var editedWorkout: Pair<String, String>? = null
+        var openedProgramId: String? = null
+        val workout = workout()
+        composeRule.setContent {
+            val baseContext = LocalContext.current
+            val baseConfiguration = LocalConfiguration.current
+            val configuration = remember(baseConfiguration) {
+                Configuration(baseConfiguration).apply { setLocale(Locale("ru")) }
+            }
+            val localizedContext = remember(baseContext, configuration) {
+                baseContext.createConfigurationContext(configuration)
+            }
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides configuration,
+            ) {
+                GymCoachTheme(darkTheme = true) {
+                    HomeScreen(
+                        email = "user@example.com",
+                        bootstrap = bootstrap(workout),
+                        openSessions = emptyList(),
+                        pendingCount = 0,
+                        syncIssue = null,
+                        online = true,
+                        syncing = false,
+                        onOpenSession = {},
+                        onStartWorkout = { selected, _ -> startedWorkoutId = selected.id },
+                        onSync = {},
+                        onRetrySyncIssue = {},
+                        onDiscardSyncIssue = {},
+                        onSaveReadiness = { _, _, _ -> true },
+                        onPrograms = {},
+                        onExerciseCatalog = {},
+                        onHistory = {},
+                        onProgress = {},
+                        onCoach = {},
+                        onChat = {},
+                        onSettings = {},
+                        onWebPanel = {},
+                        currentVersion = "test",
+                        onDownloadUpdate = {},
+                        onLogout = {},
+                        onEditWorkout = { programId, workoutId ->
+                            editedWorkout = programId to workoutId
+                        },
+                        onOpenProgram = { openedProgramId = it },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("home-workout-${workout.id}").performClick()
+        composeRule.onNodeWithTag("workout-day-details").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-day-exercise-list")
+            .performScrollToNode(hasTestTag("workout-day-exercise-${workout.exercises.single().exerciseId}"))
+        composeRule.onNodeWithText("Жим лёжа").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-day-target-${workout.exercises.single().id}")
+            .performScrollTo()
+            .assertIsDisplayed()
+        assertTrue(startedWorkoutId == null)
+
+        composeRule.onNodeWithTag("workout-day-exercise-list")
+            .performScrollToNode(hasTestTag("workout-day-edit"))
+        composeRule.onNodeWithTag("workout-day-edit").performClick()
+        assertTrue(editedWorkout == (workout.programId to workout.id))
+
+        composeRule.onNodeWithTag("home-workout-${workout.id}").performClick()
+        composeRule.onNodeWithTag("workout-day-exercise-list")
+            .performScrollToNode(hasTestTag("workout-day-open-program"))
+        composeRule.onNodeWithTag("workout-day-open-program").performClick()
+        assertTrue(openedProgramId == workout.programId)
+
+        composeRule.onNodeWithTag("home-workout-${workout.id}").performClick()
+        composeRule.onNodeWithTag("workout-day-start").performClick()
+        assertTrue(startedWorkoutId == workout.id)
+    }
+
     private fun bootstrap(workout: WorkoutDto) = BootstrapResponse(
         schemaVersion = 1,
         calculationVersion = "test",
@@ -123,6 +206,7 @@ class HomeScreenNativeTest {
             id = "workout",
             programId = "program",
             name = "Грудь",
+            dayOfWeek = 1,
             order = 0,
             exercises = listOf(
                 ProgramExerciseDto(

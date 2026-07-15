@@ -60,6 +60,44 @@ class ProgramsCatalogUiTest {
     }
 
     @Test
+    fun directWorkoutEditOpensExactDayWithLocalizedWeekdaySelector() {
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ru"))
+            composeRule.setContent {
+                val baseContext = LocalContext.current
+                val baseConfiguration = LocalConfiguration.current
+                val configuration = remember(baseConfiguration) {
+                    Configuration(baseConfiguration).apply { setLocale(Locale("ru")) }
+                }
+                val localizedContext = remember(baseContext, configuration) {
+                    baseContext.createConfigurationContext(configuration)
+                }
+                CompositionLocalProvider(
+                    LocalContext provides localizedContext,
+                    LocalConfiguration provides configuration,
+                ) {
+                    GymCoachTheme {
+                        ProgramsScreen(
+                            dataSource = FakeProgramsCatalogDataSource(),
+                            onBack = {},
+                            initialProgramId = "program-1",
+                            initialWorkoutId = "upper-a",
+                        )
+                    }
+                }
+            }
+
+            composeRule.onNodeWithText("Изменить тренировочный день").assertIsDisplayed()
+            composeRule.onAllNodesWithText("Upper A").onFirst().assertIsDisplayed()
+            composeRule.onNodeWithTag("program-workout-day").assertIsDisplayed()
+            composeRule.onNodeWithText("понедельник").assertIsDisplayed()
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+    }
+
+    @Test
     fun searchesNativeExerciseCatalog() {
         composeRule.setContent {
             GymCoachTheme {
@@ -314,6 +352,7 @@ private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
         id = "upper-a",
         programId = "program-1",
         name = "Upper A",
+        dayOfWeek = 1,
         order = 1,
         exercises = listOf(
             ProgramExerciseDto(

@@ -19,7 +19,9 @@
     <string name="program_workout_edit">Edit training day</string>
     <string name="program_workout_delete">Delete training day</string>
     <string name="program_workout_name">Training day name</string>
-    <string name="program_day_of_week">Day of week (1-7, optional)</string>
+    <string name="program_day_of_week">Day of week</string>
+    <string name="program_day_of_week_value">Day: %1$s</string>
+    <string name="program_day_not_set">Not scheduled</string>
     <string name="program_exercise_add">Add exercise</string>
     <string name="program_exercise_edit">Edit exercise targets</string>
     <string name="program_exercise_delete">Remove from program</string>
@@ -64,4 +66,14 @@
     <string name="invalid_number">Enter a valid number.</string>
     <string name="program_templates_web">Templates</string>
     <string name="program_generate_web">Generate with AI</string>
+    <string name="workout_day_view">View</string>
+    <string name="workout_day_program">Program: %1$s</string>
+    <string name="workout_day_sets_count">%1$d planned sets</string>
+    <string name="workout_day_exercises">Exercises</string>
+    <string name="workout_day_no_exercises">No exercises have been added to this training day yet.</string>
+    <string name="workout_day_open_program">Open full program</string>
+    <string name="workout_day_start">Start workout</string>
+    <string name="workout_day_drop_sets">Drop sets: %1$d</string>
+    <string name="workout_day_superset">Superset %1$s</string>
+    <string name="workout_day_tempo">Tempo: %1$s</string>
 </resources>

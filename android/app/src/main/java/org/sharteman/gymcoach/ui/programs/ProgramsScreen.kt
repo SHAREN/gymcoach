@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.ui.programs
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -60,6 +61,7 @@ import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.programs.ManagedProgramDto
@@ -69,6 +71,9 @@ import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.programs.WorkoutInput
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import java.time.DayOfWeek
+import java.time.format.TextStyle
+import java.util.Locale
 
 @Composable
 fun ProgramsScreen(
@@ -76,9 +81,29 @@ fun ProgramsScreen(
     token: String,
     onBack: () -> Unit,
     onOpenWebPath: (String) -> Unit,
+    initialProgramId: String? = null,
+    initialWorkoutId: String? = null,
+    initialProgram: ProgramDto? = null,
+    onChanged: () -> Unit = {},
 ) {
     val repository = remember(baseUrl, token) { ProgramsCatalogRepository.remote(baseUrl, token) }
-    ProgramsScreen(repository, onBack, onOpenWebPath)
+    var seedReady by remember(repository, initialProgram?.id) { mutableStateOf(initialProgram == null) }
+    LaunchedEffect(repository, initialProgram) {
+        initialProgram?.let { repository.seedActiveProgram(it) }
+        seedReady = true
+    }
+    if (!seedReady) {
+        LoadingRow()
+        return
+    }
+    ProgramsScreen(
+        dataSource = repository,
+        onBack = onBack,
+        onOpenWebPath = onOpenWebPath,
+        initialProgramId = initialProgramId,
+        initialWorkoutId = initialWorkoutId,
+        onChanged = onChanged,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,13 +112,21 @@ fun ProgramsScreen(
     dataSource: ProgramsCatalogDataSource,
     onBack: () -> Unit,
     onOpenWebPath: (String) -> Unit = {},
+    initialProgramId: String? = null,
+    initialWorkoutId: String? = null,
+    onChanged: () -> Unit = {},
 ) {
-    var selectedProgramId by remember { mutableStateOf<String?>(null) }
+    var selectedProgramId by remember(initialProgramId) { mutableStateOf(initialProgramId) }
     if (selectedProgramId != null) {
         ProgramDetailScreen(
             dataSource = dataSource,
             programId = selectedProgramId!!,
-            onBack = { selectedProgramId = null },
+            initialWorkoutId = initialWorkoutId,
+            onBack = {
+                if (initialProgramId != null) onBack()
+                else selectedProgramId = null
+            },
+            onChanged = onChanged,
         )
         return
     }
@@ -290,7 +323,9 @@ private fun ProgramCard(
 private fun ProgramDetailScreen(
     dataSource: ProgramsCatalogDataSource,
     programId: String,
+    initialWorkoutId: String? = null,
     onBack: () -> Unit,
+    onChanged: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var program by remember { mutableStateOf<ManagedProgramDto?>(null) }
@@ -303,6 +338,7 @@ private fun ProgramDetailScreen(
     var deletingWorkout by remember { mutableStateOf<WorkoutDto?>(null) }
     var exerciseTarget by remember { mutableStateOf<Pair<WorkoutDto, ProgramExerciseDto?>?>(null) }
     var deletingExercise by remember { mutableStateOf<ProgramExerciseDto?>(null) }
+    var initialWorkoutConsumed by remember(initialWorkoutId) { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -320,6 +356,12 @@ private fun ProgramDetailScreen(
         }
     }
     LaunchedEffect(programId) { reload() }
+    LaunchedEffect(initialWorkoutId, program?.id, initialWorkoutConsumed) {
+        if (initialWorkoutId != null && !initialWorkoutConsumed && program != null) {
+            editingWorkout = program?.workouts?.firstOrNull { it.id == initialWorkoutId }
+            initialWorkoutConsumed = true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -361,7 +403,7 @@ private fun ProgramDetailScreen(
                                     onCheckedChange = { active ->
                                         scope.launch {
                                             runCatching { dataSource.setProgramActive(current.id, active) }
-                                                .onSuccess { reload() }
+                                                .onSuccess { onChanged(); reload() }
                                                 .onFailure { error = it.message }
                                         }
                                     },
@@ -407,7 +449,7 @@ private fun ProgramDetailScreen(
             onSave = { input ->
                 scope.launch {
                     runCatching { dataSource.updateProgram(programId, input) }
-                        .onSuccess { editingProgram = false; reload() }
+                        .onSuccess { editingProgram = false; onChanged(); reload() }
                         .onFailure { error = it.message }
                 }
             },
@@ -425,6 +467,7 @@ private fun ProgramDetailScreen(
                     }.onSuccess {
                         creatingWorkout = false
                         editingWorkout = null
+                        onChanged()
                         reload()
                     }.onFailure { error = it.message }
                 }
@@ -441,7 +484,7 @@ private fun ProgramDetailScreen(
                     runCatching {
                         existing?.let { dataSource.updateProgramExercise(it.id, input) }
                             ?: dataSource.createProgramExercise(workout.id, input)
-                    }.onSuccess { exerciseTarget = null; reload() }
+                    }.onSuccess { exerciseTarget = null; onChanged(); reload() }
                         .onFailure { error = it.message }
                 }
             },
@@ -455,7 +498,7 @@ private fun ProgramDetailScreen(
                 deletingWorkout = null
                 scope.launch {
                     runCatching { dataSource.deleteWorkout(workout.id) }
-                        .onSuccess { reload() }
+                        .onSuccess { onChanged(); reload() }
                         .onFailure { error = it.message }
                 }
             },
@@ -472,7 +515,7 @@ private fun ProgramDetailScreen(
                 deletingExercise = null
                 scope.launch {
                     runCatching { dataSource.deleteProgramExercise(target.id) }
-                        .onSuccess { reload() }
+                        .onSuccess { onChanged(); reload() }
                         .onFailure { error = it.message }
                 }
             },
@@ -499,7 +542,10 @@ private fun WorkoutCard(
                     Text(workout.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     workout.dayOfWeek?.let {
                         Text(
-                            stringResource(R.string.program_day_of_week) + ": $it",
+                            stringResource(
+                                R.string.program_day_of_week_value,
+                                localizedWeekdayName(it),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -590,19 +636,54 @@ private fun WorkoutEditorDialog(
     onSave: (WorkoutInput) -> Unit,
 ) {
     var name by remember(workout?.id) { mutableStateOf(workout?.name.orEmpty()) }
-    var day by remember(workout?.id) { mutableStateOf(workout?.dayOfWeek?.toString().orEmpty()) }
-    val dayValue = day.toIntOrNull()
-    val valid = name.isNotBlank() && (day.isBlank() || dayValue in 1..7)
+    var day by remember(workout?.id) { mutableStateOf(workout?.dayOfWeek) }
+    var dayMenuOpen by remember(workout?.id) { mutableStateOf(false) }
+    val valid = name.isNotBlank()
     EditorDialog(
         title = stringResource(if (workout == null) R.string.program_workout_add else R.string.program_workout_edit),
         onDismiss = onDismiss,
-        onSave = { onSave(WorkoutInput(name.trim(), dayValue)) },
+        onSave = { onSave(WorkoutInput(name.trim(), day)) },
         saveEnabled = valid,
     ) {
         OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.program_workout_name)) }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(day, { day = it.filter(Char::isDigit).take(1) }, label = { Text(stringResource(R.string.program_day_of_week)) }, modifier = Modifier.fillMaxWidth())
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                stringResource(R.string.program_day_of_week),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { dayMenuOpen = true },
+                    modifier = Modifier.fillMaxWidth().testTag("program-workout-day"),
+                ) {
+                    Text(
+                        day?.let(::localizedWeekdayName)
+                            ?: stringResource(R.string.program_day_not_set),
+                    )
+                }
+                DropdownMenu(
+                    expanded = dayMenuOpen,
+                    onDismissRequest = { dayMenuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.program_day_not_set)) },
+                        onClick = { day = null; dayMenuOpen = false },
+                    )
+                    (1..7).forEach { weekday ->
+                        DropdownMenuItem(
+                            text = { Text(localizedWeekdayName(weekday)) },
+                            onClick = { day = weekday; dayMenuOpen = false },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
+
+private fun localizedWeekdayName(day: Int): String =
+    DayOfWeek.of(day).getDisplayName(TextStyle.FULL, Locale.getDefault())
 
 @Composable
 private fun ProgramExerciseEditorDialog(
