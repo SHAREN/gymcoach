@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_diagnostics_settings_label">Диагностика Huawei Watch</string>
+    <string name="watch_diagnostics_title">Диагностика часов</string>
+    <string name="watch_diagnostics_connection">Подключение</string>
+    <string name="watch_diagnostics_status">Статус</string>
+    <string name="watch_diagnostics_model">Модель часов</string>
+    <string name="watch_diagnostics_watch_version">Версия приложения часов</string>
+    <string name="watch_diagnostics_protocol_version">Версия протокола</string>
+    <string name="watch_diagnostics_last_sync">Последняя синхронизация</string>
+    <string name="watch_diagnostics_latency">Задержка сообщений</string>
+    <string name="watch_diagnostics_sync">Синхронизация</string>
+    <string name="watch_diagnostics_unacknowledged">Неподтверждённые события</string>
+    <string name="watch_diagnostics_queue_size">Размер очереди</string>
+    <string name="watch_diagnostics_conflicts">Конфликты</string>
+    <string name="watch_diagnostics_last_error">Последняя ошибка</string>
+    <string name="watch_diagnostics_force_sync">Принудительная синхронизация</string>
+    <string name="watch_diagnostics_sync_requested">Синхронизация запрошена.</string>
+    <string name="watch_diagnostics_sync_failed">Не удалось запросить синхронизацию.</string>
+    <string name="watch_diagnostics_sensors">Сенсоры</string>
+    <string name="watch_diagnostics_current_heart_rate">Текущий пульс</string>
+    <string name="watch_diagnostics_sensor_notice">Отладочные значения являются данными симуляции и не считаются измерениями с реального устройства.</string>
+    <string name="watch_diagnostics_export">Экспорт диагностики</string>
+    <string name="watch_diagnostics_export_notice">Экспорт содержит только состояние протокола и счётчики. Значения пульса, аккаунт, идентификаторы тренировок, адреса и токены исключены.</string>
+    <string name="watch_diagnostics_export_action">Экспортировать обезличенный журнал</string>
+    <string name="watch_diagnostics_export_saved">Диагностический журнал сохранён.</string>
+    <string name="watch_diagnostics_export_failed">Не удалось сохранить диагностический журнал.</string>
+    <string name="watch_diagnostics_disconnected">Не подключены</string>
+    <string name="watch_diagnostics_connecting">Подключение</string>
+    <string name="watch_diagnostics_connected">Подключены</string>
+    <string name="watch_diagnostics_sensor_available">Доступен</string>
+    <string name="watch_diagnostics_sensor_simulated">Отладочная симуляция</string>
+    <string name="watch_diagnostics_sensor_unavailable">Недоступен</string>
+    <string name="watch_diagnostics_never">Никогда</string>
+    <string name="watch_diagnostics_not_available">Нет данных</string>
+    <string name="watch_diagnostics_no_error">Ошибок нет</string>
+    <string name="watch_diagnostics_milliseconds">%1$d мс</string>
+    <string name="watch_diagnostics_bpm">%1$d уд/мин</string>
+</resources>

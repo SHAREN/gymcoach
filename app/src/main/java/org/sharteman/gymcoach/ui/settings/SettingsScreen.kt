@@ -104,6 +104,8 @@ fun SettingsScreen(
     onOpenWebPath: (String) -> Unit,
     appRepository: GymCoachRepository? = null,
     repository: SettingsDataSource = SettingsRepository.create(LocalContext.current),
+    watchDiagnosticsLabel: String? = null,
+    onOpenWatchDiagnostics: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -414,6 +416,19 @@ fun SettingsScreen(
                             }
                         },
                     )
+                }
+                if (watchDiagnosticsLabel != null && onOpenWatchDiagnostics != null) {
+                    item {
+                        OutlinedButton(
+                            onClick = onOpenWatchDiagnostics,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .testTag("settings-watch-diagnostics"),
+                        ) {
+                            Text(watchDiagnosticsLabel)
+                        }
+                    }
                 }
                 item {
                     ProfileSection(

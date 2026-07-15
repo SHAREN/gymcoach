@@ -40,13 +40,17 @@ import org.sharteman.gymcoach.ui.programs.ProgramsScreen
 private const val HOME_ROUTE = "home"
 private const val WEB_ROUTE = "web"
 private const val SETTINGS_ROUTE = "settings"
+private const val WATCH_DIAGNOSTICS_ROUTE = "watch-diagnostics"
 
 @Composable
 fun GymCoachApp(
     repository: GymCoachRepository,
+    watchDiagnosticsDestination: WatchDiagnosticsDestination? = null,
     settingsContent: (@Composable (
         onBack: () -> Unit,
         onOpenWebPath: (String) -> Unit,
+        watchDiagnosticsLabel: String?,
+        onOpenWatchDiagnostics: (() -> Unit)?,
     ) -> Unit)? = null,
 ) {
     var loggedIn by remember { mutableStateOf(repository.isLoggedIn) }
@@ -420,7 +424,14 @@ fun GymCoachApp(
             composable(SETTINGS_ROUTE) {
                 val back: () -> Unit = { navController.popBackStack() }
                 if (settingsContent != null) {
-                    settingsContent(back, ::openWebPath)
+                    settingsContent(
+                        back,
+                        ::openWebPath,
+                        watchDiagnosticsDestination?.settingsLabel,
+                        watchDiagnosticsDestination?.let {
+                            { navController.navigate(WATCH_DIAGNOSTICS_ROUTE) }
+                        },
+                    )
                 } else {
                     WebPanelScreen(
                         repository = repository,
@@ -428,6 +439,11 @@ fun GymCoachApp(
                         startPath = "/settings",
                         onBack = back,
                     )
+                }
+            }
+            if (watchDiagnosticsDestination != null) {
+                composable(WATCH_DIAGNOSTICS_ROUTE) {
+                    watchDiagnosticsDestination.content { navController.popBackStack() }
                 }
             }
             composable(WEB_ROUTE) {

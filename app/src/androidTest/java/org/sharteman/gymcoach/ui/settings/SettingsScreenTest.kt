@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.JsonObject
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertTrue
 import org.sharteman.gymcoach.data.settings.AndroidReleaseDto
 import org.sharteman.gymcoach.data.settings.SettingsDataSource
 import org.sharteman.gymcoach.data.settings.SettingsGymDto
@@ -65,6 +66,30 @@ class SettingsScreenTest {
                 composeRule.onNodeWithTag("settings-download-apk").assertIsDisplayed()
             }.isSuccess
         }
+    }
+
+    @Test
+    fun opensDebugWatchDiagnosticsFromSettings() {
+        var opened = false
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    repository = FakeSettingsSource(),
+                    watchDiagnosticsLabel = "Watch diagnostics test",
+                    onOpenWatchDiagnostics = { opened = true },
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-watch-diagnostics").performScrollTo()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-watch-diagnostics").performClick()
+        composeRule.runOnIdle { assertTrue(opened) }
     }
 
     @Test

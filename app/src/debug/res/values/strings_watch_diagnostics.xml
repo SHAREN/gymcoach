@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_diagnostics_settings_label">Huawei Watch diagnostics</string>
+    <string name="watch_diagnostics_title">Watch diagnostics</string>
+    <string name="watch_diagnostics_connection">Connection</string>
+    <string name="watch_diagnostics_status">Status</string>
+    <string name="watch_diagnostics_model">Watch model</string>
+    <string name="watch_diagnostics_watch_version">Watch app version</string>
+    <string name="watch_diagnostics_protocol_version">Protocol version</string>
+    <string name="watch_diagnostics_last_sync">Last synchronization</string>
+    <string name="watch_diagnostics_latency">Message latency</string>
+    <string name="watch_diagnostics_sync">Synchronization</string>
+    <string name="watch_diagnostics_unacknowledged">Unacknowledged events</string>
+    <string name="watch_diagnostics_queue_size">Queue size</string>
+    <string name="watch_diagnostics_conflicts">Conflicts</string>
+    <string name="watch_diagnostics_last_error">Last error</string>
+    <string name="watch_diagnostics_force_sync">Force synchronization</string>
+    <string name="watch_diagnostics_sync_requested">Synchronization requested.</string>
+    <string name="watch_diagnostics_sync_failed">Could not request synchronization.</string>
+    <string name="watch_diagnostics_sensors">Sensors</string>
+    <string name="watch_diagnostics_current_heart_rate">Current pulse</string>
+    <string name="watch_diagnostics_sensor_notice">Debug values are simulation data and are never treated as measurements from production hardware.</string>
+    <string name="watch_diagnostics_export">Diagnostic export</string>
+    <string name="watch_diagnostics_export_notice">The export contains protocol status and counters only. Pulse values, account data, workout IDs, URLs and tokens are excluded.</string>
+    <string name="watch_diagnostics_export_action">Export redacted log</string>
+    <string name="watch_diagnostics_export_saved">Diagnostic log saved.</string>
+    <string name="watch_diagnostics_export_failed">Could not save the diagnostic log.</string>
+    <string name="watch_diagnostics_disconnected">Disconnected</string>
+    <string name="watch_diagnostics_connecting">Connecting</string>
+    <string name="watch_diagnostics_connected">Connected</string>
+    <string name="watch_diagnostics_sensor_available">Available</string>
+    <string name="watch_diagnostics_sensor_simulated">Debug simulation</string>
+    <string name="watch_diagnostics_sensor_unavailable">Unavailable</string>
+    <string name="watch_diagnostics_never">Never</string>
+    <string name="watch_diagnostics_not_available">Not available</string>
+    <string name="watch_diagnostics_no_error">No error</string>
+    <string name="watch_diagnostics_milliseconds">%1$d ms</string>
+    <string name="watch_diagnostics_bpm">%1$d bpm</string>
+</resources>
