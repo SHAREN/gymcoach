@@ -236,6 +236,7 @@ fun WorkoutScreen(
             recommendations = equipmentReturnRecommendations[exercise.id],
             fallback = legacyReturnRecommendations[exercise.id],
             fallbackPerformance = bootstrap?.lastPerformances?.get(exercise.exerciseId),
+            fallbackGymId = bootstrap?.profile?.activeGymId,
             gymId = session?.gymId,
             gymEquipmentId = equipmentIdsByExercise[exercise.id],
         )

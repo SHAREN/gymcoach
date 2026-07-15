@@ -117,6 +117,7 @@ class WorkoutEquipmentHistoryTest {
             fallback = bootstrap.returnRecommendationsByWorkout["workout-1"]
                 ?.get("program-exercise-1"),
             fallbackPerformance = bootstrap.lastPerformances["pressdown"],
+            fallbackGymId = "gym-1",
             gymId = "gym-1",
             gymEquipmentId = "cable-b",
         )
@@ -184,6 +185,7 @@ class WorkoutEquipmentHistoryTest {
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
+            fallbackGymId = "gym-1",
             gymId = "gym-1",
             gymEquipmentId = recordedEquipmentId,
         )
@@ -203,6 +205,7 @@ class WorkoutEquipmentHistoryTest {
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
+            fallbackGymId = "gym-1",
             gymId = "gym-1",
             gymEquipmentId = selectedEquipmentId,
         )
@@ -259,6 +262,7 @@ class WorkoutEquipmentHistoryTest {
             recommendations = recommendations,
             fallback = recommendations.first().recommendation,
             fallbackPerformance = performances.first(),
+            fallbackGymId = "gym-a",
             gymId = "gym-b",
             gymEquipmentId = null,
         )
@@ -269,8 +273,62 @@ class WorkoutEquipmentHistoryTest {
         assertEquals(60.0, gymBRecommendation?.suggestedWeight ?: 0.0, 0.001)
     }
 
+    @Test
+    fun `uses no-gym scope and rejects active-gym legacy fallback for a no-gym session`() {
+        val activeGymPerformance = nullEquipmentPerformance("gym-a", "session-a", maxWeight = 30.0)
+        val noGymPerformance = nullEquipmentPerformance(null, "session-no-gym", maxWeight = 60.0)
+        val activeGymRecommendation = EquipmentReturnRecommendationDto(
+            gymId = "gym-a",
+            gymEquipmentId = null,
+            recommendation = ReturnRecommendationDto(
+                mode = "normal",
+                targetSets = 3,
+                targetRIR = 2,
+                suggestedWeight = 30.0,
+            ),
+        )
+        val noGymRecommendation = EquipmentReturnRecommendationDto(
+            gymId = null,
+            gymEquipmentId = null,
+            recommendation = ReturnRecommendationDto(
+                mode = "exercise-reintro",
+                targetSets = 2,
+                targetRIR = 3,
+                suggestedWeight = 60.0,
+            ),
+        )
+
+        val selectedPerformance = selectLastPerformanceForEquipment(
+            performances = listOf(activeGymPerformance, noGymPerformance),
+            fallback = activeGymPerformance,
+            gymId = null,
+            gymEquipmentId = null,
+        )
+        val selectedRecommendation = selectReturnRecommendationForEquipment(
+            recommendations = listOf(activeGymRecommendation, noGymRecommendation),
+            fallback = activeGymRecommendation.recommendation,
+            fallbackPerformance = activeGymPerformance,
+            fallbackGymId = "gym-a",
+            gymId = null,
+            gymEquipmentId = null,
+        )
+        val rejectedLegacyFallback = selectReturnRecommendationForEquipment(
+            recommendations = listOf(activeGymRecommendation),
+            fallback = activeGymRecommendation.recommendation,
+            fallbackPerformance = activeGymPerformance,
+            fallbackGymId = "gym-a",
+            gymId = null,
+            gymEquipmentId = null,
+        )
+
+        assertEquals("session-no-gym", selectedPerformance?.sessionId)
+        assertEquals(60.0, selectedPerformance?.maxWeight ?: 0.0, 0.001)
+        assertEquals(2, selectedRecommendation?.targetSets)
+        assertEquals(null, rejectedLegacyFallback)
+    }
+
     private fun nullEquipmentPerformance(
-        gymId: String,
+        gymId: String?,
         sessionId: String,
         maxWeight: Double,
     ) = LastPerformanceDto(
