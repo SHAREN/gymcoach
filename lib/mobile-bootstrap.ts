@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { isDeloadActive } from '@/lib/deload';
 import { getLastPerformances } from '@/lib/last-performance';
+import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 
@@ -174,6 +175,18 @@ export async function buildMobileBootstrap(userId: string) {
   if (!user) throw new Error('User not found.');
   const exerciseHistoryRows = await exerciseHistoryRowsPromise;
 
+  const mobileGyms = await Promise.all(
+    gyms.map(async (gym) => ({
+      ...gym,
+      equipment: await Promise.all(
+        gym.equipment.map(async (equipment) => ({
+          ...equipment,
+          snapshotRevisionId: await ensureMobileEquipmentSnapshotRevision(db, equipment),
+        })),
+      ),
+    })),
+  );
+
   const activeGym = gyms.find((gym) => gym.id === user.activeGymId) ?? null;
   const programExercises = activeProgram?.workouts.flatMap((workout) => workout.exercises) ?? [];
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
@@ -259,7 +272,7 @@ export async function buildMobileBootstrap(userId: string) {
       deloadActive: isDeloadActive(user.deloadUntil, new Date()),
     },
     activeProgram,
-    gyms,
+    gyms: mobileGyms,
     catalog,
     openSessions,
     lastPerformances: serializedPerformances,

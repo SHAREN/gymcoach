@@ -350,6 +350,7 @@ model Gym {
   exerciseConfigs GymExerciseConfig[]
   equipment       GymEquipment[]
   platePools      GymPlatePool[]
+  snapshotRevisions MobileEquipmentSnapshotRevision[]
 
   @@unique([userId, name])
   @@index([userId, updatedAt])
@@ -456,6 +457,33 @@ model GymEquipmentExercise {
 
   @@id([equipmentId, exerciseId])
   @@index([exerciseId])
+}
+
+// Immutable server validation anchors issued through mobile bootstrap. They
+// intentionally do not reference GymEquipment so an offline set can prove the
+// equipment configuration it saw even after that equipment is deleted.
+model MobileEquipmentSnapshotRevision {
+  id                                String            @id @default(cuid())
+  gymId                             String
+  gym                               Gym               @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  equipmentId                       String
+  equipmentNameSnapshot             String
+  equipmentType                     EquipmentType
+  loadType                          EquipmentLoadType
+  selectedLoadMultiplier            Float
+  baseLoadKg                        Float
+  loadingSides                      Int
+  weightOptions                     Float[]           @default([])
+  platePoolIdSnapshot               String?
+  platePoolNameSnapshot             String?
+  platePoolCompatibilityKeySnapshot String?
+  plateInventorySnapshot            Json?
+  exerciseIds                       String[]
+  configHash                        String
+  createdAt                         DateTime          @default(now())
+
+  @@unique([equipmentId, configHash])
+  @@index([gymId, equipmentId])
 }
 
 model Set {
