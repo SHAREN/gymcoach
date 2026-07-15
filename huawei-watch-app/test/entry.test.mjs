@@ -21,17 +21,25 @@ test('watch page entry resolves and does not import the debug transport', async 
   assert.equal(typeof module.default.deleteLastSet, 'function');
 });
 
-test('HML exposes home, workout, and touch-first set entry without a fake pause action', async () => {
+test('HML exposes workout, set, and rest controls without unsupported crown APIs', async () => {
   const hml = await readFile(hmlUrl, 'utf8');
+  const source = await readFile(entryUrl, 'utf8');
   assert.equal(hml.includes('showHome'), true);
   assert.equal(hml.includes('showWorkout'), true);
   assert.equal(hml.includes('showSetEntry'), true);
+  assert.equal(hml.includes('showRest'), true);
   assert.equal(hml.includes('onclick="startSet"'), true);
   assert.equal(hml.includes('onclick="completeSet"'), true);
   assert.equal(hml.includes('onclick="weightUp"'), true);
   assert.equal(hml.includes('onclick="correctLastSet"'), true);
   assert.equal(hml.includes('onclick="deleteLastSet"'), true);
-  assert.equal(hml.toLowerCase().includes('pause'), false);
+  assert.equal(hml.includes('onclick="skipRest"'), true);
+  assert.equal(hml.includes('onclick="add15Seconds"'), true);
+  assert.equal(hml.includes('onclick="add30Seconds"'), true);
+  assert.equal(hml.includes('onclick="togglePause"'), true);
+  assert.equal(hml.includes('onclick="startNextSet"'), true);
+  assert.equal(`${hml}\n${source}`.toLowerCase().includes('crown'), false);
+  assert.equal(`${hml}\n${source}`.toLowerCase().includes('rotary'), false);
 });
 
 test('watch labels include both Russian and English workout UI', async () => {
@@ -42,4 +50,8 @@ test('watch labels include both Russian and English workout UI', async () => {
   assert.equal(labels('ru').completeSet, 'Завершить подход');
   assert.equal(labels('en').correctLastSet, 'Correct last set');
   assert.equal(labels('ru').deleteLastSet, 'Удалить подход');
+  assert.equal(labels('en').rest, 'Rest');
+  assert.equal(labels('ru').rest, 'Отдых');
+  assert.equal(labels('en').add15, '+15 sec');
+  assert.equal(labels('ru').add30, '+30 секунд');
 });

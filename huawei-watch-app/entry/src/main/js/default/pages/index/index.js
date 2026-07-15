@@ -21,6 +21,8 @@ let draftExerciseSessionId = null;
 let draftWeight = 0;
 let draftReps = 1;
 let draftRir = 2;
+let pageVisible = false;
+let timerHandle = null;
 
 function renderPage() {
   const text = labels(locale);
@@ -33,6 +35,8 @@ function renderPage() {
     : 0;
   const setNumber = activeWorkout?.pendingSet?.setNumber || completed + 1;
   const targetSets = exercise?.targetSets || 0;
+  const timer = companion.timerState(Date.now());
+  const restSummary = timer.restSummary;
   const connectionLabels = {
     connected: text.connected,
     connecting: text.connecting,
@@ -50,6 +54,7 @@ function renderPage() {
     showHome: screen === 'home',
     showWorkout: screen === 'workout',
     showSetEntry: screen === 'set',
+    showRest: screen === 'rest',
     hasWorkout,
     noWorkout: !hasWorkout,
     showStartSet: hasWorkout && activeWorkout.activeSetId === null,
@@ -63,6 +68,11 @@ function renderPage() {
     pendingCount: String(latestState.pendingCount),
     languageButton: locale === 'ru' ? 'EN' : 'RU',
     activeWorkoutLabel: text.activeWorkout,
+    currentHrLabel: text.currentHr,
+    currentHeartRate:
+      latestState.currentHeartRate === null
+        ? text.noHr
+        : `${latestState.currentHeartRate} BPM`,
     noWorkoutLabel: text.noWorkout,
     waitingLabel: text.waiting,
     openLabel: text.open,
@@ -84,12 +94,26 @@ function renderPage() {
     weightLabel: text.weight,
     repsLabel: text.reps,
     rirLabel: text.rir,
+    restLabel: text.rest,
+    restMinimumLabel: text.restMinimum,
+    restAverageLabel: text.restAverage,
+    restAt30Label: text.restAt30,
+    restAt60Label: text.restAt60,
+    skipLabel: text.skip,
+    add15Label: text.add15,
+    add30Label: text.add30,
+    pauseResumeLabel: timer.rest.paused ? text.resume : text.pause,
     exerciseName: exercise?.exerciseName || text.noWorkout,
     setProgress: `${setNumber} / ${targetSets}`,
     targetSummary: exercise
       ? `${exercise.targetReps} ${text.reps.toLowerCase()} · RIR ${exercise.targetRir}`
       : '-',
     elapsed: formatElapsed(activeWorkout?.startedAt),
+    restCountdown: formatCountdown(timer.rest.remainingSeconds),
+    restMinimum: formatHeartRate(restSummary?.min),
+    restAverage: formatHeartRate(restSummary?.average),
+    restAt30: formatHeartRate(restSummary?.at30Seconds),
+    restAt60: formatHeartRate(restSummary?.at60Seconds),
     draftWeight: formatWeight(draftWeight),
     draftReps: String(draftReps),
     draftRir: String(draftRir),
@@ -130,8 +154,35 @@ function formatWeight(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function formatCountdown(seconds) {
+  return `${pad(Math.floor(seconds / 60))}:${pad(seconds % 60)}`;
+}
+
+function formatHeartRate(value) {
+  return typeof value === 'number' ? `${Math.round(value)} BPM` : '-';
+}
+
 function refresh(page) {
   Object.assign(page, renderPage());
+  scheduleTimer(page);
+}
+
+function scheduleTimer(page) {
+  if (timerHandle !== null) {
+    clearTimeout(timerHandle);
+    timerHandle = null;
+  }
+  const rest = latestState.activeWorkout?.rest;
+  if (!pageVisible || !rest) {
+    return;
+  }
+  const remaining = companion.timerState(Date.now()).rest.remainingMs;
+  const delay = Math.max(50, Math.min(1_000, remaining || 50));
+  timerHandle = setTimeout(async () => {
+    timerHandle = null;
+    await companion.checkRestTimer(Date.now());
+    refresh(page);
+  }, delay);
 }
 
 async function run(page, action) {
@@ -149,13 +200,39 @@ export default {
   async onInit() {
     companion.subscribe((state) => {
       latestState = state;
+      if (state.activeWorkout?.rest) {
+        screen = 'rest';
+      } else if (screen === 'rest') {
+        screen = 'workout';
+      }
       refresh(this);
     });
     await companion.start();
   },
 
   async onDestroy() {
+    pageVisible = false;
+    if (timerHandle !== null) {
+      clearTimeout(timerHandle);
+      timerHandle = null;
+    }
+    await companion.lifecycleCheckpoint(Date.now());
     await companion.stop();
+  },
+
+  async onShow() {
+    pageVisible = true;
+    await companion.lifecycleCheckpoint(Date.now());
+    refresh(this);
+  },
+
+  async onHide() {
+    pageVisible = false;
+    if (timerHandle !== null) {
+      clearTimeout(timerHandle);
+      timerHandle = null;
+    }
+    await companion.lifecycleCheckpoint(Date.now());
   },
 
   toggleLanguage() {
@@ -221,6 +298,26 @@ export default {
     await run(this, () => companion.deleteLastSet());
     draftExerciseSessionId = null;
     refresh(this);
+  },
+
+  async skipRest() {
+    await run(this, () => companion.skipRest());
+  },
+
+  async add15Seconds() {
+    await run(this, () => companion.adjustRest(15));
+  },
+
+  async add30Seconds() {
+    await run(this, () => companion.adjustRest(30));
+  },
+
+  async togglePause() {
+    await run(this, () => companion.togglePause());
+  },
+
+  async startNextSet() {
+    await run(this, () => companion.startNextSetFromRest());
   },
 
   weightDown() {
