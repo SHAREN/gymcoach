@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Next Task'
+  short_description: 'Select the highest-priority READY task'
+  default_prompt: 'Use $next-task to choose and explain the next eligible READY task without starting it.'

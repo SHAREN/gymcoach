@@ -81,6 +81,65 @@ cleanup_full() {
 
 echo "GymCoach green-gate — node $(node -v 2>/dev/null || echo '??'), npm $(npm -v 2>/dev/null || echo '??')"
 
+step "Codex harness integrity"
+required_harness_files=(
+  "AGENTS.md"
+  "docs/CODEX_WORKFLOW.md"
+  ".codex/config.toml"
+  ".codex/hooks.json"
+  ".agents/skills/beads/SKILL.md"
+  ".agents/skills/beads/agents/openai.yaml"
+  ".agents/skills/capture-issue/SKILL.md"
+  ".agents/skills/capture-issue/agents/openai.yaml"
+  ".agents/skills/triage-inbox/SKILL.md"
+  ".agents/skills/triage-inbox/agents/openai.yaml"
+  ".agents/skills/next-task/SKILL.md"
+  ".agents/skills/next-task/agents/openai.yaml"
+  ".agents/skills/execute-task/SKILL.md"
+  ".agents/skills/execute-task/agents/openai.yaml"
+  ".agents/skills/verify-task/SKILL.md"
+  ".agents/skills/verify-task/agents/openai.yaml"
+)
+for harness_file in "${required_harness_files[@]}"; do
+  [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
+done
+grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
+node <<'NODE' || fail "Codex harness configuration"
+const fs = require('fs');
+
+const config = fs.readFileSync('.codex/config.toml', 'utf8')
+  .replace(/\r\n/g, '\n')
+  .trim();
+if (config !== '[features]\nhooks = true\nmulti_agent = true') {
+  throw new Error('unexpected .codex/config.toml');
+}
+
+const hooks = JSON.parse(fs.readFileSync('.codex/hooks.json', 'utf8')).hooks;
+const expected = {
+  PostCompact: ['bd codex-hook PostCompact', 'manual|auto'],
+  PreCompact: ['bd codex-hook PreCompact', 'manual|auto'],
+  SessionStart: ['bd codex-hook SessionStart', 'startup|resume|clear|compact'],
+  UserPromptSubmit: ['bd codex-hook UserPromptSubmit', null],
+};
+for (const [event, [command, matcher]] of Object.entries(expected)) {
+  const groups = hooks?.[event];
+  if (!Array.isArray(groups) || groups.length !== 1) {
+    throw new Error(`missing hook event ${event}`);
+  }
+  if ((groups[0].matcher ?? null) !== matcher) {
+    throw new Error(`unexpected matcher for ${event}`);
+  }
+  const handlers = groups[0].hooks;
+  if (!Array.isArray(handlers) || handlers.length !== 1) {
+    throw new Error(`unexpected handlers for ${event}`);
+  }
+  const handler = handlers[0];
+  if (handler.type !== 'command' || handler.command !== command || handler.timeout !== 30) {
+    throw new Error(`unexpected command hook for ${event}`);
+  }
+}
+NODE
+
 if [ "$FULL" = "1" ]; then
   step "full-gate production safety preflight"
   node scripts/test-port.mjs assert-free 3031 || fail "port 3031 preflight"
