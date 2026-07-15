@@ -12,6 +12,9 @@ import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
+import org.sharteman.gymcoach.watch.domain.WatchIncomingMessage
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 
 class WatchProtocolCodecTest {
     private val codec = WatchProtocolCodec()
@@ -60,6 +63,27 @@ class WatchProtocolCodecTest {
 
         assertTrue(failure is WatchProtocolException)
         assertEquals(WatchProtocolErrorCode.INVALID_EVENT, (failure as WatchProtocolException).code)
+    }
+
+    @Test
+    fun `incoming dispatcher decodes sync ack without confusing event ids`() {
+        val ack = WatchSyncAckDto(
+            protocolVersion = WatchProtocol.VERSION,
+            schemaVersion = WatchProtocol.SCHEMA_VERSION,
+            ackId = "30000000-0000-0000-0000-000000000001",
+            sessionId = "mob_session_ack",
+            eventIds = listOf("40000000-0000-0000-0000-000000000001"),
+            status = WatchSyncAckStatus.APPLIED,
+            timestamp = 1_000,
+            source = WatchEventSource.WATCH,
+            deviceId = "watch-test",
+            revision = 3,
+            errorCode = null,
+        )
+
+        val incoming = codec.decodeIncomingMessage(codec.encodeSyncAck(ack))
+
+        assertEquals(ack, (incoming as WatchIncomingMessage.Ack).ack)
     }
 
     private fun controlMessage(messageId: String) = WatchControlMessageDto(

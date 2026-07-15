@@ -14,10 +14,12 @@ import org.sharteman.gymcoach.watch.domain.WatchIncomingMessage
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 
 class WatchProtocolCodec(
     private val json: Json = STRICT_JSON,
 ) {
+    private val workoutCodec = WatchWorkoutProtocolCodec(json)
     fun encodeEvent(event: WatchEventEnvelopeDto): ByteArray {
         validateEvent(event)
         return json.encodeToString(event).encodeToByteArray().also(::requireP2pSize)
@@ -53,19 +55,24 @@ class WatchProtocolCodec(
         }
         val hasMessageId = root.containsKey("messageId")
         val hasEventId = root.containsKey("eventId")
-        if (hasMessageId == hasEventId) {
+        val hasAckId = root.containsKey("ackId")
+        if (listOf(hasMessageId, hasEventId, hasAckId).count { it } != 1) {
             throw WatchProtocolException(WatchProtocolErrorCode.INVALID_JSON)
         }
         return if (hasMessageId) {
             val controlMessage = decodeStrict<WatchControlMessageDto>(message)
             validateControlMessage(controlMessage)
             WatchIncomingMessage.Control(controlMessage)
-        } else {
+        } else if (hasEventId) {
             val event = decodeStrict<WatchEventEnvelopeDto>(message)
             validateEvent(event)
             WatchIncomingMessage.Event(event)
+        } else {
+            WatchIncomingMessage.Ack(workoutCodec.decodeSyncAck(message))
         }
     }
+
+    fun encodeSyncAck(ack: WatchSyncAckDto): ByteArray = workoutCodec.encodeSyncAck(ack)
 
     fun encodeBatch(batch: WatchBatchEnvelopeDto): ByteArray {
         validateBatch(batch)

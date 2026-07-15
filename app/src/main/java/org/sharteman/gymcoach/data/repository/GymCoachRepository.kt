@@ -397,6 +397,9 @@ class GymCoachRepository(
     suspend fun hasProcessedWatchEvent(eventId: String): Boolean =
         dao.hasProcessedWatchEvent(eventId) > 0
 
+    suspend fun processedWatchEvent(eventId: String): WatchProcessedEventEntity? =
+        dao.getProcessedWatchEvent(eventId)
+
     suspend fun hasWatchSensorBatch(batchId: String, sequence: Int): Boolean =
         dao.hasWatchSensorBatch(batchId, sequence) > 0
 
@@ -416,9 +419,11 @@ class GymCoachRepository(
             activeExerciseId = exerciseId,
             activeSetId = null,
             setStartedAtEpochMs = null,
+            setAccumulatedPauseMs = 0,
             restStartedAtEpochMs = null,
             restEndsAtEpochMs = null,
             restDurationSeconds = null,
+            restPausedRemainingMs = null,
             revision = current.revision + 1,
             updatedAtEpochMs = updatedAtEpochMs,
             updatedBy = updatedBy,

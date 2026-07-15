@@ -15,6 +15,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalSetEntity::class,
         ActiveWorkoutRuntimeEntity::class,
         WatchProcessedEventEntity::class,
+        WatchInboxEventEntity::class,
+        WatchOutboxEventEntity::class,
+        WatchAckJournalEntity::class,
+        WatchPeerEntity::class,
+        WatchConflictEntity::class,
+        WatchFileTransferEntity::class,
         WatchSensorBatchEntity::class,
         WatchSensorSampleEntity::class,
         RestRecoverySummaryEntity::class,
@@ -22,7 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -43,6 +49,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_3_4,
                 MIGRATION_4_5,
                 MIGRATION_5_6,
+                MIGRATION_6_7,
             )
                 .build()
                 .also { instance = it }
@@ -283,6 +290,135 @@ abstract class GymCoachDatabase : RoomDatabase() {
                         "index_rest_recovery_summaries_sessionId_setId_restStartedAtEpochMs " +
                         "ON rest_recovery_summaries(sessionId, setId, restStartedAtEpochMs)",
                 )
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE active_workout_runtime ADD COLUMN " +
+                        "workoutAccumulatedPauseMs INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE active_workout_runtime ADD COLUMN " +
+                        "setAccumulatedPauseMs INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE active_workout_runtime ADD COLUMN restPausedRemainingMs INTEGER",
+                )
+                db.execSQL(
+                    "ALTER TABLE watch_processed_events ADD COLUMN " +
+                        "canonicalEventHash TEXT NOT NULL DEFAULT ''",
+                )
+                db.execSQL(
+                    "ALTER TABLE watch_processed_events ADD COLUMN " +
+                        "resultStatus TEXT NOT NULL DEFAULT 'APPLIED'",
+                )
+                db.execSQL(
+                    "ALTER TABLE watch_processed_events ADD COLUMN " +
+                        "resultRevision INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL("ALTER TABLE watch_processed_events ADD COLUMN errorCode TEXT")
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_inbox_events (" +
+                        "eventId TEXT NOT NULL, sessionId TEXT NOT NULL, revision INTEGER NOT NULL, " +
+                        "timestampEpochMs INTEGER NOT NULL, canonicalEventHash TEXT NOT NULL, " +
+                        "envelopeJson TEXT NOT NULL, status TEXT NOT NULL, resultStatus TEXT, " +
+                        "resultRevision INTEGER, errorCode TEXT, receivedAtEpochMs INTEGER NOT NULL, " +
+                        "processedAtEpochMs INTEGER, PRIMARY KEY(eventId))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_inbox_events_sessionId ON watch_inbox_events(sessionId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_inbox_events_status ON watch_inbox_events(status)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_inbox_events_receivedAtEpochMs " +
+                        "ON watch_inbox_events(receivedAtEpochMs)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_outbox_events (" +
+                        "eventId TEXT NOT NULL, sessionId TEXT NOT NULL, revision INTEGER NOT NULL, " +
+                        "timestampEpochMs INTEGER NOT NULL, eventType TEXT NOT NULL, " +
+                        "canonicalEventHash TEXT NOT NULL, envelopeJson TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, attempts INTEGER NOT NULL, lastAttemptAtEpochMs INTEGER, " +
+                        "ackStatus TEXT, errorCode TEXT, relatedTransferId TEXT, " +
+                        "createdAtEpochMs INTEGER NOT NULL, acknowledgedAtEpochMs INTEGER, " +
+                        "PRIMARY KEY(eventId))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_outbox_events_sessionId ON watch_outbox_events(sessionId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_outbox_events_status ON watch_outbox_events(status)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_outbox_events_sessionId_revision_timestampEpochMs_eventId " +
+                        "ON watch_outbox_events(sessionId, revision, timestampEpochMs, eventId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_outbox_events_relatedTransferId " +
+                        "ON watch_outbox_events(relatedTransferId)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_ack_journal (" +
+                        "ackId TEXT NOT NULL, sessionId TEXT NOT NULL, eventIdsJson TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, revision INTEGER NOT NULL, errorCode TEXT, " +
+                        "source TEXT NOT NULL, deviceId TEXT NOT NULL, receivedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(ackId))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_ack_journal_sessionId ON watch_ack_journal(sessionId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_ack_journal_receivedAtEpochMs " +
+                        "ON watch_ack_journal(receivedAtEpochMs)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_peers (" +
+                        "deviceId TEXT NOT NULL, sessionId TEXT, protocolVersion TEXT NOT NULL, " +
+                        "schemaVersion INTEGER NOT NULL, lastRevision INTEGER NOT NULL, " +
+                        "lastSyncAtEpochMs INTEGER, lastError TEXT, updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(deviceId))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_peers_sessionId ON watch_peers(sessionId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_peers_lastSyncAtEpochMs " +
+                        "ON watch_peers(lastSyncAtEpochMs)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_conflicts (" +
+                        "conflictId TEXT NOT NULL, sessionId TEXT NOT NULL, eventId TEXT NOT NULL, " +
+                        "entityType TEXT NOT NULL, entityId TEXT NOT NULL, localRevision INTEGER NOT NULL, " +
+                        "remoteRevision INTEGER NOT NULL, localEventJson TEXT NOT NULL, " +
+                        "remoteEventJson TEXT NOT NULL, status TEXT NOT NULL, errorCode TEXT, " +
+                        "detectedAtEpochMs INTEGER NOT NULL, resolution TEXT, resolvedAtEpochMs INTEGER, " +
+                        "PRIMARY KEY(conflictId))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_conflicts_sessionId ON watch_conflicts(sessionId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_conflicts_eventId ON watch_conflicts(eventId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_conflicts_resolution ON watch_conflicts(resolution)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_conflicts_detectedAtEpochMs " +
+                        "ON watch_conflicts(detectedAtEpochMs)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_file_transfers (" +
+                        "transferId TEXT NOT NULL, sequence INTEGER NOT NULL, sessionId TEXT NOT NULL, " +
+                        "relatedEventId TEXT, payloadType TEXT NOT NULL, payloadId TEXT NOT NULL, " +
+                        "totalSequences INTEGER NOT NULL, byteLength INTEGER NOT NULL, sha256 TEXT NOT NULL, " +
+                        "source TEXT NOT NULL, deviceId TEXT NOT NULL, direction TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, canonicalPayloadJson TEXT, errorCode TEXT, " +
+                        "createdAtEpochMs INTEGER NOT NULL, updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(transferId, sequence))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_file_transfers_sessionId ON watch_file_transfers(sessionId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_file_transfers_relatedEventId " +
+                        "ON watch_file_transfers(relatedEventId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_file_transfers_payloadId_sequence " +
+                        "ON watch_file_transfers(payloadId, sequence)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_file_transfers_status ON watch_file_transfers(status)")
             }
         }
     }

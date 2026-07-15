@@ -192,9 +192,70 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration6To7PreservesRuntimeAndProcessedEventsAndCreatesDurableWatchSync() {
+        helper.createDatabase(TEST_DB_V7, 6).apply {
+            execSQL(
+                "INSERT INTO local_sessions " +
+                    "(id, workoutId, gymId, startedAt, finishedAt, notes, sessionRpe) VALUES " +
+                    "('mob_session_v7', 'workout_v7', NULL, '2026-07-15T05:00:00Z', NULL, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO active_workout_runtime " +
+                    "(sessionId, workoutId, status, activeExerciseId, activeSetId, " +
+                    "setStartedAtEpochMs, pausedAtEpochMs, restStartedAtEpochMs, restEndsAtEpochMs, " +
+                    "restDurationSeconds, revision, updatedAtEpochMs, updatedBy) VALUES " +
+                    "('mob_session_v7', 'workout_v7', 'PAUSED', 'exercise_v7', 'set_v7', " +
+                    "1000, 2000, 3000, 5000, 2, 7, 2000, 'WATCH')",
+            )
+            execSQL(
+                "INSERT INTO watch_processed_events " +
+                    "(eventId, sessionId, revision, processedAtEpochMs) VALUES " +
+                    "('70000000-0000-0000-0000-000000000001', 'mob_session_v7', 7, 2100)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V7,
+            7,
+            true,
+            GymCoachDatabase.MIGRATION_6_7,
+        ).use { database ->
+            database.query(
+                "SELECT workoutAccumulatedPauseMs, setAccumulatedPauseMs, restPausedRemainingMs " +
+                    "FROM active_workout_runtime WHERE sessionId = 'mob_session_v7'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(0L, cursor.getLong(0))
+                assertEquals(0L, cursor.getLong(1))
+                assertEquals(true, cursor.isNull(2))
+            }
+            database.query(
+                "SELECT canonicalEventHash, resultStatus, resultRevision, errorCode " +
+                    "FROM watch_processed_events WHERE eventId = '70000000-0000-0000-0000-000000000001'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("", cursor.getString(0))
+                assertEquals("APPLIED", cursor.getString(1))
+                assertEquals(0L, cursor.getLong(2))
+                assertEquals(true, cursor.isNull(3))
+            }
+            database.query(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (" +
+                    "'watch_inbox_events', 'watch_outbox_events', 'watch_ack_journal', " +
+                    "'watch_peers', 'watch_conflicts', 'watch_file_transfers')",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(6, cursor.getInt(0))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
         const val TEST_DB_V6 = "gymcoach-migration-v6-test"
+        const val TEST_DB_V7 = "gymcoach-migration-v7-test"
     }
 }
