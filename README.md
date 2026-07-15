@@ -104,6 +104,21 @@ on your own key - all self-hosted.
   a whole batch at once, and every imported run or ride shows a
   **heart-rate-over-time chart** on the session detail.
 
+### Huawei Watch companion
+
+A standalone Huawei Lite Wearable companion for the HUAWEI WATCH GT 4 is under
+development in [`huawei-watch-app/`](huawei-watch-app/). It is designed around
+Wear Engine P2P communication, offline event queues, shared versioned contracts,
+and the existing Android session and set models.
+
+Huawei does not publish a model-specific statement that explicitly labels the
+WATCH GT 4 as a Lite Wearable. The implementation therefore treats that device
+type as an officially supported GT-series inference and requires runtime checks
+on the real watch before enabling transport and sensor features. See the
+[capability matrix](docs/huawei-watch-gt4-capabilities.md),
+[architecture](docs/huawei-watch-architecture.md), and
+[sync protocol](docs/huawei-watch-sync-protocol.md).
+
 ### AI coach (bring your own model)
 
 - **Weekly debrief and adjustments** - evidence-based, aware of your goals,

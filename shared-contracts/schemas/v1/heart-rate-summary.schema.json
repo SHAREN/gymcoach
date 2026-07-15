@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/heart-rate-summary.schema.json",
+  "title": "HeartRateSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["min", "max", "average", "start", "end", "sampleCount"],
+  "properties": {
+    "min": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "max": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "average": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "start": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "end": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "sampleCount": { "type": "integer", "minimum": 0 }
+  }
+}

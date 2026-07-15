@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "snapshotId": "2b63ec53-2204-4819-a2ee-4db580d5a2cd",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "timestamp": 1784102582000,
+  "source": "PHONE",
+  "deviceId": "android-debug-001",
+  "revision": 8,
+  "workoutSession": {
+    "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+    "workoutProgramId": "2e16599e-045f-4db2-8243-393e45cbf2d7",
+    "userId": "bd57db6a-0240-411d-85ee-dd5a588863a2",
+    "status": "ACTIVE",
+    "startedAt": 1784102400000,
+    "finishedAt": null,
+    "activeExerciseId": "17b70728-c8a5-4338-b28a-45b40c83092c",
+    "activeSetId": "34599d14-fb23-4ff2-837a-d7dc453ec21a",
+    "revision": 8,
+    "updatedAt": 1784102582000,
+    "updatedBy": "PHONE"
+  },
+  "exerciseSessions": [],
+  "setRecords": [],
+  "sensorSamples": [],
+  "pendingEvents": []
+}

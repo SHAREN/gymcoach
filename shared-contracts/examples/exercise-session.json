@@ -1,0 +1,12 @@
+{
+  "exerciseSessionId": "17b70728-c8a5-4338-b28a-45b40c83092c",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "exerciseId": "198d94eb-671f-4860-9039-b1d5e6f4fb70",
+  "exerciseName": "Barbell squat",
+  "order": 1,
+  "status": "ACTIVE",
+  "targetSets": 4,
+  "targetReps": 8,
+  "targetRir": 2,
+  "restDurationSeconds": 120
+}

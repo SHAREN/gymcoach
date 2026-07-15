@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/sync-snapshot.schema.json",
+  "title": "SyncSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "schemaVersion",
+    "snapshotId",
+    "sessionId",
+    "timestamp",
+    "source",
+    "deviceId",
+    "revision",
+    "workoutSession",
+    "exerciseSessions",
+    "setRecords",
+    "sensorSamples",
+    "pendingEvents"
+  ],
+  "properties": {
+    "protocolVersion": { "type": "string", "const": "1.0" },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "snapshotId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "workoutSession": { "$ref": "workout-session.schema.json" },
+    "exerciseSessions": {
+      "type": "array",
+      "items": { "$ref": "exercise-session.schema.json" }
+    },
+    "setRecords": {
+      "type": "array",
+      "items": { "$ref": "set-record.schema.json" }
+    },
+    "sensorSamples": {
+      "type": "array",
+      "items": { "$ref": "sensor-sample.schema.json" }
+    },
+    "pendingEvents": {
+      "type": "array",
+      "items": { "$ref": "watch-event.schema.json" }
+    }
+  }
+}

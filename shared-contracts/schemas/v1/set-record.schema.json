@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/set-record.schema.json",
+  "title": "SetRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "setId",
+    "sessionId",
+    "exerciseSessionId",
+    "setNumber",
+    "weight",
+    "reps",
+    "rir",
+    "startedAt",
+    "completedAt",
+    "source",
+    "heartRateSummary",
+    "sensorSummary",
+    "revision"
+  ],
+  "properties": {
+    "setId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "exerciseSessionId": { "type": "string", "format": "uuid" },
+    "setNumber": { "type": "integer", "minimum": 1 },
+    "weight": { "type": "number", "minimum": 0 },
+    "reps": { "type": "integer", "minimum": 0 },
+    "rir": { "type": "number", "minimum": 0 },
+    "setType": { "type": ["string", "null"] },
+    "comment": { "type": ["string", "null"] },
+    "startedAt": { "type": "integer", "minimum": 0 },
+    "completedAt": { "type": "integer", "minimum": 0 },
+    "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
+    "heartRateSummary": {
+      "$ref": "heart-rate-summary.schema.json"
+    },
+    "sensorSummary": { "type": "object" },
+    "revision": { "type": "integer", "minimum": 1 }
+  }
+}
