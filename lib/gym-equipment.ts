@@ -460,7 +460,7 @@ export async function reconcileLegacyExerciseConfigMirrors(
     where: { id: gymId },
     select: { inventoryMode: true },
   });
-  if (!gym || gym.inventoryMode !== 'EQUIPMENT_FIRST') return;
+  if (!gym) return;
 
   const remainingMirrorLinks = await tx.gymEquipmentExercise.findMany({
     where: {
@@ -479,6 +479,7 @@ export async function reconcileLegacyExerciseConfigMirrors(
       });
       continue;
     }
+    if (gym.inventoryMode !== 'EQUIPMENT_FIRST') continue;
 
     await tx.gymExerciseConfig.createMany({
       data: {
@@ -504,6 +505,26 @@ export async function reconcileLegacyExerciseConfigMirrors(
       },
     });
   }
+}
+
+export async function reconcileAllLegacyExerciseConfigMirrorsForGym(
+  tx: Prisma.TransactionClient,
+  gymId: string,
+) {
+  const [mirrorLinks, mirrorConfigs] = await Promise.all([
+    tx.gymEquipmentExercise.findMany({
+      where: { mirrorsLegacyConfig: true, equipment: { gymId } },
+      select: { exerciseId: true },
+    }),
+    tx.gymExerciseConfig.findMany({
+      where: { gymId, isEquipmentMirror: true },
+      select: { exerciseId: true },
+    }),
+  ]);
+  await reconcileLegacyExerciseConfigMirrors(tx, gymId, [
+    ...mirrorLinks.map((link) => link.exerciseId),
+    ...mirrorConfigs.map((config) => config.exerciseId),
+  ]);
 }
 
 export async function upsertOwnedGymPlatePool(

@@ -566,7 +566,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
       where: {
         sessionId_exerciseId: { sessionId: sessionA.id, exerciseId: rowA.id },
       },
-      data: { ordinal: 500 },
+      data: { ordinal: 2_147_483_647 },
     });
 
     actAs(userA.id);
@@ -575,7 +575,11 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
       { exerciseName: 'Bench Press', addedAt: '2026-06-01T10:10:00.000Z', ordinal: 0 },
       { exerciseName: 'Dip', addedAt: '2026-06-01T10:20:00.000Z', ordinal: 2 },
       { exerciseName: 'Pull-up', addedAt: '2026-06-01T10:20:00.000Z', ordinal: 3 },
-      { exerciseName: 'Membership row', addedAt: '2026-06-01T10:40:00.000Z', ordinal: 500 },
+      {
+        exerciseName: 'Membership row',
+        addedAt: '2026-06-01T10:40:00.000Z',
+        ordinal: 2_147_483_647,
+      },
       { exerciseName: 'Running', addedAt: '2026-06-01T10:50:00.000Z', ordinal: 1 },
     ];
     expect(dump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
@@ -612,6 +616,68 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
 
     const restoredDump = await (await getBackup(getReq())).json();
     expect(restoredDump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
+
+    const restoredSessionId = restoredMemberships[0]!.sessionId;
+    const restoredMaxMembership = restoredMemberships.find(
+      (membership) => membership.exercise.name === 'Membership row',
+    )!;
+    await db.set.create({
+      data: {
+        sessionId: restoredSessionId,
+        exerciseId: restoredMaxMembership.exerciseId,
+        setNumber: 99,
+        weight: 0,
+        reps: 1,
+        completedAt: new Date('2026-06-01T11:00:00.000Z'),
+      },
+    });
+    expect(
+      await db.sessionExercise.findUniqueOrThrow({
+        where: {
+          sessionId_exerciseId: {
+            sessionId: restoredSessionId,
+            exerciseId: restoredMaxMembership.exerciseId,
+          },
+        },
+      }),
+    ).toMatchObject({ ordinal: 2_147_483_647 });
+
+    const appendedExercise = await db.exercise.create({
+      data: {
+        userId: userB.id,
+        name: 'Post-import membership',
+        muscleGroup: 'OTHER',
+        category: 'ISOLATION',
+      },
+    });
+    await db.set.create({
+      data: {
+        sessionId: restoredSessionId,
+        exerciseId: appendedExercise.id,
+        setNumber: 1,
+        weight: 0,
+        reps: 1,
+        completedAt: new Date('2026-06-01T11:10:00.000Z'),
+      },
+    });
+    const compactedMemberships = await db.sessionExercise.findMany({
+      where: { sessionId: restoredSessionId },
+      orderBy: { ordinal: 'asc' },
+      include: { exercise: { select: { name: true } } },
+    });
+    expect(compactedMemberships.map((membership) => membership.ordinal)).toEqual([
+      0, 1, 2, 3, 4, 5,
+    ]);
+    expect(compactedMemberships.at(-1)?.exercise.name).toBe('Post-import membership');
+    const compactedDump = await (await getBackup(getReq())).json();
+    expect(
+      compactedDump.sessions[0].exerciseMemberships.map(
+        (membership: { exerciseName: string }) => membership.exerciseName,
+      ),
+    ).toEqual([
+      ...expectedMemberships.map((membership) => membership.exerciseName),
+      'Post-import membership',
+    ]);
 
     const legacyStructuredDump = structuredClone(dump);
     legacyStructuredDump.version = 9;
@@ -723,16 +789,39 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
 
     const cases = [
       {
+        email: 'snapshot-weight-mismatch@test.dev',
+        expectedError: 'The recorded equipment snapshot fields are inconsistent.',
+        mutate: (set: Record<string, unknown>) => {
+          set.weight = Number(set.selectedLoadKg) + 5;
+        },
+      },
+      {
         email: 'snapshot-top-level-mismatch@test.dev',
+        expectedError: 'The recorded equipment snapshot fields are inconsistent.',
         mutate: (set: Record<string, unknown>) => {
           set.selectedLoadMultiplier = 2;
         },
       },
       {
         email: 'snapshot-load-type-mismatch@test.dev',
+        expectedError: 'The recorded equipment snapshot fields are inconsistent.',
         mutate: (set: Record<string, unknown>) => {
           (set.equipmentLoadSnapshot as Record<string, unknown>).nominalResistanceKg = 999;
           set.nominalResistanceKg = 999;
+        },
+      },
+      {
+        email: 'snapshot-missing-plate-pool@test.dev',
+        expectedError: 'The recorded equipment snapshot is unsupported or invalid.',
+        mutate: (set: Record<string, unknown>) => {
+          (set.equipmentLoadSnapshot as Record<string, unknown>).platePool = null;
+        },
+      },
+      {
+        email: 'snapshot-unexpected-plate-pool@test.dev',
+        expectedError: 'The recorded equipment snapshot is unsupported or invalid.',
+        mutate: (set: Record<string, unknown>) => {
+          (set.equipmentLoadSnapshot as Record<string, unknown>).loadType = 'FIXED';
         },
       },
     ];
@@ -759,7 +848,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
       const response = await postBackup(jsonReq({ payload, confirmReplace: true }));
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
-        error: 'The recorded equipment snapshot fields are inconsistent.',
+        error: testCase.expectedError,
       });
       expect(
         await db.exercise.findUnique({

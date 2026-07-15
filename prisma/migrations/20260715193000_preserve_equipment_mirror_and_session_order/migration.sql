@@ -33,19 +33,49 @@ CREATE OR REPLACE FUNCTION preserve_session_exercise_membership()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  max_ordinal INTEGER;
+  next_ordinal INTEGER;
+  membership RECORD;
 BEGIN
   -- Serialize new exercise memberships inside one session without locking
   -- the Session row itself, which may be updated concurrently at finish.
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW."sessionId", 0));
 
-  INSERT INTO "SessionExercise" ("sessionId", "exerciseId", "addedAt", "ordinal")
-  SELECT
-    NEW."sessionId",
-    NEW."exerciseId",
-    NEW."completedAt",
-    COALESCE(MAX("ordinal"), -1) + 1
+  IF EXISTS (
+    SELECT 1
+    FROM "SessionExercise"
+    WHERE "sessionId" = NEW."sessionId"
+      AND "exerciseId" = NEW."exerciseId"
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT MAX("ordinal")
+  INTO max_ordinal
   FROM "SessionExercise"
-  WHERE "sessionId" = NEW."sessionId"
+  WHERE "sessionId" = NEW."sessionId";
+
+  IF max_ordinal = 2147483647 THEN
+    next_ordinal := 0;
+    FOR membership IN
+      SELECT "exerciseId"
+      FROM "SessionExercise"
+      WHERE "sessionId" = NEW."sessionId"
+      ORDER BY "ordinal" ASC
+    LOOP
+      UPDATE "SessionExercise"
+      SET "ordinal" = next_ordinal
+      WHERE "sessionId" = NEW."sessionId"
+        AND "exerciseId" = membership."exerciseId";
+      next_ordinal := next_ordinal + 1;
+    END LOOP;
+  ELSE
+    next_ordinal := COALESCE(max_ordinal, -1) + 1;
+  END IF;
+
+  INSERT INTO "SessionExercise" ("sessionId", "exerciseId", "addedAt", "ordinal")
+  VALUES (NEW."sessionId", NEW."exerciseId", NEW."completedAt", next_ordinal)
   ON CONFLICT ("sessionId", "exerciseId") DO NOTHING;
   RETURN NEW;
 END;

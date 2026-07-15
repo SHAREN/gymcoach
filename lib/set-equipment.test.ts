@@ -51,8 +51,25 @@ describe('frozen set load constraints', () => {
 
     expect(frozenSetLoadSnapshotVersion(equipmentLoadSnapshot)).toBe(1);
     expect(frozenSetLoadConstraints('Legacy cable', equipmentLoadSnapshot)).toBeNull();
+    expect(
+      frozenSetLoadSnapshotVersion({
+        ...equipmentLoadSnapshot,
+        platePool: {
+          id: 'pool-1',
+          name: 'Olympic plates',
+          compatibilityKey: 'olympic_50mm',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      frozenSetLoadSnapshotVersion({
+        ...equipmentLoadSnapshot,
+        loadType: 'PLATE_LOADED',
+      }),
+    ).toBeNull();
 
     const existing = {
+      weight: 40,
       gymEquipmentId: 'legacy-cable',
       equipmentNameSnapshot: 'Legacy cable',
       selectedLoadKg: 40,
@@ -77,11 +94,12 @@ describe('frozen set load constraints', () => {
     });
 
     expect(() =>
-      preserveSetEquipmentSnapshot(
-        { ...existing, selectedLoadMultiplierSnapshot: 1 },
-        45,
-        { allowLegacySnapshot: true },
-      ),
+      preserveSetEquipmentSnapshot({ ...existing, weight: 41 }, 45, { allowLegacySnapshot: true }),
+    ).toThrow('The recorded equipment snapshot fields are inconsistent.');
+    expect(() =>
+      preserveSetEquipmentSnapshot({ ...existing, selectedLoadMultiplierSnapshot: 1 }, 45, {
+        allowLegacySnapshot: true,
+      }),
     ).toThrow('The recorded equipment snapshot fields are inconsistent.');
     expect(() =>
       preserveSetEquipmentSnapshot(
@@ -108,6 +126,37 @@ describe('frozen set load constraints', () => {
         { allowLegacySnapshot: true },
       ),
     ).toThrow('The recorded equipment snapshot fields are inconsistent.');
+    expect(() =>
+      preserveSetEquipmentSnapshot(
+        {
+          ...existing,
+          equipmentLoadSnapshot: {
+            ...equipmentLoadSnapshot,
+            platePool: {
+              id: 'pool-1',
+              name: 'Olympic plates',
+              compatibilityKey: 'olympic_50mm',
+            },
+          },
+        },
+        45,
+        { allowLegacySnapshot: true },
+      ),
+    ).toThrow('The recorded equipment snapshot is unsupported or invalid.');
+    expect(() =>
+      preserveSetEquipmentSnapshot(
+        {
+          ...existing,
+          equipmentLoadSnapshot: {
+            ...equipmentLoadSnapshot,
+            loadType: 'PLATE_LOADED',
+          },
+          nominalResistanceKg: null,
+        },
+        45,
+        { allowLegacySnapshot: true },
+      ),
+    ).toThrow('The recorded equipment snapshot is unsupported or invalid.');
   });
 
   it('does not invent frozen choices for malformed snapshots', () => {

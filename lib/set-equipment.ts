@@ -78,7 +78,15 @@ const legacyMobileEquipmentLoadSnapshotSchema = z
       .strict()
       .nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if ((snapshot.loadType === 'PLATE_LOADED') === (snapshot.platePool !== null)) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['platePool'],
+      message: 'Plate-loaded snapshots require a plate pool, and other load types forbid one.',
+    });
+  });
 
 export function frozenSetLoadSnapshotVersion(
   equipmentLoadSnapshot: Prisma.JsonValue | null,
@@ -89,6 +97,7 @@ export function frozenSetLoadSnapshotVersion(
 }
 
 export function assertLegacySetEquipmentSnapshotConsistency(input: {
+  weight: number;
   selectedLoadKg: number | null;
   selectedLoadMultiplierSnapshot: number | null;
   nominalResistanceKg: number | null;
@@ -106,11 +115,15 @@ export function assertLegacySetEquipmentSnapshotConsistency(input: {
     snapshot.loadType === 'SELECTORIZED'
       ? round(snapshot.selectedLoadKg * snapshot.selectedLoadMultiplier)
       : null;
+  const platePoolMatchesLoadType =
+    (snapshot.loadType === 'PLATE_LOADED') === (snapshot.platePool !== null);
   if (
+    input.weight !== snapshot.selectedLoadKg ||
     input.selectedLoadKg !== snapshot.selectedLoadKg ||
     input.selectedLoadMultiplierSnapshot !== snapshot.selectedLoadMultiplier ||
     input.nominalResistanceKg !== snapshot.nominalResistanceKg ||
-    snapshot.nominalResistanceKg !== expectedNominalResistanceKg
+    snapshot.nominalResistanceKg !== expectedNominalResistanceKg ||
+    !platePoolMatchesLoadType
   ) {
     throw new ApiError(400, 'The recorded equipment snapshot fields are inconsistent.');
   }
@@ -118,6 +131,7 @@ export function assertLegacySetEquipmentSnapshotConsistency(input: {
 
 type StoredSetEquipmentSnapshot = Pick<
   Set,
+  | 'weight'
   | 'gymEquipmentId'
   | 'equipmentNameSnapshot'
   | 'selectedLoadKg'

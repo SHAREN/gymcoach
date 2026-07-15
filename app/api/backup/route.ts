@@ -674,6 +674,7 @@ const importBodySchema = z.object({
 function validateImportedLegacyEquipmentSnapshots(
   sessions: Array<{
     sets: Array<{
+      weight: number;
       selectedLoadKg?: number | null;
       selectedLoadMultiplier?: number | null;
       nominalResistanceKg?: number | null;
@@ -684,6 +685,7 @@ function validateImportedLegacyEquipmentSnapshots(
   for (const session of sessions) {
     for (const set of session.sets) {
       assertLegacySetEquipmentSnapshotConsistency({
+        weight: set.weight,
         selectedLoadKg: set.selectedLoadKg ?? null,
         selectedLoadMultiplierSnapshot: set.selectedLoadMultiplier ?? null,
         nominalResistanceKg: set.nominalResistanceKg ?? null,

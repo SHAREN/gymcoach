@@ -23,6 +23,7 @@ import {
   PUT as setImage,
 } from '@/app/api/gym-equipment/[id]/image/route';
 import { PATCH as updateExerciseWeights } from '@/app/api/gyms/[id]/weights/route';
+import { PATCH as updateInventoryMode } from '@/app/api/gyms/[id]/inventory/route';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -266,6 +267,38 @@ describe('gym equipment REST API', () => {
       }),
     ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
 
+    mockUserId.mockResolvedValue(user.id);
+    const legacyModeResponse = await updateInventoryMode(
+      request(`http://test.local/api/gyms/${gym.id}/inventory`, 'PATCH', undefined, {
+        inventoryMode: 'LEGACY',
+      }),
+      params(gym.id),
+    );
+    expect(legacyModeResponse.status).toBe(200);
+
+    await db.gymExerciseConfig.delete({
+      where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+    });
+    const rebuiltEquipmentFirstResponse = await updateInventoryMode(
+      request(`http://test.local/api/gyms/${gym.id}/inventory`, 'PATCH', undefined, {
+        inventoryMode: 'EQUIPMENT_FIRST',
+      }),
+      params(gym.id),
+    );
+    expect(rebuiltEquipmentFirstResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
+    const legacyAgainResponse = await updateInventoryMode(
+      request(`http://test.local/api/gyms/${gym.id}/inventory`, 'PATCH', undefined, {
+        inventoryMode: 'LEGACY',
+      }),
+      params(gym.id),
+    );
+    expect(legacyAgainResponse.status).toBe(200);
+
     expect(
       (
         await deleteEquipment(
@@ -282,6 +315,26 @@ describe('gym equipment REST API', () => {
         where: { equipmentId: unmirroredId, exerciseId: exercise.id },
       }),
     ).toBe(1);
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        isAvailable: true,
+        isEquipmentMirror: true,
+      },
+    });
+    const equipmentFirstResponse = await updateInventoryMode(
+      request(`http://test.local/api/gyms/${gym.id}/inventory`, 'PATCH', undefined, {
+        inventoryMode: 'EQUIPMENT_FIRST',
+      }),
+      params(gym.id),
+    );
+    expect(equipmentFirstResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUnique({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toBeNull();
 
     await deleteEquipment(
       request(`http://test.local/api/gym-equipment/${firstId}`, 'DELETE', token),

@@ -344,6 +344,7 @@ model SessionExercise {
   addedAt    DateTime @default(now())
   // Stable per-session insertion order. addedAt remains the primary display
   // order; ordinal resolves equal timestamps across backup/import ID changes.
+  // The insert trigger compacts a session before this PostgreSQL Int can overflow.
   ordinal    Int
 
   @@id([sessionId, exerciseId])
