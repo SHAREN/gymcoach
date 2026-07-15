@@ -1,30 +1,93 @@
 <div class="watch-page">
-  <div class="status-ring status-{{ connectionTone }}">
-    <text class="status-label">{{ connectionLabel }}</text>
+  <div if="{{ showHome }}" class="screen home-screen">
+    <div class="top-row">
+      <div class="connection-dot status-{{ connectionTone }}"></div>
+      <text class="connection-text">{{ connectionLabel }}</text>
+      <button class="language-button" onclick="toggleLanguage">{{ languageButton }}</button>
+    </div>
+
+    <text class="app-title">GymCoach</text>
+    <text class="screen-title">{{ activeWorkoutLabel }}</text>
+
+    <div if="{{ hasWorkout }}" class="workout-card" onclick="openWorkout">
+      <text class="exercise-name">{{ exerciseName }}</text>
+      <text class="card-detail">{{ setProgress }}</text>
+      <text class="card-detail">{{ durationLabel }}: {{ elapsed }}</text>
+      <button class="open-button" onclick="openWorkout">{{ openLabel }}</button>
+    </div>
+
+    <div if="{{ noWorkout }}" class="empty-card">
+      <text class="empty-text">{{ noWorkoutLabel }}</text>
+      <text class="card-detail">{{ waitingLabel }}</text>
+    </div>
+
+    <div class="home-actions">
+      <button class="small-button" onclick="sendPing">{{ pingLabel }}</button>
+      <button class="small-button secondary" onclick="requestState">{{ syncLabel }}</button>
+    </div>
+    <text class="footer-status">{{ syncStatusLabel }} · {{ pendingLabel }} {{ pendingCount }}</text>
   </div>
 
-  <text class="app-title">GymCoach</text>
-  <text class="screen-title">Phone connection</text>
+  <div if="{{ showWorkout }}" class="screen workout-screen">
+    <div class="top-row">
+      <button class="back-button" onclick="goHome">‹</button>
+      <text class="compact-title">{{ activeWorkoutLabel }}</text>
+      <text class="elapsed">{{ elapsed }}</text>
+    </div>
 
-  <div class="metric-row">
-    <text class="metric-label">Sync</text>
-    <text class="metric-value">{{ syncLabel }}</text>
+    <text class="exercise-name large">{{ exerciseName }}</text>
+    <text class="set-progress">{{ setLabel }} {{ setProgress }}</text>
+    <div class="target-card">
+      <text class="target-label">{{ targetLabel }}</text>
+      <text class="target-value">{{ targetSummary }}</text>
+    </div>
+
+    <div class="exercise-nav">
+      <button class="nav-button" onclick="previousExercise">‹ {{ previousLabel }}</button>
+      <button class="nav-button" onclick="nextExercise">{{ nextLabel }} ›</button>
+    </div>
+
+    <button class="wide-button secondary" onclick="openSetEntry">{{ editSetLabel }}</button>
+    <button if="{{ showStartSet }}" class="wide-button" onclick="startSet">{{ startSetLabel }}</button>
+    <button if="{{ showCompleteSet }}" class="wide-button danger" onclick="completeSet">{{ completeSetLabel }}</button>
+    <text if="{{ showRemoteActiveSet }}" class="warning-text">{{ activeSetOnPhoneLabel }}</text>
   </div>
 
-  <div class="metric-row">
-    <text class="metric-label">Protocol</text>
-    <text class="metric-value">{{ protocolVersion }}</text>
-  </div>
+  <div if="{{ showSetEntry }}" class="screen set-screen">
+    <div class="top-row">
+      <button class="back-button" onclick="closeSetEntry">‹</button>
+      <text class="compact-title">{{ editSetLabel }}</text>
+      <text class="elapsed">{{ setProgress }}</text>
+    </div>
 
-  <div class="metric-row">
-    <text class="metric-label">Pending</text>
-    <text class="metric-value">{{ pendingCount }}</text>
-  </div>
+    <text class="exercise-name">{{ exerciseName }}</text>
 
-  <text class="last-result">{{ lastResult }}</text>
+    <div class="number-row">
+      <text class="number-label">{{ weightLabel }}</text>
+      <button class="step-button" onclick="weightDown">−</button>
+      <text class="number-value">{{ draftWeight }}</text>
+      <button class="step-button" onclick="weightUp">+</button>
+    </div>
 
-  <div class="action-row">
-    <button class="action-button" onclick="sendPing">Ping</button>
-    <button class="action-button secondary" onclick="requestState">Sync</button>
+    <div class="number-row">
+      <text class="number-label">{{ repsLabel }}</text>
+      <button class="step-button" onclick="repsDown">−</button>
+      <text class="number-value">{{ draftReps }}</text>
+      <button class="step-button" onclick="repsUp">+</button>
+    </div>
+
+    <div class="number-row">
+      <text class="number-label">{{ rirLabel }}</text>
+      <button class="step-button" onclick="rirDown">−</button>
+      <text class="number-value">{{ draftRir }}</text>
+      <button class="step-button" onclick="rirUp">+</button>
+    </div>
+
+    <div if="{{ showLastSetActions }}" class="last-set-actions">
+      <button class="last-set-button" onclick="correctLastSet">{{ correctLastSetLabel }}</button>
+      <button class="last-set-button delete" onclick="deleteLastSet">{{ deleteLastSetLabel }}</button>
+    </div>
+
+    <button class="wide-button" onclick="closeSetEntry">{{ backLabel }}</button>
   </div>
 </div>

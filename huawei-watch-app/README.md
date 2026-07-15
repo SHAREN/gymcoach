@@ -1,6 +1,6 @@
 # GymCoach Huawei Watch companion
 
-This directory contains the Stage 2 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
+This directory contains the Stage 3 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
 
 ## Verified target
 
@@ -14,7 +14,7 @@ This directory contains the Stage 2 source project for the Huawei Watch GT 4 com
 
 The normative Stage 2 control-plane envelope is `../shared-contracts/schemas/v1/control-message.schema.json`. It is separate from workout events and uses only `PING`, `PONG`, `SYNC_REQUESTED`, and `SYNC_SNAPSHOT`.
 
-## Current Stage 2 scope
+## Current Stage 3 scope
 
 Implemented now:
 
@@ -24,11 +24,18 @@ Implemented now:
 - A debug-only in-process transport under `src/debug`.
 - A storage abstraction that can be backed by the official Lite Wearable storage API later.
 - Durable outbox and inbound-message receipt behavior at the abstraction boundary.
-- Node tests for ping/pong, reconnect and state request, message-size limits, persistence, and duplicate-message idempotency.
+- Strict dependency-free validation and serialization for `WatchEvent`, `SyncSnapshot`, `WorkoutSession`, `ExerciseSession`, and `SetRecord`.
+- A persisted active workout projection with exercises, active exercise and set, revision, absolute `startedAt`, and completed sets.
+- Standalone snapshot application and Stage 3 workout-event reducers.
+- Durable watch-originated exercise and set events that replay after reconnect.
+- A round-screen home card, active-workout screen, touch-first set entry, and Russian or English labels.
+- Correction and deletion of the last completed set for the active exercise.
+- Direct-message delivery through 1,024 bytes with file fallback below 4,000,000 bytes.
+- Node tests for connection, snapshots, exercise changes, sets, restart recovery, deduplication, strict DTOs, and transport limits.
 
 Not implemented in Stage 2:
 
-- Workout, set, rest, or sensor screens.
+- Rest timer and rest screens.
 - Sensor APIs or health permissions.
 - Production Wear Engine calls.
 - HAP signing or installation.
@@ -46,14 +53,19 @@ huawei-watch-app/
       index.css
   src/core/
     companion.js
+    contracts.js
+    i18n.js
     messages.js
     storage.js
     transport.js
+    workout-state.js
   src/debug/
     debug-transport.js
   test/
     companion.test.mjs
+    contracts.test.mjs
     messages.test.mjs
+    workout.test.mjs
   scripts/
     check-format.mjs
 ```
@@ -78,7 +90,7 @@ Until those steps are complete, this directory is a real source project with exe
 
 ## Runtime boundaries
 
-The page entry imports only `src/core`. It uses `createUnavailableTransport()` and a volatile storage backend until official platform adapters are supplied. This fallback reports that transport is unavailable. It does not simulate a phone, generate pong messages, or claim persistence.
+The page entry imports only `src/core`. It uses `createUnavailableTransport()` and a volatile storage backend until official platform adapters are supplied. This fallback reports that transport is unavailable. It does not simulate a phone, generate pong messages, or claim device persistence. Persistence behavior is verified against the same repository abstraction with a retained backend in Node tests.
 
 The debug transport is isolated under `src/debug` and is imported only by Node tests. A future DevEco debug product may inject it for Previewer work. Production code must use an official Wear Engine adapter and official Lite storage implementation.
 
@@ -94,15 +106,19 @@ npm run check
 
 No npm dependencies are installed or downloaded. Tests use the Node built-in test runner.
 
-## Expected connection check
+## Implemented Stage 3 flow
 
 With a future official transport adapter, the page flow is:
 
-1. Start disconnected and load persisted control state.
-2. Connect through the transport adapter.
-3. Send `SYNC_REQUESTED` after every successful connection or reconnection.
-4. Send `PING` when the user presses the ping button.
-5. Accept one matching `PONG`, update the last-pong timestamp, and remove the pending ping.
-6. Ignore a redelivered message ID after its receipt has been persisted.
+1. Start disconnected and restore persisted control and active-workout state.
+2. Connect through the transport adapter and send or replay `SYNC_REQUESTED`.
+3. Accept a strict standalone `SyncSnapshot` through message or file delivery.
+4. Render the active workout and current exercise on the 466 x 466 page.
+5. Apply phone exercise and set events idempotently by UUID `eventId`.
+6. Emit watch exercise changes and set events with opaque domain IDs and durable outbox storage.
+7. Reuse a stable `setId` from `SET_STARTED` through `SET_COMPLETED`.
+8. Preserve explicit weight, repetitions, and RIR after strict range validation.
+9. Replay unacknowledged watch events after reconnect or application restart.
+10. Keep raw sensor and rest behavior out of Stage 3.
 
 See `../docs/huawei-watch-gt4-capabilities.md` and `../docs/huawei-development-environment.md` for official capability and environment evidence.

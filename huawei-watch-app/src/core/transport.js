@@ -6,7 +6,15 @@ export const ConnectionState = Object.freeze({
 });
 
 export function assertTransport(transport) {
-  const required = ['connect', 'disconnect', 'send', 'setConnectionHandler', 'setMessageHandler'];
+  const required = [
+    'connect',
+    'disconnect',
+    'send',
+    'sendFile',
+    'setConnectionHandler',
+    'setMessageHandler',
+    'setFileHandler',
+  ];
   for (const method of required) {
     if (typeof transport[method] !== 'function') {
       throw new Error(`Transport is missing ${method}().`);
@@ -28,9 +36,13 @@ export function createUnavailableTransport(reason) {
     async send() {
       throw new Error(reason);
     },
+    async sendFile() {
+      throw new Error(reason);
+    },
     setConnectionHandler(handler) {
       connectionHandler = handler;
     },
     setMessageHandler() {},
+    setFileHandler() {},
   };
 }

@@ -1,103 +1,139 @@
 .watch-page {
   width: 466px;
   height: 466px;
-  padding: 36px 54px 30px;
-  flex-direction: column;
-  align-items: center;
   background-color: #080b10;
   color: #f7f9fc;
 }
 
-.status-ring {
-  width: 74px;
-  height: 74px;
-  border-radius: 37px;
-  justify-content: center;
+.screen {
+  width: 466px;
+  height: 466px;
+  padding: 30px 48px 28px;
+  flex-direction: column;
   align-items: center;
-  border-width: 4px;
-  border-color: #5d6878;
-  background-color: #151a22;
+}
+
+.home-screen {
+  padding-top: 34px;
+}
+
+.top-row {
+  width: 350px;
+  height: 42px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.connection-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background-color: #5d6878;
 }
 
 .status-connected {
-  border-color: #45d483;
+  background-color: #45d483;
 }
 
 .status-connecting {
-  border-color: #f3b94f;
+  background-color: #f3b94f;
 }
 
 .status-error {
-  border-color: #ff626f;
+  background-color: #ff626f;
 }
 
-.status-label {
-  font-size: 13px;
-  text-align: center;
-  color: #f7f9fc;
+.connection-text {
+  width: 220px;
+  font-size: 15px;
+  color: #aab3c2;
+}
+
+.language-button {
+  width: 54px;
+  height: 34px;
+  border-radius: 17px;
+  font-size: 14px;
+  color: #ffffff;
+  background-color: #29313e;
 }
 
 .app-title {
-  margin-top: 12px;
-  font-size: 28px;
+  margin-top: 6px;
+  font-size: 30px;
   font-weight: bold;
   color: #ffffff;
 }
 
 .screen-title {
   margin-top: 2px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   font-size: 18px;
   color: #aab3c2;
 }
 
-.metric-row {
-  width: 330px;
-  height: 38px;
-  padding-left: 14px;
-  padding-right: 14px;
-  flex-direction: row;
-  justify-content: space-between;
+.workout-card,
+.empty-card {
+  width: 340px;
+  height: 190px;
+  padding: 20px;
+  flex-direction: column;
   align-items: center;
-  border-radius: 12px;
+  border-radius: 28px;
   background-color: #151a22;
-  margin-bottom: 7px;
 }
 
-.metric-label {
+.exercise-name {
+  width: 320px;
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  color: #ffffff;
+}
+
+.large {
+  min-height: 62px;
+  font-size: 28px;
+}
+
+.card-detail {
+  margin-top: 8px;
   font-size: 16px;
   color: #aab3c2;
 }
 
-.metric-value {
-  font-size: 16px;
+.open-button {
+  width: 170px;
+  height: 48px;
+  margin-top: 14px;
+  border-radius: 24px;
+  font-size: 17px;
+  font-weight: bold;
+  color: #07110b;
+  background-color: #45d483;
+}
+
+.empty-text {
+  margin-top: 38px;
+  font-size: 22px;
   font-weight: bold;
   color: #ffffff;
 }
 
-.last-result {
-  width: 330px;
-  height: 34px;
-  margin-top: 3px;
-  font-size: 14px;
-  text-align: center;
-  color: #aab3c2;
-}
-
-.action-row {
-  width: 330px;
+.home-actions {
+  width: 340px;
   height: 58px;
+  margin-top: 12px;
   flex-direction: row;
   justify-content: space-between;
-  align-items: center;
 }
 
-.action-button {
-  width: 156px;
-  height: 52px;
-  border-radius: 26px;
-  font-size: 18px;
-  font-weight: bold;
+.small-button {
+  width: 164px;
+  height: 50px;
+  border-radius: 25px;
+  font-size: 16px;
   color: #07110b;
   background-color: #45d483;
 }
@@ -105,4 +141,159 @@
 .secondary {
   color: #f7f9fc;
   background-color: #29313e;
+}
+
+.footer-status {
+  width: 340px;
+  font-size: 13px;
+  text-align: center;
+  color: #7f8a9a;
+}
+
+.back-button {
+  width: 44px;
+  height: 38px;
+  border-radius: 19px;
+  font-size: 26px;
+  color: #ffffff;
+  background-color: #29313e;
+}
+
+.compact-title {
+  width: 220px;
+  font-size: 17px;
+  text-align: center;
+  color: #aab3c2;
+}
+
+.elapsed {
+  width: 70px;
+  font-size: 14px;
+  text-align: right;
+  color: #aab3c2;
+}
+
+.set-progress {
+  margin-top: 4px;
+  font-size: 20px;
+  color: #45d483;
+}
+
+.target-card {
+  width: 330px;
+  height: 72px;
+  margin-top: 10px;
+  padding: 10px 18px;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 18px;
+  background-color: #151a22;
+}
+
+.target-label {
+  font-size: 14px;
+  color: #7f8a9a;
+}
+
+.target-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.exercise-nav {
+  width: 330px;
+  height: 50px;
+  margin-top: 10px;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.nav-button {
+  width: 158px;
+  height: 44px;
+  border-radius: 22px;
+  font-size: 14px;
+  color: #ffffff;
+  background-color: #222936;
+}
+
+.wide-button {
+  width: 330px;
+  height: 48px;
+  margin-top: 7px;
+  border-radius: 24px;
+  font-size: 17px;
+  font-weight: bold;
+  color: #07110b;
+  background-color: #45d483;
+}
+
+.danger {
+  color: #ffffff;
+  background-color: #d64d5d;
+}
+
+.warning-text {
+  width: 330px;
+  margin-top: 9px;
+  font-size: 14px;
+  text-align: center;
+  color: #f3b94f;
+}
+
+.number-row {
+  width: 340px;
+  height: 58px;
+  margin-top: 5px;
+  padding: 5px 12px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 20px;
+  background-color: #151a22;
+}
+
+.number-label {
+  width: 105px;
+  font-size: 17px;
+  color: #aab3c2;
+}
+
+.number-value {
+  width: 70px;
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  color: #ffffff;
+}
+
+.step-button {
+  width: 46px;
+  height: 46px;
+  border-radius: 23px;
+  font-size: 24px;
+  color: #ffffff;
+  background-color: #29313e;
+}
+
+.last-set-actions {
+  width: 340px;
+  height: 42px;
+  margin-top: 7px;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.last-set-button {
+  width: 164px;
+  height: 40px;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #ffffff;
+  background-color: #29313e;
+}
+
+.delete {
+  background-color: #75343c;
 }
