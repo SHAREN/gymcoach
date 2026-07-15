@@ -173,7 +173,7 @@ class WatchProtocolCodec(
             ignoreUnknownKeys = false
             isLenient = false
             coerceInputValues = false
-            explicitNulls = false
+            explicitNulls = true
             encodeDefaults = true
         }
     }

@@ -10,11 +10,13 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
+import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
+import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
@@ -336,8 +338,14 @@ class GymCoachRepository(
     }
 
     suspend fun startWorkout(workout: WorkoutDto, gymId: String?): String {
-        dao.findOpenSessionForWorkout(workout.id)?.let { return it.id }
-        val now = Instant.now().toString()
+        dao.findOpenSessionForWorkout(workout.id)?.let { existing ->
+            if (dao.getActiveWorkoutRuntime(existing.id) == null) {
+                dao.saveActiveWorkoutRuntime(newActiveRuntime(existing, workout, System.currentTimeMillis()))
+            }
+            return existing.id
+        }
+        val nowInstant = Instant.now()
+        val now = nowInstant.toString()
         val session = LocalSessionEntity(
             id = entityId("session"),
             workoutId = workout.id,
@@ -353,13 +361,95 @@ class GymCoachRepository(
                 startedAt = session.startedAt,
             ),
         )
-        dao.saveSessionAndOperation(session, outbox(operation))
+        dao.saveSessionOperationAndRuntime(
+            session = session,
+            operation = outbox(operation),
+            runtime = newActiveRuntime(session, workout, nowInstant.toEpochMilli()),
+        )
         scheduleSyncNow()
         return session.id
     }
 
     fun observeSession(sessionId: String): Flow<LocalSessionEntity?> = dao.observeSession(sessionId)
     fun observeSets(sessionId: String): Flow<List<LocalSetEntity>> = dao.observeSets(sessionId)
+    fun observeActiveWorkoutRuntime(sessionId: String): Flow<ActiveWorkoutRuntimeEntity?> =
+        dao.observeActiveWorkoutRuntime(sessionId)
+
+    suspend fun cachedBootstrapSnapshot(): BootstrapResponse? = dao.getBootstrap()?.let { cached ->
+        runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }.getOrNull()
+    }
+
+    suspend fun localSession(sessionId: String): LocalSessionEntity? = dao.getSession(sessionId)
+
+    suspend fun localSets(sessionId: String): List<LocalSetEntity> = dao.getAllSets(sessionId)
+
+    suspend fun localSet(setId: String): LocalSetEntity? = dao.getSet(setId)
+
+    suspend fun activeWorkoutRuntime(sessionId: String): ActiveWorkoutRuntimeEntity? =
+        dao.getActiveWorkoutRuntime(sessionId)
+
+    suspend fun latestActiveWorkoutRuntime(): ActiveWorkoutRuntimeEntity? =
+        dao.getLatestActiveWorkoutRuntime()
+
+    suspend fun hasProcessedWatchEvent(eventId: String): Boolean =
+        dao.hasProcessedWatchEvent(eventId) > 0
+
+    suspend fun saveActiveWorkoutRuntime(runtime: ActiveWorkoutRuntimeEntity) {
+        dao.saveActiveWorkoutRuntime(runtime)
+    }
+
+    suspend fun updateActiveExercise(
+        sessionId: String,
+        exerciseId: String,
+        updatedBy: String = "PHONE",
+        updatedAtEpochMs: Long = System.currentTimeMillis(),
+    ): ActiveWorkoutRuntimeEntity? {
+        val current = dao.getActiveWorkoutRuntime(sessionId) ?: return null
+        if (current.activeExerciseId == exerciseId && current.updatedBy == updatedBy) return current
+        return current.copy(
+            activeExerciseId = exerciseId,
+            activeSetId = null,
+            setStartedAtEpochMs = null,
+            restStartedAtEpochMs = null,
+            restEndsAtEpochMs = null,
+            restDurationSeconds = null,
+            revision = current.revision + 1,
+            updatedAtEpochMs = updatedAtEpochMs,
+            updatedBy = updatedBy,
+        ).also { dao.saveActiveWorkoutRuntime(it) }
+    }
+
+    suspend fun applyWatchRuntimeEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean = dao.applyWatchRuntimeEvent(processed, runtime)
+
+    suspend fun applyWatchSetEvent(
+        processed: WatchProcessedEventEntity,
+        set: LocalSetEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        val applied = dao.applyWatchSetEvent(processed, set, outbox(upsertOperation(set)), runtime)
+        if (applied) scheduleSyncNow()
+        return applied
+    }
+
+    suspend fun applyWatchDeleteSetEvent(
+        processed: WatchProcessedEventEntity,
+        setId: String,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        val applied = dao.applyWatchDeleteSetEvent(
+            processed = processed,
+            setId = setId,
+            operation = outbox(DeleteSetOperation(operationId(), setId)),
+            runtime = runtime,
+        )
+        if (applied) scheduleSyncNow()
+        return applied
+    }
+
+    suspend fun queuedSyncOperations(): List<SyncOutboxEntity> = dao.queuedOperations()
 
     suspend fun updateTargetSets(programExerciseId: String, targetSets: Int) {
         require(targetSets in 1..20) { "Target sets must be between 1 and 20." }
@@ -719,6 +809,19 @@ class GymCoachRepository(
         operationId = operation.operationId,
         type = operation::class.simpleName.orEmpty(),
         payloadJson = api.json.encodeToString<SyncOperation>(operation),
+    )
+
+    private fun newActiveRuntime(
+        session: LocalSessionEntity,
+        workout: WorkoutDto,
+        updatedAtEpochMs: Long,
+    ) = ActiveWorkoutRuntimeEntity(
+        sessionId = session.id,
+        workoutId = workout.id,
+        activeExerciseId = workout.exercises.minByOrNull { it.order }?.exerciseId,
+        revision = 1,
+        updatedAtEpochMs = updatedAtEpochMs,
+        updatedBy = "PHONE",
     )
 
     private fun entityId(type: String) = "mob_${type}_${UUID.randomUUID().toString().replace("-", "")}"

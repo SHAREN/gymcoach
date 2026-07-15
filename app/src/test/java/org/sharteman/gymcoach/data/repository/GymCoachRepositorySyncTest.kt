@@ -12,11 +12,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
+import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
+import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
@@ -50,6 +52,24 @@ import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 
 class GymCoachRepositorySyncTest {
+    @Test
+    fun startWorkoutPersistsActiveRuntimeWithoutASecondSessionModel() = runTest {
+        val fixture = fixture()
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+
+        val session = requireNotNull(fixture.dao.getSession(sessionId))
+        val runtime = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(session.id, runtime.sessionId)
+        assertEquals(workout.id, runtime.workoutId)
+        assertEquals(workout.exercises.single().exerciseId, runtime.activeExerciseId)
+        assertEquals(1L, runtime.revision)
+        assertEquals("PHONE", runtime.updatedBy)
+        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertEquals(1, fixture.syncCounter.count)
+    }
+
     @Test
     fun refreshProgressSavesTheLatestSnapshotInTheOfflineCache() = runTest {
         val fixture = fixture()
@@ -1118,6 +1138,8 @@ class GymCoachRepositorySyncTest {
         private val progressFlow = MutableStateFlow<ProgressCacheEntity?>(null)
         private val sessions = linkedMapOf<String, LocalSessionEntity>()
         private val sets = linkedMapOf<String, LocalSetEntity>()
+        private val activeRuntimes = linkedMapOf<String, ActiveWorkoutRuntimeEntity>()
+        private val processedWatchEvents = mutableSetOf<String>()
         private val outbox = mutableListOf<SyncOutboxEntity>()
         private val openSessionsFlow = MutableStateFlow<List<LocalSessionEntity>>(emptyList())
         private val pendingCountFlow = MutableStateFlow(0)
@@ -1149,6 +1171,7 @@ class GymCoachRepositorySyncTest {
         override suspend fun deleteSessionLocal(sessionId: String) {
             sessions.remove(sessionId)
             sets.entries.removeIf { it.value.sessionId == sessionId }
+            activeRuntimes.remove(sessionId)
             publishSessions()
         }
         override fun observeSets(sessionId: String): Flow<List<LocalSetEntity>> = MutableStateFlow(
@@ -1168,6 +1191,20 @@ class GymCoachRepositorySyncTest {
         override suspend fun deleteSetLocal(setId: String) {
             sets.remove(setId)
         }
+        override fun observeActiveWorkoutRuntime(sessionId: String): Flow<ActiveWorkoutRuntimeEntity?> =
+            MutableStateFlow(activeRuntimes[sessionId])
+        override suspend fun getActiveWorkoutRuntime(sessionId: String) = activeRuntimes[sessionId]
+        override suspend fun getLatestActiveWorkoutRuntime() = activeRuntimes.values.maxByOrNull { it.updatedAtEpochMs }
+        override suspend fun saveActiveWorkoutRuntime(entity: ActiveWorkoutRuntimeEntity) {
+            activeRuntimes[entity.sessionId] = entity
+        }
+        override suspend fun deleteActiveWorkoutRuntime(sessionId: String) {
+            activeRuntimes.remove(sessionId)
+        }
+        override suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long =
+            if (processedWatchEvents.add(entity.eventId)) processedWatchEvents.size.toLong() else -1L
+        override suspend fun hasProcessedWatchEvent(eventId: String) =
+            if (eventId in processedWatchEvents) 1 else 0
         override suspend fun pendingOperations(limit: Int) = outbox
             .filter { it.status == "PENDING" || it.status == "FAILED" }
             .sortedBy { it.sequence }
@@ -1213,11 +1250,18 @@ class GymCoachRepositorySyncTest {
         override suspend fun clearSessions() {
             sessions.clear()
             sets.clear()
+            activeRuntimes.clear()
             publishSessions()
         }
         override suspend fun clearOutbox() {
             outbox.clear()
             publishPending()
+        }
+        override suspend fun clearActiveWorkoutRuntime() {
+            activeRuntimes.clear()
+        }
+        override suspend fun clearProcessedWatchEvents() {
+            processedWatchEvents.clear()
         }
 
         suspend fun cachedTargetSets(): Int? = getBootstrap()?.let { cached ->

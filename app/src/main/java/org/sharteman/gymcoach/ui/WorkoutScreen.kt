@@ -144,6 +144,7 @@ fun WorkoutScreen(
     }
     val session by repository.observeSession(sessionId).collectAsState(initial = null)
     val allSets by repository.observeSets(sessionId).collectAsState(initial = emptyList())
+    val activeRuntime by repository.observeActiveWorkoutRuntime(sessionId).collectAsState(initial = null)
     val progressSnapshot by repository.progress.collectAsState(initial = null)
     val workout = remember(bootstrap, session?.workoutId) {
         bootstrap?.activeProgram?.workouts?.firstOrNull { it.id == session?.workoutId }
@@ -189,6 +190,19 @@ fun WorkoutScreen(
 
     val exercises = workout.exercises
     if (selectedIndex !in exercises.indices) selectedIndex = 0
+    fun selectExercise(index: Int, persist: Boolean = true) {
+        val selected = exercises.getOrNull(index) ?: return
+        selectedIndex = index
+        if (persist) {
+            scope.launch {
+                repository.updateActiveExercise(sessionId, selected.exerciseId)
+            }
+        }
+    }
+    LaunchedEffect(activeRuntime?.activeExerciseId, exercises) {
+        val runtimeIndex = exercises.indexOfFirst { it.exerciseId == activeRuntime?.activeExerciseId }
+        if (runtimeIndex >= 0 && runtimeIndex != selectedIndex) selectExercise(runtimeIndex, persist = false)
+    }
     val current = exercises.getOrNull(selectedIndex) ?: return
     val returnRecommendations = bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
     val returnRecommendation = returnRecommendations[current.id]
@@ -310,7 +324,9 @@ fun WorkoutScreen(
                 } else {
                     (totalCompletedRows.toFloat() / totalPlannedRows).coerceIn(0f, 1f)
                 },
-                onSelect = { selectedIndex = it },
+                onSelect = { index ->
+                    selectExercise(index)
+                },
                 onOpen = { detailsExercise = it },
                 onOpenControls = { controlsDialog = true },
             )
@@ -396,7 +412,7 @@ fun WorkoutScreen(
                                     val next = exercises.indices.firstOrNull { index ->
                                         index != selectedIndex && exercises[index].supersetGroup == group
                                     }
-                                    if (next != null) selectedIndex = next
+                                    if (next != null) selectExercise(next)
                                 }
                             }
                         }
@@ -434,8 +450,8 @@ fun WorkoutScreen(
                     canGoNext = selectedIndex < exercises.lastIndex,
                     navigationEnabled = restRemaining == 0,
                     online = online,
-                    onPrevious = { selectedIndex -= 1 },
-                    onNext = { selectedIndex += 1 },
+                    onPrevious = { selectExercise(selectedIndex - 1) },
+                    onNext = { selectExercise(selectedIndex + 1) },
                     onAskCoach = onAskCoach,
                     onFinish = { showSummary = true },
                 )

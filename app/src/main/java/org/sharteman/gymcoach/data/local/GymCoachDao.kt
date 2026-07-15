@@ -1,6 +1,8 @@
 package org.sharteman.gymcoach.data.local
 
 import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
@@ -68,6 +70,27 @@ interface GymCoachDao {
     @Query("DELETE FROM local_sets WHERE id = :setId")
     suspend fun deleteSetLocal(setId: String)
 
+    @Query("SELECT * FROM active_workout_runtime WHERE sessionId = :sessionId")
+    fun observeActiveWorkoutRuntime(sessionId: String): Flow<ActiveWorkoutRuntimeEntity?>
+
+    @Query("SELECT * FROM active_workout_runtime WHERE sessionId = :sessionId")
+    suspend fun getActiveWorkoutRuntime(sessionId: String): ActiveWorkoutRuntimeEntity?
+
+    @Query("SELECT * FROM active_workout_runtime ORDER BY updatedAtEpochMs DESC LIMIT 1")
+    suspend fun getLatestActiveWorkoutRuntime(): ActiveWorkoutRuntimeEntity?
+
+    @Upsert
+    suspend fun saveActiveWorkoutRuntime(entity: ActiveWorkoutRuntimeEntity)
+
+    @Query("DELETE FROM active_workout_runtime WHERE sessionId = :sessionId")
+    suspend fun deleteActiveWorkoutRuntime(sessionId: String)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long
+
+    @Query("SELECT COUNT(*) FROM watch_processed_events WHERE eventId = :eventId")
+    suspend fun hasProcessedWatchEvent(eventId: String): Int
+
     @Query("SELECT * FROM sync_outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY sequence LIMIT :limit")
     suspend fun pendingOperations(limit: Int = 500): List<SyncOutboxEntity>
 
@@ -113,9 +136,17 @@ interface GymCoachDao {
     @Query("DELETE FROM sync_outbox")
     suspend fun clearOutbox()
 
+    @Query("DELETE FROM active_workout_runtime")
+    suspend fun clearActiveWorkoutRuntime()
+
+    @Query("DELETE FROM watch_processed_events")
+    suspend fun clearProcessedWatchEvents()
+
     @Transaction
     suspend fun clearAccountData() {
         clearOutbox()
+        clearActiveWorkoutRuntime()
+        clearProcessedWatchEvents()
         clearSessions()
         clearBootstrap()
         clearProgress()
@@ -134,6 +165,17 @@ interface GymCoachDao {
     }
 
     @Transaction
+    suspend fun saveSessionOperationAndRuntime(
+        session: LocalSessionEntity,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ) {
+        saveSession(session)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+    }
+
+    @Transaction
     suspend fun saveFinishedSessionOperationAndBootstrap(
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
@@ -141,6 +183,7 @@ interface GymCoachDao {
     ) {
         saveSession(session)
         enqueue(operation)
+        deleteActiveWorkoutRuntime(session.id)
         bootstrap?.let { saveBootstrap(it) }
     }
 
@@ -166,6 +209,44 @@ interface GymCoachDao {
     suspend fun deleteSetAndOperation(setId: String, operation: SyncOutboxEntity) {
         markSetDeleted(setId)
         enqueue(operation)
+    }
+
+    @Transaction
+    suspend fun applyWatchRuntimeEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        saveActiveWorkoutRuntime(runtime)
+        return true
+    }
+
+    @Transaction
+    suspend fun applyWatchSetEvent(
+        processed: WatchProcessedEventEntity,
+        set: LocalSetEntity,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        saveSet(set)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+        return true
+    }
+
+    @Transaction
+    suspend fun applyWatchDeleteSetEvent(
+        processed: WatchProcessedEventEntity,
+        setId: String,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        markSetDeleted(setId)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+        return true
     }
 
     @Transaction

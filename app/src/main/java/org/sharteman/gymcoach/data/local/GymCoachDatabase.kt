@@ -13,11 +13,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ProgressCacheEntity::class,
         LocalSessionEntity::class,
         LocalSetEntity::class,
+        ActiveWorkoutRuntimeEntity::class,
+        WatchProcessedEventEntity::class,
         SyncOutboxEntity::class,
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -32,7 +34,9 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 context.applicationContext,
                 GymCoachDatabase::class.java,
                 "gymcoach-android.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .build()
+                .also { instance = it }
         }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -108,6 +112,58 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_offline_mutation_outbox_operationId " +
                         "ON offline_mutation_outbox(operationId)",
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN exerciseSessionId TEXT")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN startedAt TEXT")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN source TEXT")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN watchRevision INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS active_workout_runtime (" +
+                        "sessionId TEXT NOT NULL, " +
+                        "workoutId TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, " +
+                        "activeExerciseId TEXT, " +
+                        "activeSetId TEXT, " +
+                        "setStartedAtEpochMs INTEGER, " +
+                        "pausedAtEpochMs INTEGER, " +
+                        "restStartedAtEpochMs INTEGER, " +
+                        "restEndsAtEpochMs INTEGER, " +
+                        "restDurationSeconds INTEGER, " +
+                        "revision INTEGER NOT NULL, " +
+                        "updatedAtEpochMs INTEGER NOT NULL, " +
+                        "updatedBy TEXT NOT NULL, " +
+                        "PRIMARY KEY(sessionId), " +
+                        "FOREIGN KEY(sessionId) REFERENCES local_sessions(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_active_workout_runtime_workoutId " +
+                        "ON active_workout_runtime(workoutId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_active_workout_runtime_updatedAtEpochMs " +
+                        "ON active_workout_runtime(updatedAtEpochMs)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_processed_events (" +
+                        "eventId TEXT NOT NULL, " +
+                        "sessionId TEXT NOT NULL, " +
+                        "revision INTEGER NOT NULL, " +
+                        "processedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(eventId))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_processed_events_sessionId " +
+                        "ON watch_processed_events(sessionId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_processed_events_processedAtEpochMs " +
+                        "ON watch_processed_events(processedAtEpochMs)",
                 )
             }
         }
