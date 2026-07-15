@@ -132,6 +132,7 @@ data class GymEquipmentDto(
     val id: String,
     val gymId: String,
     val name: String,
+    val snapshotRevisionId: String? = null,
     val equipmentType: String = "OTHER",
     val description: String? = null,
     val manufacturer: String? = null,
@@ -301,6 +302,45 @@ data class MobileSessionPayload(
     val startedAt: String,
 )
 
+@Serializable
+data class MobileFrozenPlateInventoryItemSnapshot(
+    val weightKg: Double,
+    val quantity: Int? = null,
+)
+
+@Serializable
+data class MobileFrozenPlatePoolSnapshot(
+    val id: String,
+    val name: String,
+    val compatibilityKey: String,
+    val plates: List<MobileFrozenPlateInventoryItemSnapshot> = emptyList(),
+)
+
+@Serializable
+data class MobileFrozenEquipmentLoadSnapshot(
+    val version: Int = 2,
+    val revisionId: String,
+    val gymEquipmentId: String,
+    val loadType: String,
+    val equipmentType: String,
+    val selectedLoadKg: Double,
+    val selectedLoadMultiplier: Double,
+    val nominalResistanceKg: Double? = null,
+    val baseLoadKg: Double,
+    val loadingSides: Int,
+    val weightOptions: List<Double> = emptyList(),
+    val platePool: MobileFrozenPlatePoolSnapshot? = null,
+)
+
+@Serializable
+data class MobileFrozenEquipmentSnapshot(
+    val equipmentNameSnapshot: String,
+    val selectedLoadKg: Double,
+    val selectedLoadMultiplierSnapshot: Double,
+    val nominalResistanceKg: Double? = null,
+    val equipmentLoadSnapshot: MobileFrozenEquipmentLoadSnapshot,
+)
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MobileSetPayload(
@@ -311,6 +351,8 @@ data class MobileSetPayload(
     val gymEquipmentId: String? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val equipmentSnapshotAction: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val frozenEquipmentSnapshot: MobileFrozenEquipmentSnapshot? = null,
     val setNumber: Int,
     val weight: Double,
     val reps: Int,
