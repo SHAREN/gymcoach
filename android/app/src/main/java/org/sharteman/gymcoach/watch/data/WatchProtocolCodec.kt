@@ -134,12 +134,13 @@ class WatchProtocolCodec(
         requireProtocol(message.protocolVersion, message.schemaVersion)
         if (
             message.messageId.isBlank() ||
-            message.messageId.length > WatchProtocol.MAX_CONTROL_ID_LENGTH ||
+            message.messageId.codePointLength() > WatchProtocol.MAX_CONTROL_ID_LENGTH ||
             message.deviceId.isBlank() ||
-            message.deviceId.length > WatchProtocol.MAX_DEVICE_ID_LENGTH ||
+            message.deviceId.codePointLength() > WatchProtocol.MAX_DEVICE_ID_LENGTH ||
             message.timestamp < 0 ||
             (message.replyTo != null && (
-                message.replyTo.isBlank() || message.replyTo.length > WatchProtocol.MAX_CONTROL_ID_LENGTH
+                message.replyTo.isBlank() ||
+                    message.replyTo.codePointLength() > WatchProtocol.MAX_CONTROL_ID_LENGTH
             ))
         ) {
             throw WatchProtocolException(WatchProtocolErrorCode.INVALID_EVENT)
@@ -164,6 +165,8 @@ class WatchProtocolCodec(
             throw WatchProtocolException(WatchProtocolErrorCode.MESSAGE_TOO_LARGE)
         }
     }
+
+    private fun String.codePointLength(): Int = codePointCount(0, length)
 
     private companion object {
         val STRICT_JSON = Json {
