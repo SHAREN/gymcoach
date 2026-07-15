@@ -164,7 +164,7 @@ test('snapshot validation enforces active exercise, uniqueness, linkage, and rev
   assert.throws(() => validateSyncSnapshot(futureSet));
 });
 
-test('data envelopes use message delivery up to 1,024 bytes and file fallback above it', async () => {
+test('data envelopes use the 900-byte send target and preserve the 1,024-byte receive limit', async () => {
   const payloads = await sharedJson('fixtures/stage3-event-payloads.json');
   const snapshot = await sharedJson('examples/sync-snapshot.json');
   const event = {
