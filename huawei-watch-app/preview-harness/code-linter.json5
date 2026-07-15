@@ -1,0 +1,12 @@
+{
+  "files": [
+    "**/*.js"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/oh_modules/**",
+    "**/build/**",
+    "**/.preview/**"
+  ],
+  "ruleSet": []
+}

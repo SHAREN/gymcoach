@@ -4,6 +4,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <queries>
+        <package android:name="com.huawei.health" />
+    </queries>
+
     <application
         android:name=".GymCoachApplication"
         android:allowBackup="true"
@@ -13,6 +17,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.GymCoach"
         android:usesCleartextTraffic="false">
+        <meta-data
+            android:name="com.huawei.hms.client.appid"
+            android:value="${huaweiWearEngineAppId}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

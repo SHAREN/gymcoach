@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "GymCoach watch companion"
+    },
+    {
+      "name": "MainAbility_desc",
+      "value": "Track GymCoach workouts from a Huawei watch"
+    },
+    {
+      "name": "MainAbility_label",
+      "value": "GymCoach"
+    }
+  ]
+}
