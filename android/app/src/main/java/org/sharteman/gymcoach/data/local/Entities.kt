@@ -63,6 +63,49 @@ data class LocalSetEntity(
     val recoverySec: Int? = null,
     val completedAt: String,
     val deleted: Boolean = false,
+    val exerciseSessionId: String? = null,
+    val startedAt: String? = null,
+    val source: String? = null,
+    val watchRevision: Long? = null,
+)
+
+@Entity(
+    tableName = "active_workout_runtime",
+    foreignKeys = [
+        ForeignKey(
+            entity = LocalSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("workoutId"), Index("updatedAtEpochMs")],
+)
+data class ActiveWorkoutRuntimeEntity(
+    @PrimaryKey val sessionId: String,
+    val workoutId: String,
+    val status: String = "ACTIVE",
+    val activeExerciseId: String? = null,
+    val activeSetId: String? = null,
+    val setStartedAtEpochMs: Long? = null,
+    val pausedAtEpochMs: Long? = null,
+    val restStartedAtEpochMs: Long? = null,
+    val restEndsAtEpochMs: Long? = null,
+    val restDurationSeconds: Int? = null,
+    val revision: Long = 1,
+    val updatedAtEpochMs: Long,
+    val updatedBy: String = "PHONE",
+)
+
+@Entity(
+    tableName = "watch_processed_events",
+    indices = [Index("sessionId"), Index("processedAtEpochMs")],
+)
+data class WatchProcessedEventEntity(
+    @PrimaryKey val eventId: String,
+    val sessionId: String,
+    val revision: Long,
+    val processedAtEpochMs: Long,
 )
 
 @Entity(

@@ -29,12 +29,17 @@ import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 import org.sharteman.gymcoach.watch.transport.WatchTransport
 
+fun interface WatchEventConsumer {
+    suspend fun onEvent(event: WatchEventEnvelopeDto)
+}
+
 class WatchConnectionCoordinator(
     private val phoneDeviceId: String,
     private val transport: WatchTransport,
     private val processedEventStore: ProcessedWatchEventStore,
     private val processedControlMessageStore: ProcessedWatchControlMessageStore,
     private val scope: CoroutineScope,
+    private val eventConsumer: WatchEventConsumer? = null,
     private val codec: WatchProtocolCodec = WatchProtocolCodec(),
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
@@ -189,6 +194,13 @@ class WatchConnectionCoordinator(
     private suspend fun handleIncomingEvent(event: WatchEventEnvelopeDto) {
         if (event.source != WatchEventSource.WATCH) {
             throw WatchProtocolException(WatchProtocolErrorCode.INVALID_SOURCE)
+        }
+        eventConsumer?.let { consumer ->
+            consumer.onEvent(event)
+            mutableState.update {
+                it.copy(processedEventCount = it.processedEventCount + 1, lastErrorCode = null)
+            }
+            return
         }
         if (!processedEventStore.markProcessed(event.eventId)) {
             mutableState.update {
