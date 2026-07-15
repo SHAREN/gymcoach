@@ -250,6 +250,7 @@ export function EditableSetsTable({
     loadConstraints?.plateWeights?.join(',') ?? '',
     loadConstraints?.barWeights?.join(',') ?? '',
     loadConstraints?.weightOptions?.join(',') ?? '',
+    loadConstraints?.equipmentId ?? '',
   ].join('|');
 
   useEffect(() => {
@@ -341,6 +342,8 @@ export function EditableSetsTable({
     : null;
   const canApplyRecommendation =
     !isNextDropSet && recommendation != null && appliedRecommendationKey !== recommendationKey;
+  const canEditLegacyInventory =
+    gym?.inventoryMode === 'LEGACY' && !loadConstraints?.equipmentOptions?.length;
 
   function metricLabel(metric: SetTableMetric, short = false) {
     if (metric === '1RM') return t(short ? 'metrics.oneRmShort' : 'metrics.oneRm');
@@ -604,18 +607,20 @@ export function EditableSetsTable({
           </button>
           <span className="flex items-center justify-center gap-1">
             {unit}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={!gym || disabled}
-              onClick={() => setInventoryOpen(true)}
-              aria-label={gym ? t('weightEditor.open') : t('weightEditor.noGym')}
-              title={gym ? t('weightEditor.open') : t('weightEditor.noGym')}
-              className="size-6 text-muted-foreground"
-            >
-              <Pencil className="size-3.5" />
-            </Button>
+            {canEditLegacyInventory && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={disabled}
+                onClick={() => setInventoryOpen(true)}
+                aria-label={t('weightEditor.open')}
+                title={t('weightEditor.open')}
+                className="size-6 text-muted-foreground"
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+            )}
           </span>
           <span>REPS</span>
           <span>RIR</span>
@@ -897,7 +902,7 @@ export function EditableSetsTable({
         onUndo={() => void undoLastSet()}
       />
 
-      {gym && (
+      {gym && canEditLegacyInventory && (
         <WeightInventoryEditor
           open={inventoryOpen}
           gym={gym}

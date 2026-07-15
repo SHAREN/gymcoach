@@ -25,6 +25,10 @@ export const exerciseInputSchema = z.object({
 
 export type ExerciseInput = z.infer<typeof exerciseInputSchema>;
 
+export const exerciseEquipmentLinksSchema = z.object({
+  equipmentIds: z.array(z.string().cuid()).max(1000),
+});
+
 export const MUSCLE_GROUP_LABELS: Record<MuscleGroup, string> = {
   CHEST: 'Chest',
   BACK_WIDTH: 'Back (width)',

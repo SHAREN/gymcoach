@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ExerciseFormDialog } from '@/components/exercises/exercise-form-dialog';
+import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
@@ -31,6 +32,7 @@ interface ExercisesViewProps {
   }>;
   activeGymId: string | null;
   trainingDatesByExercise?: Record<string, string[]>;
+  equipmentChoices?: ExerciseEquipmentChoice[];
 }
 
 const ALL_GYMS = 'all';
@@ -40,6 +42,7 @@ export function ExercisesView({
   gyms,
   activeGymId,
   trainingDatesByExercise = {},
+  equipmentChoices = [],
 }: ExercisesViewProps) {
   const t = useTranslations('exercises');
   const common = useTranslations('common');
@@ -178,7 +181,12 @@ export function ExercisesView({
         </div>
       )}
 
-      <ExerciseFormDialog open={createOpen} onOpenChange={setCreateOpen} mode="create" />
+      <ExerciseFormDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        mode="create"
+        equipmentChoices={equipmentChoices}
+      />
     </div>
   );
 }

@@ -10,6 +10,7 @@ const mockUserId = vi.mocked(getCurrentUserId);
 import { DELETE as deleteSet, PATCH as patchSet } from '@/app/api/sets/[id]/route';
 import { PUT as putSession } from '@/app/api/sessions/[id]/route';
 import { GET as getExercise } from '@/app/api/exercises/[id]/route';
+import { PATCH as patchExerciseEquipment } from '@/app/api/exercises/[id]/equipment/route';
 
 function actAs(userId: string) {
   mockUserId.mockResolvedValue(userId);
@@ -118,6 +119,68 @@ describe('route ownership: PUT /api/sessions/[id]', () => {
     });
     expect(res.status).toBe(404);
     expect((await db.session.findUnique({ where: { id: session.id } }))?.notes).toBe('original');
+  });
+});
+
+describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
+  it('replaces only the owner exercise links with owner equipment', async () => {
+    const { a, exercise } = await seed();
+    const gym = await db.gym.create({ data: { userId: a.id, name: 'Owner gym' } });
+    const equipment = await db.gymEquipment.create({
+      data: { gymId: gym.id, name: 'Cable tower', equipmentType: 'CABLE' },
+    });
+    actAs(a.id);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [equipment.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymEquipmentExercise.findUnique({
+        where: {
+          equipmentId_exerciseId: { equipmentId: equipment.id, exerciseId: exercise.id },
+        },
+      }),
+    ).not.toBeNull();
+  });
+
+  it('rejects another user equipment before changing existing links', async () => {
+    const { a, b, exercise } = await seed();
+    const [ownerGym, strangerGym] = await Promise.all([
+      db.gym.create({ data: { userId: a.id, name: 'Owner gym' } }),
+      db.gym.create({ data: { userId: b.id, name: 'Stranger gym' } }),
+    ]);
+    const [ownerEquipment, strangerEquipment] = await Promise.all([
+      db.gymEquipment.create({
+        data: { gymId: ownerGym.id, name: 'Owner cable', equipmentType: 'CABLE' },
+      }),
+      db.gymEquipment.create({
+        data: { gymId: strangerGym.id, name: 'Stranger cable', equipmentType: 'CABLE' },
+      }),
+    ]);
+    await db.gymEquipmentExercise.create({
+      data: { equipmentId: ownerEquipment.id, exerciseId: exercise.id },
+    });
+    actAs(a.id);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [strangerEquipment.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(
+      await db.gymEquipmentExercise.findUnique({
+        where: {
+          equipmentId_exerciseId: {
+            equipmentId: ownerEquipment.id,
+            exerciseId: exercise.id,
+          },
+        },
+      }),
+    ).not.toBeNull();
   });
 });
 

@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import type { Exercise } from '@/lib/prisma-client';
+import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   mode: 'create' | 'edit';
   exercise?: Exercise;
+  equipmentChoices?: ExerciseEquipmentChoice[];
 }
 
 const DEFAULT_VALUES: ExerciseInput = {
@@ -57,7 +59,13 @@ const DEFAULT_VALUES: ExerciseInput = {
   equipmentType: 'OTHER',
 };
 
-export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props) {
+export function ExerciseFormDialog({
+  open,
+  onOpenChange,
+  mode,
+  exercise,
+  equipmentChoices = [],
+}: Props) {
   const t = useTranslations('exercises');
   const common = useTranslations('common');
   const router = useRouter();
@@ -65,6 +73,7 @@ export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props
     resolver: zodResolver(exerciseInputSchema),
     defaultValues: DEFAULT_VALUES,
   });
+  const [equipmentIds, setEquipmentIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open) {
@@ -78,11 +87,28 @@ export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props
           usesBodyweight: exercise.usesBodyweight,
           equipmentType: exercise.equipmentType,
         });
+        setEquipmentIds(
+          new Set(
+            equipmentChoices
+              .filter((item) => item.exerciseIds.includes(exercise.id))
+              .map((item) => item.id),
+          ),
+        );
       } else {
         form.reset(DEFAULT_VALUES);
+        setEquipmentIds(new Set());
       }
     }
-  }, [open, mode, exercise, form]);
+  }, [open, mode, exercise, equipmentChoices, form]);
+
+  const groupedEquipment = useMemo(
+    () =>
+      equipmentChoices.reduce<Record<string, ExerciseEquipmentChoice[]>>((groups, item) => {
+        (groups[item.gymName] ??= []).push(item);
+        return groups;
+      }, {}),
+    [equipmentChoices],
+  );
 
   async function onSubmit(values: ExerciseInput) {
     const url = mode === 'edit' && exercise ? `/api/exercises/${exercise.id}` : '/api/exercises';
@@ -94,6 +120,16 @@ export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props
     });
     if (!res.ok) {
       toast.error(t('saveError'));
+      return;
+    }
+    const saved = (await res.json()) as Exercise;
+    const equipmentResponse = await fetch(`/api/exercises/${saved.id}/equipment`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentIds: [...equipmentIds] }),
+    });
+    if (!equipmentResponse.ok) {
+      toast.error(t('equipmentSaveError'));
       return;
     }
     toast.success(mode === 'edit' ? t('updated') : t('created'));
@@ -181,6 +217,42 @@ export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props
             </Select>
           </div>
 
+          {equipmentChoices.length > 0 && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div>
+                <p className="text-sm font-medium">{t('physicalEquipment')}</p>
+                <p className="text-xs text-muted-foreground">{t('physicalEquipmentDescription')}</p>
+              </div>
+              <div className="max-h-48 space-y-3 overflow-y-auto pr-1">
+                {Object.entries(groupedEquipment).map(([gymName, items]) => (
+                  <div key={gymName} className="space-y-1">
+                    <p className="text-xs font-semibold text-muted-foreground">{gymName}</p>
+                    {items.map((item) => (
+                      <label
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 rounded-md bg-muted/30 p-2"
+                      >
+                        <span className="truncate text-sm">{item.name}</span>
+                        <Switch
+                          aria-label={item.name}
+                          checked={equipmentIds.has(item.id)}
+                          onCheckedChange={(checked) =>
+                            setEquipmentIds((current) => {
+                              const next = new Set(current);
+                              if (checked) next.add(item.id);
+                              else next.delete(item.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="defaultRestSec">{t('defaultRest')}</Label>
             <Input
@@ -204,6 +276,7 @@ export function ExerciseFormDialog({ open, onOpenChange, mode, exercise }: Props
               <p className="text-xs text-muted-foreground">{t('bodyweightDescription')}</p>
             </div>
             <Switch
+              aria-label={t('bodyweight')}
               checked={form.watch('usesBodyweight')}
               onCheckedChange={(v) => form.setValue('usesBodyweight', v)}
             />

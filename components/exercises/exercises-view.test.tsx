@@ -16,6 +16,14 @@ Element.prototype.hasPointerCapture = vi.fn(() => false);
 Element.prototype.setPointerCapture = vi.fn();
 Element.prototype.releasePointerCapture = vi.fn();
 Element.prototype.scrollIntoView = vi.fn();
+vi.stubGlobal(
+  'ResizeObserver',
+  class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
 
 function exercise(over: Partial<Exercise>): Exercise {
   return {
@@ -118,6 +126,35 @@ describe('ExercisesView search (issue #238)', () => {
     render(<ExercisesView exercises={[]} gyms={[]} activeGymId={null} />);
     expect(screen.getByText('No exercises')).toBeInTheDocument();
     expect(screen.queryByLabelText('Search exercises by name')).not.toBeInTheDocument();
+  });
+
+  it('shows physical equipment choices in the create form without removing compact rows', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(
+      <ExercisesView
+        exercises={exercises}
+        gyms={[]}
+        activeGymId={null}
+        equipmentChoices={[
+          {
+            id: 'equipment-1',
+            name: 'Cable tower',
+            gymId: 'gym-1',
+            gymName: 'Olymp',
+            equipmentType: 'CABLE',
+            exerciseIds: ['e1'],
+          },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Available on physical equipment')).toBeInTheDocument();
+    expect(screen.getByText('Olymp')).toBeInTheDocument();
+    expect(screen.getByText('Cable tower')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Cable tower' })).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Edit exercise' })).not.toBeInTheDocument();
   });
 });
 

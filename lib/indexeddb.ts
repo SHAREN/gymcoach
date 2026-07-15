@@ -36,8 +36,17 @@ export interface PendingSet {
   notes: string | null;
   isWarmup: boolean;
   isDropSet: boolean;
+  // Equipment-first snapshot fields mirror the server Set contract. They are
+  // optional so records created by older PWA versions remain readable.
+  gymEquipmentId?: string | null;
+  equipmentNameSnapshot?: string | null;
+  selectedLoadKg?: number | null;
+  selectedLoadMultiplierSnapshot?: number | null;
+  nominalResistanceKg?: number | null;
+  equipmentLoadSnapshot?: unknown;
+  equipmentSnapshotAction?: 'REPLACE' | 'CLEAR' | null;
 
-  createdAt: number;        // epoch ms
+  createdAt: number; // epoch ms
   status: PendingSetStatus;
   // If synced: server id returned by the API. Allows reconciliation
   // with the UI state and avoids double-POST on retry.

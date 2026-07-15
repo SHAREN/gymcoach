@@ -1,16 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Building2, Check, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Exercise, Gym, GymExerciseConfig } from '@/lib/prisma-client';
+import type { Gym, GymExerciseConfig, GymInventoryMode } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -29,19 +28,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { GymInventoryManager } from '@/components/settings/gym-inventory-manager';
 
 type GymWithConfigs = Gym & { exerciseConfigs: GymExerciseConfig[] };
 
 interface Props {
   initialGyms: GymWithConfigs[];
   activeGymId: string | null;
-  exercises: Exercise[];
 }
 
 interface Draft {
   id: string | null;
   name: string;
+  inventoryMode: GymInventoryMode;
   dumbbellWeights: number[];
   plateWeights: number[];
   barWeights: number[];
@@ -57,10 +56,9 @@ interface Draft {
   >;
 }
 
-export function GymProfilesSection({ initialGyms, activeGymId: initialActive, exercises }: Props) {
+export function GymProfilesSection({ initialGyms, activeGymId: initialActive }: Props) {
   const t = useTranslations('settings.gyms');
   const common = useTranslations('common');
-  const exerciseName = useExerciseName();
   const router = useRouter();
   const [gyms, setGyms] = useState(initialGyms);
   const [activeGymId, setActiveGymId] = useState(initialActive);
@@ -68,44 +66,11 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
   const [draft, setDraft] = useState<Draft>(() =>
     draftFromGym(initialGyms.find((g) => g.id === selectedId)),
   );
-  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
-
-  const filteredExercises = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (!query) return exercises;
-    return exercises.filter((exercise) =>
-      exerciseName(exercise.name).toLocaleLowerCase().includes(query),
-    );
-  }, [exerciseName, exercises, search]);
 
   function selectGym(id: string) {
     setSelectedId(id);
     setDraft(draftFromGym(gyms.find((gym) => gym.id === id)));
-  }
-
-  function updateConfig(
-    exerciseId: string,
-    next: Partial<{
-      isAvailable: boolean;
-      weightOptions: number[];
-      dumbbellWeights: number[];
-      plateWeights: number[];
-      barWeights: number[];
-    }>,
-  ) {
-    setDraft((current) => {
-      const configs = new Map(current.configs);
-      const previous = configs.get(exerciseId) ?? {
-        isAvailable: true,
-        weightOptions: [],
-        dumbbellWeights: [],
-        plateWeights: [],
-        barWeights: [],
-      };
-      configs.set(exerciseId, { ...previous, ...next });
-      return { ...current, configs };
-    });
   }
 
   async function save() {
@@ -114,6 +79,7 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
     try {
       const body = {
         name: draft.name.trim(),
+        inventoryMode: draft.inventoryMode,
         dumbbellWeights: draft.dumbbellWeights,
         plateWeights: draft.plateWeights,
         barWeights: draft.barWeights,
@@ -226,20 +192,13 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <WeightListField
             id="gym-dumbbells"
             label={t('dumbbells')}
             values={draft.dumbbellWeights}
             placeholder="10, 12, 14, 15, 16, 19"
             onChange={(values) => setDraft((current) => ({ ...current, dumbbellWeights: values }))}
-          />
-          <WeightListField
-            id="gym-plates"
-            label={t('plates')}
-            values={draft.plateWeights}
-            placeholder="1.25, 2.5, 5, 10, 15, 20"
-            onChange={(values) => setDraft((current) => ({ ...current, plateWeights: values }))}
           />
           <WeightListField
             id="gym-bars"
@@ -249,58 +208,20 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
             onChange={(values) => setDraft((current) => ({ ...current, barWeights: values }))}
           />
         </div>
+        <p className="text-xs text-muted-foreground">{t('sharedFreeWeightsHelp')}</p>
 
-        <div className="space-y-3 border-t pt-4">
-          <div>
-            <h3 className="text-sm font-semibold">{t('exerciseAvailability')}</h3>
-            <p className="text-xs text-muted-foreground">{t('exerciseAvailabilityDescription')}</p>
-          </div>
-          <Input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t('searchExercises')}
-          />
-          <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-            {filteredExercises.map((exercise) => {
-              const config = draft.configs.get(exercise.id) ?? {
-                isAvailable: true,
-                weightOptions: [],
-              };
-              const hasStack =
-                exercise.equipmentType === 'MACHINE' || exercise.equipmentType === 'CABLE';
-              return (
-                <div key={exercise.id} className="rounded-md border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="min-w-0 truncate text-sm font-medium">
-                      {exerciseName(exercise.name)}
-                    </span>
-                    <label className="flex shrink-0 items-center gap-2 text-xs">
-                      {t('available')}
-                      <Switch
-                        checked={config.isAvailable}
-                        onCheckedChange={(isAvailable) =>
-                          updateConfig(exercise.id, { isAvailable })
-                        }
-                      />
-                    </label>
-                  </div>
-                  {hasStack && config.isAvailable && (
-                    <div className="mt-2">
-                      <WeightListField
-                        id={`weights-${exercise.id}`}
-                        label={t('machineWeights')}
-                        values={config.weightOptions}
-                        placeholder="5, 10, 15, 20, 25"
-                        onChange={(weightOptions) => updateConfig(exercise.id, { weightOptions })}
-                      />
-                    </div>
-                  )}
-                </div>
+        {draft.id && (
+          <GymInventoryManager
+            key={draft.id}
+            gymId={draft.id}
+            onModeChanged={(inventoryMode) => {
+              setDraft((current) => ({ ...current, inventoryMode }));
+              setGyms((current) =>
+                current.map((gym) => (gym.id === draft.id ? { ...gym, inventoryMode } : gym)),
               );
-            })}
-          </div>
-        </div>
+            }}
+          />
+        )}
 
         <div className="flex flex-wrap justify-between gap-2">
           <div>
@@ -395,6 +316,7 @@ function draftFromGym(gym?: GymWithConfigs): Draft {
   return {
     id: gym?.id ?? null,
     name: gym?.name ?? '',
+    inventoryMode: gym?.inventoryMode ?? 'EQUIPMENT_FIRST',
     dumbbellWeights: gym?.dumbbellWeights ?? [],
     plateWeights: gym?.plateWeights ?? [],
     barWeights: gym?.barWeights ?? [],
