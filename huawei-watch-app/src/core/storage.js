@@ -446,6 +446,7 @@ export class WatchStateRepository {
       this.document.sensorSamples = this.document.sensorSamples.filter(
         (sample) => !acknowledgedSamples.has(sample.sampleId),
       );
+      resolveAckConflicts(this.document, ack.sessionId, eventIds);
     } else {
       addConflict(this.document, {
         code: ack.errorCode || `ACK_${ack.status}`,
@@ -685,7 +686,7 @@ function addConflict(document, conflict) {
     code: sanitizeStoredError(conflict.code) || 'SYNC_CONFLICT',
     ackId: conflict.ackId ?? null,
     eventId: conflict.eventId ?? null,
-    eventIds: Array.isArray(conflict.eventIds) ? [...conflict.eventIds] : [],
+    eventIds: Array.isArray(conflict.eventIds) ? [...conflict.eventIds].sort() : [],
     sessionId: conflict.sessionId ?? null,
     localHash: conflict.localHash ?? null,
     remoteHash: conflict.remoteHash ?? null,
@@ -702,12 +703,29 @@ function addConflict(document, conflict) {
   return true;
 }
 
+function resolveAckConflicts(document, sessionId, acknowledgedEventIds) {
+  document.conflicts = document.conflicts.filter((conflict) => {
+    const conflictEventIds = Array.isArray(conflict.eventIds) ? conflict.eventIds : [];
+    if (conflict.sessionId !== sessionId || conflictEventIds.length === 0) {
+      return true;
+    }
+    return !conflictEventIds.every((eventId) => acknowledgedEventIds.has(eventId));
+  });
+}
+
 function conflictKey(conflict) {
+  const eventIds = Array.isArray(conflict.eventIds) ? [...conflict.eventIds].sort() : [];
+  if (eventIds.length > 0) {
+    return JSON.stringify({
+      code: conflict.code,
+      eventIds,
+      sessionId: conflict.sessionId,
+    });
+  }
   return JSON.stringify({
     code: conflict.code,
     ackId: conflict.ackId,
     eventId: conflict.eventId,
-    eventIds: conflict.eventIds,
     sessionId: conflict.sessionId,
     localHash: conflict.localHash,
     remoteHash: conflict.remoteHash,

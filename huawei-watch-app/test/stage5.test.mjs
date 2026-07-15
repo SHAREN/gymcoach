@@ -187,6 +187,42 @@ test('STALE, CONFLICT, and REJECTED ACKs keep data and record sanitized diagnost
   }
 });
 
+test('replayed rejection deduplicates by event and a later success resolves the conflict', async () => {
+  const harness = await createHarness();
+  const event = await harness.watch.changeExercise(1);
+  const firstRejected = ackFor(event, {
+    ackId: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000201',
+    errorCode: 'EQUIPMENT_SELECTION_REQUIRED',
+    status: 'REJECTED',
+  });
+  const replayedRejected = ackFor(event, {
+    ackId: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000202',
+    errorCode: 'EQUIPMENT_SELECTION_REQUIRED',
+    status: 'REJECTED',
+    timestamp: firstRejected.timestamp + 1,
+  });
+
+  await harness.watch.receive(serializeSyncAck(firstRejected));
+  await harness.watch.receive(serializeSyncAck(replayedRejected));
+
+  assert.equal(harness.repository.conflicts().length, 1);
+  assert.equal(harness.watch.getState().conflictCount, 1);
+  assert.equal(pendingEvents(harness.repository).some((entry) => entry.eventId === event.eventId), true);
+
+  await harness.watch.receive(
+    serializeSyncAck(
+      ackFor(event, {
+        ackId: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000203',
+        timestamp: replayedRejected.timestamp + 1,
+      }),
+    ),
+  );
+
+  assert.equal(harness.repository.conflicts().length, 0);
+  assert.equal(harness.watch.getState().conflictCount, 0);
+  assert.equal(pendingEvents(harness.repository).some((entry) => entry.eventId === event.eventId), false);
+});
+
 test('same eventId with changed canonical event content records EVENT_ID_REUSE', async () => {
   const harness = await createHarness();
   const base = harness.watch.getState().activeWorkout;
