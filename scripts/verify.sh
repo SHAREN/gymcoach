@@ -84,6 +84,9 @@ echo "GymCoach green-gate — node $(node -v 2>/dev/null || echo '??'), npm $(np
 step "Codex harness integrity"
 required_harness_files=(
   "AGENTS.md"
+  "docs/PRODUCT.md"
+  "docs/ARCHITECTURE.md"
+  "docs/CURRENT_MILESTONE.md"
   "docs/CODEX_WORKFLOW.md"
   ".codex/config.toml"
   ".codex/hooks.json"
@@ -104,6 +107,12 @@ for harness_file in "${required_harness_files[@]}"; do
   [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
 done
 grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
+grep -q '^# GymCoach Product$' docs/PRODUCT.md || fail "GymCoach product document"
+grep -q '^## Product Contracts$' docs/PRODUCT.md || fail "GymCoach product contract"
+grep -q '^# GymCoach Architecture$' docs/ARCHITECTURE.md || fail "GymCoach architecture document"
+grep -q '^## Verification Map$' docs/ARCHITECTURE.md || fail "GymCoach architecture verification map"
+grep -q '^# Current Milestone$' docs/CURRENT_MILESTONE.md || fail "current milestone document"
+grep -q '^## Milestone State$' docs/CURRENT_MILESTONE.md || fail "current milestone state"
 node <<'NODE' || fail "Codex harness configuration"
 const fs = require('fs');
 
