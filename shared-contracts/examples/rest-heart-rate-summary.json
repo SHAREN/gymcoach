@@ -1,0 +1,12 @@
+{
+  "startedAt": 1784102580000,
+  "finishedAt": 1784102700000,
+  "start": 154,
+  "min": 118,
+  "average": 132.5,
+  "at30Seconds": 140,
+  "at60Seconds": 126,
+  "drop30Seconds": 14,
+  "drop60Seconds": 28,
+  "sampleCount": 20
+}

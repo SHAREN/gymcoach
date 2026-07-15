@@ -146,6 +146,21 @@ Historical snapshot records may carry `rir: null` when the existing set never
 recorded RIR. A watch-originated `SET_COMPLETED` mutation requires an explicit
 integer RIR from 0 to 5.
 
+Stage 4 rest and sensor payloads are mirrored in
+`shared-contracts/fixtures/stage4-rest-payloads.json`:
+
+- `SENSOR_BATCH_RECORDED`: `batchId`, one-based `sequence`,
+  `totalSequences`, `deliveryMode`, and `sampleCount`. The referenced payload
+  validates as `SensorBatch`.
+- `REST_STARTED`: `setId`, absolute `startedAt`, and absolute `restEndsAt`.
+- `REST_UPDATED`: replacement absolute `restEndsAt` and a reason code.
+- `REST_FINISHED`: absolute `finishedAt` plus `RestHeartRateSummary`.
+- `REST_SKIPPED`: absolute `skippedAt`.
+
+The recovery summary reports observed values and arithmetic drops at 30 and 60
+seconds. It does not define a medical interpretation or a universal readiness
+threshold.
+
 ## ACK contract
 
 ```json

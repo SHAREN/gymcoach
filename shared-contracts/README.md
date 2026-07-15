@@ -123,6 +123,8 @@ outbox. `errorCode` is a sanitized machine-readable string or `null`.
 - `examples/` - valid example documents.
 - `fixtures/stage3-event-payloads.json` - normative compact payload shapes for
   active exercise and set events.
+- `fixtures/stage4-rest-payloads.json` - normative sensor-batch manifest and
+  absolute rest event payloads.
 - `test-contracts.mjs` - dependency-free structural and protocol-limit checks.
 
 Run the checks with Node.js 20 or newer:

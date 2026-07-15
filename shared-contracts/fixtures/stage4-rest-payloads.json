@@ -1,0 +1,36 @@
+{
+  "sensorBatchRecorded": {
+    "batchId": "af16d6d4-8f3f-42b3-8d70-3705d67bc5a1",
+    "sequence": 1,
+    "totalSequences": 1,
+    "deliveryMode": "FILE",
+    "sampleCount": 3
+  },
+  "restStarted": {
+    "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+    "startedAt": 1784102580000,
+    "restEndsAt": 1784102700000
+  },
+  "restUpdated": {
+    "restEndsAt": 1784102730000,
+    "reason": "ADD_30_SECONDS"
+  },
+  "restFinished": {
+    "finishedAt": 1784102700000,
+    "summary": {
+      "startedAt": 1784102580000,
+      "finishedAt": 1784102700000,
+      "start": 154,
+      "min": 118,
+      "average": 132.5,
+      "at30Seconds": 140,
+      "at60Seconds": 126,
+      "drop30Seconds": 14,
+      "drop60Seconds": 28,
+      "sampleCount": 20
+    }
+  },
+  "restSkipped": {
+    "skippedAt": 1784102640000
+  }
+}

@@ -18,6 +18,7 @@ const expectedSchemas = new Set([
   'control-message.schema.json',
   'exercise-session.schema.json',
   'heart-rate-summary.schema.json',
+  'rest-heart-rate-summary.schema.json',
   'sensor-sample.schema.json',
   'sensor-batch.schema.json',
   'set-record.schema.json',
@@ -258,6 +259,38 @@ required(
 
 const heartRate = examples.get('heart-rate-summary.json').parsed;
 required(heartRate, ['min', 'max', 'average', 'start', 'end', 'sampleCount'], 'HeartRateSummary');
+
+const restHeartRate = examples.get('rest-heart-rate-summary.json').parsed;
+required(
+  restHeartRate,
+  [
+    'startedAt',
+    'finishedAt',
+    'start',
+    'min',
+    'average',
+    'at30Seconds',
+    'at60Seconds',
+    'drop30Seconds',
+    'drop60Seconds',
+    'sampleCount',
+  ],
+  'RestHeartRateSummary',
+);
+assert.ok(
+  restHeartRate.startedAt <= restHeartRate.finishedAt,
+  'RestHeartRateSummary timestamps are reversed',
+);
+assert.equal(
+  restHeartRate.drop30Seconds,
+  restHeartRate.start - restHeartRate.at30Seconds,
+  'RestHeartRateSummary 30-second drop mismatch',
+);
+assert.equal(
+  restHeartRate.drop60Seconds,
+  restHeartRate.start - restHeartRate.at60Seconds,
+  'RestHeartRateSummary 60-second drop mismatch',
+);
 
 const sensor = examples.get('sensor-sample.json').parsed;
 required(
@@ -649,5 +682,31 @@ validateRootShape(
 required(stage3Payloads.setDeleted, ['setId', 'deletedAt', 'baseRevision'], 'SET_DELETED payload');
 assert.ok(stage3Payloads.setDeleted.deletedAt >= 0, 'SET_DELETED deletedAt must be non-negative');
 assert.ok(stage3Payloads.setDeleted.baseRevision >= 1, 'SET_DELETED baseRevision must be positive');
+
+const stage4Payloads = JSON.parse(
+  await readFile(join(fixturesDir, 'stage4-rest-payloads.json'), 'utf8'),
+);
+required(
+  stage4Payloads.sensorBatchRecorded,
+  ['batchId', 'sequence', 'totalSequences', 'deliveryMode', 'sampleCount'],
+  'SENSOR_BATCH_RECORDED payload',
+);
+assert.ok(
+  ['P2P', 'FILE'].includes(stage4Payloads.sensorBatchRecorded.deliveryMode),
+  'SENSOR_BATCH_RECORDED delivery mode is invalid',
+);
+required(stage4Payloads.restStarted, ['setId', 'startedAt', 'restEndsAt'], 'REST_STARTED payload');
+assert.ok(
+  stage4Payloads.restStarted.startedAt <= stage4Payloads.restStarted.restEndsAt,
+  'REST_STARTED timestamps are reversed',
+);
+required(stage4Payloads.restUpdated, ['restEndsAt', 'reason'], 'REST_UPDATED payload');
+required(stage4Payloads.restFinished, ['finishedAt', 'summary'], 'REST_FINISHED payload');
+validateRootShape(
+  stage4Payloads.restFinished.summary,
+  schemas.get('rest-heart-rate-summary.schema.json'),
+  'REST_FINISHED summary',
+);
+required(stage4Payloads.restSkipped, ['skippedAt'], 'REST_SKIPPED payload');
 
 console.log(`Validated ${schemaFiles.length} schemas and ${exampleFiles.length} examples.`);

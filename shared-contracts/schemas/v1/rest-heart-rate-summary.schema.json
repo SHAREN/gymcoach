@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/rest-heart-rate-summary.schema.json",
+  "title": "RestHeartRateSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "startedAt",
+    "finishedAt",
+    "start",
+    "min",
+    "average",
+    "at30Seconds",
+    "at60Seconds",
+    "drop30Seconds",
+    "drop60Seconds",
+    "sampleCount"
+  ],
+  "properties": {
+    "startedAt": { "type": "integer", "minimum": 0 },
+    "finishedAt": { "type": "integer", "minimum": 0 },
+    "start": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "min": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "average": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "at30Seconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "at60Seconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+    "drop30Seconds": { "type": ["number", "null"] },
+    "drop60Seconds": { "type": ["number", "null"] },
+    "sampleCount": { "type": "integer", "minimum": 0 }
+  }
+}
