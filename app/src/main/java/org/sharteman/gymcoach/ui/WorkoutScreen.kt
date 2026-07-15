@@ -216,26 +216,36 @@ fun WorkoutScreen(
     }
     val current = exercises.getOrNull(selectedIndex) ?: return
     val returnRecommendations = bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
-    val returnRecommendation = returnRecommendations[current.id]
+    val equipmentReturnRecommendations =
+        bootstrap?.returnRecommendationsByEquipmentByWorkout?.get(workout.id).orEmpty()
+    val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
+    var selectedEquipmentId by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
+    val inventory = resolveExerciseInventory(current, gym, selectedEquipmentId)
+    val selectedProfile = selectedEquipment(inventory)
+    val legacyLastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
+    val lastPerformance = selectLastPerformanceForEquipment(
+        performances = bootstrap?.lastPerformancesByEquipment?.get(current.exerciseId),
+        fallback = legacyLastPerformance,
+        gymEquipmentId = selectedProfile?.equipmentId,
+    )
+    val returnRecommendation = selectReturnRecommendationForEquipment(
+        recommendations = equipmentReturnRecommendations[current.id],
+        fallback = returnRecommendations[current.id],
+        fallbackPerformance = legacyLastPerformance,
+        gymEquipmentId = selectedProfile?.equipmentId,
+    )
     val target = current.copy(
         targetSets = returnRecommendation?.targetSets ?: current.targetSets,
         targetDropSets = if (returnRecommendation?.mode != null && returnRecommendation.mode != "normal") 0 else current.targetDropSets,
         targetRIR = returnRecommendation?.targetRIR ?: current.targetRIR,
     )
     val currentSets = allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
-    val lastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
-    val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
-    var selectedEquipmentId by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
-    val inventory = resolveExerciseInventory(target, gym, selectedEquipmentId)
-    val selectedProfile = selectedEquipment(inventory)
     val selectedEquipmentDto = gym?.equipment?.firstOrNull { it.id == selectedProfile?.equipmentId }
     val comparableSets = selectedProfile?.let { profile ->
         currentSets.filter { it.gymEquipmentId == profile.equipmentId }
     } ?: currentSets
-    val historyMatchesSelectedEquipment =
-        lastPerformance?.gymEquipmentId == selectedProfile?.equipmentId
     val previousPerformance = lastPerformance?.takeIf {
-        it.sessionId != sessionId && historyMatchesSelectedEquipment
+        it.sessionId != sessionId
     }
     val plannedRows = target.targetSets + target.targetDropSets
     val completedWorkingRows = currentSets.count { !it.isWarmup }
@@ -282,7 +292,7 @@ fun WorkoutScreen(
         recoverySec = recoverySec,
         sameMuscleSuperset = sameMuscleSuperset,
         allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
-        maxWeight = returnRecommendation?.weightCeiling?.takeIf { historyMatchesSelectedEquipment },
+        maxWeight = returnRecommendation?.weightCeiling,
         constraints = loadConstraints,
     )
 
@@ -313,10 +323,17 @@ fun WorkoutScreen(
     var isWarmup by rememberSaveable(current.id) { mutableStateOf(false) }
     var isDropSet by rememberSaveable(current.id) { mutableStateOf(false) }
 
-    LaunchedEffect(current.id, comparableSets.size, recommendation, selectedProfile?.equipmentId) {
+    LaunchedEffect(
+        current.id,
+        comparableSets.size,
+        recommendation,
+        selectedProfile?.equipmentId,
+        returnRecommendation?.suggestedWeight,
+        lastPerformance?.sessionId,
+    ) {
         val candidateWeight = recommendation?.weight
-            ?: returnRecommendation?.suggestedWeight?.takeIf { historyMatchesSelectedEquipment }
-            ?: lastPerformance?.maxWeight?.takeIf { historyMatchesSelectedEquipment }
+            ?: returnRecommendation?.suggestedWeight
+            ?: lastPerformance?.maxWeight
         val initialWeight = candidateWeight?.let {
             constrainGymWeight(it, it, inventory.constraints)
         } ?: selectedProfile?.attainableLoads?.firstOrNull()

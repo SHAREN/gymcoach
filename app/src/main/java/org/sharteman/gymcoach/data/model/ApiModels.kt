@@ -44,8 +44,13 @@ data class BootstrapResponse(
     val catalog: List<ExerciseDto> = emptyList(),
     val openSessions: List<SessionDto> = emptyList(),
     val lastPerformances: Map<String, LastPerformanceDto> = emptyMap(),
+    val lastPerformancesByEquipment: Map<String, List<LastPerformanceDto>> = emptyMap(),
     val exerciseHistoryByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
     val returnRecommendationsByWorkout: Map<String, Map<String, ReturnRecommendationDto>> = emptyMap(),
+    val returnRecommendationsByEquipmentByWorkout: Map<
+        String,
+        Map<String, List<EquipmentReturnRecommendationDto>>,
+    > = emptyMap(),
     val readiness: ReadinessDto? = null,
 )
 
@@ -275,6 +280,12 @@ data class ReturnRecommendationDto(
     val targetRIR: Int,
     val suggestedWeight: Double? = null,
     val weightCeiling: Double? = null,
+)
+
+@Serializable
+data class EquipmentReturnRecommendationDto(
+    val gymEquipmentId: String? = null,
+    val recommendation: ReturnRecommendationDto,
 )
 
 @Serializable
