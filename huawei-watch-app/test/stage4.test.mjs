@@ -65,6 +65,12 @@ function uuidSequence(start = 1) {
 function activeSnapshot(snapshot) {
   const next = clone(snapshot);
   next.workoutSession.activeSetId = null;
+  if (next.runtimeState) {
+    next.runtimeState.activeSetId = null;
+    next.runtimeState.setStartedAt = null;
+    next.runtimeState.setAccumulatedPauseMs = 0;
+    next.runtimeState.rest = null;
+  }
   return next;
 }
 

@@ -27,17 +27,57 @@ const REST_UPDATE_REASONS = new Set(['ADD_15_SECONDS', 'ADD_30_SECONDS', 'MANUAL
 
 export function activeWorkoutFromSnapshot(snapshot) {
   validateSyncSnapshot(snapshot);
+  const runtime = snapshot.runtimeState;
+  const activeExerciseId = runtime?.activeExerciseId ?? snapshot.workoutSession.activeExerciseId;
+  const completedSets = snapshot.setRecords.map(clone);
+  const activeExercise = snapshot.exerciseSessions.find(
+    (exercise) => exercise.exerciseId === activeExerciseId,
+  );
+  const pendingSet =
+    runtime?.activeSetId && runtime.setStartedAt !== null && activeExercise
+      ? {
+          setId: runtime.activeSetId,
+          exerciseSessionId: activeExercise.exerciseSessionId,
+          setNumber:
+            completedSets.filter(
+              (set) => set.exerciseSessionId === activeExercise.exerciseSessionId,
+            ).length + 1,
+          startedAt: runtime.setStartedAt,
+          accumulatedPauseMs: runtime.setAccumulatedPauseMs,
+          pauseStartedAt: runtime.status === 'PAUSED' ? runtime.pausedAt : null,
+        }
+      : null;
   return {
-    session: clone(snapshot.workoutSession),
+    session: {
+      ...clone(snapshot.workoutSession),
+      status: runtime?.status ?? snapshot.workoutSession.status,
+      activeExerciseId,
+      activeSetId: runtime?.activeSetId ?? snapshot.workoutSession.activeSetId,
+    },
     exercises: snapshot.exerciseSessions.map(clone).sort((left, right) => left.order - right.order),
-    activeExerciseId: snapshot.workoutSession.activeExerciseId,
-    activeSetId: snapshot.workoutSession.activeSetId,
+    activeExerciseId,
+    activeSetId: runtime?.activeSetId ?? snapshot.workoutSession.activeSetId,
     revision: snapshot.revision,
-    completedSets: snapshot.setRecords.map(clone),
+    completedSets,
     startedAt: snapshot.workoutSession.startedAt,
-    pendingSet: null,
-    rest: null,
-    timing: emptyTiming(),
+    pendingSet,
+    rest:
+      runtime?.rest === null || runtime?.rest === undefined
+        ? null
+        : {
+            setId: runtime.rest.setId,
+            startedAt: runtime.rest.startedAt,
+            restEndsAt: runtime.rest.endsAt,
+            pausedRemainingMs: runtime.rest.pausedRemainingMs,
+            warningVibrated: false,
+            finishVibrated: false,
+          },
+    timing: runtime
+      ? {
+          accumulatedPauseMs: runtime.workoutAccumulatedPauseMs,
+          pauseStartedAt: runtime.status === 'PAUSED' ? runtime.pausedAt : null,
+        }
+      : emptyTiming(),
     lastRestSummary: null,
   };
 }

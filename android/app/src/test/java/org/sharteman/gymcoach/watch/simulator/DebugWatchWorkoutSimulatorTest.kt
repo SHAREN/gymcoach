@@ -34,21 +34,28 @@ class DebugWatchWorkoutSimulatorTest {
             phase = WatchWorkoutPhase.REST,
             timestampEpochMs = 3_000L,
         )
+        simulator.recordOffWristSample(
+            exerciseSessionId = simulator.snapshot.value!!.exerciseSessions.first().exerciseSessionId,
+            setId = simulator.snapshot.value!!.setRecords.first().setId,
+            phase = WatchWorkoutPhase.REST,
+            timestampEpochMs = 4_000L,
+        )
 
-        assertEquals(1, simulator.diagnostics.value.pendingDeliveryCount)
-        assertEquals(1, simulator.diagnostics.value.invalidHeartRateSampleCount)
+        assertEquals(2, simulator.diagnostics.value.pendingDeliveryCount)
+        assertEquals(2, simulator.diagnostics.value.invalidHeartRateSampleCount)
         assertEquals(0, delivered.size)
 
         transport.connect()
         simulator.replayPendingDeliveries()
 
-        assertEquals(1, delivered.size)
-        assertEquals(WatchEventType.SENSOR_BATCH_RECORDED, delivered.single().first.type)
-        assertFalse(delivered.single().second.samples.single().valid)
-        assertEquals("OFF_WRIST", delivered.single().second.samples.single().quality)
-        assertEquals("null", delivered.single().second.samples.single().value.toString())
+        assertEquals(2, delivered.size)
+        assertEquals(WatchEventType.SENSOR_BATCH_RECORDED, delivered.first().first.type)
+        assertFalse(delivered.first().second.samples.single().valid)
+        assertEquals("OFF_WRIST", delivered.first().second.samples.single().quality)
+        assertEquals("null", delivered.first().second.samples.single().value.toString())
+        assertEquals(delivered.first().first.revision + 1, delivered.last().first.revision)
         assertEquals(0, simulator.diagnostics.value.pendingDeliveryCount)
-        assertEquals(1, simulator.diagnostics.value.replayedDeliveryCount)
+        assertEquals(2, simulator.diagnostics.value.replayedDeliveryCount)
     }
 
     private fun resource(name: String): String = requireNotNull(javaClass.classLoader?.getResource(name)).readText()

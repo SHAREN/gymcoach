@@ -38,6 +38,8 @@ import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutSessionDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutStatus
+import org.sharteman.gymcoach.watch.domain.WatchActiveWorkoutRuntimeDto
+import org.sharteman.gymcoach.watch.domain.WatchRestRuntimeDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutPhase
 import org.sharteman.gymcoach.watch.sensors.HeartRateObservation
 import org.sharteman.gymcoach.watch.sensors.HeartRateSummaryCalculator
@@ -264,6 +266,33 @@ class PersistentWatchWorkoutGateway(
                 updatedAt = runtime.updatedAtEpochMs,
                 updatedBy = runtime.updatedBy.toEventSource(),
             ),
+            runtimeState = WatchActiveWorkoutRuntimeDto(
+                sessionId = runtime.sessionId,
+                status = runtime.status.toWorkoutStatus(),
+                activeExerciseId = runtime.activeExerciseId,
+                activeSetId = runtime.activeSetId,
+                setStartedAt = runtime.setStartedAtEpochMs,
+                pausedAt = runtime.pausedAtEpochMs,
+                workoutAccumulatedPauseMs = 0,
+                setAccumulatedPauseMs = 0,
+                rest = if (
+                    runtime.activeSetId != null &&
+                    runtime.restStartedAtEpochMs != null &&
+                    runtime.restEndsAtEpochMs != null
+                ) {
+                    WatchRestRuntimeDto(
+                        setId = runtime.activeSetId,
+                        startedAt = runtime.restStartedAtEpochMs,
+                        endsAt = runtime.restEndsAtEpochMs,
+                        pausedRemainingMs = null,
+                    )
+                } else {
+                    null
+                },
+                revision = runtime.revision,
+                updatedAt = runtime.updatedAtEpochMs,
+                updatedBy = runtime.updatedBy.toEventSource(),
+            ),
             exerciseSessions = exerciseSessions,
             setRecords = setRecords,
             sensorSamples = emptyList(),
@@ -328,9 +357,13 @@ class PersistentWatchWorkoutGateway(
                 val existing = repository.set(payload.setId)
                     ?.takeIf { it.sessionId == event.sessionId }
                     ?: return rejected(event, "SET_NOT_FOUND")
+                val clearsActiveSet = current.activeSetId == existing.id
                 val updated = current.copy(
-                    activeSetId = current.activeSetId?.takeUnless { it == existing.id },
-                    setStartedAtEpochMs = if (current.activeSetId == existing.id) null else current.setStartedAtEpochMs,
+                    activeSetId = current.activeSetId?.takeUnless { clearsActiveSet },
+                    setStartedAtEpochMs = if (clearsActiveSet) null else current.setStartedAtEpochMs,
+                    restStartedAtEpochMs = if (clearsActiveSet) null else current.restStartedAtEpochMs,
+                    restEndsAtEpochMs = if (clearsActiveSet) null else current.restEndsAtEpochMs,
+                    restDurationSeconds = if (clearsActiveSet) null else current.restDurationSeconds,
                     revision = nextRevision,
                     updatedAtEpochMs = event.timestamp,
                     updatedBy = WatchEventSource.WATCH.name,
@@ -478,14 +511,22 @@ class PersistentWatchWorkoutGateway(
             return rejected(event, "SET_ID_CONFLICT")
         }
         val set = record.toLocalSet(target.exerciseId)
-        val updated = current.copy(
-            activeExerciseId = target.exerciseId,
-            activeSetId = null,
-            setStartedAtEpochMs = null,
-            revision = nextRevision,
-            updatedAtEpochMs = event.timestamp,
-            updatedBy = WatchEventSource.WATCH.name,
-        )
+        val updated = if (event.type == WatchEventType.SET_COMPLETED) {
+            current.copy(
+                activeExerciseId = target.exerciseId,
+                activeSetId = null,
+                setStartedAtEpochMs = null,
+                revision = nextRevision,
+                updatedAtEpochMs = event.timestamp,
+                updatedBy = WatchEventSource.WATCH.name,
+            )
+        } else {
+            current.copy(
+                revision = nextRevision,
+                updatedAtEpochMs = event.timestamp,
+                updatedBy = WatchEventSource.WATCH.name,
+            )
+        }
         val result = appliedResult(repository.applySetEvent(processed, set, updated), updated.revision)
         if (result.status == WatchSyncAckStatus.APPLIED) refreshSetHeartRateSummary(record.setId)
         return result
@@ -602,7 +643,10 @@ class PersistentWatchWorkoutGateway(
     }
 
     private suspend fun refreshHeartRateSummaries(batch: WatchSensorBatchDto) {
-        val setIds = batch.samples.mapNotNullTo(linkedSetOf()) { it.setId }
+        val setIds = batch.samples
+            .asSequence()
+            .filter { it.sensorType == "HEART_RATE" }
+            .mapNotNullTo(linkedSetOf()) { it.setId }
         setIds.forEach { refreshSetHeartRateSummary(it) }
         repository.restSummaries(batch.sessionId)
             .filter { it.setId in setIds }
@@ -619,6 +663,7 @@ class PersistentWatchWorkoutGateway(
                     existing.restStartedAtEpochMs,
                     existing.restEndedAtEpochMs,
                 )
+                if (recalculated.sampleCount == 0) return@forEach
                 repository.saveRestSummary(
                     recalculated.toEntity(
                         sessionId = existing.sessionId,
@@ -646,6 +691,7 @@ class PersistentWatchWorkoutGateway(
             startedAt,
             finishedAt,
         )
+        if (summary.sampleCount == 0) return
         repository.updateSetHeartRateSummary(
             setId = set.id,
             minHr = summary.min?.roundToInt(),
@@ -879,7 +925,9 @@ private fun RestHeartRateSummaryDto.toEntity(
     skipped: Boolean,
     updatedAtEpochMs: Long,
 ) = RestRecoverySummaryEntity(
-    restId = "$sessionId:$setId:$startedAt",
+    restId = UUID.nameUUIDFromBytes(
+        "${sessionId.length}:$sessionId${setId.length}:$setId:$startedAt".encodeToByteArray(),
+    ).toString(),
     sessionId = sessionId,
     setId = setId,
     restStartedAtEpochMs = startedAt,

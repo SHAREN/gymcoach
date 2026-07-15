@@ -20,6 +20,7 @@ import org.sharteman.gymcoach.watch.domain.SensorBatchRecordedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetDeletedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetStartedPayloadDto
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
+import org.sharteman.gymcoach.watch.domain.WatchActiveWorkoutRuntimeDto
 import org.sharteman.gymcoach.watch.domain.WatchExerciseStatus
 import org.sharteman.gymcoach.watch.domain.WatchHeartRateSummaryDto
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
@@ -31,6 +32,7 @@ import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutSessionDto
+import org.sharteman.gymcoach.watch.domain.WatchWorkoutStatus
 import org.sharteman.gymcoach.watch.domain.WatchExerciseSessionDto
 
 class WatchWorkoutProtocolCodec(
@@ -250,7 +252,8 @@ class WatchWorkoutProtocolCodec(
             value.totalSequences < 1 ||
             value.sequence > value.totalSequences ||
             value.samples.isEmpty() ||
-            value.sampleCount != value.samples.size
+            value.sampleCount != value.samples.size ||
+            value.samples.map { it.sampleId }.toSet().size != value.samples.size
         ) invalid()
         value.samples.forEach { sample ->
             validateSensorSample(sample)
@@ -268,6 +271,16 @@ class WatchWorkoutProtocolCodec(
             value.workoutSession.sessionId != value.sessionId ||
             value.workoutSession.revision != value.revision
         ) invalid()
+        value.runtimeState?.let { runtime ->
+            validateActiveWorkoutRuntime(runtime)
+            if (
+                runtime.sessionId != value.sessionId ||
+                runtime.revision != value.revision ||
+                runtime.status != value.workoutSession.status ||
+                runtime.activeExerciseId != value.workoutSession.activeExerciseId ||
+                runtime.activeSetId != value.workoutSession.activeSetId
+            ) invalid()
+        }
         value.exerciseSessions.forEach {
             validateExerciseSession(it)
             if (it.sessionId != value.sessionId) invalid()
@@ -297,6 +310,30 @@ class WatchWorkoutProtocolCodec(
         value.pendingEvents.forEach {
             validatePendingEvent(it)
             if (it.sessionId != value.sessionId) invalid()
+        }
+    }
+
+    private fun validateActiveWorkoutRuntime(value: WatchActiveWorkoutRuntimeDto) {
+        requireOpaqueId(value.sessionId)
+        value.activeExerciseId?.let(::requireOpaqueId)
+        value.activeSetId?.let(::requireOpaqueId)
+        if (
+            (value.setStartedAt != null && value.setStartedAt < 0) ||
+            (value.pausedAt != null && value.pausedAt < 0) ||
+            value.workoutAccumulatedPauseMs < 0 ||
+            value.setAccumulatedPauseMs < 0 ||
+            value.revision < 1 ||
+            value.updatedAt < 0 ||
+            (value.status == WatchWorkoutStatus.PAUSED) != (value.pausedAt != null) ||
+            (value.activeSetId == null && value.setStartedAt != null)
+        ) invalid()
+        value.rest?.let { rest ->
+            requireOpaqueId(rest.setId)
+            if (
+                rest.startedAt < 0 ||
+                rest.endsAt < rest.startedAt ||
+                (rest.pausedRemainingMs != null && rest.pausedRemainingMs < 0)
+            ) invalid()
         }
     }
 

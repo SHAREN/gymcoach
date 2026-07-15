@@ -289,6 +289,95 @@ class WatchWorkoutCoordinatorTest {
     }
 
     @Test
+    fun `non heart rate sensor batch does not erase an existing heart rate summary`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        gateway.buildSnapshot(SESSION_ID)
+        val coordinator = coordinator(gateway, sink)
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_SET,
+                WatchEventType.SET_COMPLETED,
+                2,
+                codec.encodeSetRecordPayload(setRecord(100.0, 8, 2, 2)),
+            ),
+        )
+        val hrBatch = sensorBatch(
+            sequence = 1,
+            samples = listOf(heartRateSample("21000000-0000-0000-0000-000000000001", 2_000L, 155)),
+            batchId = "21000000-0000-0000-0000-000000000010",
+            totalSequences = 1,
+        )
+        coordinator.onSensorBatch(
+            sensorBatchEvent("21000000-0000-0000-0000-000000000011", 3, hrBatch),
+            hrBatch,
+        )
+        val accelerometer = heartRateSample(
+            "21000000-0000-0000-0000-000000000002",
+            3_000L,
+            12,
+        ).copy(sensorType = "ACCELEROMETER", unit = "M/S2")
+        val motionBatch = sensorBatch(
+            sequence = 1,
+            samples = listOf(accelerometer),
+            batchId = "21000000-0000-0000-0000-000000000012",
+            totalSequences = 1,
+        )
+        coordinator.onSensorBatch(
+            sensorBatchEvent("21000000-0000-0000-0000-000000000013", 4, motionBatch),
+            motionBatch,
+        )
+
+        val stored = repository.sets.getValue(WATCH_SET_ID)
+        assertEquals(155, stored.avgHr)
+        assertEquals(155, stored.maxHr)
+        assertEquals(1, stored.hrSampleCount)
+    }
+
+    @Test
+    fun `editing a set during rest preserves rest and deleting it ends rest cleanly`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        gateway.buildSnapshot(SESSION_ID)
+        val coordinator = coordinator(gateway, sink)
+        coordinator.onEvent(
+            watchEvent(EVENT_SET, WatchEventType.SET_COMPLETED, 2, codec.encodeSetRecordPayload(setRecord(100.0, 8, 2, 2))),
+        )
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_REST_STARTED,
+                WatchEventType.REST_STARTED,
+                3,
+                codec.encodeRestStartedPayload(RestStartedPayloadDto(WATCH_SET_ID, 70_000L, 190_000L)),
+            ),
+        )
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_SET_UPDATED,
+                WatchEventType.SET_UPDATED,
+                4,
+                codec.encodeSetRecordPayload(setRecord(102.5, 7, 1, 4)),
+            ),
+        )
+        assertEquals(WATCH_SET_ID, repository.runtime?.activeSetId)
+        assertEquals(70_000L, repository.runtime?.restStartedAtEpochMs)
+
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_SET_DELETED,
+                WatchEventType.SET_DELETED,
+                5,
+                codec.encodeSetDeletedPayload(SetDeletedPayloadDto(WATCH_SET_ID, 80_000L, 4)),
+            ),
+        )
+        assertEquals(null, repository.runtime?.activeSetId)
+        assertEquals(null, repository.runtime?.restStartedAtEpochMs)
+        assertEquals(null, repository.runtime?.restEndsAtEpochMs)
+    }
+
+    @Test
     fun `absolute rest survives updates and persists deterministic recovery summary`() = runTest {
         val repository = FakeWatchWorkoutRepository()
         val sink = RecordingSink()

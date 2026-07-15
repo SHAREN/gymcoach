@@ -19,6 +19,18 @@ async function sharedJson(relativePath) {
   return JSON.parse(await readFile(url, 'utf8'));
 }
 
+function idleSnapshot(snapshot) {
+  const next = JSON.parse(JSON.stringify(snapshot));
+  next.workoutSession.activeSetId = null;
+  if (next.runtimeState) {
+    next.runtimeState.activeSetId = null;
+    next.runtimeState.setStartedAt = null;
+    next.runtimeState.setAccumulatedPauseMs = 0;
+    next.runtimeState.rest = null;
+  }
+  return next;
+}
+
 function sequenceClock(start) {
   let value = start;
   return () => ++value;
@@ -98,10 +110,12 @@ test('opening the app applies a standalone snapshot and renders active state', a
   assert.equal(active.completedSets.length, 1);
   assert.equal(active.startedAt, snapshot.workoutSession.startedAt);
   assert.equal(active.revision, snapshot.revision);
+  assert.equal(active.pendingSet.setId, snapshot.runtimeState.activeSetId);
+  assert.equal(active.pendingSet.startedAt, snapshot.runtimeState.setStartedAt);
 });
 
 test('phone exercise change is applied and leaves exactly one ACTIVE exercise', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const payloads = await sharedJson('fixtures/stage3-event-payloads.json');
   const harness = await createHarness({ snapshot });
   const event = createWatchEvent({
@@ -122,7 +136,7 @@ test('phone exercise change is applied and leaves exactly one ACTIVE exercise', 
 });
 
 test('watch exercise change emits the exact durable event payload', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const payloads = await sharedJson('fixtures/stage3-event-payloads.json');
   const harness = await createHarness({ snapshot });
 
@@ -141,8 +155,7 @@ test('watch exercise change emits the exact durable event payload', async () => 
 });
 
 test('watch completes a set with stable setId and exact weight, reps, and RIR', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
-  snapshot.workoutSession.activeSetId = null;
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const harness = await createHarness({ snapshot });
 
   const started = await harness.watch.startSet();
@@ -175,7 +188,7 @@ test('watch completes a set with stable setId and exact weight, reps, and RIR', 
 });
 
 test('duplicate event delivery is idempotent', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const payloads = await sharedJson('fixtures/stage3-event-payloads.json');
   const harness = await createHarness({ snapshot });
   const event = createWatchEvent({
@@ -198,7 +211,7 @@ test('duplicate event delivery is idempotent', async () => {
 });
 
 test('active workout and outbound event survive a watch restart', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const backend = createVolatileStorageBackend();
   const first = await createHarness({ backend, snapshot });
   const event = await first.watch.changeExercise(1);
@@ -212,7 +225,7 @@ test('active workout and outbound event survive a watch restart', async () => {
 });
 
 test('SET_STARTED, SET_UPDATED, SET_DELETED, and WORKOUT_FINISHED are applied', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const payloads = await sharedJson('fixtures/stage3-event-payloads.json');
   const harness = await createHarness({ snapshot });
   let revision = snapshot.revision;
@@ -285,8 +298,7 @@ test('SET_STARTED, SET_UPDATED, SET_DELETED, and WORKOUT_FINISHED are applied', 
 });
 
 test('watch corrects and deletes the last set with exact durable payloads', async () => {
-  const snapshot = await sharedJson('examples/sync-snapshot.json');
-  snapshot.workoutSession.activeSetId = null;
+  const snapshot = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
   const harness = await createHarness({ snapshot });
   const original = snapshot.setRecords[0];
 
