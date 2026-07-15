@@ -254,8 +254,14 @@ export function summarizeRestHeartRate(samples, startedAt, finishedAt) {
   const validSamples = validHeartRateSamples(samples, startedAt, finishedAt);
   const values = validSamples.map((sample) => sample.value);
   const start = values.length > 0 ? values[0] : null;
-  const at30Seconds = nearestValue(validSamples, startedAt + 30_000);
-  const at60Seconds = nearestValue(validSamples, startedAt + 60_000);
+  const at30Seconds =
+    finishedAt >= startedAt + 30_000
+      ? nearestValue(validSamples, startedAt + 30_000)
+      : null;
+  const at60Seconds =
+    finishedAt >= startedAt + 60_000
+      ? nearestValue(validSamples, startedAt + 60_000)
+      : null;
   return {
     startedAt,
     finishedAt,

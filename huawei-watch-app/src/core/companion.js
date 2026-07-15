@@ -43,6 +43,7 @@ import {
   completedSetsForExercise,
   currentExercise,
   nextExercise,
+  withRestSummary,
 } from './workout-state.js';
 
 function defaultIdGenerator() {
@@ -107,6 +108,7 @@ export class WatchCompanion {
       lastSyncAt: null,
       conflictCount: 0,
       activeWorkout: null,
+      lastWorkout: null,
       currentHeartRate: null,
     };
   }
@@ -131,6 +133,7 @@ export class WatchCompanion {
       ...this.state,
       ...document.state,
       activeWorkout: document.activeWorkout,
+      lastWorkout: document.lastWorkout,
       pendingCount: document.outbox.length,
       connection: ConnectionState.CONNECTING,
     };
@@ -391,9 +394,15 @@ export class WatchCompanion {
     if (!activeWorkout.rest) {
       return null;
     }
-    const event = await this.emitWorkoutEvent(WatchEventType.REST_SKIPPED, {
-      skippedAt: this.clock(),
-    });
+    const setId = activeWorkout.rest.setId;
+    const skippedAt = this.clock();
+    await this.collectSensorSamples();
+    const summary = this.liveRestSummary(skippedAt);
+    const event = await this.emitWorkoutEvent(
+      WatchEventType.REST_SKIPPED,
+      { skippedAt },
+      (next) => withRestSummary(next, setId, summary),
+    );
     await this.flushSensorBatches();
     return event;
   }
@@ -472,7 +481,7 @@ export class WatchCompanion {
     });
   }
 
-  async emitWorkoutEvent(type, payloadOrFactory) {
+  async emitWorkoutEvent(type, payloadOrFactory, transformNext = (next) => next) {
     await this.collectSensorSamples();
     const activeWorkout = this.requireActiveWorkout();
     const revision = activeWorkout.revision + 1;
@@ -488,9 +497,10 @@ export class WatchCompanion {
       timestamp: this.clock(),
       type,
     });
-    const next = applyWorkoutEvent(activeWorkout, event);
+    const next = transformNext(applyWorkoutEvent(activeWorkout, event));
     await this.repository.commitOutboundWorkoutEvent(event, next);
     this.state.activeWorkout = next;
+    this.state.lastWorkout = this.repository.snapshot().lastWorkout;
     await this.refreshSensorCollectors();
     this.refreshPendingCount();
     this.emit();
@@ -610,6 +620,7 @@ export class WatchCompanion {
     await this.repository.completeInboundTransferForEvent(event.eventId);
     await this.repository.removePendingInboundEvent(event.eventId);
     this.state.activeWorkout = next;
+    this.state.lastWorkout = this.repository.snapshot().lastWorkout;
     await this.refreshSensorCollectors();
     if (SENSOR_FLUSH_EVENT_TYPES.has(event.type)) {
       await this.queueSensorBatches({ collect: false });
@@ -633,6 +644,7 @@ export class WatchCompanion {
     await this.collectSensorSamples();
     await this.queueSensorBatches({ collect: false });
     const snapshot = parseSyncSnapshot(serialized);
+    const localBeforeSnapshot = this.state.activeWorkout;
     const snapshotHash = canonicalSha256(snapshot);
     const existing = this.repository.receiptRecord(snapshot.snapshotId);
     if (existing?.canonicalHash && existing.canonicalHash !== snapshotHash) {
@@ -697,6 +709,8 @@ export class WatchCompanion {
       next = applyWorkoutEvent(next, event);
     }
 
+    next = preserveRestSummaries(next, localBeforeSnapshot);
+
     await this.repository.commitSnapshot(snapshot.snapshotId, next, {
       canonicalHash: snapshotHash,
       recordedAt: this.clock(),
@@ -727,6 +741,7 @@ export class WatchCompanion {
       lastSyncAt,
     });
     this.state.activeWorkout = next;
+    this.state.lastWorkout = this.repository.snapshot().lastWorkout;
     await this.refreshSensorCollectors();
     this.state.lastSnapshotAt = lastSnapshotAt;
     this.state.lastSyncAt = lastSyncAt;
@@ -1246,6 +1261,33 @@ function compareWorkoutEvents(left, right) {
     left.timestamp - right.timestamp ||
     left.eventId.localeCompare(right.eventId)
   );
+}
+
+function preserveRestSummaries(next, previous) {
+  if (!previous || previous.session.sessionId !== next.session.sessionId) {
+    return next;
+  }
+  const retainedSetIds = new Set(next.completedSets.map((set) => set.setId));
+  const bySetId = new Map();
+  for (const summary of previous.restSummaries || []) {
+    if (retainedSetIds.has(summary.setId)) {
+      bySetId.set(summary.setId, summary);
+    }
+  }
+  for (const summary of next.restSummaries || []) {
+    if (retainedSetIds.has(summary.setId)) {
+      bySetId.set(summary.setId, summary);
+    }
+  }
+  next.restSummaries = [...bySetId.values()].sort(
+    (left, right) => left.finishedAt - right.finishedAt || left.setId.localeCompare(right.setId),
+  );
+  if (next.restSummaries.length > 0) {
+    const summary = { ...next.restSummaries[next.restSummaries.length - 1] };
+    delete summary.setId;
+    next.lastRestSummary = summary;
+  }
+  return next;
 }
 
 function comparePendingEnvelopes(left, right) {
