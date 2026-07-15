@@ -66,8 +66,35 @@ async function seedUser(email: string, password = 'secret123') {
       plateWeights: [1.25, 2.5, 5, 10, 20],
     },
   });
+  const platePool = await db.gymPlatePool.create({
+    data: {
+      gymId: gym.id,
+      name: 'Olympic plates',
+      compatibilityKey: 'olympic_50mm',
+      plates: {
+        createMany: {
+          data: [
+            { weightKg: 20, quantity: 4 },
+            { weightKg: 5, quantity: 4 },
+          ],
+        },
+      },
+    },
+  });
+  const equipment = await db.gymEquipment.create({
+    data: {
+      gymId: gym.id,
+      name: 'Bench station',
+      equipmentType: 'BARBELL',
+      loadType: 'PLATE_LOADED',
+      baseLoadKg: 20,
+      platePoolId: platePool.id,
+      loadingSides: 2,
+      exerciseLinks: { create: { exerciseId: exercise.id } },
+    },
+  });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
-  return { user, exercise, workout: program.workouts[0]!, gym };
+  return { user, exercise, workout: program.workouts[0]!, gym, equipment };
 }
 
 async function loginDevice(email: string, password = 'secret123') {
@@ -96,7 +123,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
       activeProgram: { name: 'Offline block' },
     });
@@ -104,6 +131,16 @@ describe('Android mobile API', () => {
       exerciseId: seeded.exercise.id,
       targetSets: 3,
       targetRIR: 2,
+    });
+    expect(body.gyms[0]).toMatchObject({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      equipment: [
+        expect.objectContaining({
+          id: seeded.equipment.id,
+          loadType: 'PLATE_LOADED',
+          platePoolId: expect.any(String),
+        }),
+      ],
     });
   });
 
@@ -130,6 +167,7 @@ describe('Android mobile API', () => {
           id: setId,
           sessionId,
           exerciseId: seeded.exercise.id,
+          gymEquipmentId: seeded.equipment.id,
           setNumber: 1,
           weight: 80,
           reps: 10,
@@ -185,6 +223,15 @@ describe('Android mobile API', () => {
       rir: 2,
       recoverySec: 135,
       completedAt: new Date('2026-07-13T10:05:00.000Z'),
+      gymEquipmentId: seeded.equipment.id,
+      equipmentNameSnapshot: 'Bench station',
+      selectedLoadKg: 80,
+      selectedLoadMultiplierSnapshot: 1,
+    });
+    expect(set.equipmentLoadSnapshot).toMatchObject({
+      version: 1,
+      loadType: 'PLATE_LOADED',
+      platePool: expect.objectContaining({ compatibilityKey: 'olympic_50mm' }),
     });
 
     const reusedOperation = await sync(

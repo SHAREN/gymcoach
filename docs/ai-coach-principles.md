@@ -333,6 +333,47 @@ still unavailable to program generation: structured life-stress ratings,
 movement-pattern overlap and lumbar-fatigue load. Prompts and agents MUST NOT
 imply that unavailable metrics were calculated.
 
+### 5.6 Equipment-first availability and attainable loads
+
+Implementations: `lib/gym-loads.ts`, `lib/gym-equipment.ts`, and set-writing
+routes.
+
+Source-backed principles:
+
+- available equipment constrains which exercises can be performed;
+- the available load increment constrains practical progression;
+- exercise substitutions may preserve a movement purpose, but performance on
+  different machines is not an exact load conversion.
+
+The following deterministic domain rules are engineering heuristics:
+
+- a physical equipment link is the primary availability source for an
+  exercise;
+- existing `GymExerciseConfig` rows remain a compatibility fallback while old
+  gyms are migrated, but new equipment does not copy its stack into those
+  rows;
+- compatible plates belong to a gym-wide plate pool that may be reused by a
+  barbell, Smith machine, and plate-loaded machine;
+- a plate denomination has an optional physical quantity. `null` means the old
+  inventory recorded the denomination but not its count. The application keeps
+  this uncertainty explicit instead of writing an invented quantity;
+- known plate quantities are consumed deterministically according to the
+  equipment's equally loaded side count;
+- selectorized equipment stores displayed/selected positions and a multiplier
+  specific to that physical machine;
+- nominal resistance is `selectedLoad * selectedLoadMultiplier`. It is an
+  estimate for explaining that machine's configuration, not a claim that two
+  machines with the same nominal number are equivalent;
+- when several physical machines support one exercise, their attainable loads
+  remain separate until the trainee selects the concrete equipment instance.
+
+Workout history preserves `Set.weight` and the displayed/selected load as the
+primary historical facts. It also stores the concrete equipment ID, equipment
+name snapshot, multiplier snapshot, optional nominal resistance, and a
+versioned load-profile snapshot. Later edits to a machine must not rewrite
+historical facts. Deleted equipment may clear the live foreign key, but the
+snapshot remains.
+
 ## 6. LLM coach contract
 
 The LLM is an interpreter and planner around validated GymCoach data. It is not
@@ -466,3 +507,13 @@ in that second review: load, repetitions, RIR, exercise identity and order,
 actual recovery time, session timing, session RPE, warm-up and working-set
 distinction, timestamps and notes. The outbox and synchronization rules are
 engineering reliability mechanisms and do not change the training formulas.
+
+A third review on 2026-07-15 used the same notebook with eight sources and
+conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`. Separate questions covered
+source-backed equipment constraints, edge cases in selectorized and
+plate-loaded machines, deterministic product rules, and an adversarial review
+of ratios and quantities. The sources support equipment-aware exercise choice
+and load increments. They do not define a universal cable ratio, plate sleeve
+standard, shared-pool schema, or exact cross-machine conversion. Universal
+compatible plate pools, nullable quantities, per-machine multipliers, and the
+attainable-load algorithm are therefore documented engineering heuristics.

@@ -36,6 +36,7 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('get_gym_equipment_image')).toBe(true);
     expect(byName.has('update_gym_free_weights')).toBe(true);
     expect(byName.has('upsert_gym_equipment')).toBe(true);
+    expect(byName.has('upsert_gym_plate_pool')).toBe(true);
     expect(byName.has('set_gym_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_program_design_context')).toBe(true);

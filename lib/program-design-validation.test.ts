@@ -70,10 +70,13 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
     gym: {
       id: 'gym-1',
       name: 'Olymp',
+      inventoryMode: 'EQUIPMENT_FIRST',
       dumbbellWeights: [10, 12, 14],
       plateWeights: [1.25, 2.5, 5],
       barWeights: [20],
       exerciseConfigs: [],
+      platePools: [],
+      equipment: [],
     },
     availableExercises: [
       {
@@ -86,6 +89,9 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         defaultRestSec: 120,
         notes: null,
         isAvailableInActiveGym: true,
+        availabilitySource: 'legacy-config',
+        requiresEquipmentSelection: false,
+        equipmentOptions: [],
         weightOptions: [],
         dumbbellWeights: [],
         plateWeights: [],
@@ -101,6 +107,9 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         defaultRestSec: 60,
         notes: null,
         isAvailableInActiveGym: false,
+        availabilitySource: 'none',
+        requiresEquipmentSelection: false,
+        equipmentOptions: [],
         weightOptions: [],
         dumbbellWeights: [],
         plateWeights: [],

@@ -94,6 +94,14 @@ export function validateProgramDesign(
           path: `workouts.${workoutIndex}.exercises.${exerciseIndex}.name`,
         });
       }
+      if (known?.requiresEquipmentSelection) {
+        issues.push({
+          code: 'equipment-selection-required',
+          severity: 'warning',
+          message: `${exercise.name} is available on multiple equipment instances. Select the concrete machine when logging so their loads are not treated as exact equivalents.`,
+          path: `workouts.${workoutIndex}.exercises.${exerciseIndex}.name`,
+        });
+      }
 
       const returnRecommendation = returnByName.get(exercise.name.toLocaleLowerCase());
       if (returnRecommendation && returnRecommendation.mode !== 'normal') {

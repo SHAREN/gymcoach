@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { setUpdateSchema } from '@/lib/schemas/set';
 import { rederiveGoalAchievement } from '@/lib/set-goal-sync';
+import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -16,19 +17,27 @@ export async function PATCH(req: Request, props: Params) {
     const userId = await requireApiUserId();
     const set = await db.set.findUnique({
       where: { id: params.id },
-      include: { session: { select: { userId: true } } },
+      include: { session: { select: { userId: true, gymId: true } } },
     });
     if (!set || set.session.userId !== userId) {
       throw new ApiError(404, 'Set not found.');
     }
 
     const data = await parseJsonBody(req, setUpdateSchema);
+    const equipmentSnapshot = await resolveSetEquipmentSnapshot(db, {
+      userId,
+      sessionGymId: set.session.gymId,
+      exerciseId: set.exerciseId,
+      gymEquipmentId: data.gymEquipmentId === undefined ? set.gymEquipmentId : data.gymEquipmentId,
+      selectedLoadKg: data.weight,
+    });
     const updated = await db.set.update({
       where: { id: set.id },
       data: {
         weight: data.weight,
         reps: data.reps,
         rir: data.rir ?? null,
+        ...equipmentSnapshot,
       },
     });
 

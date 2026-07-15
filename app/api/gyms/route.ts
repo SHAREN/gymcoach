@@ -12,7 +12,16 @@ export async function GET() {
       db.gym.findMany({
         where: { userId },
         orderBy: [{ name: 'asc' }],
-        include: { exerciseConfigs: true },
+        include: {
+          exerciseConfigs: true,
+          platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+          equipment: {
+            include: {
+              exerciseLinks: true,
+              platePool: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+            },
+          },
+        },
       }),
     ]);
     return NextResponse.json({ activeGymId: user?.activeGymId ?? null, gyms });
@@ -32,12 +41,17 @@ export async function POST(req: Request) {
         data: {
           userId,
           name: input.name,
+          inventoryMode: input.inventoryMode,
           dumbbellWeights: input.dumbbellWeights,
           plateWeights: input.plateWeights,
           barWeights: input.barWeights,
           exerciseConfigs: { createMany: { data: exerciseConfigs } },
         },
-        include: { exerciseConfigs: true },
+        include: {
+          exerciseConfigs: true,
+          platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+          equipment: { include: { exerciseLinks: true, platePool: { include: { plates: true } } } },
+        },
       });
       const user = await tx.user.findUnique({
         where: { id: userId },

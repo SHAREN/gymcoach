@@ -99,6 +99,7 @@ async function seedFullUser(email: string) {
     data: {
       userId: user.id,
       name: 'Basement',
+      inventoryMode: 'EQUIPMENT_FIRST',
       dumbbellWeights: [10, 12, 14, 16, 19],
       plateWeights: [1.25, 2.5, 5, 10, 20],
       barWeights: [20],
@@ -115,7 +116,22 @@ async function seedFullUser(email: string) {
     },
   });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
-  await db.gymEquipment.create({
+  const platePool = await db.gymPlatePool.create({
+    data: {
+      gymId: gym.id,
+      name: 'Olympic plates',
+      compatibilityKey: 'olympic_50mm',
+      plates: {
+        createMany: {
+          data: [
+            { weightKg: 20, quantity: 4 },
+            { weightKg: 5, quantity: null },
+          ],
+        },
+      },
+    },
+  });
+  const equipment = await db.gymEquipment.create({
     data: {
       gymId: gym.id,
       name: 'Competition bench station',
@@ -124,7 +140,10 @@ async function seedFullUser(email: string) {
       manufacturer: 'GymCo',
       modelName: 'Bench Pro',
       quantity: 2,
-      weightOptions: [20, 40, 60, 80, 100],
+      loadType: 'PLATE_LOADED',
+      baseLoadKg: 20,
+      platePoolId: platePool.id,
+      loadingSides: 2,
       imageData: EQUIPMENT_PNG,
       imageMimeType: 'image/png',
       exerciseLinks: { create: { exerciseId: bench.id } },
@@ -194,6 +213,15 @@ async function seedFullUser(email: string) {
             rir: 2,
             isDropSet: true,
             recoverySec: 150,
+            gymEquipmentId: equipment.id,
+            equipmentNameSnapshot: equipment.name,
+            selectedLoadKg: 100,
+            selectedLoadMultiplierSnapshot: 1,
+            equipmentLoadSnapshot: {
+              version: 1,
+              loadType: 'PLATE_LOADED',
+              platePool: { name: platePool.name, compatibilityKey: platePool.compatibilityKey },
+            },
             notes: 'top set',
             completedAt: new Date('2026-06-01T10:10:00.000Z'),
           },
@@ -293,6 +321,8 @@ async function countsFor(userId: string) {
     gyms: await db.gym.count({ where: { userId } }),
     gymConfigs: await db.gymExerciseConfig.count({ where: { gym: { userId } } }),
     gymEquipment: await db.gymEquipment.count({ where: { gym: { userId } } }),
+    gymPlatePools: await db.gymPlatePool.count({ where: { gym: { userId } } }),
+    gymPlateItems: await db.gymPlateInventoryItem.count({ where: { pool: { gym: { userId } } } }),
     gymEquipmentLinks: await db.gymEquipmentExercise.count({
       where: { equipment: { gym: { userId } } },
     }),
@@ -304,7 +334,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 7 with mobile training fields, gym equipment, and earlier fields', async () => {
+  it('exports version 8 with equipment load profiles, snapshots, and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -312,7 +342,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(7);
+    expect(dump.version).toBe(8);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -331,9 +361,20 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(dump.gyms).toEqual([
       {
         name: 'Basement',
+        inventoryMode: 'EQUIPMENT_FIRST',
         dumbbellWeights: [10, 12, 14, 16, 19],
         plateWeights: [1.25, 2.5, 5, 10, 20],
         barWeights: [20],
+        platePools: [
+          {
+            name: 'Olympic plates',
+            compatibilityKey: 'olympic_50mm',
+            plates: [
+              { weightKg: 5, quantity: null },
+              { weightKg: 20, quantity: 4 },
+            ],
+          },
+        ],
         equipment: [
           {
             name: 'Competition bench station',
@@ -342,7 +383,12 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
             manufacturer: 'GymCo',
             modelName: 'Bench Pro',
             quantity: 2,
-            weightOptions: [20, 40, 60, 80, 100],
+            loadType: 'PLATE_LOADED',
+            weightOptions: [],
+            selectedLoadMultiplier: 1,
+            baseLoadKg: 20,
+            platePoolCompatibilityKey: 'olympic_50mm',
+            loadingSides: 2,
             imageUrl: null,
             imageMimeType: 'image/png',
             imageBase64: EQUIPMENT_PNG_BASE64,
@@ -365,7 +411,14 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
 
     const sets = dump.sessions[0].sets as Array<Record<string, unknown>>;
     const strength = sets.find((s) => s.exerciseName === 'Bench Press');
-    expect(strength).toMatchObject({ recoverySec: 150 });
+    expect(strength).toMatchObject({
+      recoverySec: 150,
+      equipmentName: 'Competition bench station',
+      selectedLoadKg: 100,
+      selectedLoadMultiplier: 1,
+      nominalResistanceKg: null,
+      equipmentLoadSnapshot: expect.objectContaining({ loadType: 'PLATE_LOADED' }),
+    });
     const cardio = sets.find((s) => s.exerciseName === 'Running');
     expect(cardio).toMatchObject({ durationSec: 1800, distanceM: 5000, avgHr: 152, maxHr: 181 });
 

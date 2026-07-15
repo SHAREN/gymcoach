@@ -6,6 +6,7 @@ import type { MobilePrincipal } from '@/lib/mobile-auth';
 import type { MobileSyncOperation } from '@/lib/schemas/mobile';
 import { validateSetForCategory } from '@/lib/schemas/set';
 import { rederiveGoalAchievement, stampGoalIfAchieved } from '@/lib/set-goal-sync';
+import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 
 export interface MobileSyncResult {
   operationId: string;
@@ -160,7 +161,7 @@ async function applyOperationInTransaction(
     case 'UPSERT_SET': {
       const session = await tx.session.findFirst({
         where: { id: operation.set.sessionId, userId },
-        select: { id: true },
+        select: { id: true, gymId: true },
       });
       if (!session) throw new ApiError(404, 'Session not found.');
       const exercise = await tx.exercise.findFirst({
@@ -177,6 +178,18 @@ async function applyOperationInTransaction(
         throw new ApiError(404, 'Set not found.');
       }
       const isCardio = exercise.category === 'CARDIO';
+      const equipmentSnapshot = isCardio
+        ? null
+        : await resolveSetEquipmentSnapshot(tx, {
+            userId,
+            sessionGymId: session.gymId,
+            exerciseId: operation.set.exerciseId,
+            gymEquipmentId:
+              operation.set.gymEquipmentId === undefined
+                ? existing?.gymEquipmentId
+                : operation.set.gymEquipmentId,
+            selectedLoadKg: operation.set.weight,
+          });
       const data = {
         sessionId: operation.set.sessionId,
         exerciseId: operation.set.exerciseId,
@@ -193,6 +206,7 @@ async function applyOperationInTransaction(
         isDropSet: operation.set.isDropSet,
         recoverySec: operation.set.recoverySec ?? null,
         completedAt: new Date(operation.set.completedAt),
+        ...(equipmentSnapshot ?? {}),
       };
       const saved = existing
         ? await tx.set.update({ where: { id: existing.id }, data })

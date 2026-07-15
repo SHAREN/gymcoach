@@ -4,8 +4,8 @@ import { getLastPerformances } from '@/lib/last-performance';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 1;
-export const MOBILE_CALCULATION_VERSION = '2026-07-13';
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 2;
+export const MOBILE_CALCULATION_VERSION = '2026-07-15-equipment-v1';
 
 export async function buildMobileBootstrap(userId: string) {
   const [user, activeProgram, gyms, openSessions, latestReadiness, catalog] = await Promise.all([
@@ -39,7 +39,30 @@ export async function buildMobileBootstrap(userId: string) {
     db.gym.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      include: { exerciseConfigs: true },
+      include: {
+        exerciseConfigs: true,
+        equipment: {
+          select: {
+            id: true,
+            gymId: true,
+            name: true,
+            equipmentType: true,
+            description: true,
+            manufacturer: true,
+            modelName: true,
+            quantity: true,
+            loadType: true,
+            weightOptions: true,
+            selectedLoadMultiplier: true,
+            baseLoadKg: true,
+            platePoolId: true,
+            loadingSides: true,
+            exerciseLinks: true,
+            platePool: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+          },
+        },
+        platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+      },
     }),
     db.session.findMany({
       where: { userId, finishedAt: null },

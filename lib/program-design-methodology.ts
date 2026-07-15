@@ -1,4 +1,4 @@
-export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-13.2';
+export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-15.1';
 
 export const PROGRAM_DESIGN_RULES = {
   authority: [
@@ -16,6 +16,7 @@ export const PROGRAM_DESIGN_RULES = {
     'Do not convert strength from a related exercise into an exact load for another movement.',
     'Reduce training stress when performance and recovery signals deteriorate together.',
     'Treat pain, illness and medical red flags outside automatic training optimization.',
+    'Available equipment and practical load increments constrain exercise selection and progression.',
   ],
   engineeringHeuristics: {
     perMuscleSessionSoftCapSets: 10,
@@ -51,6 +52,7 @@ Source-backed principles:
 - High volume should be distributed across sessions. More than about 10 hard sets for one primary muscle in one session is a soft warning for diminishing returns, not an absolute physiological prohibition.
 - Poor recovery plus declining performance calls for holding or reducing stress, not adding volume.
 - Pain, illness, injury rehabilitation and medical red flags are outside automatic program optimization.
+- Available equipment constrains exercise selection. Different physical machines are not exact load equivalents.
 
 Engineering heuristics:
 - Use 10-20 weekly hard sets per primary muscle only as a starting range that must be individualized.
@@ -58,6 +60,7 @@ Engineering heuristics:
 - Two or more worsening items in the post-block sleep, motivation, performance, life-stress and aches checklist trigger a conservative load-reduction state. This is a product heuristic, not a diagnosis of overtraining.
 - Use six weeks as the default phase length when the trainee gives no event date or preferred duration.
 - Treat exact date windows, readiness cutoffs, e1RM equations and fatigue coefficients as revisable product rules.
+- Treat plate compatibility pools, nullable inventory quantities and per-machine load multipliers as explicit GymCoach engineering configuration, not universal training science.
 
 Required planning inputs are the goal, realistic weekly schedule, training experience, session-duration limit, equipment access and current pain or movement constraints. Extending a block also requires the post-block recovery checklist.
 

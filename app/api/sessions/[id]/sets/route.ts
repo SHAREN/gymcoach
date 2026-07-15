@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { stampGoalIfAchieved } from '@/lib/set-goal-sync';
+import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -37,6 +38,15 @@ export async function POST(req: Request, props: Params) {
       throw new ApiError(400, categoryError);
     }
     const isCardio = exercise.category === 'CARDIO';
+    const equipmentSnapshot = isCardio
+      ? null
+      : await resolveSetEquipmentSnapshot(db, {
+          userId,
+          sessionGymId: session.gymId,
+          exerciseId: data.exerciseId,
+          gymEquipmentId: data.gymEquipmentId,
+          selectedLoadKg: data.weight,
+        });
 
     const created = await db.set.create({
       data: {
@@ -56,6 +66,7 @@ export async function POST(req: Request, props: Params) {
         isWarmup: data.isWarmup ?? false,
         isDropSet: data.isDropSet ?? false,
         recoverySec: data.recoverySec ?? null,
+        ...(equipmentSnapshot ?? {}),
       },
     });
     // Best-effort: the set is already committed, so a failure here must never
