@@ -392,6 +392,7 @@ export default {
 
   async onShow() {
     pageVisible = true;
+    await run(this, () => companion.reconnect());
     await companion.lifecycleCheckpoint(Date.now());
     refresh(this);
   },

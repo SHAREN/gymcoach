@@ -15,8 +15,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
+
+internal suspend fun <T> withWearEngineSendTimeout(
+    timeoutMs: Long,
+    block: suspend () -> T,
+): T = try {
+    withTimeout(timeoutMs) { block() }
+} catch (error: TimeoutCancellationException) {
+    currentCoroutineContext().ensureActive()
+    throw HuaweiWearEngineClientException(HuaweiWearEngineFailure.SDK_FAILURE, error)
+}
 
 class HuaweiWearEngineSdkClient(context: Context) : HuaweiWearEngineClient {
     private val applicationContext = context.applicationContext
@@ -133,7 +146,7 @@ class HuaweiWearEngineSdkClient(context: Context) : HuaweiWearEngineClient {
     }
 
     private suspend fun send(peer: Peer, message: Message) = sdkCall {
-        withTimeout(SEND_TIMEOUT_MS) {
+        withWearEngineSendTimeout(SEND_TIMEOUT_MS) {
             suspendCancellableCoroutine { continuation ->
                 val completed = AtomicBoolean(false)
                 fun fail(error: Throwable) {

@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { WatchCompanion } from '../src/core/companion.js';
+import { parseControlMessage } from '../src/core/messages.js';
+import { createVolatileStorageBackend, WatchStateRepository } from '../src/core/storage.js';
 import { ConnectionState } from '../src/core/transport.js';
 import { createWearEngineTransport } from '../src/platform/wear-engine-transport.js';
 
@@ -186,6 +189,51 @@ test('send failure rejects and reports the transport error state', async () => {
   await assert.rejects(transport.send('payload'), /phone unavailable/);
   assert.equal(states.at(-1)[0], ConnectionState.ERROR);
   assert.match(states.at(-1)[1].message, /phone unavailable/);
+  assert.equal(FakeP2pClient.instances[0].unregistered, true);
+  await assert.rejects(transport.send('payload'), /disconnected/);
+});
+
+test('send failure reconnects with a fresh client and replays the durable outbox', async () => {
+  class RecoveringP2pClient extends FakeP2pClient {
+    send(message, callback) {
+      this.sent.push(message);
+      const isFirstClient = FakeP2pClient.instances.indexOf(this) === 0;
+      if (isFirstClient && this.sent.length === 2) {
+        callback.onSendResult({ code: 206, data: 'temporary phone failure' });
+        return;
+      }
+      callback.onSendResult({ code: 207 });
+    }
+  }
+  const { transport } = createHarness({
+    sdk: { Builder: FakeBuilder, Message: FakeMessage, P2pClient: RecoveringP2pClient },
+  });
+  let nextId = 0;
+  let now = 1_000;
+  const repository = new WatchStateRepository(createVolatileStorageBackend());
+  const companion = new WatchCompanion({
+    clock: () => ++now,
+    deviceId: 'watch-recovery-test',
+    idGenerator: () => `watch-recovery-${++nextId}`,
+    repository,
+    transport,
+  });
+
+  await companion.start();
+  const pendingId = await companion.ping();
+
+  assert.equal(companion.getState().connection, ConnectionState.ERROR);
+  assert.equal(FakeP2pClient.instances[0].unregistered, true);
+  assert.equal(repository.pending().some((entry) => entry.messageId === pendingId), true);
+
+  await companion.reconnect();
+
+  assert.equal(FakeP2pClient.instances.length, 2);
+  assert.equal(companion.getState().connection, ConnectionState.CONNECTED);
+  const replayed = FakeP2pClient.instances[1].sent
+    .map((message) => parseControlMessage(message.getData()))
+    .map((message) => message.messageId);
+  assert.equal(replayed.includes(pendingId), true);
 });
 
 test('disconnect unregisters the receiver and reports disconnected state', async () => {

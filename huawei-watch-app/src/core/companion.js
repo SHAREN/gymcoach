@@ -159,6 +159,17 @@ export class WatchCompanion {
     this.started = false;
   }
 
+  async reconnect() {
+    if (
+      !this.started ||
+      this.state.connection === ConnectionState.CONNECTED ||
+      this.state.connection === ConnectionState.CONNECTING
+    ) {
+      return;
+    }
+    await this.transport.connect();
+  }
+
   async ping() {
     return this.sendRequest(ControlMessageType.PING, { purpose: 'connection-check' });
   }

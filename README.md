@@ -117,11 +117,11 @@ compact Russian/English diagnostics.
 
 The current integrated local evidence is:
 
-- 77/77 Huawei watch JavaScript/core tests passed.
+- 80/80 Huawei watch JavaScript/core tests passed.
 - 15 shared schemas and 15 examples validated.
 - Production watch HAP and the separate Previewer harness both build successfully with official DevEco Studio/Hvigor.
-- DevEco synchronized the integration Previewer project, but the current-worktree rendering and navigation smoke remains pending because the available GUI control could not complete it. An earlier source-branch visual pass is historical evidence only.
-- Android `testDebugUnitTest` passes 234 tests; `lintDebug`, `assembleDebug` and release Kotlin compilation also pass with Huawei Wear Engine `5.0.3.304`.
+- The integration Previewer project renders the Russian home and workout/rest flows and supports navigation and locale switching. The accepted frozen rest-countdown limitation is tracked separately.
+- Android `testDebugUnitTest` passes 237 tests; `lintDebug`, `assembleDebug` and release Kotlin compilation also pass with Huawei Wear Engine `5.0.3.304`.
 - 6/6 Room migration tests passed on an API 34 Android emulator, including migration 8 to 9.
 
 DevEco Studio `6.1.1.280` is installed with its bundled SDK. The official watch

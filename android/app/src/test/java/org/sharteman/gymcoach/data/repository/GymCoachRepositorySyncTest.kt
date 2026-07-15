@@ -85,6 +85,8 @@ import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchHeartRateSummaryDto
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
+import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 
@@ -261,6 +263,27 @@ class GymCoachRepositorySyncTest {
         restPublished.await()
         assertEquals(listOf(2L, 3L), publisher.revisions.takeLast(2))
         assertEquals(listOf("SET_COMPLETED", "REST_STARTED"), publisher.commands.takeLast(2))
+    }
+
+    @Test
+    fun queuedWatchPublisherSurvivesTransportFailureAndProcessesTheNextCommand() = runTest {
+        val restPublished = CompletableDeferred<Unit>()
+        val publisher = RecordingWatchPublisher(
+            failOnceOn = "SET_COMPLETED",
+            afterRestStarted = { restPublished.complete(Unit) },
+        )
+        val fixture = fixture(publisher, backgroundScope)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+
+        fixture.repository.startRest(sessionId, set.id, 3_000, 123_000)
+        restPublished.await()
+
+        assertEquals(listOf("START", "SET_COMPLETED", "REST_STARTED"), publisher.attempts)
+        assertEquals(listOf("START", "REST_STARTED"), publisher.commands)
+        assertEquals(1, fixture.dao.getWatchConflicts(sessionId).size)
+        assertTrue(fixture.dao.getWatchResyncMarker(sessionId) != null)
     }
 
     @Test
@@ -2437,15 +2460,23 @@ class GymCoachRepositorySyncTest {
 
     private class RecordingWatchPublisher(
         private val fail: Boolean = false,
+        private val failOnceOn: String? = null,
         private val afterSetCompleted: suspend () -> Unit = {},
         private val afterRestStarted: suspend () -> Unit = {},
     ) : WatchPhoneCommandPublisher {
         val commands = mutableListOf<String>()
+        val attempts = mutableListOf<String>()
         val revisions = mutableListOf<Long>()
         val restReasons = mutableListOf<String>()
+        private var failedOnce = false
 
         private fun record(command: String, revision: Long) {
+            attempts += command
             if (fail) error("watch unavailable")
+            if (!failedOnce && command == failOnceOn) {
+                failedOnce = true
+                throw WatchProtocolException(WatchProtocolErrorCode.TRANSPORT_FAILURE)
+            }
             commands += command
             revisions += revision
         }

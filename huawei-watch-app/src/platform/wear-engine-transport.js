@@ -183,6 +183,7 @@ export class WearEngineTransport {
     if (!this.connected || !this.client) {
       throw new Error('Wear Engine transport is disconnected.');
     }
+    const client = this.client;
 
     try {
       await new Promise((resolve, reject) => {
@@ -194,7 +195,7 @@ export class WearEngineTransport {
           }
         };
 
-        this.client.send(message, {
+        client.send(message, {
           onSuccess: () => complete(resolve),
           onFailure: (error) => {
             if (error !== undefined && error !== null) {
@@ -220,6 +221,24 @@ export class WearEngineTransport {
       });
     } catch (error) {
       const normalized = normalizeError(error, fallbackError);
+      if (this.client === client) {
+        this.client = null;
+        this.connected = false;
+        if (typeof client.unregisterReceiver === 'function') {
+          try {
+            await new Promise((resolve, reject) => {
+              client.unregisterReceiver({
+                onSuccess: resolve,
+                onFailure: (releaseError) => reject(
+                  normalizeError(releaseError, 'Wear Engine receiver cleanup failed.'),
+                ),
+              });
+            });
+          } catch {
+            // Preserve the original send failure while allowing a fresh client to reconnect.
+          }
+        }
+      }
       await this.connectionHandler(ConnectionState.ERROR, normalized);
       throw normalized;
     }
