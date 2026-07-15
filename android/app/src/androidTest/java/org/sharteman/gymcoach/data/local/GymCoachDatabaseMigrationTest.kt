@@ -109,8 +109,92 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration5To6PreservesSetsAndCreatesChunkedSensorStorage() {
+        helper.createDatabase(TEST_DB_V6, 5).apply {
+            execSQL(
+                "INSERT INTO local_sessions " +
+                    "(id, workoutId, gymId, startedAt, finishedAt, notes, sessionRpe) " +
+                    "VALUES ('mob_session_v6', 'workout_v6', NULL, " +
+                    "'2026-07-15T04:00:00Z', NULL, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO local_sets " +
+                    "(id, sessionId, exerciseId, setNumber, weight, reps, rir, durationSec, " +
+                    "distanceM, avgHr, maxHr, notes, isWarmup, isDropSet, recoverySec, " +
+                    "completedAt, deleted, exerciseSessionId, startedAt, source, watchRevision) VALUES " +
+                    "('mob_set_v6', 'mob_session_v6', 'exercise_v6', 1, 100, 8, 2, 60, " +
+                    "NULL, 150, 170, NULL, 0, 0, NULL, '2026-07-15T04:01:00Z', 0, " +
+                    "'exercise_session_v6', '2026-07-15T04:00:00Z', 'WATCH', 2)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V6,
+            6,
+            true,
+            GymCoachDatabase.MIGRATION_5_6,
+        ).use { database ->
+            database.query(
+                "SELECT avgHr, maxHr, minHr, startHr, endHr, hrSampleCount " +
+                    "FROM local_sets WHERE id = 'mob_set_v6'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(150, cursor.getInt(0))
+                assertEquals(170, cursor.getInt(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(true, cursor.isNull(3))
+                assertEquals(true, cursor.isNull(4))
+                assertEquals(true, cursor.isNull(5))
+            }
+            database.execSQL(
+                "INSERT INTO watch_sensor_batches " +
+                    "(batchId, sessionId, source, deviceId, createdAtEpochMs, sequence, " +
+                    "totalSequences, sampleCount, receivedAtEpochMs) VALUES " +
+                    "('50000000-0000-0000-0000-000000000001', 'mob_session_v6', 'WATCH', " +
+                    "'watch-v6', 1000, 1, 2, 1, 2000)",
+            )
+            database.execSQL(
+                "INSERT INTO watch_sensor_batches " +
+                    "(batchId, sessionId, source, deviceId, createdAtEpochMs, sequence, " +
+                    "totalSequences, sampleCount, receivedAtEpochMs) VALUES " +
+                    "('50000000-0000-0000-0000-000000000001', 'mob_session_v6', 'WATCH', " +
+                    "'watch-v6', 1000, 2, 2, 1, 2000)",
+            )
+            database.execSQL(
+                "INSERT INTO watch_sensor_samples " +
+                    "(sampleId, batchId, batchSequence, sessionId, exerciseSessionId, setId, " +
+                    "phase, sensorType, numericValue, textValue, booleanValue, unit, " +
+                    "timestampEpochMs, source, valid, quality) VALUES " +
+                    "('60000000-0000-0000-0000-000000000001', " +
+                    "'50000000-0000-0000-0000-000000000001', 2, 'mob_session_v6', " +
+                    "'exercise_session_v6', 'mob_set_v6', 'REST', 'HEART_RATE', " +
+                    "NULL, NULL, NULL, 'BPM', 3000, 'WATCH', 0, 'OFF_WRIST')",
+            )
+            database.query(
+                "SELECT COUNT(*), SUM(sampleCount) FROM watch_sensor_batches " +
+                    "WHERE batchId = '50000000-0000-0000-0000-000000000001'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(2, cursor.getInt(0))
+                assertEquals(2, cursor.getInt(1))
+            }
+            database.query(
+                "SELECT numericValue, valid, quality, batchSequence FROM watch_sensor_samples",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(true, cursor.isNull(0))
+                assertEquals(0, cursor.getInt(1))
+                assertEquals("OFF_WRIST", cursor.getString(2))
+                assertEquals(2, cursor.getInt(3))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
+        const val TEST_DB_V6 = "gymcoach-migration-v6-test"
     }
 }

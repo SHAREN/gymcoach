@@ -7,6 +7,7 @@ import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchSensorBatchDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 
@@ -30,6 +31,17 @@ class WatchWorkoutCoordinator(
             return
         }
         val result = gateway.applyWatchEvent(event)
+        sendAck(event, result)
+    }
+
+    suspend fun onSensorBatch(event: WatchEventEnvelopeDto, batch: WatchSensorBatchDto) {
+        sendAck(event, gateway.applySensorBatch(event, batch))
+    }
+
+    private suspend fun sendAck(
+        event: WatchEventEnvelopeDto,
+        result: org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult,
+    ) {
         sink.sendAck(
             WatchSyncAckDto(
                 protocolVersion = WatchProtocol.VERSION,

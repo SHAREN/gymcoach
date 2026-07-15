@@ -17,8 +17,11 @@ import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.ProgressCacheEntity
+import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
+import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
+import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
@@ -1140,6 +1143,9 @@ class GymCoachRepositorySyncTest {
         private val sets = linkedMapOf<String, LocalSetEntity>()
         private val activeRuntimes = linkedMapOf<String, ActiveWorkoutRuntimeEntity>()
         private val processedWatchEvents = mutableSetOf<String>()
+        private val sensorBatches = linkedMapOf<Pair<String, Int>, WatchSensorBatchEntity>()
+        private val sensorSamples = linkedMapOf<String, WatchSensorSampleEntity>()
+        private val restSummaries = linkedMapOf<String, RestRecoverySummaryEntity>()
         private val outbox = mutableListOf<SyncOutboxEntity>()
         private val openSessionsFlow = MutableStateFlow<List<LocalSessionEntity>>(emptyList())
         private val pendingCountFlow = MutableStateFlow(0)
@@ -1205,6 +1211,65 @@ class GymCoachRepositorySyncTest {
             if (processedWatchEvents.add(entity.eventId)) processedWatchEvents.size.toLong() else -1L
         override suspend fun hasProcessedWatchEvent(eventId: String) =
             if (eventId in processedWatchEvents) 1 else 0
+        override suspend fun hasWatchSensorBatch(batchId: String, sequence: Int) =
+            if (batchId to sequence in sensorBatches) 1 else 0
+        override suspend fun insertWatchSensorBatch(entity: WatchSensorBatchEntity) {
+            check(sensorBatches.putIfAbsent(entity.batchId to entity.sequence, entity) == null)
+        }
+        override suspend fun insertWatchSensorSamples(entities: List<WatchSensorSampleEntity>) {
+            check(entities.none { it.sampleId in sensorSamples })
+            entities.forEach { sensorSamples[it.sampleId] = it }
+        }
+        override suspend fun getWatchSensorSamplesForSet(
+            sessionId: String,
+            setId: String,
+            phase: String,
+        ) = sensorSamples.values.filter {
+            it.sessionId == sessionId && it.setId == setId && it.phase == phase
+        }.sortedWith(compareBy(WatchSensorSampleEntity::timestampEpochMs, WatchSensorSampleEntity::sampleId))
+        override suspend fun getWatchSensorSamplesForInterval(
+            sessionId: String,
+            setId: String,
+            phase: String,
+            startedAtEpochMs: Long,
+            endedAtEpochMs: Long,
+        ) = getWatchSensorSamplesForSet(sessionId, setId, phase).filter {
+            it.timestampEpochMs in startedAtEpochMs..endedAtEpochMs
+        }
+        override suspend fun getRestRecoverySummaries(sessionId: String) =
+            restSummaries.values.filter { it.sessionId == sessionId }
+        override suspend fun getRestRecoverySummary(
+            sessionId: String,
+            setId: String,
+            restStartedAtEpochMs: Long,
+        ) = restSummaries.values.firstOrNull {
+            it.sessionId == sessionId &&
+                it.setId == setId &&
+                it.restStartedAtEpochMs == restStartedAtEpochMs
+        }
+        override suspend fun saveRestRecoverySummary(entity: RestRecoverySummaryEntity) {
+            restSummaries[entity.restId] = entity
+        }
+        override suspend fun updateSetHeartRateSummary(
+            setId: String,
+            minHr: Int?,
+            maxHr: Int?,
+            avgHr: Int?,
+            startHr: Int?,
+            endHr: Int?,
+            sampleCount: Int,
+        ): Int {
+            val existing = sets[setId] ?: return 0
+            sets[setId] = existing.copy(
+                minHr = minHr,
+                maxHr = maxHr,
+                avgHr = avgHr,
+                startHr = startHr,
+                endHr = endHr,
+                hrSampleCount = sampleCount,
+            )
+            return 1
+        }
         override suspend fun pendingOperations(limit: Int) = outbox
             .filter { it.status == "PENDING" || it.status == "FAILED" }
             .sortedBy { it.sequence }

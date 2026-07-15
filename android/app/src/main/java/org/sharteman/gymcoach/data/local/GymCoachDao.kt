@@ -91,6 +91,75 @@ interface GymCoachDao {
     @Query("SELECT COUNT(*) FROM watch_processed_events WHERE eventId = :eventId")
     suspend fun hasProcessedWatchEvent(eventId: String): Int
 
+    @Query(
+        "SELECT COUNT(*) FROM watch_sensor_batches " +
+            "WHERE batchId = :batchId AND sequence = :sequence",
+    )
+    suspend fun hasWatchSensorBatch(batchId: String, sequence: Int): Int
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertWatchSensorBatch(entity: WatchSensorBatchEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertWatchSensorSamples(entities: List<WatchSensorSampleEntity>)
+
+    @Query(
+        "SELECT * FROM watch_sensor_samples " +
+            "WHERE sessionId = :sessionId AND setId = :setId AND phase = :phase " +
+            "ORDER BY timestampEpochMs, sampleId",
+    )
+    suspend fun getWatchSensorSamplesForSet(
+        sessionId: String,
+        setId: String,
+        phase: String,
+    ): List<WatchSensorSampleEntity>
+
+    @Query(
+        "SELECT * FROM watch_sensor_samples " +
+            "WHERE sessionId = :sessionId AND setId = :setId AND phase = :phase " +
+            "AND timestampEpochMs BETWEEN :startedAtEpochMs AND :endedAtEpochMs " +
+            "ORDER BY timestampEpochMs, sampleId",
+    )
+    suspend fun getWatchSensorSamplesForInterval(
+        sessionId: String,
+        setId: String,
+        phase: String,
+        startedAtEpochMs: Long,
+        endedAtEpochMs: Long,
+    ): List<WatchSensorSampleEntity>
+
+    @Query("SELECT * FROM rest_recovery_summaries WHERE sessionId = :sessionId")
+    suspend fun getRestRecoverySummaries(sessionId: String): List<RestRecoverySummaryEntity>
+
+    @Query(
+        "SELECT * FROM rest_recovery_summaries " +
+            "WHERE sessionId = :sessionId AND setId = :setId " +
+            "AND restStartedAtEpochMs = :restStartedAtEpochMs LIMIT 1",
+    )
+    suspend fun getRestRecoverySummary(
+        sessionId: String,
+        setId: String,
+        restStartedAtEpochMs: Long,
+    ): RestRecoverySummaryEntity?
+
+    @Upsert
+    suspend fun saveRestRecoverySummary(entity: RestRecoverySummaryEntity)
+
+    @Query(
+        "UPDATE local_sets SET minHr = :minHr, maxHr = :maxHr, avgHr = :avgHr, " +
+            "startHr = :startHr, endHr = :endHr, hrSampleCount = :sampleCount " +
+            "WHERE id = :setId",
+    )
+    suspend fun updateSetHeartRateSummary(
+        setId: String,
+        minHr: Int?,
+        maxHr: Int?,
+        avgHr: Int?,
+        startHr: Int?,
+        endHr: Int?,
+        sampleCount: Int,
+    ): Int
+
     @Query("SELECT * FROM sync_outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY sequence LIMIT :limit")
     suspend fun pendingOperations(limit: Int = 500): List<SyncOutboxEntity>
 
@@ -246,6 +315,38 @@ interface GymCoachDao {
         markSetDeleted(setId)
         enqueue(operation)
         saveActiveWorkoutRuntime(runtime)
+        return true
+    }
+
+    @Transaction
+    suspend fun applyWatchSensorBatch(
+        processed: WatchProcessedEventEntity,
+        batch: WatchSensorBatchEntity,
+        samples: List<WatchSensorSampleEntity>,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean {
+        if (
+            hasProcessedWatchEvent(processed.eventId) > 0 ||
+            hasWatchSensorBatch(batch.batchId, batch.sequence) > 0
+        ) {
+            return false
+        }
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        insertWatchSensorBatch(batch)
+        insertWatchSensorSamples(samples)
+        saveActiveWorkoutRuntime(runtime)
+        return true
+    }
+
+    @Transaction
+    suspend fun applyWatchRestEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        summary: RestRecoverySummaryEntity?,
+    ): Boolean {
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        saveActiveWorkoutRuntime(runtime)
+        summary?.let { saveRestRecoverySummary(it) }
         return true
     }
 

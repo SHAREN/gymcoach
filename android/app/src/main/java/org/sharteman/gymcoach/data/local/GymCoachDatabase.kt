@@ -15,11 +15,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalSetEntity::class,
         ActiveWorkoutRuntimeEntity::class,
         WatchProcessedEventEntity::class,
+        WatchSensorBatchEntity::class,
+        WatchSensorSampleEntity::class,
+        RestRecoverySummaryEntity::class,
         SyncOutboxEntity::class,
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -34,7 +37,13 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 context.applicationContext,
                 GymCoachDatabase::class.java,
                 "gymcoach-android.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            ).addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+            )
                 .build()
                 .also { instance = it }
         }
@@ -164,6 +173,115 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_watch_processed_events_processedAtEpochMs " +
                         "ON watch_processed_events(processedAtEpochMs)",
+                )
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN minHr INTEGER")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN startHr INTEGER")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN endHr INTEGER")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN hrSampleCount INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_sensor_batches (" +
+                        "batchId TEXT NOT NULL, " +
+                        "sessionId TEXT NOT NULL, " +
+                        "source TEXT NOT NULL, " +
+                        "deviceId TEXT NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL, " +
+                        "sequence INTEGER NOT NULL, " +
+                        "totalSequences INTEGER NOT NULL, " +
+                        "sampleCount INTEGER NOT NULL, " +
+                        "receivedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(batchId, sequence), " +
+                        "FOREIGN KEY(sessionId) REFERENCES local_sessions(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_batches_sessionId " +
+                        "ON watch_sensor_batches(sessionId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_batches_createdAtEpochMs " +
+                        "ON watch_sensor_batches(createdAtEpochMs)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_sensor_samples (" +
+                        "sampleId TEXT NOT NULL, " +
+                        "batchId TEXT NOT NULL, " +
+                        "batchSequence INTEGER NOT NULL, " +
+                        "sessionId TEXT NOT NULL, " +
+                        "exerciseSessionId TEXT, " +
+                        "setId TEXT, " +
+                        "phase TEXT NOT NULL, " +
+                        "sensorType TEXT NOT NULL, " +
+                        "numericValue REAL, " +
+                        "textValue TEXT, " +
+                        "booleanValue INTEGER, " +
+                        "unit TEXT NOT NULL, " +
+                        "timestampEpochMs INTEGER NOT NULL, " +
+                        "source TEXT NOT NULL, " +
+                        "valid INTEGER NOT NULL, " +
+                        "quality TEXT, " +
+                        "PRIMARY KEY(sampleId), " +
+                        "FOREIGN KEY(batchId, batchSequence) " +
+                        "REFERENCES watch_sensor_batches(batchId, sequence) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_samples_batchId_batchSequence " +
+                        "ON watch_sensor_samples(batchId, batchSequence)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_samples_sessionId " +
+                        "ON watch_sensor_samples(sessionId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_samples_setId " +
+                        "ON watch_sensor_samples(setId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_samples_sessionId_phase_timestampEpochMs " +
+                        "ON watch_sensor_samples(sessionId, phase, timestampEpochMs)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_sensor_samples_sessionId_setId_phase_timestampEpochMs " +
+                        "ON watch_sensor_samples(sessionId, setId, phase, timestampEpochMs)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS rest_recovery_summaries (" +
+                        "restId TEXT NOT NULL, " +
+                        "sessionId TEXT NOT NULL, " +
+                        "setId TEXT NOT NULL, " +
+                        "restStartedAtEpochMs INTEGER NOT NULL, " +
+                        "restEndedAtEpochMs INTEGER NOT NULL, " +
+                        "startHr REAL, " +
+                        "minHr REAL, " +
+                        "avgHr REAL, " +
+                        "hr30 REAL, " +
+                        "hr60 REAL, " +
+                        "drop30 REAL, " +
+                        "drop60 REAL, " +
+                        "hrSampleCount INTEGER NOT NULL, " +
+                        "skipped INTEGER NOT NULL, " +
+                        "updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(restId), " +
+                        "FOREIGN KEY(sessionId) REFERENCES local_sessions(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_rest_recovery_summaries_sessionId " +
+                        "ON rest_recovery_summaries(sessionId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_rest_recovery_summaries_setId " +
+                        "ON rest_recovery_summaries(setId)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_rest_recovery_summaries_sessionId_setId_restStartedAtEpochMs " +
+                        "ON rest_recovery_summaries(sessionId, setId, restStartedAtEpochMs)",
                 )
             }
         }

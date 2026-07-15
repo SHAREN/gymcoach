@@ -57,6 +57,10 @@ data class LocalSetEntity(
     val distanceM: Double? = null,
     val avgHr: Int? = null,
     val maxHr: Int? = null,
+    val minHr: Int? = null,
+    val startHr: Int? = null,
+    val endHr: Int? = null,
+    val hrSampleCount: Int? = null,
     val notes: String? = null,
     val isWarmup: Boolean = false,
     val isDropSet: Boolean = false,
@@ -106,6 +110,102 @@ data class WatchProcessedEventEntity(
     val sessionId: String,
     val revision: Long,
     val processedAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "watch_sensor_batches",
+    primaryKeys = ["batchId", "sequence"],
+    foreignKeys = [
+        ForeignKey(
+            entity = LocalSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("sessionId"), Index("createdAtEpochMs")],
+)
+data class WatchSensorBatchEntity(
+    val batchId: String,
+    val sessionId: String,
+    val source: String,
+    val deviceId: String,
+    val createdAtEpochMs: Long,
+    val sequence: Int,
+    val totalSequences: Int,
+    val sampleCount: Int,
+    val receivedAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "watch_sensor_samples",
+    foreignKeys = [
+        ForeignKey(
+            entity = WatchSensorBatchEntity::class,
+            parentColumns = ["batchId", "sequence"],
+            childColumns = ["batchId", "batchSequence"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["batchId", "batchSequence"]),
+        Index("sessionId"),
+        Index("setId"),
+        Index(value = ["sessionId", "phase", "timestampEpochMs"]),
+        Index(value = ["sessionId", "setId", "phase", "timestampEpochMs"]),
+    ],
+)
+data class WatchSensorSampleEntity(
+    @PrimaryKey val sampleId: String,
+    val batchId: String,
+    val batchSequence: Int,
+    val sessionId: String,
+    val exerciseSessionId: String?,
+    val setId: String?,
+    val phase: String,
+    val sensorType: String,
+    val numericValue: Double?,
+    val textValue: String?,
+    val booleanValue: Boolean?,
+    val unit: String,
+    val timestampEpochMs: Long,
+    val source: String,
+    val valid: Boolean,
+    val quality: String?,
+)
+
+@Entity(
+    tableName = "rest_recovery_summaries",
+    foreignKeys = [
+        ForeignKey(
+            entity = LocalSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index("sessionId"),
+        Index("setId"),
+        Index(value = ["sessionId", "setId", "restStartedAtEpochMs"], unique = true),
+    ],
+)
+data class RestRecoverySummaryEntity(
+    @PrimaryKey val restId: String,
+    val sessionId: String,
+    val setId: String,
+    val restStartedAtEpochMs: Long,
+    val restEndedAtEpochMs: Long,
+    val startHr: Double?,
+    val minHr: Double?,
+    val avgHr: Double?,
+    val hr30: Double?,
+    val hr60: Double?,
+    val drop30: Double?,
+    val drop60: Double?,
+    val hrSampleCount: Int,
+    val skipped: Boolean,
+    val updatedAtEpochMs: Long,
 )
 
 @Entity(

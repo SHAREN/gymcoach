@@ -2,6 +2,8 @@ package org.sharteman.gymcoach.watch.sync
 
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -10,7 +12,10 @@ import org.junit.Test
 import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
+import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
+import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ProfileDto
@@ -21,17 +26,26 @@ import org.sharteman.gymcoach.watch.data.PersistentWatchWorkoutGateway
 import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
 import org.sharteman.gymcoach.watch.data.WatchWorkoutRepository
 import org.sharteman.gymcoach.watch.domain.ActiveExerciseChangedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestFinishedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestHeartRateSummaryDto
+import org.sharteman.gymcoach.watch.domain.RestStartedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestUpdatedPayloadDto
+import org.sharteman.gymcoach.watch.domain.SensorBatchRecordedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetDeletedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetStartedPayloadDto
+import org.sharteman.gymcoach.watch.domain.WatchDeliveryMode
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchHeartRateSummaryDto
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchSensorBatchDto
+import org.sharteman.gymcoach.watch.domain.WatchSensorSampleDto
 import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
+import org.sharteman.gymcoach.watch.domain.WatchWorkoutPhase
 
 class WatchWorkoutCoordinatorTest {
     private val codec = WatchWorkoutProtocolCodec()
@@ -216,6 +230,157 @@ class WatchWorkoutCoordinatorTest {
         assertEquals(5L, repository.runtime?.revision)
     }
 
+    @Test
+    fun `sensor chunks are idempotent per batch sequence and update set summary`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        gateway.buildSnapshot(SESSION_ID)
+        val coordinator = coordinator(gateway, sink)
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_SET,
+                WatchEventType.SET_COMPLETED,
+                2,
+                codec.encodeSetRecordPayload(setRecord(100.0, 8, 2, 2)),
+            ),
+        )
+        val firstBatch = sensorBatch(
+            sequence = 1,
+            samples = listOf(
+                heartRateSample("20000000-0000-0000-0000-000000000001", 2_000L, 150),
+                heartRateSample(
+                    "20000000-0000-0000-0000-000000000002",
+                    3_000L,
+                    null,
+                    valid = false,
+                    quality = "OFF_WRIST",
+                ),
+                heartRateSample("20000000-0000-0000-0000-000000000003", 32_000L, 170),
+            ),
+        )
+        val firstEvent = sensorBatchEvent(EVENT_SENSOR_BATCH, 3, firstBatch)
+
+        coordinator.onSensorBatch(firstEvent, firstBatch)
+        coordinator.onSensorBatch(firstEvent, firstBatch)
+        coordinator.onSensorBatch(
+            sensorBatchEvent(EVENT_SENSOR_BATCH_DUPLICATE_CHUNK, 4, firstBatch),
+            firstBatch,
+        )
+
+        val secondBatch = sensorBatch(
+            sequence = 2,
+            samples = listOf(
+                heartRateSample("20000000-0000-0000-0000-000000000004", 62_000L, 160),
+            ),
+        )
+        coordinator.onSensorBatch(sensorBatchEvent(EVENT_SENSOR_BATCH_SECOND, 4, secondBatch), secondBatch)
+
+        val stored = repository.sets.getValue(WATCH_SET_ID)
+        assertEquals(150, stored.minHr)
+        assertEquals(170, stored.maxHr)
+        assertEquals(160, stored.avgHr)
+        assertEquals(150, stored.startHr)
+        assertEquals(160, stored.endHr)
+        assertEquals(3, stored.hrSampleCount)
+        assertEquals(setOf(SENSOR_BATCH_ID to 1, SENSOR_BATCH_ID to 2), repository.sensorBatches)
+        assertEquals(WatchSyncAckStatus.DUPLICATE, sink.acks[sink.acks.lastIndex - 1].status)
+        assertEquals(WatchSyncAckStatus.APPLIED, sink.acks.last().status)
+    }
+
+    @Test
+    fun `absolute rest survives updates and persists deterministic recovery summary`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        gateway.buildSnapshot(SESSION_ID)
+        val coordinator = coordinator(gateway, sink)
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_SET,
+                WatchEventType.SET_COMPLETED,
+                2,
+                codec.encodeSetRecordPayload(setRecord(100.0, 8, 2, 2)),
+            ),
+        )
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_REST_STARTED,
+                WatchEventType.REST_STARTED,
+                3,
+                codec.encodeRestStartedPayload(RestStartedPayloadDto(WATCH_SET_ID, 70_000L, 190_000L)),
+            ),
+        )
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_REST_UPDATED,
+                WatchEventType.REST_UPDATED,
+                4,
+                codec.encodeRestUpdatedPayload(RestUpdatedPayloadDto(220_000L, "ADD_30_SECONDS")),
+            ),
+        )
+
+        assertEquals(WATCH_SET_ID, repository.runtime?.activeSetId)
+        assertEquals(70_000L, repository.runtime?.restStartedAtEpochMs)
+        assertEquals(220_000L, repository.runtime?.restEndsAtEpochMs)
+        assertEquals(150, repository.runtime?.restDurationSeconds)
+
+        val restBatch = sensorBatch(
+            sequence = 1,
+            samples = listOf(
+                heartRateSample("30000000-0000-0000-0000-000000000001", 70_000L, 150, phase = WatchWorkoutPhase.REST),
+                heartRateSample("30000000-0000-0000-0000-000000000002", 100_000L, 140, phase = WatchWorkoutPhase.REST),
+                heartRateSample("30000000-0000-0000-0000-000000000003", 130_000L, 130, phase = WatchWorkoutPhase.REST),
+                heartRateSample(
+                    "30000000-0000-0000-0000-000000000004",
+                    150_000L,
+                    null,
+                    valid = false,
+                    quality = "OFF_WRIST",
+                    phase = WatchWorkoutPhase.REST,
+                ),
+            ),
+            batchId = REST_BATCH_ID,
+            totalSequences = 1,
+        )
+        coordinator.onSensorBatch(sensorBatchEvent(EVENT_REST_BATCH, 5, restBatch), restBatch)
+        coordinator.onEvent(
+            watchEvent(
+                EVENT_REST_FINISHED,
+                WatchEventType.REST_FINISHED,
+                6,
+                codec.encodeRestFinishedPayload(
+                    RestFinishedPayloadDto(
+                        finishedAt = 190_000L,
+                        summary = RestHeartRateSummaryDto(
+                            startedAt = 70_000L,
+                            finishedAt = 190_000L,
+                            start = 150.0,
+                            min = 130.0,
+                            average = 140.0,
+                            at30Seconds = 140.0,
+                            at60Seconds = 130.0,
+                            drop30Seconds = 10.0,
+                            drop60Seconds = 20.0,
+                            sampleCount = 3,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val summary = repository.restRecoverySummaries.values.single()
+        assertEquals(WATCH_SET_ID, summary.setId)
+        assertEquals(150.0, summary.startHr ?: Double.NaN, 0.0)
+        assertEquals(130.0, summary.minHr ?: Double.NaN, 0.0)
+        assertEquals(140.0, summary.avgHr ?: Double.NaN, 0.0)
+        assertEquals(10.0, summary.drop30 ?: Double.NaN, 0.0)
+        assertEquals(20.0, summary.drop60 ?: Double.NaN, 0.0)
+        assertEquals(3, summary.hrSampleCount)
+        assertEquals(null, repository.runtime?.restStartedAtEpochMs)
+        assertEquals(null, repository.runtime?.activeSetId)
+    }
+
     private fun gateway(repository: FakeWatchWorkoutRepository) = PersistentWatchWorkoutGateway(
         repository = repository,
         phoneDeviceId = "phone-stage3",
@@ -277,6 +442,66 @@ class WatchWorkoutCoordinatorTest {
         revision = revision,
     )
 
+    private fun sensorBatchEvent(
+        eventId: String,
+        revision: Long,
+        batch: WatchSensorBatchDto,
+    ) = watchEvent(
+        eventId = eventId,
+        type = WatchEventType.SENSOR_BATCH_RECORDED,
+        revision = revision,
+        payload = codec.encodeSensorBatchRecordedPayload(
+            SensorBatchRecordedPayloadDto(
+                batchId = batch.batchId,
+                sequence = batch.sequence,
+                totalSequences = batch.totalSequences,
+                deliveryMode = WatchDeliveryMode.FILE,
+                sampleCount = batch.sampleCount,
+            ),
+        ),
+    )
+
+    private fun sensorBatch(
+        sequence: Int,
+        samples: List<WatchSensorSampleDto>,
+        batchId: String = SENSOR_BATCH_ID,
+        totalSequences: Int = 2,
+    ) = WatchSensorBatchDto(
+        protocolVersion = WatchProtocol.VERSION,
+        schemaVersion = WatchProtocol.SCHEMA_VERSION,
+        batchId = batchId,
+        sessionId = SESSION_ID,
+        source = WatchEventSource.WATCH,
+        deviceId = "watch-stage3",
+        createdAt = 15_000L,
+        sequence = sequence,
+        totalSequences = totalSequences,
+        sampleCount = samples.size,
+        samples = samples,
+    )
+
+    private fun heartRateSample(
+        sampleId: String,
+        timestamp: Long,
+        value: Int?,
+        valid: Boolean = true,
+        quality: String = "VALID",
+        phase: WatchWorkoutPhase = WatchWorkoutPhase.SET,
+    ) = WatchSensorSampleDto(
+        sampleId = sampleId,
+        sessionId = SESSION_ID,
+        exerciseSessionId = EXERCISE_SESSION_ONE_ID,
+        setId = WATCH_SET_ID,
+        phase = phase,
+        sensorType = "HEART_RATE",
+        value = value?.let(::JsonPrimitive) ?: JsonNull,
+        unit = "BPM",
+        timestamp = timestamp,
+        source = WatchEventSource.WATCH,
+        valid = valid,
+        quality = quality,
+    )
+
     private class RecordingSink : WatchWorkoutResponseSink {
         val snapshots = mutableListOf<WatchSyncSnapshotDto>()
         val acks = mutableListOf<WatchSyncAckDto>()
@@ -304,6 +529,9 @@ class WatchWorkoutCoordinatorTest {
             startedAt = Instant.ofEpochMilli(1_000L).toString(),
         )
         private val processedEventIds = mutableSetOf<String>()
+        val sensorBatches = mutableSetOf<Pair<String, Int>>()
+        private val sensorSamples = linkedMapOf<String, WatchSensorSampleEntity>()
+        val restRecoverySummaries = linkedMapOf<String, RestRecoverySummaryEntity>()
         val sets = linkedMapOf<String, LocalSetEntity>()
         val outboxSetIds = mutableListOf<String>()
         var runtime: ActiveWorkoutRuntimeEntity? = null
@@ -326,6 +554,8 @@ class WatchWorkoutCoordinatorTest {
         override suspend fun set(setId: String) = sets[setId]
         override suspend fun runtime(sessionId: String) = runtime?.takeIf { it.sessionId == sessionId }
         override suspend fun hasProcessedEvent(eventId: String) = eventId in processedEventIds
+        override suspend fun hasSensorBatch(batchId: String, sequence: Int) =
+            batchId to sequence in sensorBatches
 
         override suspend fun saveRuntime(runtime: ActiveWorkoutRuntimeEntity) {
             this.runtime = runtime
@@ -380,6 +610,75 @@ class WatchWorkoutCoordinatorTest {
             this.runtime = runtime
             return true
         }
+
+        override suspend fun applySensorBatch(
+            processed: WatchProcessedEventEntity,
+            batch: WatchSensorBatchEntity,
+            samples: List<WatchSensorSampleEntity>,
+            runtime: ActiveWorkoutRuntimeEntity,
+        ): Boolean {
+            if (
+                !processedEventIds.add(processed.eventId) ||
+                !sensorBatches.add(batch.batchId to batch.sequence)
+            ) return false
+            samples.forEach { sensorSamples[it.sampleId] = it }
+            this.runtime = runtime
+            return true
+        }
+
+        override suspend fun applyRestEvent(
+            processed: WatchProcessedEventEntity,
+            runtime: ActiveWorkoutRuntimeEntity,
+            summary: RestRecoverySummaryEntity?,
+        ): Boolean {
+            if (!processedEventIds.add(processed.eventId)) return false
+            this.runtime = runtime
+            summary?.let { restRecoverySummaries[it.restId] = it }
+            return true
+        }
+
+        override suspend fun sensorSamplesForSet(sessionId: String, setId: String, phase: String) =
+            sensorSamples.values.filter {
+                it.sessionId == sessionId && it.setId == setId && it.phase == phase
+            }.sortedWith(compareBy(WatchSensorSampleEntity::timestampEpochMs, WatchSensorSampleEntity::sampleId))
+
+        override suspend fun sensorSamplesForInterval(
+            sessionId: String,
+            setId: String,
+            phase: String,
+            startedAtEpochMs: Long,
+            endedAtEpochMs: Long,
+        ) = sensorSamplesForSet(sessionId, setId, phase).filter {
+            it.timestampEpochMs in startedAtEpochMs..endedAtEpochMs
+        }
+
+        override suspend fun restSummaries(sessionId: String) =
+            restRecoverySummaries.values.filter { it.sessionId == sessionId }
+
+        override suspend fun updateSetHeartRateSummary(
+            setId: String,
+            minHr: Int?,
+            maxHr: Int?,
+            avgHr: Int?,
+            startHr: Int?,
+            endHr: Int?,
+            sampleCount: Int,
+        ): Boolean {
+            val existing = sets[setId] ?: return false
+            sets[setId] = existing.copy(
+                minHr = minHr,
+                maxHr = maxHr,
+                avgHr = avgHr,
+                startHr = startHr,
+                endHr = endHr,
+                hrSampleCount = sampleCount,
+            )
+            return true
+        }
+
+        override suspend fun saveRestSummary(summary: RestRecoverySummaryEntity) {
+            restRecoverySummaries[summary.restId] = summary
+        }
     }
 
     private companion object {
@@ -400,6 +699,15 @@ class WatchWorkoutCoordinatorTest {
         const val EVENT_SET_STARTED = "10000000-0000-0000-0000-000000000007"
         const val EVENT_SET_UPDATED = "10000000-0000-0000-0000-000000000008"
         const val EVENT_SET_DELETED = "10000000-0000-0000-0000-000000000009"
+        const val EVENT_SENSOR_BATCH = "10000000-0000-0000-0000-000000000010"
+        const val EVENT_SENSOR_BATCH_DUPLICATE_CHUNK = "10000000-0000-0000-0000-000000000011"
+        const val EVENT_SENSOR_BATCH_SECOND = "10000000-0000-0000-0000-000000000012"
+        const val EVENT_REST_STARTED = "10000000-0000-0000-0000-000000000013"
+        const val EVENT_REST_UPDATED = "10000000-0000-0000-0000-000000000014"
+        const val EVENT_REST_BATCH = "10000000-0000-0000-0000-000000000015"
+        const val EVENT_REST_FINISHED = "10000000-0000-0000-0000-000000000016"
+        const val SENSOR_BATCH_ID = "40000000-0000-0000-0000-000000000001"
+        const val REST_BATCH_ID = "40000000-0000-0000-0000-000000000002"
 
         fun testWorkout(): WorkoutDto {
             fun target(
