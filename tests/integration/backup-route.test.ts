@@ -221,10 +221,21 @@ async function seedFullUser(email: string) {
             equipmentNameSnapshot: equipment.name,
             selectedLoadKg: 100,
             selectedLoadMultiplierSnapshot: 1,
+            nominalResistanceKg: null,
             equipmentLoadSnapshot: {
               version: 1,
               loadType: 'PLATE_LOADED',
-              platePool: { name: platePool.name, compatibilityKey: platePool.compatibilityKey },
+              equipmentType: 'BARBELL',
+              selectedLoadKg: 100,
+              selectedLoadMultiplier: 1,
+              nominalResistanceKg: null,
+              baseLoadKg: 20,
+              loadingSides: 2,
+              platePool: {
+                id: platePool.id,
+                name: platePool.name,
+                compatibilityKey: platePool.compatibilityKey,
+              },
             },
             notes: 'top set',
             completedAt: new Date('2026-06-01T10:10:00.000Z'),
@@ -341,7 +352,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 9 with session membership, equipment snapshots, and earlier fields', async () => {
+  it('exports version 10 with provenance, membership order, snapshots, and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -349,7 +360,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(9);
+    expect(dump.version).toBe(10);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -400,6 +411,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
             imageMimeType: 'image/png',
             imageBase64: EQUIPMENT_PNG_BASE64,
             exerciseNames: ['Bench Press'],
+            legacyMirrorExerciseNames: [],
           },
         ],
         exerciseConfigs: [
@@ -410,6 +422,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
             dumbbellWeights: [7.5],
             plateWeights: [1.25],
             barWeights: [10],
+            isEquipmentMirror: false,
           },
         ],
       },
@@ -533,7 +546,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     ]);
     const orphanMemberships = [
       { exercise: dipA, completedAt: '2026-06-01T10:20:00.000Z' },
-      { exercise: pullupA, completedAt: '2026-06-01T10:30:00.000Z' },
+      { exercise: pullupA, completedAt: '2026-06-01T10:20:00.000Z' },
       { exercise: rowA, completedAt: '2026-06-01T10:40:00.000Z' },
     ];
     for (const [index, membership] of orphanMemberships.entries()) {
@@ -549,15 +562,21 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
       });
       await db.set.delete({ where: { id: temporarySet.id } });
     }
+    await db.sessionExercise.update({
+      where: {
+        sessionId_exerciseId: { sessionId: sessionA.id, exerciseId: rowA.id },
+      },
+      data: { ordinal: 500 },
+    });
 
     actAs(userA.id);
     const dump = await (await getBackup(getReq())).json();
     const expectedMemberships = [
-      { exerciseName: 'Bench Press', addedAt: '2026-06-01T10:10:00.000Z' },
-      { exerciseName: 'Dip', addedAt: '2026-06-01T10:20:00.000Z' },
-      { exerciseName: 'Pull-up', addedAt: '2026-06-01T10:30:00.000Z' },
-      { exerciseName: 'Membership row', addedAt: '2026-06-01T10:40:00.000Z' },
-      { exerciseName: 'Running', addedAt: '2026-06-01T10:50:00.000Z' },
+      { exerciseName: 'Bench Press', addedAt: '2026-06-01T10:10:00.000Z', ordinal: 0 },
+      { exerciseName: 'Dip', addedAt: '2026-06-01T10:20:00.000Z', ordinal: 2 },
+      { exerciseName: 'Pull-up', addedAt: '2026-06-01T10:20:00.000Z', ordinal: 3 },
+      { exerciseName: 'Membership row', addedAt: '2026-06-01T10:40:00.000Z', ordinal: 500 },
+      { exerciseName: 'Running', addedAt: '2026-06-01T10:50:00.000Z', ordinal: 1 },
     ];
     expect(dump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
     expect(dump.sessions[0].exerciseNames).toEqual(
@@ -580,25 +599,50 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
 
     const restoredMemberships = await db.sessionExercise.findMany({
       where: { session: { userId: userB.id } },
-      orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+      orderBy: [{ addedAt: 'asc' }, { ordinal: 'asc' }],
       include: { exercise: { select: { name: true } } },
     });
     expect(
       restoredMemberships.map((membership) => ({
         exerciseName: membership.exercise.name,
         addedAt: membership.addedAt.toISOString(),
+        ordinal: membership.ordinal,
       })),
     ).toEqual(expectedMemberships);
 
     const restoredDump = await (await getBackup(getReq())).json();
     expect(restoredDump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
 
-    const legacyV9Dump = structuredClone(dump);
-    delete legacyV9Dump.sessions[0].exerciseMemberships;
+    const legacyStructuredDump = structuredClone(dump);
+    legacyStructuredDump.version = 9;
+    for (const membership of legacyStructuredDump.sessions[0].exerciseMemberships) {
+      delete membership.ordinal;
+    }
     const userC = await db.user.create({
       data: { email: 'membership-c@test.dev', passwordHash: 'x' },
     });
     actAs(userC.id);
+    const legacyStructuredResponse = await postBackup(
+      jsonReq({ payload: legacyStructuredDump, confirmReplace: true }),
+    );
+    expect(legacyStructuredResponse.status).toBe(200);
+    const legacyStructuredExport = await (await getBackup(getReq())).json();
+    expect(
+      legacyStructuredExport.sessions[0].exerciseMemberships.map(
+        (membership: { exerciseName: string; addedAt: string }) => ({
+          exerciseName: membership.exerciseName,
+          addedAt: membership.addedAt,
+        }),
+      ),
+    ).toEqual(expectedMemberships.map(({ exerciseName, addedAt }) => ({ exerciseName, addedAt })));
+
+    const legacyV9Dump = structuredClone(dump);
+    legacyV9Dump.version = 9;
+    delete legacyV9Dump.sessions[0].exerciseMemberships;
+    const userD = await db.user.create({
+      data: { email: 'membership-d@test.dev', passwordHash: 'x' },
+    });
+    actAs(userD.id);
     const legacyResponse = await postBackup(
       jsonReq({ payload: legacyV9Dump, confirmReplace: true }),
     );
@@ -606,13 +650,123 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     expect(
       (
         await db.sessionExercise.findMany({
-          where: { session: { userId: userC.id } },
+          where: { session: { userId: userD.id } },
           include: { exercise: { select: { name: true } } },
         })
       )
         .map((membership) => membership.exercise.name)
         .sort(),
     ).toEqual(expectedMemberships.map((membership) => membership.exerciseName).sort());
+  });
+
+  it('round-trips equipment compatibility-mirror provenance in version 10', async () => {
+    const source = await seedFullUser('mirror-backup-source@test.dev');
+    const [gym, equipment, exercise] = await Promise.all([
+      db.gym.findFirstOrThrow({ where: { userId: source.id, name: 'Basement' } }),
+      db.gymEquipment.findFirstOrThrow({
+        where: { gym: { userId: source.id }, name: 'Competition bench station' },
+      }),
+      db.exercise.findFirstOrThrow({ where: { userId: source.id, name: 'Bench Press' } }),
+    ]);
+    await db.gymEquipmentExercise.update({
+      where: {
+        equipmentId_exerciseId: { equipmentId: equipment.id, exerciseId: exercise.id },
+      },
+      data: { mirrorsLegacyConfig: true },
+    });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        isAvailable: true,
+        isEquipmentMirror: true,
+      },
+    });
+
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    expect(dump.gyms[0].equipment[0].legacyMirrorExerciseNames).toEqual(['Bench Press']);
+    expect(
+      dump.gyms[0].exerciseConfigs.find(
+        (config: { exerciseName: string }) => config.exerciseName === 'Bench Press',
+      ),
+    ).toMatchObject({ isEquipmentMirror: true, weightOptions: [] });
+
+    const target = await db.user.create({
+      data: { email: 'mirror-backup-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+    expect(response.status).toBe(200);
+    const [restoredLink, restoredConfig] = await Promise.all([
+      db.gymEquipmentExercise.findFirstOrThrow({
+        where: {
+          equipment: { gym: { userId: target.id }, name: 'Competition bench station' },
+          exercise: { userId: target.id, name: 'Bench Press' },
+        },
+      }),
+      db.gymExerciseConfig.findFirstOrThrow({
+        where: {
+          gym: { userId: target.id, name: 'Basement' },
+          exercise: { userId: target.id, name: 'Bench Press' },
+        },
+      }),
+    ]);
+    expect(restoredLink.mirrorsLegacyConfig).toBe(true);
+    expect(restoredConfig.isEquipmentMirror).toBe(true);
+  });
+
+  it('rejects inconsistent legacy v1 equipment snapshots before replacing account data', async () => {
+    const source = await seedFullUser('snapshot-source@test.dev');
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+
+    const cases = [
+      {
+        email: 'snapshot-top-level-mismatch@test.dev',
+        mutate: (set: Record<string, unknown>) => {
+          set.selectedLoadMultiplier = 2;
+        },
+      },
+      {
+        email: 'snapshot-load-type-mismatch@test.dev',
+        mutate: (set: Record<string, unknown>) => {
+          (set.equipmentLoadSnapshot as Record<string, unknown>).nominalResistanceKg = 999;
+          set.nominalResistanceKg = 999;
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const target = await db.user.create({
+        data: { email: testCase.email, passwordHash: 'x' },
+      });
+      await db.exercise.create({
+        data: {
+          userId: target.id,
+          name: 'Keep existing data',
+          muscleGroup: 'OTHER',
+          category: 'ISOLATION',
+        },
+      });
+      const payload = structuredClone(dump);
+      const strengthSet = payload.sessions[0].sets.find(
+        (set: { exerciseName: string }) => set.exerciseName === 'Bench Press',
+      ) as Record<string, unknown>;
+      testCase.mutate(strengthSet);
+
+      actAs(target.id);
+      const response = await postBackup(jsonReq({ payload, confirmReplace: true }));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: 'The recorded equipment snapshot fields are inconsistent.',
+      });
+      expect(
+        await db.exercise.findUnique({
+          where: { userId_name: { userId: target.id, name: 'Keep existing data' } },
+        }),
+      ).not.toBeNull();
+    }
   });
 
   it('still restores a version 1 backup (fields and models added in v2 absent)', async () => {

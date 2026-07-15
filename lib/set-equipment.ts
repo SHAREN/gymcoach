@@ -88,6 +88,34 @@ export function frozenSetLoadSnapshotVersion(
   return null;
 }
 
+export function assertLegacySetEquipmentSnapshotConsistency(input: {
+  selectedLoadKg: number | null;
+  selectedLoadMultiplierSnapshot: number | null;
+  nominalResistanceKg: number | null;
+  equipmentLoadSnapshot: unknown;
+}): void {
+  if (storedSnapshotVersion(input.equipmentLoadSnapshot) !== 1) return;
+
+  const parsed = legacyMobileEquipmentLoadSnapshotSchema.safeParse(input.equipmentLoadSnapshot);
+  if (!parsed.success) {
+    throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
+  }
+
+  const snapshot = parsed.data;
+  const expectedNominalResistanceKg =
+    snapshot.loadType === 'SELECTORIZED'
+      ? round(snapshot.selectedLoadKg * snapshot.selectedLoadMultiplier)
+      : null;
+  if (
+    input.selectedLoadKg !== snapshot.selectedLoadKg ||
+    input.selectedLoadMultiplierSnapshot !== snapshot.selectedLoadMultiplier ||
+    input.nominalResistanceKg !== snapshot.nominalResistanceKg ||
+    snapshot.nominalResistanceKg !== expectedNominalResistanceKg
+  ) {
+    throw new ApiError(400, 'The recorded equipment snapshot fields are inconsistent.');
+  }
+}
+
 type StoredSetEquipmentSnapshot = Pick<
   Set,
   | 'gymEquipmentId'
@@ -355,7 +383,10 @@ function requireSupportedFrozenLoadSnapshot(
     const legacy = legacyMobileEquipmentLoadSnapshotSchema.safeParse(
       existing.equipmentLoadSnapshot,
     );
-    if (legacy.success) return legacy.data;
+    if (legacy.success) {
+      assertLegacySetEquipmentSnapshotConsistency(existing);
+      return legacy.data;
+    }
   }
   throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
 }
@@ -378,6 +409,13 @@ function round(value: number): number {
 function snapshotLoadType(snapshot: Prisma.JsonValue | null): string | null {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   return typeof snapshot.loadType === 'string' ? snapshot.loadType : null;
+}
+
+function storedSnapshotVersion(snapshot: unknown): number | null {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof (snapshot as { version?: unknown }).version === 'number'
+    ? ((snapshot as { version: number }).version ?? null)
+    : null;
 }
 
 function updateMutableLoadFacts(

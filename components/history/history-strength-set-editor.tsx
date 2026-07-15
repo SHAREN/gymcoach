@@ -91,6 +91,11 @@ export function HistoryStrengthSetEditor({
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [deleteSet, setDeleteSet] = useState<HistoricalStrengthSet | null>(null);
+  const selectedEquipment = useMemo(
+    () =>
+      equipmentOptions.find((equipment) => equipment.equipmentId === selectedEquipmentId) ?? null,
+    [equipmentOptions, selectedEquipmentId],
+  );
 
   useEffect(() => {
     setSelectedEquipmentId((current) => {
@@ -102,6 +107,11 @@ export function HistoryStrengthSetEditor({
   useEffect(() => {
     setDraft(draftFromSets(sets));
   }, [sets]);
+
+  useEffect(() => {
+    if (!selectedEquipment || selectedEquipment.attainableLoads.length === 0) return;
+    setDraft((current) => normalizeDraftForEquipment(current, selectedEquipment));
+  }, [selectedEquipment]);
 
   const pickerSet = picker?.setId ? (sets.find((set) => set.id === picker.setId) ?? null) : null;
   const pickerDraft = pickerSet ?? draft;
@@ -118,6 +128,12 @@ export function HistoryStrengthSetEditor({
       : weightOptions.map((weight) => toPickerWeight(weight, unit));
   const equipmentSelectionRequired = equipmentRequired && !selectedEquipmentId;
   const equipmentUnavailable = equipmentRequired && equipmentOptions.length === 0;
+  const draftLoadIsAttainable =
+    !selectedEquipment ||
+    selectedEquipment.attainableLoads.length === 0 ||
+    selectedEquipment.attainableLoads.some((weight) => nearlyEqual(weight, draft.weight));
+  const canAddSet =
+    pendingAction == null && !equipmentSelectionRequired && draft.reps > 0 && draftLoadIsAttainable;
   const nextSetNumber = Math.max(0, ...sets.map((set) => set.setNumber)) + 1;
 
   async function updateSet(set: HistoricalStrengthSet, values: DraftSet) {
@@ -135,7 +151,7 @@ export function HistoryStrengthSetEditor({
   }
 
   async function addSet() {
-    if (pendingAction || equipmentSelectionRequired || draft.reps <= 0) return;
+    if (!canAddSet) return;
     setPendingAction('add');
     try {
       await requestJson(`/api/sessions/${sessionId}/historical-sets`, 'POST', {
@@ -200,12 +216,7 @@ export function HistoryStrengthSetEditor({
     setSelectedEquipmentId(equipmentId);
     const equipment = equipmentOptions.find((item) => item.equipmentId === equipmentId);
     if (!equipment || equipment.attainableLoads.length === 0) return;
-    setDraft((current) => ({
-      ...current,
-      weight: equipment.attainableLoads.some((weight) => nearlyEqual(weight, current.weight))
-        ? current.weight
-        : equipment.attainableLoads[0]!,
-    }));
+    setDraft((current) => normalizeDraftForEquipment(current, equipment));
   }
 
   return (
@@ -369,7 +380,7 @@ export function HistoryStrengthSetEditor({
             type="button"
             size="icon"
             onClick={() => void addSet()}
-            disabled={equipmentSelectionRequired || pendingAction != null || draft.reps <= 0}
+            disabled={!canAddSet}
             aria-label={t('addSet', { number: nextSetNumber })}
             className="size-10 justify-self-center"
           >
@@ -439,6 +450,19 @@ function draftFromSets(sets: HistoricalStrengthSet[]): DraftSet {
   return last
     ? { weight: last.weight, reps: last.reps, rir: last.rir }
     : { weight: 0, reps: 10, rir: 2 };
+}
+
+function normalizeDraftForEquipment(
+  draft: DraftSet,
+  equipment: NonNullable<GymLoadConstraints['equipmentOptions']>[number],
+): DraftSet {
+  if (
+    equipment.attainableLoads.length === 0 ||
+    equipment.attainableLoads.some((weight) => nearlyEqual(weight, draft.weight))
+  ) {
+    return draft;
+  }
+  return { ...draft, weight: equipment.attainableLoads[0]! };
 }
 
 function initialEquipmentId(

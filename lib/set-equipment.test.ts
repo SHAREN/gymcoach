@@ -75,6 +75,39 @@ describe('frozen set load constraints', () => {
         nominalResistanceKg: 22.5,
       },
     });
+
+    expect(() =>
+      preserveSetEquipmentSnapshot(
+        { ...existing, selectedLoadMultiplierSnapshot: 1 },
+        45,
+        { allowLegacySnapshot: true },
+      ),
+    ).toThrow('The recorded equipment snapshot fields are inconsistent.');
+    expect(() =>
+      preserveSetEquipmentSnapshot(
+        {
+          ...existing,
+          nominalResistanceKg: 999,
+          equipmentLoadSnapshot: { ...equipmentLoadSnapshot, nominalResistanceKg: 999 },
+        },
+        45,
+        { allowLegacySnapshot: true },
+      ),
+    ).toThrow('The recorded equipment snapshot fields are inconsistent.');
+    expect(() =>
+      preserveSetEquipmentSnapshot(
+        {
+          ...existing,
+          nominalResistanceKg: 20,
+          equipmentLoadSnapshot: {
+            ...equipmentLoadSnapshot,
+            loadType: 'FIXED',
+          },
+        },
+        45,
+        { allowLegacySnapshot: true },
+      ),
+    ).toThrow('The recorded equipment snapshot fields are inconsistent.');
   });
 
   it('does not invent frozen choices for malformed snapshots', () => {

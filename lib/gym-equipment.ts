@@ -11,8 +11,9 @@ export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type UpsertGymEquipmentInput = GymEquipmentInput & {
-  // REST and older Android clients still consume GymExerciseConfig. New
-  // equipment-first callers can omit this legacy mirror and rely on links.
+  // REST and older Android clients may request an availability-only
+  // GymExerciseConfig mirror. Equipment-first callers omit it and rely on
+  // physical links and their own load profiles.
   markExercisesAvailable?: boolean;
 };
 
@@ -282,7 +283,7 @@ export async function upsertOwnedGymEquipment(
           baseLoadKg: true,
           platePoolId: true,
           loadingSides: true,
-          exerciseLinks: { select: { exerciseId: true } },
+          exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
         },
       })
     : await db.gymEquipment.findFirst({
@@ -296,7 +297,7 @@ export async function upsertOwnedGymEquipment(
           baseLoadKg: true,
           platePoolId: true,
           loadingSides: true,
-          exerciseLinks: { select: { exerciseId: true } },
+          exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
         },
       });
   if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
@@ -387,12 +388,21 @@ export async function upsertOwnedGymEquipment(
           data: requestedExerciseIds.map((exerciseId) => ({
             equipmentId: item.id,
             exerciseId,
+            mirrorsLegacyConfig: input.markExercisesAvailable === true,
           })),
         });
       }
+    } else if (input.markExercisesAvailable !== undefined) {
+      await tx.gymEquipmentExercise.updateMany({
+        where: { equipmentId: item.id },
+        data: { mirrorsLegacyConfig: input.markExercisesAvailable },
+      });
     }
-    if (input.markExercisesAvailable === true) {
-      await reconcileLegacyExerciseConfigs(tx, gym.id, [...previousExerciseIds, ...exerciseIds]);
+    if (requestedExerciseIds !== undefined || input.markExercisesAvailable !== undefined) {
+      await reconcileLegacyExerciseConfigMirrors(tx, gym.id, [
+        ...previousExerciseIds,
+        ...exerciseIds,
+      ]);
     }
     return item;
   });
@@ -429,7 +439,7 @@ export async function deleteOwnedGymEquipment(userId: string, equipmentId: strin
   if (!equipment) throw new ApiError(404, 'Gym equipment not found.');
   await db.$transaction(async (tx) => {
     await tx.gymEquipment.delete({ where: { id: equipment.id } });
-    await reconcileLegacyExerciseConfigs(
+    await reconcileLegacyExerciseConfigMirrors(
       tx,
       equipment.gymId,
       equipment.exerciseLinks.map((link) => link.exerciseId),
@@ -438,7 +448,7 @@ export async function deleteOwnedGymEquipment(userId: string, equipmentId: strin
   return { ok: true };
 }
 
-async function reconcileLegacyExerciseConfigs(
+export async function reconcileLegacyExerciseConfigMirrors(
   tx: Prisma.TransactionClient,
   gymId: string,
   affectedExerciseIds: string[],
@@ -446,35 +456,52 @@ async function reconcileLegacyExerciseConfigs(
   const exerciseIds = [...new Set(affectedExerciseIds)];
   if (exerciseIds.length === 0) return;
 
-  const remainingLinks = await tx.gymEquipmentExercise.findMany({
+  const gym = await tx.gym.findUnique({
+    where: { id: gymId },
+    select: { inventoryMode: true },
+  });
+  if (!gym || gym.inventoryMode !== 'EQUIPMENT_FIRST') return;
+
+  const remainingMirrorLinks = await tx.gymEquipmentExercise.findMany({
     where: {
       exerciseId: { in: exerciseIds },
+      mirrorsLegacyConfig: true,
       equipment: { gymId },
     },
-    select: {
-      exerciseId: true,
-      equipment: { select: { weightOptions: true } },
-    },
+    select: { exerciseId: true },
   });
-  const linkedWeightsByExercise = new Map<string, number[]>();
-  for (const link of remainingLinks) {
-    const weights = linkedWeightsByExercise.get(link.exerciseId) ?? [];
-    weights.push(...link.equipment.weightOptions);
-    linkedWeightsByExercise.set(link.exerciseId, weights);
-  }
+  const mirroredExerciseIds = new Set(remainingMirrorLinks.map((link) => link.exerciseId));
 
   for (const exerciseId of exerciseIds) {
-    const linkedWeights = linkedWeightsByExercise.get(exerciseId);
-    if (!linkedWeights) {
-      await tx.gymExerciseConfig.deleteMany({ where: { gymId, exerciseId } });
+    if (!mirroredExerciseIds.has(exerciseId)) {
+      await tx.gymExerciseConfig.deleteMany({
+        where: { gymId, exerciseId, isEquipmentMirror: true },
+      });
       continue;
     }
 
-    const weightOptions = [...new Set(linkedWeights)].sort((left, right) => left - right);
-    await tx.gymExerciseConfig.upsert({
-      where: { gymId_exerciseId: { gymId, exerciseId } },
-      update: { isAvailable: true, weightOptions },
-      create: { gymId, exerciseId, isAvailable: true, weightOptions },
+    await tx.gymExerciseConfig.createMany({
+      data: {
+        gymId,
+        exerciseId,
+        isAvailable: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+        isEquipmentMirror: true,
+      },
+      skipDuplicates: true,
+    });
+    await tx.gymExerciseConfig.updateMany({
+      where: { gymId, exerciseId, isEquipmentMirror: true },
+      data: {
+        isAvailable: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
     });
   }
 }

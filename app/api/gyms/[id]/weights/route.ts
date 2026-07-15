@@ -54,8 +54,13 @@ export async function PATCH(req: Request, props: Params) {
             : { weightOptions: input.weightOptions };
       await tx.gymExerciseConfig.upsert({
         where: { gymId_exerciseId: { gymId: id, exerciseId: exercise.id } },
-        update: overrides,
-        create: { gymId: id, exerciseId: exercise.id, ...overrides },
+        update: { ...overrides, isEquipmentMirror: false },
+        create: {
+          gymId: id,
+          exerciseId: exercise.id,
+          ...overrides,
+          isEquipmentMirror: false,
+        },
       });
     });
 

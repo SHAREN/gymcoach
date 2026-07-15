@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
+import { reconcileLegacyExerciseConfigMirrors } from '@/lib/gym-equipment';
 import { exerciseEquipmentLinksSchema } from '@/lib/schemas/exercise';
 
 interface Params {
@@ -17,7 +18,7 @@ export async function PATCH(req: Request, props: Params) {
 
     const ownedEquipment = await db.gymEquipment.findMany({
       where: { gym: { userId } },
-      select: { id: true },
+      select: { id: true, gymId: true },
     });
     const ownedIds = new Set(ownedEquipment.map((item) => item.id));
     const requestedIds = [...new Set(input.equipmentIds)];
@@ -33,8 +34,15 @@ export async function PATCH(req: Request, props: Params) {
       }
       if (requestedIds.length > 0) {
         await tx.gymEquipmentExercise.createMany({
-          data: requestedIds.map((equipmentId) => ({ equipmentId, exerciseId: id })),
+          data: requestedIds.map((equipmentId) => ({
+            equipmentId,
+            exerciseId: id,
+            mirrorsLegacyConfig: false,
+          })),
         });
+      }
+      for (const gymId of new Set(ownedEquipment.map((item) => item.gymId))) {
+        await reconcileLegacyExerciseConfigMirrors(tx, gymId, [id]);
       }
     });
 

@@ -88,6 +88,15 @@ describe('GymCoach MCP gym inventory', () => {
       },
     });
     const gym = await db.gym.create({ data: { userId: user.id, name: 'Olymp' } });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        isAvailable: false,
+        weightOptions: [99],
+        isEquipmentMirror: false,
+      },
+    });
     await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
     const client = await connect(user.id, true);
 
@@ -144,7 +153,7 @@ describe('GymCoach MCP gym inventory', () => {
       include: { exerciseLinks: true },
     });
     expect(savedEquipment.exerciseLinks).toEqual([
-      expect.objectContaining({ exerciseId: exercise.id }),
+      expect.objectContaining({ exerciseId: exercise.id, mirrorsLegacyConfig: false }),
     ]);
     expect(savedEquipment).toMatchObject({
       loadType: 'SELECTORIZED',
@@ -152,8 +161,14 @@ describe('GymCoach MCP gym inventory', () => {
       weightOptions: [10, 20, 30, 40],
     });
     expect(
-      await db.gymExerciseConfig.count({ where: { gymId: gym.id, exerciseId: exercise.id } }),
-    ).toBe(0);
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({
+      isAvailable: false,
+      weightOptions: [99],
+      isEquipmentMirror: false,
+    });
 
     const updatedStack = await client.callTool({
       name: 'upsert_gym_equipment',
@@ -177,6 +192,11 @@ describe('GymCoach MCP gym inventory', () => {
     expect(await db.gymEquipmentExercise.count({ where: { equipmentId: savedEquipment.id } })).toBe(
       1,
     );
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ weightOptions: [99], isEquipmentMirror: false });
 
     const uploaded = await client.callTool({
       name: 'set_gym_equipment_image',

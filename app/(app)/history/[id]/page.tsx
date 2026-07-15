@@ -63,7 +63,7 @@ export default async function HistorySessionPage(props: Params) {
           },
         },
         exerciseMemberships: {
-          orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+          orderBy: [{ addedAt: 'asc' }, { ordinal: 'asc' }],
           include: {
             exercise: {
               select: {

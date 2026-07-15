@@ -181,6 +181,59 @@ describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
     ).not.toBeNull();
   });
 
+  it('cleans a removed REST mirror and keeps direct replacement links link-only', async () => {
+    const { a, exercise } = await seed();
+    const gym = await db.gym.create({
+      data: { userId: a.id, name: 'Mirror cleanup gym', inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    const [mirroredEquipment, replacementEquipment] = await Promise.all([
+      db.gymEquipment.create({
+        data: { gymId: gym.id, name: 'Mirrored cable', equipmentType: 'CABLE' },
+      }),
+      db.gymEquipment.create({
+        data: { gymId: gym.id, name: 'Replacement cable', equipmentType: 'CABLE' },
+      }),
+    ]);
+    await db.gymEquipmentExercise.create({
+      data: {
+        equipmentId: mirroredEquipment.id,
+        exerciseId: exercise.id,
+        mirrorsLegacyConfig: true,
+      },
+    });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        isAvailable: true,
+        isEquipmentMirror: true,
+      },
+    });
+    actAs(a.id);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [replacementEquipment.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUnique({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toBeNull();
+    expect(
+      await db.gymEquipmentExercise.findUniqueOrThrow({
+        where: {
+          equipmentId_exerciseId: {
+            equipmentId: replacementEquipment.id,
+            exerciseId: exercise.id,
+          },
+        },
+      }),
+    ).toMatchObject({ mirrorsLegacyConfig: false });
+  });
+
   it('rejects another user equipment before changing existing links', async () => {
     const { a, b, exercise } = await seed();
     const [ownerGym, strangerGym] = await Promise.all([

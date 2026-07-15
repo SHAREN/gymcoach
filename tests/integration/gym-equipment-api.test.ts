@@ -22,6 +22,7 @@ import {
   GET as getImage,
   PUT as setImage,
 } from '@/app/api/gym-equipment/[id]/image/route';
+import { PATCH as updateExerciseWeights } from '@/app/api/gyms/[id]/weights/route';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -112,7 +113,7 @@ describe('gym equipment REST API', () => {
       await db.gymExerciseConfig.findUniqueOrThrow({
         where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
       }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [10, 20] });
+    ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
 
     const updatedResponse = await updateEquipment(
       request(`http://test.local/api/gym-equipment/${created.equipment.id}`, 'PUT', token, {
@@ -132,7 +133,7 @@ describe('gym equipment REST API', () => {
       await db.gymExerciseConfig.findUniqueOrThrow({
         where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
       }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [15, 25] });
+    ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
 
     expect(
       (
@@ -220,28 +221,50 @@ describe('gym equipment REST API', () => {
 
     const firstId = await createLinked('Legacy cable A', [10, 20]);
     const secondId = await createLinked('Legacy cable B', [30, 40]);
+    const unmirroredResponse = await createEquipment(
+      request(`http://test.local/api/gyms/${gym.id}/equipment`, 'POST', token, {
+        name: 'Link-only cable',
+        equipmentType: 'CABLE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [50, 60],
+        exerciseIds: [exercise.id],
+        markExercisesAvailable: false,
+      }),
+      params(gym.id),
+    );
+    expect(unmirroredResponse.status).toBe(201);
+    const unmirroredId = ((await unmirroredResponse.json()) as { equipment: { id: string } })
+      .equipment.id;
     expect(
       await db.gymExerciseConfig.findUniqueOrThrow({
         where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
       }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [10, 20, 30, 40] });
+    ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
+    expect(
+      await db.gymEquipmentExercise.findUniqueOrThrow({
+        where: {
+          equipmentId_exerciseId: { equipmentId: unmirroredId, exerciseId: exercise.id },
+        },
+      }),
+    ).toMatchObject({ mirrorsLegacyConfig: false });
 
-    const unlinkFirst = await updateEquipment(
+    const disableFirstMirror = await updateEquipment(
       request(`http://test.local/api/gym-equipment/${firstId}`, 'PUT', token, {
         name: 'Legacy cable A',
         equipmentType: 'CABLE',
         loadType: 'SELECTORIZED',
         weightOptions: [15, 25],
-        exerciseIds: [],
+        exerciseIds: [exercise.id],
+        markExercisesAvailable: false,
       }),
       params(firstId),
     );
-    expect(unlinkFirst.status).toBe(200);
+    expect(disableFirstMirror.status).toBe(200);
     expect(
       await db.gymExerciseConfig.findUniqueOrThrow({
         where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
       }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [30, 40] });
+    ).toMatchObject({ isAvailable: true, weightOptions: [], isEquipmentMirror: true });
 
     expect(
       (
@@ -254,11 +277,149 @@ describe('gym equipment REST API', () => {
     expect(
       await db.gymExerciseConfig.count({ where: { gymId: gym.id, exerciseId: exercise.id } }),
     ).toBe(0);
+    expect(
+      await db.gymEquipmentExercise.count({
+        where: { equipmentId: unmirroredId, exerciseId: exercise.id },
+      }),
+    ).toBe(1);
 
     await deleteEquipment(
       request(`http://test.local/api/gym-equipment/${firstId}`, 'DELETE', token),
       params(firstId),
     );
+    await deleteEquipment(
+      request(`http://test.local/api/gym-equipment/${unmirroredId}`, 'DELETE', token),
+      params(unmirroredId),
+    );
+  });
+
+  it('never overwrites or deletes an authoritative LEGACY exercise config', async () => {
+    const { user, token, gym } = await seedUser('equipment-authoritative-legacy@test.dev');
+    await db.gym.update({ where: { id: gym.id }, data: { inventoryMode: 'LEGACY' } });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Authoritative legacy cable row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const authoritativeConfig = {
+      isAvailable: false,
+      weightOptions: [7, 9],
+      dumbbellWeights: [11],
+      plateWeights: [1.25],
+      barWeights: [10],
+      isEquipmentMirror: false,
+    };
+    await db.gymExerciseConfig.create({
+      data: { gymId: gym.id, exerciseId: exercise.id, ...authoritativeConfig },
+    });
+
+    const createResponse = await createEquipment(
+      request(`http://test.local/api/gyms/${gym.id}/equipment`, 'POST', token, {
+        name: 'Legacy gym cable',
+        equipmentType: 'CABLE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [20, 30],
+        exerciseIds: [exercise.id],
+      }),
+      params(gym.id),
+    );
+    expect(createResponse.status).toBe(201);
+    const equipmentId = ((await createResponse.json()) as { equipment: { id: string } }).equipment
+      .id;
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject(authoritativeConfig);
+
+    const updateResponse = await updateEquipment(
+      request(`http://test.local/api/gym-equipment/${equipmentId}`, 'PUT', token, {
+        name: 'Legacy gym cable updated',
+        equipmentType: 'CABLE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [25, 35],
+        exerciseIds: [],
+      }),
+      params(equipmentId),
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject(authoritativeConfig);
+
+    expect(
+      (
+        await deleteEquipment(
+          request(`http://test.local/api/gym-equipment/${equipmentId}`, 'DELETE', token),
+          params(equipmentId),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject(authoritativeConfig);
+  });
+
+  it('turns an edited compatibility mirror into a durable manual config', async () => {
+    const { user, token, gym } = await seedUser('equipment-edit-mirror@test.dev');
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Editable mirrored cable row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const createResponse = await createEquipment(
+      request(`http://test.local/api/gyms/${gym.id}/equipment`, 'POST', token, {
+        name: 'Editable mirror cable',
+        equipmentType: 'CABLE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [10, 20],
+        exerciseIds: [exercise.id],
+      }),
+      params(gym.id),
+    );
+    const equipmentId = ((await createResponse.json()) as { equipment: { id: string } }).equipment
+      .id;
+
+    const weightsResponse = await updateExerciseWeights(
+      request(`http://test.local/api/gyms/${gym.id}/weights`, 'PATCH', token, {
+        exerciseId: exercise.id,
+        scope: 'exercise',
+        weightOptions: [12, 24],
+      }),
+      params(gym.id),
+    );
+    expect(weightsResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({
+      isEquipmentMirror: false,
+      isAvailable: true,
+      weightOptions: [12, 24],
+    });
+
+    await deleteEquipment(
+      request(`http://test.local/api/gym-equipment/${equipmentId}`, 'DELETE', token),
+      params(equipmentId),
+    );
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ isEquipmentMirror: false, weightOptions: [12, 24] });
   });
 
   it('keeps cookie authentication and ownership boundaries', async () => {
