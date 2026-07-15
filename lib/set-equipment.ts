@@ -76,6 +76,7 @@ export async function resolveSetEquipmentSnapshot(
     equipment.loadType === 'SELECTORIZED' ? round(selectedLoadKg * multiplier) : null;
   const snapshot = {
     version: 1,
+    gymEquipmentId: equipment.id,
     loadType: equipment.loadType,
     equipmentType: equipment.equipmentType,
     selectedLoadKg,

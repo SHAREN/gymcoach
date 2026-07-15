@@ -137,8 +137,9 @@ function assertIdempotentSet(
     isDropSet: boolean;
     recoverySec: number | null;
     gymEquipmentId: string | null;
+    equipmentLoadSnapshot: Prisma.JsonValue | null;
   },
-  expected: Omit<typeof existing, never> & { id?: string },
+  expected: Omit<typeof existing, 'equipmentLoadSnapshot'> & { id?: string },
   sessionId: string,
 ) {
   const matches =
@@ -156,9 +157,19 @@ function assertIdempotentSet(
     existing.isWarmup === expected.isWarmup &&
     existing.isDropSet === expected.isDropSet &&
     existing.recoverySec === expected.recoverySec &&
-    existing.gymEquipmentId === expected.gymEquipmentId;
+    originalGymEquipmentId(existing) === expected.gymEquipmentId;
 
   if (!matches) {
     throw new ApiError(409, 'Set ID was already used with different data.');
   }
+}
+
+function originalGymEquipmentId(existing: {
+  gymEquipmentId: string | null;
+  equipmentLoadSnapshot: Prisma.JsonValue | null;
+}): string | null {
+  if (existing.gymEquipmentId) return existing.gymEquipmentId;
+  const snapshot = existing.equipmentLoadSnapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof snapshot.gymEquipmentId === 'string' ? snapshot.gymEquipmentId : null;
 }

@@ -363,6 +363,80 @@ describe('equipment-first REST domain', () => {
     expect(await response.json()).toMatchObject({ gymEquipmentId: null, weight: 40 });
   });
 
+  it('replays a strength set after its equipment row is deleted without accepting another machine', async () => {
+    const user = await db.user.create({
+      data: { email: 'strength-equipment-replay@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Strength cable replay',
+        muscleGroup: 'TRICEPS',
+        category: 'ISOLATION',
+        equipmentType: 'CABLE',
+      },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: 'Strength replay gym', inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    mockUserId.mockResolvedValue(user.id);
+    const equipment: Array<{ id: string }> = [];
+    for (const name of ['Cable A', 'Cable B']) {
+      const response = await createEquipment(
+        jsonRequest(`http://test.local/api/gyms/${gym.id}/equipment`, {
+          name,
+          equipmentType: 'CABLE',
+          loadType: 'SELECTORIZED',
+          weightOptions: [40, 45, 50],
+          exerciseIds: [exercise.id],
+        }),
+        { params: Promise.resolve({ id: gym.id }) },
+      );
+      expect(response.status).toBe(201);
+      equipment.push((await response.json()).equipment as { id: string });
+    }
+    const [primaryEquipment, alternateEquipment] = equipment;
+    if (!primaryEquipment || !alternateEquipment) throw new Error('Equipment seed failed.');
+    const session = await db.session.create({ data: { userId: user.id, gymId: gym.id } });
+    const payload = {
+      id: 'strength-set-replay-0001',
+      exerciseId: exercise.id,
+      gymEquipmentId: primaryEquipment.id,
+      setNumber: 1,
+      weight: 45,
+      reps: 10,
+      rir: 2,
+    };
+    const first = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, payload),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(first.status).toBe(201);
+    await expect(first.json()).resolves.toMatchObject({
+      id: payload.id,
+      gymEquipmentId: primaryEquipment.id,
+      equipmentLoadSnapshot: expect.objectContaining({ gymEquipmentId: primaryEquipment.id }),
+    });
+
+    await db.gymEquipment.delete({ where: { id: primaryEquipment.id } });
+    const replay = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, payload),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    const conflicting = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
+        ...payload,
+        gymEquipmentId: alternateEquipment.id,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({ id: payload.id, gymEquipmentId: null });
+    expect(conflicting.status).toBe(409);
+    expect(await db.set.count({ where: { id: payload.id } })).toBe(1);
+  });
+
   it('replays a cardio set with linked equipment idempotently', async () => {
     const user = await db.user.create({
       data: { email: 'cardio-equipment-replay@test.dev', passwordHash: 'x' },
