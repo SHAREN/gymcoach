@@ -20,6 +20,20 @@
     "updatedAt": 1784102582000,
     "updatedBy": "PHONE"
   },
+  "runtimeState": {
+    "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+    "status": "ACTIVE",
+    "activeExerciseId": "exercise_198d94eb671f48609039b1d5e6f4fb70",
+    "activeSetId": "mob_set_pending_9f6d823b2c5646bf9fa68d243e8dd7f4",
+    "setStartedAt": 1784102581000,
+    "pausedAt": null,
+    "workoutAccumulatedPauseMs": 15000,
+    "setAccumulatedPauseMs": 0,
+    "rest": null,
+    "revision": 8,
+    "updatedAt": 1784102582000,
+    "updatedBy": "PHONE"
+  },
   "exerciseSessions": [
     {
       "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",

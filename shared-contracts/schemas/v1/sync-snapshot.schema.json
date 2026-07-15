@@ -29,6 +29,7 @@
     "deviceId": { "type": "string", "minLength": 1 },
     "revision": { "type": "integer", "minimum": 1 },
     "workoutSession": { "$ref": "workout-session.schema.json" },
+    "runtimeState": { "$ref": "active-workout-runtime.schema.json" },
     "exerciseSessions": {
       "type": "array",
       "items": { "$ref": "exercise-session.schema.json" }

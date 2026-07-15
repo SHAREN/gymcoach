@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/file-transfer-envelope.schema.json",
+  "title": "FileTransferEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "schemaVersion",
+    "transferId",
+    "sessionId",
+    "relatedEventId",
+    "payloadType",
+    "payloadId",
+    "sequence",
+    "totalSequences",
+    "byteLength",
+    "sha256",
+    "createdAt",
+    "source",
+    "deviceId",
+    "payload"
+  ],
+  "properties": {
+    "protocolVersion": { "type": "string", "const": "1.0" },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "transferId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "relatedEventId": { "type": ["string", "null"], "format": "uuid" },
+    "payloadType": {
+      "type": "string",
+      "enum": ["SENSOR_BATCH", "SYNC_SNAPSHOT", "EVENT_BATCH"]
+    },
+    "payloadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "One-based part number. It must not exceed totalSequences."
+    },
+    "totalSequences": { "type": "integer", "minimum": 1 },
+    "byteLength": { "type": "integer", "minimum": 1, "maximum": 3999999 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
+    "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "payload": { "type": "object" }
+  }
+}
