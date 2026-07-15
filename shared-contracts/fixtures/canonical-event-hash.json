@@ -1,0 +1,53 @@
+{
+  "description": "Reordered object keys must produce the same canonical WatchEvent hash.",
+  "inputA": {
+    "payload": {
+      "metrics": {
+        "max": 154,
+        "average": 138.5,
+        "valid": true
+      },
+      "unicodeKeys": {
+        "😀": "astral",
+        "": "bmp-private"
+      },
+      "labels": ["SET", "Приседания"],
+      "comment": null
+    },
+    "revision": 12,
+    "deviceId": "watch-stage5-vector",
+    "source": "WATCH",
+    "timestamp": 1784102580000,
+    "type": "SET_UPDATED",
+    "sessionId": "mob_session_hash_vector",
+    "eventId": "6e0639c1-6ee1-4c9f-b780-ff92f5f6b8e3",
+    "schemaVersion": 1,
+    "protocolVersion": "1.0"
+  },
+  "inputB": {
+    "protocolVersion": "1.0",
+    "schemaVersion": 1,
+    "eventId": "6e0639c1-6ee1-4c9f-b780-ff92f5f6b8e3",
+    "sessionId": "mob_session_hash_vector",
+    "type": "SET_UPDATED",
+    "timestamp": 1784102580000,
+    "source": "WATCH",
+    "deviceId": "watch-stage5-vector",
+    "revision": 12,
+    "payload": {
+      "comment": null,
+      "labels": ["SET", "Приседания"],
+      "metrics": {
+        "average": 138.5,
+        "valid": true,
+        "max": 154
+      },
+      "unicodeKeys": {
+        "": "bmp-private",
+        "😀": "astral"
+      }
+    }
+  },
+  "canonicalJson": "{\"deviceId\":\"watch-stage5-vector\",\"eventId\":\"6e0639c1-6ee1-4c9f-b780-ff92f5f6b8e3\",\"payload\":{\"comment\":null,\"labels\":[\"SET\",\"Приседания\"],\"metrics\":{\"average\":138.5,\"max\":154,\"valid\":true},\"unicodeKeys\":{\"\":\"bmp-private\",\"😀\":\"astral\"}},\"protocolVersion\":\"1.0\",\"revision\":12,\"schemaVersion\":1,\"sessionId\":\"mob_session_hash_vector\",\"source\":\"WATCH\",\"timestamp\":1784102580000,\"type\":\"SET_UPDATED\"}",
+  "sha256": "bccd6bd533b8ea0600560a8159252382e230c6f352eb5ea1401b28e7933c8d93"
+}

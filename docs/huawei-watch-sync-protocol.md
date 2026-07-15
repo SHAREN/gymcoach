@@ -225,6 +225,26 @@ resolved and do not allow dependent events to bypass the blocked head.
 
 Stable session, set, event, batch, and sample IDs are generated at the device where the user action occurs. They are never remapped during synchronization.
 
+### Canonical event hash
+
+Event-ID reuse detection hashes the complete immutable `WatchEvent` envelope,
+including `eventId`, all envelope metadata, and `payload`. It does not hash only
+the payload. Both peers must create the canonical JSON bytes with the same
+rules:
+
+1. Recursively sort every object key lexicographically by Unicode code point.
+2. Preserve array order exactly.
+3. Use standard JSON serialization for strings, booleans, and `null`.
+4. Accept finite JSON numbers only and serialize them with standard JSON number
+   syntax. `NaN` and positive or negative infinity are invalid protocol values.
+5. Omit all insignificant whitespace, encode the result as UTF-8, and calculate
+   lowercase SHA-256.
+
+The original object-key order is never significant. The same semantic
+`WatchEvent` with reordered keys must hash identically. The normative test
+vector, including its canonical text and expected digest, is stored in
+`shared-contracts/fixtures/canonical-event-hash.json`.
+
 ## Revisions and ordering
 
 Revisions are monotonic per workout session. Entity payloads may include `baseRevision` so concurrent edits can be detected precisely.
@@ -279,6 +299,27 @@ history in place.
 
 Opening the watch app after a phone-started workout runs the same handshake. Loss of Bluetooth changes connection state only. It does not pause timers or prevent local workout commands.
 
+## Active workout runtime projection
+
+`ActiveWorkoutRuntime` is the durable timer and active-pointer projection used
+to restore a workout after screen sleep, process restart, or reconnection. It
+contains the opaque session, exercise, and set IDs; `ACTIVE`, `PAUSED`, or
+`FINISHED` status; absolute set and pause timestamps; accumulated workout and
+set pause durations; optional absolute rest state; revision; update timestamp;
+and update source.
+
+All accumulated pause and paused-rest values are non-negative integer
+milliseconds. A running rest stores `setId`, absolute `startedAt`, absolute
+`endsAt`, and `pausedRemainingMs: null`. A paused rest stores the non-negative
+remaining duration in `pausedRemainingMs`. Missing active exercise, active set,
+set start, pause start, or rest is represented by `null`, never an invented ID
+or zero timestamp.
+
+`SyncSnapshot.runtimeState` is optional so receivers continue to accept older
+v1 snapshots without the field. When present, its `sessionId` and `revision`
+must match the snapshot envelope. Applying it replaces only the represented
+runtime projection and never discards unacknowledged events.
+
 ## Message and file limits
 
 The v1 hard limit for a direct peer-to-peer JSON payload is 1,024 UTF-8 bytes.
@@ -294,21 +335,36 @@ Before sending any message:
 1. Serialize exactly once using UTF-8.
 2. Measure byte length, not JavaScript character count.
 3. Send directly only when the byte length is at most 900.
-4. Transfer larger payloads as a `BatchEnvelope` file or a file-backed
-   `SyncSnapshot` instead of a direct message.
+4. Transfer larger payloads in a `FileTransferEnvelope` instead of a direct
+   message. Its payload type is `SENSOR_BATCH`, `SYNC_SNAPSHOT`, or
+   `EVENT_BATCH`.
 5. Reject an accidentally oversized message locally and record a sanitized diagnostic error.
 
-Every file payload must be smaller than 4,000,000 UTF-8 bytes. GymCoach targets
-at most 3.5 MiB per file. Larger exports are split into separately transferred
-`BatchEnvelope` objects. `deliveryMode` is `P2P` for direct delivery and `FILE`
-for file delivery. `sequence` and `totalSequences` are one-based and identify
-the parts of one stable `batchId`.
+Every complete serialized file must be strictly smaller than 4,000,000 UTF-8
+bytes. GymCoach targets at most 3.5 MiB per file. Larger payloads are split into
+separately transferred `FileTransferEnvelope` objects. `sequence` and
+`totalSequences` are positive, one-based values, and `sequence` must not exceed
+`totalSequences`.
 
-The receiver writes file content to a temporary location, verifies the transport
-length and checksum, validates the complete `BatchEnvelope`, commits all events
-atomically, then acknowledges their `eventId` values through `SyncAck`. A
-corrupt, missing, or duplicate file cannot partially apply events. A duplicate
-valid batch returns the same durable event results.
+`FileTransferEnvelope.byteLength` is from 1 through 3,999,999 and covers the
+UTF-8 canonical JSON bytes of `payload`. `sha256` is lowercase SHA-256 of those
+same canonical bytes. The canonicalization rules are identical to the event
+hash rules above. The formatted envelope, transport metadata, and whitespace do
+not enter the payload checksum, but they do count toward the strict total-file
+limit. Senders therefore verify both the canonical payload values and the size
+of the complete serialized file before transfer.
+
+`transferId` is a protocol UUID for one transferred part. `payloadId` is the
+stable opaque ID of the sensor batch, snapshot, or event batch across retries.
+`relatedEventId` is the UUID of the announcing `WatchEvent`, or `null` when no
+single event announced the transfer. Re-delivery preserves these identities.
+
+The receiver writes file content to a temporary location, verifies the complete
+file is below the hard limit, verifies canonical payload length and checksum,
+validates the typed payload selected by `payloadType`, and commits it
+atomically. Event batches are then acknowledged through `SyncAck`. A corrupt,
+missing, or duplicate file cannot partially apply data. A duplicate valid
+payload returns the same durable result.
 
 ## Sensor batching
 
@@ -320,12 +376,12 @@ Sensor callbacks follow the supported runtime API rate. They are not each conver
 
 The v1 `SyncSnapshot` schema contains its wire versions, snapshot and session
 IDs, timestamp, source, pseudonymous device ID, revision, one `WorkoutSession`,
-arrays of `ExerciseSession`, `SetRecord`, and `SensorSample`, plus pending
-`WatchEvent` objects. Active exercise and set pointers and absolute workout
-start/finish timestamps are carried by `WorkoutSession`. Absolute rest, pause,
-and in-progress set timestamps are replayed from the corresponding pending
-events until a dedicated runtime-state projection is introduced in a later
-schema version.
+an optional `ActiveWorkoutRuntime`, arrays of `ExerciseSession`, `SetRecord`, and
+`SensorSample`, plus pending `WatchEvent` objects. The runtime projection carries
+absolute in-progress set and pause timestamps, accumulated pause durations, and
+optional rest state. Its absence remains valid for compatibility with snapshots
+created before Stage 5, in which case pending events remain the source for
+reconstructing runtime state.
 
 A snapshot reconciles state represented by its explicit fields only. It never
 implicitly deletes a local set, event, sensor sample, conflict, timer, or

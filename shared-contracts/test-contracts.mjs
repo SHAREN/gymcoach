@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,12 +12,17 @@ const draft202012 = 'https://json-schema.org/draft/2020-12/schema';
 const p2pMaxBytes = 1_024;
 const p2pTargetBytes = 900;
 const fileMaxBytes = 4_000_000;
+const fileTargetBytes = Math.floor(3.5 * 1024 * 1024);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const sha256Pattern = /^[0-9a-f]{64}$/;
 
 const expectedSchemas = new Set([
+  'active-workout-runtime.schema.json',
   'batch-envelope.schema.json',
   'conflict-record.schema.json',
   'control-message.schema.json',
   'exercise-session.schema.json',
+  'file-transfer-envelope.schema.json',
   'heart-rate-summary.schema.json',
   'rest-heart-rate-summary.schema.json',
   'sensor-sample.schema.json',
@@ -66,6 +72,11 @@ const opaqueDomainIdSchemas = [
   ['set-record.schema.json', 'exerciseSessionId'],
   ['sensor-sample.schema.json', 'sessionId'],
   ['sensor-batch.schema.json', 'sessionId'],
+  ['active-workout-runtime.schema.json', 'sessionId'],
+  ['active-workout-runtime.schema.json', 'activeExerciseId'],
+  ['active-workout-runtime.schema.json', 'activeSetId'],
+  ['file-transfer-envelope.schema.json', 'sessionId'],
+  ['file-transfer-envelope.schema.json', 'payloadId'],
   ['watch-event.schema.json', 'sessionId'],
   ['sync-ack.schema.json', 'sessionId'],
   ['sync-snapshot.schema.json', 'sessionId'],
@@ -89,6 +100,53 @@ function validateControlDeviceId(value, label) {
   assert.equal(typeof value, 'string', `${label} must be a string`);
   assert.ok(value.length >= 1, `${label} must not be empty`);
   assert.ok(value.length <= 128, `${label} must not exceed 128 characters`);
+}
+
+function validateOpaqueDomainId(value, label) {
+  assert.equal(typeof value, 'string', `${label} must be a string`);
+  assert.ok(value.length >= 1, `${label} must not be empty`);
+  assert.ok(value.length <= 128, `${label} must not exceed 128 characters`);
+}
+
+function validateNullableTimestamp(value, label) {
+  assert.ok(
+    value === null || (Number.isInteger(value) && value >= 0),
+    `${label} must be null or a non-negative integer`,
+  );
+}
+
+function compareUnicodeCodePoints(left, right) {
+  const leftPoints = Array.from(left, (character) => character.codePointAt(0));
+  const rightPoints = Array.from(right, (character) => character.codePointAt(0));
+  const sharedLength = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    if (leftPoints[index] !== rightPoints[index]) {
+      return leftPoints[index] - rightPoints[index];
+    }
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') {
+    assert.ok(Number.isFinite(value), 'canonical JSON rejects non-finite numbers');
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  }
+  assert.equal(typeof value, 'object', 'canonical JSON accepts only JSON values');
+  const keys = Object.keys(value).sort(compareUnicodeCodePoints);
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+    .join(',')}}`;
+}
+
+function canonicalSha256(value) {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
 }
 
 function required(value, fields, label) {
@@ -117,6 +175,103 @@ function validateEvent(event, label) {
   assert.ok(
     Number.isInteger(event.revision) && event.revision >= 1,
     `${label}.revision must be a positive integer`,
+  );
+}
+
+function validateActiveWorkoutRuntime(runtime, label) {
+  const schema = schemas.get('active-workout-runtime.schema.json');
+  validateRootShape(runtime, schema, label);
+  validateOpaqueDomainId(runtime.sessionId, `${label}.sessionId`);
+  assert.ok(['ACTIVE', 'PAUSED', 'FINISHED'].includes(runtime.status), `${label}.status is invalid`);
+  for (const field of ['activeExerciseId', 'activeSetId']) {
+    if (runtime[field] !== null) {
+      validateOpaqueDomainId(runtime[field], `${label}.${field}`);
+    }
+  }
+  validateNullableTimestamp(runtime.setStartedAt, `${label}.setStartedAt`);
+  validateNullableTimestamp(runtime.pausedAt, `${label}.pausedAt`);
+  assert.ok(
+    Number.isInteger(runtime.workoutAccumulatedPauseMs) &&
+      runtime.workoutAccumulatedPauseMs >= 0,
+    `${label}.workoutAccumulatedPauseMs must be a non-negative integer`,
+  );
+  assert.ok(
+    Number.isInteger(runtime.setAccumulatedPauseMs) && runtime.setAccumulatedPauseMs >= 0,
+    `${label}.setAccumulatedPauseMs must be a non-negative integer`,
+  );
+  if (runtime.rest !== null) {
+    validateRootShape(runtime.rest, schema.properties.rest, `${label}.rest`);
+    validateOpaqueDomainId(runtime.rest.setId, `${label}.rest.setId`);
+    assert.ok(
+      Number.isInteger(runtime.rest.startedAt) && runtime.rest.startedAt >= 0,
+      `${label}.rest.startedAt must be a non-negative integer`,
+    );
+    assert.ok(
+      Number.isInteger(runtime.rest.endsAt) && runtime.rest.endsAt >= runtime.rest.startedAt,
+      `${label}.rest.endsAt must not predate rest.startedAt`,
+    );
+    validateNullableTimestamp(runtime.rest.pausedRemainingMs, `${label}.rest.pausedRemainingMs`);
+  }
+  assert.ok(
+    Number.isInteger(runtime.revision) && runtime.revision >= 1,
+    `${label}.revision must be a positive integer`,
+  );
+  assert.ok(
+    Number.isInteger(runtime.updatedAt) && runtime.updatedAt >= 0,
+    `${label}.updatedAt must be a non-negative integer`,
+  );
+  assert.ok(sources.has(runtime.updatedBy), `${label}.updatedBy is invalid`);
+}
+
+function validateFileTransferEnvelope(envelope, label) {
+  validateRootShape(envelope, schemas.get('file-transfer-envelope.schema.json'), label);
+  validateWireVersion(envelope, label);
+  assert.match(envelope.transferId, uuidPattern, `${label}.transferId must be a UUID`);
+  validateOpaqueDomainId(envelope.sessionId, `${label}.sessionId`);
+  assert.ok(
+    envelope.relatedEventId === null || uuidPattern.test(envelope.relatedEventId),
+    `${label}.relatedEventId must be null or a UUID`,
+  );
+  assert.ok(
+    ['SENSOR_BATCH', 'SYNC_SNAPSHOT', 'EVENT_BATCH'].includes(envelope.payloadType),
+    `${label}.payloadType is invalid`,
+  );
+  validateOpaqueDomainId(envelope.payloadId, `${label}.payloadId`);
+  assert.ok(
+    Number.isInteger(envelope.sequence) && envelope.sequence >= 1,
+    `${label}.sequence must be positive`,
+  );
+  assert.ok(
+    Number.isInteger(envelope.totalSequences) && envelope.totalSequences >= 1,
+    `${label}.totalSequences must be positive`,
+  );
+  assert.ok(
+    envelope.sequence <= envelope.totalSequences,
+    `${label}.sequence must not exceed totalSequences`,
+  );
+  assert.ok(
+    Number.isInteger(envelope.byteLength) &&
+      envelope.byteLength >= 1 &&
+      envelope.byteLength < fileMaxBytes,
+    `${label}.byteLength must be from 1 through 3999999`,
+  );
+  assert.match(envelope.sha256, sha256Pattern, `${label}.sha256 must be lowercase hex`);
+  assert.ok(
+    Number.isInteger(envelope.createdAt) && envelope.createdAt >= 0,
+    `${label}.createdAt must be a non-negative integer`,
+  );
+  assert.ok(sources.has(envelope.source), `${label}.source is invalid`);
+  validateControlDeviceId(envelope.deviceId, `${label}.deviceId`);
+  const canonicalPayload = canonicalJson(envelope.payload);
+  assert.equal(
+    envelope.byteLength,
+    Buffer.byteLength(canonicalPayload, 'utf8'),
+    `${label}.byteLength must cover canonical payload JSON`,
+  );
+  assert.equal(
+    envelope.sha256,
+    canonicalSha256(envelope.payload),
+    `${label}.sha256 must cover canonical payload JSON`,
   );
 }
 
@@ -192,6 +347,7 @@ for (const name of [
   'sync-ack.schema.json',
   'sync-snapshot.schema.json',
   'batch-envelope.schema.json',
+  'file-transfer-envelope.schema.json',
   'sensor-batch.schema.json',
 ]) {
   const schema = schemas.get(name);
@@ -200,6 +356,43 @@ for (const name of [
   assert.equal(schema.properties.protocolVersion.const, '1.0', `${name} protocol version drift`);
   assert.equal(schema.properties.schemaVersion.const, 1, `${name} schema version drift`);
 }
+const runtimeSchema = schemas.get('active-workout-runtime.schema.json');
+assert.equal(
+  runtimeSchema.properties.workoutAccumulatedPauseMs.minimum,
+  0,
+  'ActiveWorkoutRuntime workout pause must be non-negative',
+);
+assert.equal(
+  runtimeSchema.properties.setAccumulatedPauseMs.minimum,
+  0,
+  'ActiveWorkoutRuntime set pause must be non-negative',
+);
+assert.equal(
+  runtimeSchema.properties.rest.properties.pausedRemainingMs.minimum,
+  0,
+  'ActiveWorkoutRuntime paused rest remainder must be non-negative',
+);
+const fileTransferSchema = schemas.get('file-transfer-envelope.schema.json');
+assert.equal(fileTransferSchema.properties.sequence.minimum, 1, 'file sequence must be positive');
+assert.equal(
+  fileTransferSchema.properties.totalSequences.minimum,
+  1,
+  'file totalSequences must be positive',
+);
+assert.equal(
+  fileTransferSchema.properties.byteLength.maximum,
+  3_999_999,
+  'file payload byteLength must remain strictly below the Wear Engine file limit',
+);
+assert.equal(
+  fileTransferSchema.properties.sha256.pattern,
+  '^[0-9a-f]{64}$',
+  'file payload SHA-256 must be lowercase hexadecimal',
+);
+assert.ok(
+  !schemas.get('sync-snapshot.schema.json').required.includes('runtimeState'),
+  'SyncSnapshot.runtimeState must remain optional for older v1 snapshots',
+);
 
 const exampleFiles = (await readdir(examplesDir)).filter((name) => name.endsWith('.json'));
 const examples = new Map();
@@ -238,6 +431,13 @@ assert.ok(
   'WorkoutSession example must prove opaque prefixed Android IDs are accepted',
 );
 assert.ok(sources.has(workout.updatedBy), 'WorkoutSession.updatedBy is invalid');
+
+const runtime = examples.get('active-workout-runtime.json').parsed;
+validateActiveWorkoutRuntime(runtime, 'ActiveWorkoutRuntime');
+assert.ok(
+  runtime.activeSetId && runtime.setStartedAt !== null,
+  'ActiveWorkoutRuntime fixture must include an in-progress set',
+);
 
 const exercise = examples.get('exercise-session.json').parsed;
 required(
@@ -523,6 +723,35 @@ required(
   'SyncSnapshot',
 );
 validateWireVersion(snapshot, 'SyncSnapshot');
+assert.equal(
+  schemas.get('sync-snapshot.schema.json').properties.runtimeState.$ref,
+  'active-workout-runtime.schema.json',
+  'SyncSnapshot.runtimeState must reference the v1 runtime schema',
+);
+if (snapshot.runtimeState !== undefined) {
+  validateActiveWorkoutRuntime(snapshot.runtimeState, 'SyncSnapshot.runtimeState');
+  assert.equal(
+    snapshot.runtimeState.sessionId,
+    snapshot.sessionId,
+    'SyncSnapshot runtime state must use the envelope sessionId',
+  );
+  assert.equal(
+    snapshot.runtimeState.revision,
+    snapshot.revision,
+    'SyncSnapshot runtime state revision must match the envelope revision',
+  );
+  assert.ok(
+    snapshot.runtimeState.updatedAt <= snapshot.timestamp,
+    'SyncSnapshot runtime state must not postdate the snapshot',
+  );
+}
+const snapshotWithoutRuntime = { ...snapshot };
+delete snapshotWithoutRuntime.runtimeState;
+validateRootShape(
+  snapshotWithoutRuntime,
+  schemas.get('sync-snapshot.schema.json'),
+  'SyncSnapshot without optional runtimeState',
+);
 snapshot.pendingEvents.forEach((event, index) =>
   validateEvent(event, `SyncSnapshot.pendingEvents[${index}]`),
 );
@@ -655,6 +884,96 @@ const batchFits =
     : examples.get('batch-envelope.json').bytes < batchLimit;
 assert.ok(batchFits, `BatchEnvelope exceeds ${batch.deliveryMode} transport limit`);
 
+const fileTransfer = examples.get('file-transfer-envelope.json').parsed;
+validateFileTransferEnvelope(fileTransfer, 'FileTransferEnvelope');
+assert.ok(
+  examples.get('file-transfer-envelope.json').bytes < fileMaxBytes,
+  'FileTransferEnvelope total serialized file must remain below 4,000,000 bytes',
+);
+assert.ok(
+  examples.get('file-transfer-envelope.json').bytes <= fileTargetBytes,
+  'FileTransferEnvelope fixture exceeds the 3.5 MiB engineering target',
+);
+assert.equal(
+  fileTransfer.payloadType,
+  'SENSOR_BATCH',
+  'FileTransferEnvelope fixture must exercise a sensor batch',
+);
+validateRootShape(
+  fileTransfer.payload,
+  schemas.get('sensor-batch.schema.json'),
+  'FileTransferEnvelope.payload',
+);
+assert.equal(
+  fileTransfer.payload.batchId,
+  fileTransfer.payloadId,
+  'FileTransferEnvelope payloadId must identify its sensor batch payload',
+);
+
+assert.throws(
+  () =>
+    validateFileTransferEnvelope(
+      { ...fileTransfer, sha256: '0'.repeat(64) },
+      'FileTransferEnvelope with bad sha256',
+    ),
+  /sha256 must cover canonical payload JSON/,
+  'a syntactically valid but incorrect SHA-256 must be rejected',
+);
+assert.throws(
+  () =>
+    validateFileTransferEnvelope(
+      { ...fileTransfer, sequence: fileTransfer.totalSequences + 1 },
+      'FileTransferEnvelope with sequence gap',
+    ),
+  /sequence must not exceed totalSequences/,
+  'sequence values beyond totalSequences must be rejected',
+);
+assert.throws(
+  () =>
+    validateFileTransferEnvelope(
+      { ...fileTransfer, byteLength: fileMaxBytes },
+      'FileTransferEnvelope at the forbidden file limit',
+    ),
+  /byteLength must be from 1 through 3999999/,
+  'a 4,000,000-byte payload declaration must be rejected',
+);
+
+assert.throws(
+  () =>
+    validateActiveWorkoutRuntime(
+      { ...runtime, workoutAccumulatedPauseMs: -1 },
+      'ActiveWorkoutRuntime with negative workout pause',
+    ),
+  /workoutAccumulatedPauseMs must be a non-negative integer/,
+  'negative workout pause accumulation must be rejected',
+);
+assert.throws(
+  () =>
+    validateActiveWorkoutRuntime(
+      { ...runtime, setAccumulatedPauseMs: -1 },
+      'ActiveWorkoutRuntime with negative set pause',
+    ),
+  /setAccumulatedPauseMs must be a non-negative integer/,
+  'negative set pause accumulation must be rejected',
+);
+assert.throws(
+  () =>
+    validateActiveWorkoutRuntime(
+      {
+        ...runtime,
+        rest: {
+          setId: 'mob_set_rest_vector',
+          startedAt: 1784102583000,
+          endsAt: 1784102703000,
+          pausedRemainingMs: -1,
+        },
+      },
+      'ActiveWorkoutRuntime with negative paused rest remainder',
+    ),
+  /pausedRemainingMs must be null or a non-negative integer/,
+  'negative paused rest time must be rejected',
+);
+
 const stage3Payloads = JSON.parse(
   await readFile(join(fixturesDir, 'stage3-event-payloads.json'), 'utf8'),
 );
@@ -708,5 +1027,34 @@ validateRootShape(
   'REST_FINISHED summary',
 );
 required(stage4Payloads.restSkipped, ['skippedAt'], 'REST_SKIPPED payload');
+
+const canonicalHashVector = JSON.parse(
+  await readFile(join(fixturesDir, 'canonical-event-hash.json'), 'utf8'),
+);
+validateEvent(canonicalHashVector.inputA, 'Canonical hash vector inputA');
+validateEvent(canonicalHashVector.inputB, 'Canonical hash vector inputB');
+const canonicalA = canonicalJson(canonicalHashVector.inputA);
+const canonicalB = canonicalJson(canonicalHashVector.inputB);
+assert.equal(canonicalA, canonicalB, 'reordered semantic objects must canonicalize identically');
+assert.equal(
+  canonicalA,
+  canonicalHashVector.canonicalJson,
+  'canonical WatchEvent JSON changed from the published test vector',
+);
+assert.equal(
+  canonicalSha256(canonicalHashVector.inputA),
+  canonicalHashVector.sha256,
+  'canonical WatchEvent SHA-256 changed from the published test vector',
+);
+assert.equal(
+  canonicalSha256(canonicalHashVector.inputB),
+  canonicalHashVector.sha256,
+  'reordered WatchEvent must retain the published SHA-256',
+);
+assert.throws(
+  () => canonicalJson(Number.POSITIVE_INFINITY),
+  /rejects non-finite numbers/,
+  'canonical JSON must reject non-finite numbers',
+);
 
 console.log(`Validated ${schemaFiles.length} schemas and ${exampleFiles.length} examples.`);

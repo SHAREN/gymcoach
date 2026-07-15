@@ -12,8 +12,9 @@ simulators.
 - JSON Schema dialect: Draft 2020-12.
 - Schema identifiers use `https://gymcoach.local/contracts/watch/v1/...`.
 - `ControlMessage`, `WatchEvent`, `SyncAck`, `SyncSnapshot`, `BatchEnvelope`,
-  and `SensorBatch` carry both wire version fields. Nested domain projections
-  are versioned by the enclosing schema and do not repeat them.
+  `FileTransferEnvelope`, and `SensorBatch` carry both wire version fields.
+  Nested domain projections such as `ActiveWorkoutRuntime` are versioned by the
+  enclosing schema and do not repeat them.
 - Schemas are strict (`additionalProperties: false`). Any field, enum, or
   semantic change requires a new schema version; implementations must not add
   undeclared fields to v1 payloads.
@@ -25,8 +26,14 @@ simulators.
 - Direct peer-to-peer JSON messages must be at most 1,024 UTF-8 bytes.
 - Larger event groups and snapshots use chunked or file transfer.
 - Every chunked/file payload must be smaller than 4,000,000 UTF-8 bytes.
+- GymCoach targets at most 3.5 MiB for the complete serialized file so the
+  transport envelope and implementation overhead do not approach the hard
+  limit.
 - `BatchEnvelope.deliveryMode` declares whether an envelope is a direct `P2P`
   message or a `FILE` payload.
+- `FileTransferEnvelope.byteLength` and `sha256` cover the UTF-8 canonical JSON
+  bytes of `payload`, not the formatted envelope file. The complete serialized
+  file, including the envelope, must still remain below 4,000,000 bytes.
 - Sensor samples should be buffered and sent in batches. Do not send one
   message for every UI frame or sensor callback.
 - `SensorBatch` is the normative batch/file payload for raw samples. It keeps
@@ -96,6 +103,9 @@ integer RIR from 0 to 5.
    Neither side silently deletes the other side's data.
 8. Batch envelopes use `sequence` and `totalSequences`; sequence numbering is
    one-based. A batch is applied only when all expected sequences are present.
+9. `SyncSnapshot.runtimeState` is optional for compatibility with snapshots
+   produced before Stage 5. When present, it is the absolute active timer and
+   pause projection for the same session and revision.
 
 ACK status behavior:
 
@@ -108,6 +118,30 @@ ACK status behavior:
 
 Only `APPLIED` and `DUPLICATE` automatically remove events from the sender's
 outbox. `errorCode` is a sanitized machine-readable string or `null`.
+
+## Canonical JSON and event hashes
+
+Inbox event-ID reuse detection hashes the complete immutable `WatchEvent`
+envelope, including `eventId` and `payload`. Canonical JSON is produced as
+follows:
+
+1. Recursively sort object keys lexicographically by Unicode code point.
+2. Preserve array element order exactly.
+3. Serialize strings with standard JSON escaping and serialize booleans and
+   `null` with their standard JSON tokens.
+4. Accept finite JSON numbers only and serialize them with standard JSON number
+   syntax. `NaN`, positive infinity, and negative infinity are invalid.
+5. Encode the resulting JSON text as UTF-8 and calculate lowercase SHA-256.
+
+Insignificant whitespace and original object-key order never enter the hash.
+Two semantically identical objects with reordered keys must therefore produce
+the same digest. The published cross-implementation test vector is in
+`fixtures/canonical-event-hash.json`.
+
+The same canonical JSON rules are used for `FileTransferEnvelope.payload`.
+`byteLength` is the number of canonical UTF-8 payload bytes and `sha256` is the
+digest of exactly those bytes. `sequence` and `totalSequences` are positive,
+one-based values, and `sequence` must not exceed `totalSequences`.
 
 ## Source and privacy
 
@@ -128,6 +162,8 @@ outbox. `errorCode` is a sanitized machine-readable string or `null`.
   active exercise and set events.
 - `fixtures/stage4-rest-payloads.json` - normative sensor-batch manifest and
   absolute rest event payloads.
+- `fixtures/canonical-event-hash.json` - deterministic canonical JSON and
+  SHA-256 vector for event-ID reuse detection.
 - `test-contracts.mjs` - dependency-free structural and protocol-limit checks.
 
 Run the checks with Node.js 20 or newer:

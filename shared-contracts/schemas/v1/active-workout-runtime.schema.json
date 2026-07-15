@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/active-workout-runtime.schema.json",
+  "title": "ActiveWorkoutRuntime",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "status",
+    "activeExerciseId",
+    "activeSetId",
+    "setStartedAt",
+    "pausedAt",
+    "workoutAccumulatedPauseMs",
+    "setAccumulatedPauseMs",
+    "rest",
+    "revision",
+    "updatedAt",
+    "updatedBy"
+  ],
+  "properties": {
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "status": { "type": "string", "enum": ["ACTIVE", "PAUSED", "FINISHED"] },
+    "activeExerciseId": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "activeSetId": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "setStartedAt": { "type": ["integer", "null"], "minimum": 0 },
+    "pausedAt": { "type": ["integer", "null"], "minimum": 0 },
+    "workoutAccumulatedPauseMs": { "type": "integer", "minimum": 0 },
+    "setAccumulatedPauseMs": { "type": "integer", "minimum": 0 },
+    "rest": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["setId", "startedAt", "endsAt", "pausedRemainingMs"],
+      "properties": {
+        "setId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "startedAt": { "type": "integer", "minimum": 0 },
+        "endsAt": { "type": "integer", "minimum": 0 },
+        "pausedRemainingMs": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "revision": { "type": "integer", "minimum": 1 },
+    "updatedAt": { "type": "integer", "minimum": 0 },
+    "updatedBy": { "type": "string", "enum": ["PHONE", "WATCH"] }
+  }
+}
