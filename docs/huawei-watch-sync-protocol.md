@@ -161,6 +161,21 @@ The recovery summary reports observed values and arithmetic drops at 30 and 60
 seconds. It does not define a medical interpretation or a universal readiness
 threshold.
 
+Summary selection is deterministic:
+
+- Only samples with `valid: true`, a positive finite heart-rate value, and a
+  timestamp inside the inclusive phase interval are used.
+- `start` and `end` use the valid sample nearest the phase boundary. A distance
+  tie selects the earlier sample.
+- `at30Seconds` and `at60Seconds` use the valid sample nearest
+  `startedAt + 30,000` or `startedAt + 60,000`, with the same earlier-sample
+  tie break.
+- `min`, `max`, and `average` use every valid sample in the phase.
+- A drop is `start - atNSeconds` only when both readings exist; otherwise it is
+  `null`.
+- Invalid, missing, or off-wrist readings remain explicit samples but never
+  become zero and never enter an average.
+
 ## ACK contract
 
 ```json
