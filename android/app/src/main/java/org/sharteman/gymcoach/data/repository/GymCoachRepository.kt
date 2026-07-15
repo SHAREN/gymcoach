@@ -579,7 +579,7 @@ class GymCoachRepository(
         val applied = dao.applyWatchSetEvent(
             processed,
             merged,
-            outbox(upsertOperation(merged)),
+            outbox(upsertOperation(set = merged, includeEquipmentIdentity = false)),
             runtime,
         )
         if (applied) scheduleSyncNow()
@@ -656,7 +656,10 @@ class GymCoachRepository(
             hrSampleCount = sampleCount,
         )
         if (updated == existing) return true
-        dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+        dao.saveSetAndOperation(
+            updated,
+            outbox(upsertOperation(set = updated, includeEquipmentIdentity = false)),
+        )
         scheduleSyncNow()
         return true
     }
@@ -761,7 +764,13 @@ class GymCoachRepository(
             }
             dao.saveSetOperationRuntimeAndMarker(
                 set = set,
-                operation = outbox(upsertOperation(set, frozenEquipmentSnapshot)),
+                operation = outbox(
+                    upsertOperation(
+                        set = set,
+                        includeEquipmentIdentity = true,
+                        frozenEquipmentSnapshot = frozenEquipmentSnapshot,
+                    ),
+                ),
                 runtime = updatedRuntime,
                 marker = watchMarker(updatedRuntime, "SET_COMPLETED"),
             )
@@ -815,7 +824,9 @@ class GymCoachRepository(
             val updatedRuntime = nextPhoneRuntime(currentRuntime, System.currentTimeMillis()) { it }
             dao.saveSetOperationRuntimeAndMarker(
                 set = updated,
-                operation = outbox(upsertOperation(updated)),
+                operation = outbox(
+                    upsertOperation(set = updated, includeEquipmentIdentity = false),
+                ),
                 runtime = updatedRuntime,
                 marker = watchMarker(updatedRuntime, "SET_UPDATED"),
             )
@@ -1251,6 +1262,7 @@ class GymCoachRepository(
 
     private fun upsertOperation(
         set: LocalSetEntity,
+        includeEquipmentIdentity: Boolean,
         frozenEquipmentSnapshot: MobileFrozenEquipmentSnapshot? = null,
     ) = UpsertSetOperation(
         operationId = operationId(),
@@ -1258,7 +1270,7 @@ class GymCoachRepository(
             id = set.id,
             sessionId = set.sessionId,
             exerciseId = set.exerciseId,
-            gymEquipmentId = set.gymEquipmentId,
+            gymEquipmentId = set.gymEquipmentId.takeIf { includeEquipmentIdentity },
             frozenEquipmentSnapshot = frozenEquipmentSnapshot,
             setNumber = set.setNumber,
             weight = set.weight,
