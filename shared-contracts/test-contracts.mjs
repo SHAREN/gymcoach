@@ -8,11 +8,13 @@ const schemaDir = join(root, 'schemas', 'v1');
 const examplesDir = join(root, 'examples');
 const draft202012 = 'https://json-schema.org/draft/2020-12/schema';
 const p2pMaxBytes = 1_024;
+const p2pTargetBytes = 900;
 const fileMaxBytes = 4_000_000;
 
 const expectedSchemas = new Set([
   'batch-envelope.schema.json',
   'conflict-record.schema.json',
+  'control-message.schema.json',
   'exercise-session.schema.json',
   'heart-rate-summary.schema.json',
   'sensor-sample.schema.json',
@@ -47,6 +49,7 @@ const eventTypes = new Set([
   'SYNC_ACKNOWLEDGED',
 ]);
 const sources = new Set(['PHONE', 'WATCH']);
+const controlMessageTypes = new Set(['PING', 'PONG', 'SYNC_REQUESTED', 'SYNC_SNAPSHOT']);
 const ackStatuses = new Set(['APPLIED', 'DUPLICATE', 'STALE', 'CONFLICT', 'REJECTED']);
 const opaqueDomainIdSchemas = [
   ['workout-session.schema.json', 'sessionId'],
@@ -70,6 +73,18 @@ const opaqueDomainIdSchemas = [
 function validateWireVersion(value, label) {
   assert.equal(value.protocolVersion, '1.0', `${label}.protocolVersion must be 1.0`);
   assert.equal(value.schemaVersion, 1, `${label}.schemaVersion must be 1`);
+}
+
+function validateOpaqueMessageId(value, label) {
+  assert.equal(typeof value, 'string', `${label} must be a string`);
+  assert.ok(value.length >= 1, `${label} must not be empty`);
+  assert.ok(value.length <= 128, `${label} must not exceed 128 characters`);
+}
+
+function validateControlDeviceId(value, label) {
+  assert.equal(typeof value, 'string', `${label} must be a string`);
+  assert.ok(value.length >= 1, `${label} must not be empty`);
+  assert.ok(value.length <= 128, `${label} must not exceed 128 characters`);
 }
 
 function required(value, fields, label) {
@@ -134,6 +149,30 @@ assert.deepEqual(
   ackStatuses,
   'SyncAck status enum must match the protocol',
 );
+assert.deepEqual(
+  new Set(schemas.get('control-message.schema.json').properties.type.enum),
+  controlMessageTypes,
+  'ControlMessage type enum must match the diagnostic protocol',
+);
+const controlMessageIdProperty = schemas.get('control-message.schema.json').properties.messageId;
+assert.equal(controlMessageIdProperty.format, undefined, 'ControlMessage.messageId must be opaque');
+assert.equal(
+  controlMessageIdProperty.minLength,
+  1,
+  'ControlMessage.messageId must reject empty IDs',
+);
+assert.equal(
+  controlMessageIdProperty.maxLength,
+  128,
+  'ControlMessage.messageId must bound Lite message IDs',
+);
+const controlReplyProperty = schemas.get('control-message.schema.json').properties.replyTo;
+assert.equal(controlReplyProperty.format, undefined, 'ControlMessage.replyTo must be opaque');
+assert.equal(controlReplyProperty.minLength, 1, 'ControlMessage.replyTo must reject empty IDs');
+assert.equal(controlReplyProperty.maxLength, 128, 'ControlMessage.replyTo must bound Lite IDs');
+const controlDeviceIdProperty = schemas.get('control-message.schema.json').properties.deviceId;
+assert.equal(controlDeviceIdProperty.minLength, 1, 'ControlMessage.deviceId must reject empty IDs');
+assert.equal(controlDeviceIdProperty.maxLength, 128, 'ControlMessage.deviceId must bound Lite IDs');
 for (const [schemaName, propertyName] of opaqueDomainIdSchemas) {
   const property = schemas.get(schemaName).properties[propertyName];
   assert.equal(
@@ -144,6 +183,7 @@ for (const [schemaName, propertyName] of opaqueDomainIdSchemas) {
   assert.equal(property.minLength, 1, `${schemaName}.${propertyName} must reject empty opaque IDs`);
 }
 for (const name of [
+  'control-message.schema.json',
   'watch-event.schema.json',
   'sync-ack.schema.json',
   'sync-snapshot.schema.json',
@@ -256,6 +296,92 @@ required(
     'revision',
   ],
   'SetRecord',
+);
+
+const control = examples.get('control-message.json').parsed;
+validateWireVersion(control, 'ControlMessage');
+assert.ok(controlMessageTypes.has(control.type), 'ControlMessage.type is invalid');
+assert.ok(sources.has(control.source), 'ControlMessage.source is invalid');
+validateOpaqueMessageId(control.messageId, 'ControlMessage.messageId');
+validateControlDeviceId(control.deviceId, 'ControlMessage.deviceId');
+assert.equal(control.replyTo, null, 'standalone PING must not claim a reply target');
+assert.ok(
+  examples.get('control-message.json').bytes <= p2pMaxBytes,
+  'ControlMessage exceeds direct P2P limit',
+);
+assert.ok(
+  examples.get('control-message.json').bytes <= p2pTargetBytes,
+  'ControlMessage exceeds the GymCoach P2P engineering target',
+);
+
+const controlReply = {
+  ...control,
+  messageId: 'stage2-pong-001',
+  type: 'PONG',
+  source: 'PHONE',
+  deviceId: 'android-stage2',
+  replyTo: control.messageId,
+};
+validateRootShape(controlReply, schemas.get('control-message.schema.json'), 'ControlMessage reply');
+validateWireVersion(controlReply, 'ControlMessage reply');
+validateOpaqueMessageId(controlReply.messageId, 'ControlMessage reply.messageId');
+validateOpaqueMessageId(controlReply.replyTo, 'ControlMessage reply.replyTo');
+validateControlDeviceId(controlReply.deviceId, 'ControlMessage reply.deviceId');
+assert.notEqual(
+  controlReply.messageId,
+  controlReply.replyTo,
+  'control reply must use a unique messageId',
+);
+assert.ok(
+  Buffer.byteLength(JSON.stringify(controlReply), 'utf8') <= p2pTargetBytes,
+  'ControlMessage reply exceeds the GymCoach P2P engineering target',
+);
+assert.equal(
+  new Set([control.messageId, controlReply.messageId]).size,
+  2,
+  'ControlMessage IDs must be unique',
+);
+assert.throws(
+  () => validateOpaqueMessageId('', 'empty control ID'),
+  /must not be empty/,
+  'empty control IDs must be rejected',
+);
+assert.throws(
+  () => validateOpaqueMessageId('x'.repeat(129), 'oversized control ID'),
+  /must not exceed 128/,
+  'oversized control IDs must be rejected',
+);
+assert.throws(
+  () => validateControlDeviceId('', 'empty control device ID'),
+  /must not be empty/,
+  'empty control device IDs must be rejected',
+);
+assert.throws(
+  () => validateControlDeviceId('x'.repeat(129), 'oversized control device ID'),
+  /must not exceed 128/,
+  'oversized control device IDs must be rejected',
+);
+assert.throws(
+  () =>
+    validateRootShape(
+      { ...control, sessionId: 'must-not-be-on-control-messages' },
+      schemas.get('control-message.schema.json'),
+      'ControlMessage with workout field',
+    ),
+  /is not declared by the v1 schema/,
+  'ControlMessage must reject workout root fields',
+);
+const controlWithoutReplyTo = { ...control };
+delete controlWithoutReplyTo.replyTo;
+assert.throws(
+  () =>
+    validateRootShape(
+      controlWithoutReplyTo,
+      schemas.get('control-message.schema.json'),
+      'ControlMessage without replyTo',
+    ),
+  /replyTo is required/,
+  'ControlMessage must require all root fields',
 );
 
 const standaloneEvent = examples.get('watch-event.json').parsed;

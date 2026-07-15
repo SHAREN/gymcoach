@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "messageId": "stage2-ping-001",
+  "type": "PING",
+  "timestamp": 1784085600000,
+  "source": "WATCH",
+  "deviceId": "watch-gt4-stage2",
+  "replyTo": null,
+  "payload": {
+    "nonce": "gymcoach-stage2-ping"
+  }
+}

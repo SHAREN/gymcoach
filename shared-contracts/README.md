@@ -11,9 +11,9 @@ simulators.
   `schemaVersion: 1`.
 - JSON Schema dialect: Draft 2020-12.
 - Schema identifiers use `https://gymcoach.local/contracts/watch/v1/...`.
-- `WatchEvent`, `SyncAck`, `SyncSnapshot`, and `BatchEnvelope` carry both wire
-  version fields. Nested domain projections are versioned by the enclosing
-  schema and do not repeat them.
+- `ControlMessage`, `WatchEvent`, `SyncAck`, `SyncSnapshot`, and `BatchEnvelope`
+  carry both wire version fields. Nested domain projections are versioned by the
+  enclosing schema and do not repeat them.
 - Schemas are strict (`additionalProperties: false`). Any field, enum, or
   semantic change requires a new schema version; implementations must not add
   undeclared fields to v1 payloads.
@@ -32,6 +32,30 @@ simulators.
 
 These are protocol operating limits. An implementation must also enforce any
 stricter limit reported by the installed Huawei SDK/runtime.
+
+## Control plane and workout plane
+
+`ControlMessage` is the small pre-session and diagnostic envelope used by the
+Stage 2 transport check. It supports only `PING`, `PONG`, `SYNC_REQUESTED`, and
+`SYNC_SNAPSHOT`. Its serialized P2P form must remain at most 1,024 bytes, with a
+GymCoach engineering target of at most 900 bytes.
+
+- `messageId` is a unique opaque non-empty string of at most 128 characters. It
+  is intentionally not restricted to UUID syntax so Lite Wearable code can use
+  a deterministic local ID generator.
+- `deviceId` is a non-empty pseudonymous identifier of at most 128 characters.
+- `replyTo` contains the request `messageId` when a control message is a direct
+  response, or `null` when it is not a response.
+- Control messages do not contain `sessionId`, `eventId`, `revision`, or workout
+  mutations. They are not written into the workout event journal and do not use
+  `SyncAck`.
+- The Stage 2 `SYNC_REQUESTED` and `SYNC_SNAPSHOT` control types exchange only
+  transport/protocol diagnostic state before an active workout session is
+  established. They must not carry or replace workout session data.
+
+Once a workout session exists, all mutations and session reconciliation remain
+`WatchEvent` operations with a stable UUID `eventId`, an opaque existing
+`sessionId`, a monotonic `revision`, durable delivery, and `SyncAck` processing.
 
 ## Delivery, ordering, and acknowledgement
 
