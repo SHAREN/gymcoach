@@ -10,8 +10,8 @@ The phone remains the long-term server bridge. The watch is an autonomous record
 
 ## Versioning
 
-The normative v1 wire envelopes are `WatchEvent`, `SyncAck`, `SyncSnapshot`, and
-`BatchEnvelope`. Each includes:
+The normative v1 wire envelopes are `ControlMessage`, `WatchEvent`, `SyncAck`,
+`SyncSnapshot`, and `BatchEnvelope`. Each includes:
 
 - `protocolVersion`: the exact string `"1.0"`.
 - `schemaVersion`: the exact integer `1`.
@@ -23,6 +23,42 @@ unknown field, event type, protocol version, or schema version is rejected with
 a sanitized diagnostic result. A receiver must not attempt a best-effort decode.
 Any future field or enum addition requires a new schema version and explicit
 compatibility handling.
+
+## Pre-session control messages
+
+`ControlMessage` is a separate, small control-plane envelope for the Stage 2
+connection check and pre-session diagnostics:
+
+```json
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "messageId": "stage2-ping-001",
+  "type": "PING",
+  "timestamp": 0,
+  "source": "WATCH",
+  "deviceId": "watch-gt4-stage2",
+  "replyTo": null,
+  "payload": {}
+}
+```
+
+Its type is one of `PING`, `PONG`, `SYNC_REQUESTED`, or `SYNC_SNAPSHOT`.
+`messageId` and a non-null `replyTo` are opaque non-empty strings with a maximum
+length of 128 characters. `deviceId` is a non-empty pseudonymous identifier with
+the same 128-character limit. A `PONG` normally uses `replyTo` to reference the
+corresponding `PING` ID.
+
+This envelope is diagnostic and pre-session only. It has no `sessionId`,
+`eventId`, `revision`, or ACK state, is not inserted into the workout outbox or
+inbox, and cannot create, edit, finish, or reconcile workout data. The control
+`SYNC_REQUESTED` and `SYNC_SNAPSHOT` values describe only Stage 2 transport and
+protocol readiness before an active session is established.
+
+After a workout session exists, session synchronization uses `WatchEvent`,
+`SyncSnapshot`, and `SyncAck`. Workout mutations always have a stable UUID
+`eventId`, the existing opaque `sessionId`, a monotonic `revision`, durable
+idempotent delivery, and an ACK result.
 
 ## Event envelope
 
@@ -196,6 +232,10 @@ Opening the watch app after a phone-started workout runs the same handshake. Los
 The v1 hard limit for a direct peer-to-peer JSON payload is 1,024 UTF-8 bytes.
 GymCoach applies a smaller engineering target of at most 900 UTF-8 bytes after
 serialization, leaving room for transport metadata.
+
+Every serialized `ControlMessage`, including Stage 2 ping/pong, must satisfy
+both the 1,024-byte hard limit and the 900-byte GymCoach target. It is never
+promoted to file transfer because it must remain a compact diagnostic message.
 
 Before sending any message:
 
