@@ -236,7 +236,16 @@ class GymCoachRepository(
             recoverySec = recoverySec,
             completedAt = now.toString(),
         )
-        dao.saveSetAndOperation(set, outbox(upsertOperation(set, frozenEquipmentSnapshot)))
+        dao.saveSetAndOperation(
+            set,
+            outbox(
+                upsertOperation(
+                    set = set,
+                    includeEquipmentIdentity = true,
+                    frozenEquipmentSnapshot = frozenEquipmentSnapshot,
+                ),
+            ),
+        )
         scheduleSyncNow()
         return set
     }
@@ -272,7 +281,10 @@ class GymCoachRepository(
             ),
             deleted = false,
         )
-        dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+        dao.saveSetAndOperation(
+            updated,
+            outbox(upsertOperation(set = updated, includeEquipmentIdentity = false)),
+        )
         scheduleSyncNow()
     }
 
@@ -469,6 +481,7 @@ class GymCoachRepository(
 
     private fun upsertOperation(
         set: LocalSetEntity,
+        includeEquipmentIdentity: Boolean,
         frozenEquipmentSnapshot: MobileFrozenEquipmentSnapshot? = null,
     ) = UpsertSetOperation(
         operationId = operationId(),
@@ -476,7 +489,7 @@ class GymCoachRepository(
             id = set.id,
             sessionId = set.sessionId,
             exerciseId = set.exerciseId,
-            gymEquipmentId = set.gymEquipmentId,
+            gymEquipmentId = set.gymEquipmentId.takeIf { includeEquipmentIdentity },
             frozenEquipmentSnapshot = frozenEquipmentSnapshot,
             setNumber = set.setNumber,
             weight = set.weight,

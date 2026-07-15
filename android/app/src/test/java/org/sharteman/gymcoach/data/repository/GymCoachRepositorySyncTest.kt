@@ -264,8 +264,9 @@ class GymCoachRepositorySyncTest {
             as UpsertSetOperation
         assertTrue(create.set.frozenEquipmentSnapshot != null)
         assertEquals(null, edit.set.frozenEquipmentSnapshot)
-        assertEquals(equipment.id, edit.set.gymEquipmentId)
+        assertEquals(null, edit.set.gymEquipmentId)
         assertEquals(80.0, edit.set.weight, 0.001)
+        assertFalse(queued[1].payloadJson.contains("gymEquipmentId"))
         assertFalse(queued[1].payloadJson.contains("frozenEquipmentSnapshot"))
         assertFalse(queued[1].payloadJson.contains("equipmentSnapshotAction"))
         val updated = requireNotNull(fixture.dao.getSet(set.id))
@@ -320,7 +321,9 @@ class GymCoachRepositorySyncTest {
             fixture.dao.queuedOperations()[1].payloadJson,
         ) as UpsertSetOperation
         assertEquals(25.0, edit.set.weight, 0.0)
+        assertEquals(null, edit.set.gymEquipmentId)
         assertEquals(null, edit.set.frozenEquipmentSnapshot)
+        assertFalse(fixture.dao.queuedOperations()[1].payloadJson.contains("gymEquipmentId"))
     }
 
     @Test
@@ -370,6 +373,64 @@ class GymCoachRepositorySyncTest {
         )
         fixture.repository.refreshBootstrap()
         assertEquals(createJson, fixture.dao.queuedOperations().single().payloadJson)
+    }
+
+    @Test
+    fun frozenCreateAndIdentityFreeEditSyncInOrderAfterEquipmentDeletion() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment()
+        val set = fixture.repository.addSet(
+            sessionId = "session_1",
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        fixture.repository.updateSet(set, weight = 80.0, reps = 11, rir = 1)
+        fixture.api.bootstrapResponse = bootstrap(
+            gyms = listOf(
+                GymDto(
+                    id = equipment.gymId,
+                    name = "Updated gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+
+        val queuedBeforeSync = fixture.dao.queuedOperations()
+        assertEquals(2, queuedBeforeSync.size)
+        fixture.api.syncHandler = { request ->
+            val create = request.operations[0] as UpsertSetOperation
+            val edit = request.operations[1] as UpsertSetOperation
+            assertEquals(equipment.id, create.set.gymEquipmentId)
+            assertEquals(
+                equipment.snapshotRevisionId,
+                create.set.frozenEquipmentSnapshot?.equipmentLoadSnapshot?.revisionId,
+            )
+            assertEquals(null, edit.set.gymEquipmentId)
+            assertEquals(null, edit.set.frozenEquipmentSnapshot)
+            assertFalse(queuedBeforeSync[1].payloadJson.contains("gymEquipmentId"))
+            assertFalse(queuedBeforeSync[1].payloadJson.contains("frozenEquipmentSnapshot"))
+            assertFalse(queuedBeforeSync[1].payloadJson.contains("equipmentSnapshotAction"))
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map { operation ->
+                    SyncOperationResult(operation.operationId, "APPLIED")
+                },
+            )
+        }
+
+        assertTrue(fixture.repository.syncPending())
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        val local = requireNotNull(fixture.dao.getSet(set.id))
+        assertEquals(equipment.id, local.gymEquipmentId)
+        assertTrue(local.equipmentLoadSnapshotJson?.contains(equipment.snapshotRevisionId!!) == true)
+        assertEquals(80.0, local.weight, 0.0)
+        assertEquals(11, local.reps)
+        assertEquals(1, local.rir)
     }
 
     @Test
