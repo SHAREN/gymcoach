@@ -22,6 +22,8 @@ import { DeleteSessionButton } from '@/components/history/delete-session-button'
 import { ActivityTrackChart } from '@/components/history/activity-track-chart';
 import { getExerciseDisplayName } from '@/i18n/exercise-names';
 import { getTrainingDisplayName } from '@/i18n/training-names';
+import { HistoryStrengthSetEditor } from '@/components/history/history-strength-set-editor';
+import { resolveExerciseInventory } from '@/lib/gym-loads';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -52,6 +54,50 @@ export default async function HistorySessionPage(props: Params) {
                 muscleGroup: true,
                 category: true,
                 usesBodyweight: true,
+                equipmentType: true,
+              },
+            },
+          },
+        },
+        exerciseMemberships: {
+          orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+          include: {
+            exercise: {
+              select: {
+                id: true,
+                name: true,
+                muscleGroup: true,
+                category: true,
+                usesBodyweight: true,
+                equipmentType: true,
+              },
+            },
+          },
+        },
+        gym: {
+          include: {
+            exerciseConfigs: true,
+            equipment: {
+              select: {
+                id: true,
+                name: true,
+                equipmentType: true,
+                loadType: true,
+                weightOptions: true,
+                selectedLoadMultiplier: true,
+                baseLoadKg: true,
+                loadingSides: true,
+                platePoolId: true,
+                exerciseLinks: { select: { exerciseId: true } },
+                platePool: {
+                  select: {
+                    name: true,
+                    plates: {
+                      orderBy: { weightKg: 'asc' },
+                      select: { weightKg: true, quantity: true },
+                    },
+                  },
+                },
               },
             },
           },
@@ -72,10 +118,15 @@ export default async function HistorySessionPage(props: Params) {
 
   // Group sets by exercise (keeping the order of the first set per exercise).
   const exerciseOrder: string[] = [];
+  type HistoryExercise = (typeof session.exerciseMemberships)[number]['exercise'];
   const setsByExercise = new Map<
     string,
-    { exercise: (typeof session.sets)[number]['exercise']; sets: typeof session.sets }
+    { exercise: HistoryExercise; sets: typeof session.sets }
   >();
+  for (const membership of session.exerciseMemberships) {
+    exerciseOrder.push(membership.exerciseId);
+    setsByExercise.set(membership.exerciseId, { exercise: membership.exercise, sets: [] });
+  }
   for (const s of session.sets) {
     let entry = setsByExercise.get(s.exerciseId);
     if (!entry) {
@@ -229,6 +280,49 @@ export default async function HistorySessionPage(props: Params) {
                     .filter(Boolean)
                     .join(' · ')
                 : null;
+              const inventory =
+                !isCardio && session.gym
+                  ? resolveExerciseInventory({
+                      inventoryMode: session.gym.inventoryMode,
+                      exercise: entry.exercise,
+                      linkedEquipment: session.gym.equipment
+                        .filter((equipment) =>
+                          equipment.exerciseLinks.some(
+                            (link) => link.exerciseId === entry.exercise.id,
+                          ),
+                        )
+                        .map((equipment) => ({
+                          equipmentId: equipment.id,
+                          equipmentName: equipment.name,
+                          equipmentType: equipment.equipmentType,
+                          loadType: equipment.loadType,
+                          weightOptions: equipment.weightOptions,
+                          selectedLoadMultiplier: equipment.selectedLoadMultiplier,
+                          baseLoadKg: equipment.baseLoadKg,
+                          loadingSides: equipment.loadingSides,
+                          platePoolId: equipment.platePoolId,
+                          platePoolName: equipment.platePool?.name ?? null,
+                          plates: equipment.platePool?.plates ?? [],
+                        })),
+                      legacyConfig: (() => {
+                        const config = session.gym.exerciseConfigs.find(
+                          (item) => item.exerciseId === entry.exercise.id,
+                        );
+                        return config
+                          ? {
+                              isAvailable: config.isAvailable,
+                              weightOptions: config.weightOptions,
+                              dumbbellWeights: config.dumbbellWeights,
+                              plateWeights: config.plateWeights,
+                              barWeights: config.barWeights,
+                            }
+                          : null;
+                      })(),
+                      sharedDumbbellWeights: session.gym.dumbbellWeights,
+                      legacyPlateWeights: session.gym.plateWeights,
+                      legacyBarWeights: session.gym.barWeights,
+                    })
+                  : null;
               return (
                 <li key={exerciseId}>
                   <Card>
@@ -323,7 +417,28 @@ export default async function HistorySessionPage(props: Params) {
                             />
                           ) : null,
                         )}
-                      {!isCardio && (
+                      {!isCardio && session.finishedAt && (
+                        <HistoryStrengthSetEditor
+                          sessionId={session.id}
+                          exerciseId={entry.exercise.id}
+                          exerciseName={getExerciseDisplayName(entry.exercise.name, locale)}
+                          sets={entry.sets.map((set) => ({
+                            id: set.id,
+                            setNumber: set.setNumber,
+                            weight: set.weight,
+                            reps: set.reps,
+                            rir: set.rir,
+                            isWarmup: set.isWarmup,
+                            isDropSet: set.isDropSet,
+                            gymEquipmentId: set.gymEquipmentId,
+                            equipmentNameSnapshot: set.equipmentNameSnapshot,
+                          }))}
+                          unit={unit}
+                          loadConstraints={inventory?.constraints ?? null}
+                          equipmentRequired={session.gym?.inventoryMode === 'EQUIPMENT_FIRST'}
+                        />
+                      )}
+                      {!isCardio && !session.finishedAt && (
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
