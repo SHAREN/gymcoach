@@ -200,6 +200,16 @@ interface GymCoachDao {
     @Query("SELECT * FROM watch_conflicts WHERE sessionId = :sessionId ORDER BY detectedAtEpochMs, conflictId")
     suspend fun getWatchConflicts(sessionId: String): List<WatchConflictEntity>
 
+    @Query(
+        "UPDATE watch_conflicts SET status = 'RESOLVED', resolution = :resolution, " +
+            "resolvedAtEpochMs = :resolvedAtEpochMs WHERE eventId = :eventId AND status = 'UNRESOLVED'",
+    )
+    suspend fun resolveWatchConflictsForEvent(
+        eventId: String,
+        resolution: String,
+        resolvedAtEpochMs: Long,
+    )
+
     @Query("SELECT COUNT(*) FROM watch_conflicts WHERE status = 'UNRESOLVED'")
     fun observeUnresolvedWatchConflictCount(): Flow<Int>
 
@@ -560,6 +570,11 @@ interface GymCoachDao {
         saveSet(set)
         enqueue(operation)
         saveActiveWorkoutRuntime(runtime)
+        resolveWatchConflictsForEvent(
+            processed.eventId,
+            "REPLAY_APPLIED",
+            processed.processedAtEpochMs,
+        )
         return true
     }
 
