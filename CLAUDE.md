@@ -26,7 +26,7 @@ Before committing or opening a PR, the change MUST pass:
 
 ```bash
 bash scripts/verify.sh          # prisma generate + lint + typecheck + unit + build
-bash scripts/verify.sh --full   # also integration + E2E (needs test Postgres on :5434)
+bash scripts/verify.sh --full   # owns isolated Postgres :5434 + E2E :3031 and cleans both
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit, integration, build
