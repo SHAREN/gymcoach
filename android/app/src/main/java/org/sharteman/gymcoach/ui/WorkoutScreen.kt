@@ -109,6 +109,7 @@ import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.constrainGymWeight
 import org.sharteman.gymcoach.training.constraintsFor
 import org.sharteman.gymcoach.training.formatSetTableMetric
+import org.sharteman.gymcoach.training.frozenEquipmentLoadConstraints
 import org.sharteman.gymcoach.training.fromDisplayWeight
 import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.isAchievableLoad
@@ -947,6 +948,7 @@ private fun loadConstraintsForSet(
     loadConstraints: LoadConstraints,
     set: LocalSetEntity,
 ): LoadConstraints {
+    frozenEquipmentLoadConstraints(set)?.let { return it }
     if (loadConstraints.equipmentOptions.isEmpty()) return loadConstraints
     val equipmentId = set.gymEquipmentId
     return if (

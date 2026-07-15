@@ -68,10 +68,17 @@ import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.training.frozenEquipmentLoadConstraints
+import org.sharteman.gymcoach.training.isAchievableLoad
 import java.time.Duration
 import java.time.Instant
 import java.io.IOException
 import java.util.UUID
+
+data class WatchSetEventApplyResult(
+    val applied: Boolean,
+    val errorCode: String? = null,
+)
 
 class GymCoachRepository(
     private val dao: GymCoachDao,
@@ -544,10 +551,29 @@ class GymCoachRepository(
         processed: WatchProcessedEventEntity,
         set: LocalSetEntity,
         runtime: ActiveWorkoutRuntimeEntity,
-    ): Boolean {
+    ): WatchSetEventApplyResult {
         val existing = dao.getSet(set.id)
+        val existingFrozenConstraints = existing?.let(::frozenEquipmentLoadConstraints)
+        if (
+            existingFrozenConstraints != null &&
+            !isAchievableLoad(existingFrozenConstraints, set.weight)
+        ) {
+            saveWatchEquipmentConflict(processed, set, runtime, "INVALID_EQUIPMENT_LOAD")
+            return WatchSetEventApplyResult(applied = false, errorCode = "INVALID_EQUIPMENT_LOAD")
+        }
+        val inferred = if (existing == null) {
+            when (val resolution = resolveNewWatchSetEquipment(set)) {
+                is WatchSetEquipmentResolution.Allowed -> resolution
+                is WatchSetEquipmentResolution.Rejected -> {
+                    saveWatchEquipmentConflict(processed, set, runtime, resolution.errorCode)
+                    return WatchSetEventApplyResult(applied = false, errorCode = resolution.errorCode)
+                }
+            }
+        } else {
+            null
+        }
         val merged = if (existing == null) {
-            set
+            requireNotNull(inferred).set
         } else {
             val selectedLoad = existing.selectedLoadKg?.let { roundLoad(set.weight) }
             val nominalResistance = if (
@@ -579,11 +605,17 @@ class GymCoachRepository(
         val applied = dao.applyWatchSetEvent(
             processed,
             merged,
-            outbox(upsertOperation(set = merged, includeEquipmentIdentity = false)),
+            outbox(
+                upsertOperation(
+                    set = merged,
+                    includeEquipmentIdentity = existing == null && inferred?.frozenSnapshot != null,
+                    frozenEquipmentSnapshot = inferred?.frozenSnapshot,
+                ),
+            ),
             runtime,
         )
         if (applied) scheduleSyncNow()
-        return applied
+        return WatchSetEventApplyResult(applied = applied)
     }
 
     suspend fun applyWatchDeleteSetEvent(
@@ -794,6 +826,10 @@ class GymCoachRepository(
             val currentRuntime = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
             val current = dao.getSet(set.id) ?: return@withLock
             if (current.deleted) return@withLock
+            val frozenConstraints = frozenEquipmentLoadConstraints(current)
+            require(frozenConstraints == null || isAchievableLoad(frozenConstraints, weight)) {
+                "Selected weight is not attainable with the recorded equipment snapshot."
+            }
             val selectedLoad = current.selectedLoadKg?.let { roundLoad(weight) }
             val storedWeight = selectedLoad ?: weight
             val nominalResistance = if (
@@ -1442,6 +1478,115 @@ class GymCoachRepository(
         updatedAtEpochMs = updatedAtEpochMs,
         updatedBy = "PHONE",
     )
+
+    private sealed interface WatchSetEquipmentResolution {
+        data class Allowed(
+            val set: LocalSetEntity,
+            val frozenSnapshot: MobileFrozenEquipmentSnapshot?,
+        ) : WatchSetEquipmentResolution
+
+        data class Rejected(val errorCode: String) : WatchSetEquipmentResolution
+    }
+
+    private suspend fun resolveNewWatchSetEquipment(
+        set: LocalSetEntity,
+    ): WatchSetEquipmentResolution {
+        val session = dao.getSession(set.sessionId)
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val cached = dao.getBootstrap()
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val bootstrap = runCatching {
+            api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+        }.getOrNull() ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val workout = bootstrap.activeProgram?.workouts?.firstOrNull { it.id == session.workoutId }
+            ?: bootstrap.openSessions.firstOrNull { it.id == session.id }?.workout
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val exercise = workout.exercises.firstOrNull { it.exerciseId == set.exerciseId }?.exercise
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val gymId = session.gymId
+            ?: return WatchSetEquipmentResolution.Allowed(set = set, frozenSnapshot = null)
+        val gym = bootstrap.gyms.firstOrNull { it.id == gymId }
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        if (gym.inventoryMode != "EQUIPMENT_FIRST") {
+            return WatchSetEquipmentResolution.Allowed(set = set, frozenSnapshot = null)
+        }
+        val compatible = gym.equipment.filter { equipment ->
+            equipment.exerciseLinks.any { link -> link.exerciseId == set.exerciseId }
+        }
+        if (compatible.isEmpty()) {
+            return if (
+                exercise.usesBodyweight ||
+                exercise.equipmentType == "BODYWEIGHT" ||
+                exercise.equipmentType == "CARDIO" ||
+                exercise.category == "CARDIO"
+            ) {
+                WatchSetEquipmentResolution.Allowed(set = set, frozenSnapshot = null)
+            } else {
+                WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+            }
+        }
+        val equipment = compatible.singleOrNull()
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val selectedLoad = roundLoad(set.weight)
+        val nominalResistance = equipment
+            .takeIf { it.loadType == "SELECTORIZED" }
+            ?.let { roundLoad(selectedLoad * it.selectedLoadMultiplier) }
+        val frozenSnapshot = frozenEquipmentSnapshot(equipment, selectedLoad, nominalResistance)
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val inferredSet = set.copy(
+            weight = selectedLoad,
+            gymEquipmentId = equipment.id,
+            equipmentNameSnapshot = equipment.name,
+            selectedLoadKg = selectedLoad,
+            selectedLoadMultiplierSnapshot = equipment.selectedLoadMultiplier,
+            nominalResistanceKg = nominalResistance,
+            equipmentLoadSnapshotJson = api.json.encodeToString(
+                frozenSnapshot.equipmentLoadSnapshot,
+            ),
+        )
+        val frozenConstraints = frozenEquipmentLoadConstraints(inferredSet)
+        if (frozenConstraints == null || !isAchievableLoad(frozenConstraints, selectedLoad)) {
+            return WatchSetEquipmentResolution.Rejected("INVALID_EQUIPMENT_LOAD")
+        }
+        return WatchSetEquipmentResolution.Allowed(
+            set = inferredSet,
+            frozenSnapshot = frozenSnapshot,
+        )
+    }
+
+    private suspend fun saveWatchEquipmentConflict(
+        processed: WatchProcessedEventEntity,
+        set: LocalSetEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        errorCode: String,
+    ) {
+        val localRevision = (runtime.revision - 1).coerceAtLeast(0)
+        dao.saveWatchConflict(
+            WatchConflictEntity(
+                conflictId = "watch_equipment_${processed.eventId}",
+                sessionId = set.sessionId,
+                eventId = processed.eventId,
+                entityType = "SET",
+                entityId = set.id,
+                localRevision = localRevision,
+                remoteRevision = processed.revision,
+                localEventJson = buildJsonObject {
+                    put("runtimeRevision", localRevision)
+                    put("gymEquipmentId", JsonNull)
+                }.toString(),
+                remoteEventJson = buildJsonObject {
+                    put("setId", set.id)
+                    put("exerciseId", set.exerciseId)
+                    put("weight", set.weight)
+                    put("reps", set.reps)
+                    set.rir?.let { put("rir", it) } ?: put("rir", JsonNull)
+                }.toString(),
+                status = "UNRESOLVED",
+                errorCode = errorCode,
+                detectedAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
+    }
 
     private fun entityId(type: String) = "mob_${type}_${UUID.randomUUID().toString().replace("-", "")}"
     private fun operationId() = "op_${UUID.randomUUID().toString().replace("-", "")}"

@@ -47,6 +47,7 @@ import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
+import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
 import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
 import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.LoginRequest
@@ -1074,7 +1075,7 @@ class GymCoachRepositorySyncTest {
                 ),
                 set = incoming,
                 runtime = watchRuntime,
-            ),
+            ).applied,
         )
 
         val updated = requireNotNull(fixture.dao.getSet(created.id))
@@ -1086,6 +1087,127 @@ class GymCoachRepositorySyncTest {
         assertEquals(22.5, updated.nominalResistanceKg ?: 0.0, 0.0)
         assertTrue(updated.equipmentLoadSnapshotJson?.contains("revision_watch_1") == true)
         assertTrue(updated.equipmentLoadSnapshotJson?.contains("\"selectedLoadKg\":45.0") == true)
+    }
+
+    @Test
+    fun watchFirstSetInfersSingleLinkedEquipmentAndQueuesFrozenSnapshot() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = bootstrapWithTargetSets(3).copy(
+            gyms = listOf(
+                GymDto(
+                    id = equipment.gymId,
+                    name = "Equipment-first gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    equipment = listOf(equipment),
+                ),
+            ),
+        )
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val currentRuntime = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        val watchRuntime = currentRuntime.copy(
+            revision = currentRuntime.revision + 1,
+            updatedAtEpochMs = 10_000,
+            updatedBy = "WATCH",
+        )
+        val incoming = watchSet(
+            id = "watch_set_equipment_single",
+            sessionId = sessionId,
+            weight = 70.0,
+        )
+
+        val result = fixture.repository.applyWatchSetEvent(
+            processed = watchProcessedEvent(
+                id = "watch_equipment_event_single",
+                sessionId = sessionId,
+                revision = watchRuntime.revision,
+            ),
+            set = incoming,
+            runtime = watchRuntime,
+        )
+
+        assertTrue(result.applied)
+        assertEquals(null, result.errorCode)
+        val saved = requireNotNull(fixture.dao.getSet(incoming.id))
+        assertEquals(equipment.id, saved.gymEquipmentId)
+        assertEquals(equipment.name, saved.equipmentNameSnapshot)
+        assertEquals(70.0, saved.selectedLoadKg ?: 0.0, 0.001)
+        assertTrue(saved.equipmentLoadSnapshotJson?.contains("\"version\":2") == true)
+        assertTrue(saved.equipmentLoadSnapshotJson?.contains(equipment.snapshotRevisionId!!) == true)
+        val queued = fixture.upsertEntries().single()
+        assertEquals(equipment.id, queued.second.set.gymEquipmentId)
+        val frozen = requireNotNull(queued.second.set.frozenEquipmentSnapshot)
+        assertEquals(equipment.snapshotRevisionId, frozen.equipmentLoadSnapshot.revisionId)
+        assertEquals(listOf(4, null, 8), frozen.equipmentLoadSnapshot.platePool?.plates?.map { it.quantity })
+        assertEquals(watchRuntime, fixture.dao.getActiveWorkoutRuntime(sessionId))
+    }
+
+    @Test
+    fun watchFirstSetRejectsAmbiguousEquipmentWithoutAdvancingMutationState() = runTest {
+        val fixture = fixture()
+        val first = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val second = first.copy(
+            id = "equipment_plate_0002",
+            name = "Second plate-loaded press",
+            snapshotRevisionId = "revision_plate_0002",
+        )
+        val response = bootstrapWithTargetSets(3).copy(
+            gyms = listOf(
+                GymDto(
+                    id = first.gymId,
+                    name = "Equipment-first gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    equipment = listOf(first, second),
+                ),
+            ),
+        )
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            first.gymId,
+        )
+        val currentRuntime = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        val attemptedRuntime = currentRuntime.copy(
+            revision = currentRuntime.revision + 1,
+            updatedAtEpochMs = 11_000,
+            updatedBy = "WATCH",
+        )
+        val incoming = watchSet(
+            id = "watch_set_equipment_ambiguous",
+            sessionId = sessionId,
+            weight = 70.0,
+        )
+        val processed = watchProcessedEvent(
+            id = "watch_equipment_event_ambiguous",
+            sessionId = sessionId,
+            revision = attemptedRuntime.revision,
+        )
+        val queuedBefore = fixture.dao.queuedOperations()
+
+        val result = fixture.repository.applyWatchSetEvent(processed, incoming, attemptedRuntime)
+
+        assertFalse(result.applied)
+        assertEquals("EQUIPMENT_SELECTION_REQUIRED", result.errorCode)
+        assertEquals(null, fixture.dao.getSet(incoming.id))
+        assertEquals(currentRuntime, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(null, fixture.dao.getProcessedWatchEvent(processed.eventId))
+        assertEquals(queuedBefore, fixture.dao.queuedOperations())
+        val conflict = fixture.dao.getWatchConflicts(sessionId).single()
+        assertEquals(processed.eventId, conflict.eventId)
+        assertEquals("UNRESOLVED", conflict.status)
+        assertEquals("EQUIPMENT_SELECTION_REQUIRED", conflict.errorCode)
+        assertEquals(currentRuntime.revision, conflict.localRevision)
+        assertEquals(attemptedRuntime.revision, conflict.remoteRevision)
     }
 
     @Test
@@ -1175,6 +1297,123 @@ class GymCoachRepositorySyncTest {
         assertEquals(80.0, updated.selectedLoadKg ?: 0.0, 0.001)
         assertTrue(updated.equipmentLoadSnapshotJson?.contains(equipment.snapshotRevisionId!!) == true)
         assertTrue(updated.equipmentLoadSnapshotJson?.contains("\"selectedLoadKg\":80.0") == true)
+    }
+
+    @Test
+    fun frozenEquipmentSnapshotStillConstrainsEditingAfterEquipmentDeletion() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = equipmentFirstBootstrap(equipment)
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val set = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        fixture.api.bootstrapResponse = response.copy(
+            gyms = response.gyms.map { it.copy(equipment = emptyList()) },
+        )
+        fixture.repository.refreshBootstrap()
+
+        fixture.repository.updateSet(set, weight = 80.0, reps = 11, rir = 1)
+
+        val updated = requireNotNull(fixture.dao.getSet(set.id))
+        assertEquals(equipment.id, updated.gymEquipmentId)
+        assertEquals(equipment.snapshotRevisionId, equipmentSnapshotRevision(updated))
+        assertEquals(80.0, updated.weight, 0.001)
+        assertEquals(80.0, updated.selectedLoadKg ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun frozenEquipmentSnapshotIgnoresChangedCurrentEquipmentConstraints() = runTest {
+        val fixture = fixture()
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = equipmentFirstBootstrap(equipment)
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val set = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        val changedEquipment = equipment.copy(
+            snapshotRevisionId = "revision_plate_changed",
+            baseLoadKg = 25.0,
+            platePool = equipment.platePool?.copy(
+                plates = listOf(GymPlateInventoryItemDto(weightKg = 25.0, quantity = 2)),
+            ),
+        )
+        fixture.api.bootstrapResponse = response.copy(
+            gyms = response.gyms.map { it.copy(equipment = listOf(changedEquipment)) },
+        )
+        fixture.repository.refreshBootstrap()
+
+        fixture.repository.updateSet(set, weight = 80.0, reps = 12, rir = 1)
+
+        val updated = requireNotNull(fixture.dao.getSet(set.id))
+        assertEquals(equipment.snapshotRevisionId, equipmentSnapshotRevision(updated))
+        assertEquals(80.0, updated.weight, 0.001)
+        assertTrue(updated.equipmentLoadSnapshotJson?.contains("revision_plate_changed") == false)
+    }
+
+    @Test
+    fun impossibleFrozenEquipmentLoadIsRejectedBeforeAnyPhoneOrWatchMutation() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(watchPublisher = publisher)
+        val equipment = plateLoadedEquipment().copy(
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        val response = equipmentFirstBootstrap(equipment)
+        fixture.api.bootstrapResponse = response
+        fixture.repository.refreshBootstrap()
+        val sessionId = fixture.repository.startWorkout(
+            requireNotNull(response.activeProgram).workouts.single(),
+            equipment.gymId,
+        )
+        val set = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 70.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+        val savedBefore = requireNotNull(fixture.dao.getSet(set.id))
+        val runtimeBefore = requireNotNull(fixture.dao.getActiveWorkoutRuntime(sessionId))
+        val queuedBefore = fixture.dao.queuedOperations()
+        val commandsBefore = publisher.commands.toList()
+
+        val failure = runCatching {
+            fixture.repository.updateSet(set, weight = 77.0, reps = 12, rir = 1)
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(savedBefore, fixture.dao.getSet(set.id))
+        assertEquals(runtimeBefore, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(queuedBefore, fixture.dao.queuedOperations())
+        assertEquals(commandsBefore, publisher.commands)
     }
 
     @Test
@@ -1901,6 +2140,38 @@ class GymCoachRepositorySyncTest {
         return Fixture(dao, api, accountStore, repository, syncCounter)
     }
 
+    private fun watchSet(
+        id: String,
+        sessionId: String,
+        weight: Double,
+    ) = LocalSetEntity(
+        id = id,
+        sessionId = sessionId,
+        exerciseId = "exercise_1",
+        setNumber = 1,
+        weight = weight,
+        reps = 8,
+        rir = 2,
+        completedAt = "2026-07-13T12:00:10Z",
+        exerciseSessionId = "program_exercise_1",
+        startedAt = "2026-07-13T12:00:00Z",
+        source = "WATCH",
+        watchRevision = 2,
+    )
+
+    private fun watchProcessedEvent(
+        id: String,
+        sessionId: String,
+        revision: Long,
+    ) = WatchProcessedEventEntity(
+        eventId = id,
+        sessionId = sessionId,
+        revision = revision,
+        processedAtEpochMs = 10_000,
+        canonicalEventHash = "c".repeat(64),
+        resultRevision = revision,
+    )
+
     private fun bootstrap(
         openSessions: List<SessionDto> = emptyList(),
         activeProgram: ProgramDto? = null,
@@ -1941,6 +2212,26 @@ class GymCoachRepositorySyncTest {
             ),
         ),
     )
+
+    private fun equipmentFirstBootstrap(vararg equipment: GymEquipmentDto): BootstrapResponse =
+        bootstrapWithTargetSets(3).copy(
+            gyms = listOf(
+                GymDto(
+                    id = equipment.first().gymId,
+                    name = "Equipment-first gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    equipment = equipment.toList(),
+                ),
+            ),
+        )
+
+    private fun equipmentSnapshotRevision(set: LocalSetEntity): String? =
+        set.equipmentLoadSnapshotJson?.let { snapshot ->
+            TestApi.jsonConfig.parseToJsonElement(snapshot)
+                .jsonObject["revisionId"]
+                ?.toString()
+                ?.trim('"')
+        }
 
     private fun bootstrapWithTargetSets(targetSets: Int) = bootstrap(
         activeProgram = ProgramDto(
