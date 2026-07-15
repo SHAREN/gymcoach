@@ -277,11 +277,62 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration8To9AddsEquipmentSnapshotsWithoutChangingWatchState() {
+        helper.createDatabase(TEST_DB_V9, 8).apply {
+            execSQL(
+                "INSERT INTO local_sessions " +
+                    "(id, workoutId, gymId, startedAt, finishedAt, notes, sessionRpe) VALUES " +
+                    "('session_v9', 'workout_v9', 'gym_v9', '2026-07-15T06:00:00Z', NULL, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO local_sets " +
+                    "(id, sessionId, exerciseId, setNumber, weight, reps, rir, durationSec, " +
+                    "distanceM, avgHr, maxHr, notes, isWarmup, isDropSet, recoverySec, " +
+                    "completedAt, deleted, exerciseSessionId, startedAt, source, watchRevision, " +
+                    "minHr, startHr, endHr, hrSampleCount) VALUES " +
+                    "('set_v9', 'session_v9', 'exercise_v9', 1, 80, 10, 2, NULL, NULL, NULL, " +
+                    "NULL, NULL, 0, 0, NULL, '2026-07-15T06:01:00Z', 0, NULL, NULL, " +
+                    "'PHONE', NULL, NULL, NULL, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO watch_resync_markers " +
+                    "(sessionId, revision, reason, createdAtEpochMs, updatedAtEpochMs) " +
+                    "VALUES ('session_v9', 4, 'SET_COMPLETED', 1000, 1000)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V9,
+            9,
+            true,
+            GymCoachDatabase.MIGRATION_8_9,
+        ).use { database ->
+            database.query(
+                "SELECT gymEquipmentId, equipmentNameSnapshot, selectedLoadKg, " +
+                    "selectedLoadMultiplierSnapshot, nominalResistanceKg, equipmentLoadSnapshotJson " +
+                    "FROM local_sets WHERE id = 'set_v9'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                repeat(6) { index -> assertEquals(true, cursor.isNull(index)) }
+            }
+            database.query(
+                "SELECT revision, reason FROM watch_resync_markers WHERE sessionId = 'session_v9'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(4L, cursor.getLong(0))
+                assertEquals("SET_COMPLETED", cursor.getString(1))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
         const val TEST_DB_V6 = "gymcoach-migration-v6-test"
         const val TEST_DB_V7 = "gymcoach-migration-v7-test"
         const val TEST_DB_V8 = "gymcoach-migration-v8-test"
+        const val TEST_DB_V9 = "gymcoach-migration-v9-test"
     }
 }

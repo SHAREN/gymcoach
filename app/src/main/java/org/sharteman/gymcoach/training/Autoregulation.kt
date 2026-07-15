@@ -2,12 +2,34 @@ package org.sharteman.gymcoach.training
 
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.GymDto
+import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
 
+data class PlateInventoryItem(
+    val weightKg: Double,
+    val quantity: Int?,
+)
+
+data class ResolvedEquipmentLoadProfile(
+    val equipmentId: String,
+    val equipmentName: String,
+    val equipmentType: String,
+    val loadType: String,
+    val weightOptions: List<Double>,
+    val selectedLoadMultiplier: Double,
+    val baseLoadKg: Double,
+    val loadingSides: Int,
+    val platePoolId: String?,
+    val platePoolName: String?,
+    val plates: List<PlateInventoryItem>,
+    val attainableLoads: List<Double>,
+    val inventoryPrecision: String,
+)
 
 data class LoadConstraints(
     val equipmentType: String,
@@ -16,6 +38,17 @@ data class LoadConstraints(
     val plateWeights: List<Double> = emptyList(),
     val barWeights: List<Double> = emptyList(),
     val weightOptions: List<Double> = emptyList(),
+    val equipmentId: String? = null,
+    val equipmentOptions: List<ResolvedEquipmentLoadProfile> = emptyList(),
+)
+
+data class ExerciseInventory(
+    val isAvailable: Boolean,
+    val source: String,
+    val equipment: List<ResolvedEquipmentLoadProfile>,
+    val requiresEquipmentSelection: Boolean,
+    val weightOptions: List<Double>,
+    val constraints: LoadConstraints,
 )
 
 data class SetRecommendation(
@@ -28,22 +61,132 @@ data class SetRecommendation(
     val confidence: String,
 )
 
-fun constraintsFor(programExercise: ProgramExerciseDto, gym: GymDto?): LoadConstraints {
+fun resolveExerciseInventory(
+    programExercise: ProgramExerciseDto,
+    gym: GymDto?,
+    selectedEquipmentId: String? = null,
+): ExerciseInventory {
     val equipmentType = resolveEquipmentType(
         programExercise.exercise.equipmentType,
         programExercise.exercise.name,
     )
-    if (gym == null) return LoadConstraints(equipmentType)
-    val config = gym.exerciseConfigs.firstOrNull { it.exerciseId == programExercise.exerciseId }
-    return LoadConstraints(
-        equipmentType = equipmentType,
-        isAvailable = config?.isAvailable ?: true,
-        dumbbellWeights = config?.dumbbellWeights?.takeIf { it.isNotEmpty() }
-            ?: gym.dumbbellWeights,
-        plateWeights = config?.plateWeights?.takeIf { it.isNotEmpty() } ?: gym.plateWeights,
-        barWeights = config?.barWeights?.takeIf { it.isNotEmpty() } ?: gym.barWeights,
-        weightOptions = config?.weightOptions ?: emptyList(),
-    )
+    if (gym == null) {
+        val constraints = LoadConstraints(equipmentType = equipmentType)
+        return ExerciseInventory(true, "no-gym", emptyList(), false, emptyList(), constraints)
+    }
+
+    val linkedEquipment = gym.equipment
+        .filter { equipment ->
+            equipment.exerciseLinks.any { link -> link.exerciseId == programExercise.exerciseId }
+        }
+        .map { equipment -> resolveEquipmentLoadProfile(equipment, gym) }
+    if (linkedEquipment.isNotEmpty()) {
+        val requiresSelection = linkedEquipment.size > 1
+        val resolvedEquipmentId = selectedEquipmentId
+            ?.takeIf { id -> linkedEquipment.any { it.equipmentId == id } }
+            ?: linkedEquipment.singleOrNull()?.equipmentId
+        val selected = linkedEquipment.firstOrNull { it.equipmentId == resolvedEquipmentId }
+        val constraints = LoadConstraints(
+            equipmentType = equipmentType,
+            isAvailable = true,
+            equipmentId = resolvedEquipmentId,
+            equipmentOptions = linkedEquipment,
+        )
+        return ExerciseInventory(
+            isAvailable = true,
+            source = "equipment",
+            equipment = linkedEquipment,
+            requiresEquipmentSelection = requiresSelection,
+            weightOptions = selected?.attainableLoads ?: emptyList(),
+            constraints = constraints,
+        )
+    }
+
+    if (equipmentType == "DUMBBELL" && gym.dumbbellWeights.isNotEmpty()) {
+        val weights = uniquePositive(gym.dumbbellWeights)
+        val constraints = LoadConstraints(
+            equipmentType = equipmentType,
+            isAvailable = true,
+            dumbbellWeights = weights,
+        )
+        return ExerciseInventory(true, "shared-dumbbells", emptyList(), false, weights, constraints)
+    }
+
+    val legacyConfig = gym.exerciseConfigs.firstOrNull {
+        it.exerciseId == programExercise.exerciseId
+    }
+    if (legacyConfig != null) {
+        val constraints = LoadConstraints(
+            equipmentType = equipmentType,
+            isAvailable = legacyConfig.isAvailable,
+            weightOptions = legacyConfig.weightOptions,
+            dumbbellWeights = legacyConfig.dumbbellWeights.takeIf { it.isNotEmpty() }
+                ?: gym.dumbbellWeights,
+            plateWeights = legacyConfig.plateWeights.takeIf { it.isNotEmpty() }
+                ?: gym.plateWeights,
+            barWeights = legacyConfig.barWeights.takeIf { it.isNotEmpty() }
+                ?: gym.barWeights,
+        )
+        return ExerciseInventory(
+            isAvailable = legacyConfig.isAvailable,
+            source = "legacy-config",
+            equipment = emptyList(),
+            requiresEquipmentSelection = false,
+            weightOptions = gymWeightOptions(constraints, 200.0),
+            constraints = constraints,
+        )
+    }
+
+    if (equipmentType == "BODYWEIGHT" || equipmentType == "CARDIO") {
+        val constraints = LoadConstraints(equipmentType = equipmentType, isAvailable = true)
+        return ExerciseInventory(true, "implicit", emptyList(), false, emptyList(), constraints)
+    }
+
+    if (gym.inventoryMode == "LEGACY") {
+        val constraints = LoadConstraints(
+            equipmentType = equipmentType,
+            isAvailable = true,
+            dumbbellWeights = gym.dumbbellWeights,
+            plateWeights = gym.plateWeights,
+            barWeights = gym.barWeights,
+        )
+        return ExerciseInventory(
+            isAvailable = true,
+            source = "legacy-gym",
+            equipment = emptyList(),
+            requiresEquipmentSelection = false,
+            weightOptions = gymWeightOptions(constraints, 200.0),
+            constraints = constraints,
+        )
+    }
+
+    val constraints = LoadConstraints(equipmentType = equipmentType, isAvailable = false)
+    return ExerciseInventory(false, "none", emptyList(), false, emptyList(), constraints)
+}
+
+fun constraintsFor(
+    programExercise: ProgramExerciseDto,
+    gym: GymDto?,
+    selectedEquipmentId: String? = null,
+): LoadConstraints = resolveExerciseInventory(programExercise, gym, selectedEquipmentId).constraints
+
+fun selectedEquipment(
+    inventory: ExerciseInventory,
+): ResolvedEquipmentLoadProfile? = inventory.constraints.equipmentId?.let { selectedId ->
+    inventory.equipment.firstOrNull { it.equipmentId == selectedId }
+}
+
+fun nominalResistanceKg(
+    profile: ResolvedEquipmentLoadProfile?,
+    selectedLoadKg: Double,
+): Double? = profile
+    ?.takeIf { it.loadType == "SELECTORIZED" }
+    ?.let { roundTo(selectedLoadKg * it.selectedLoadMultiplier) }
+
+fun isAchievableLoad(constraints: LoadConstraints?, weight: Double): Boolean {
+    if (constraints == null || !constraints.isAvailable) return false
+    val options = gymWeightOptions(constraints, weight)
+    return options.isEmpty() || roundTo(weight) in options
 }
 
 fun recommendNextSet(
@@ -119,6 +262,12 @@ fun recommendNextSet(
 
 fun gymWeightOptions(constraints: LoadConstraints?, referenceWeight: Double): List<Double> {
     if (constraints == null || !constraints.isAvailable) return emptyList()
+    if (constraints.equipmentOptions.isNotEmpty()) {
+        val selected = constraints.equipmentId
+            ?.let { id -> constraints.equipmentOptions.firstOrNull { it.equipmentId == id } }
+            ?: constraints.equipmentOptions.singleOrNull()
+        return selected?.attainableLoads ?: emptyList()
+    }
     return when (constraints.equipmentType) {
         "DUMBBELL" -> uniquePositive(constraints.dumbbellWeights)
         "BARBELL" -> constructibleBarbellWeights(
@@ -136,6 +285,11 @@ fun constrainGymWeight(
     constraints: LoadConstraints?,
 ): Double {
     if (constraints == null || !constraints.isAvailable || targetWeight <= 0) return roundTo(targetWeight)
+    if (constraints.equipmentOptions.isNotEmpty()) {
+        val options = uniquePositive(gymWeightOptions(constraints, max(targetWeight, referenceWeight)))
+        if (options.isEmpty()) return roundTo(targetWeight)
+        return selectDirectionalWeight(options, targetWeight, referenceWeight)
+    }
     val options = when (constraints.equipmentType) {
         "DUMBBELL" -> constraints.dumbbellWeights
         "BARBELL" -> constructibleBarbellWeights(
@@ -147,13 +301,7 @@ fun constrainGymWeight(
         else -> constraints.weightOptions
     }.let(::uniquePositive)
     if (options.isEmpty()) return roundTo(targetWeight)
-    val directional = when {
-        targetWeight < referenceWeight -> options.filter { it < referenceWeight }
-        targetWeight > referenceWeight -> options.filter { it > referenceWeight }
-        else -> options
-    }
-    if (directional.isEmpty()) return roundTo(referenceWeight)
-    return roundTo(nearest(directional, targetWeight))
+    return selectDirectionalWeight(options, targetWeight, referenceWeight)
 }
 
 fun constrainGymWeightAtOrBelow(targetWeight: Double, constraints: LoadConstraints?): Double {
@@ -193,6 +341,106 @@ fun constructibleBarbellWeights(
         }
     }
     return totals.sorted()
+}
+
+fun resolveEquipmentLoadProfile(
+    equipment: GymEquipmentDto,
+    gym: GymDto,
+    targetCeiling: Double = 500.0,
+): ResolvedEquipmentLoadProfile {
+    val pool = equipment.platePool
+        ?: equipment.platePoolId?.let { id -> gym.platePools.firstOrNull { it.id == id } }
+    val plates = pool?.plates.orEmpty().map { PlateInventoryItem(it.weightKg, it.quantity) }
+    val resolved = if (equipment.loadType == "PLATE_LOADED") {
+        constructiblePlateLoadedWeights(
+            baseLoadKg = equipment.baseLoadKg,
+            loadingSides = equipment.loadingSides,
+            plates = plates,
+            targetCeiling = targetCeiling,
+        )
+    } else {
+        val loads = if (equipment.loadType == "FIXED" || equipment.loadType == "SELECTORIZED") {
+            uniquePositive(equipment.weightOptions)
+        } else {
+            emptyList()
+        }
+        loads to "NOT_APPLICABLE"
+    }
+    return ResolvedEquipmentLoadProfile(
+        equipmentId = equipment.id,
+        equipmentName = equipment.name,
+        equipmentType = equipment.equipmentType,
+        loadType = equipment.loadType,
+        weightOptions = equipment.weightOptions,
+        selectedLoadMultiplier = equipment.selectedLoadMultiplier,
+        baseLoadKg = equipment.baseLoadKg,
+        loadingSides = equipment.loadingSides,
+        platePoolId = equipment.platePoolId,
+        platePoolName = pool?.name,
+        plates = plates,
+        attainableLoads = resolved.first,
+        inventoryPrecision = resolved.second,
+    )
+}
+
+fun constructiblePlateLoadedWeights(
+    baseLoadKg: Double,
+    loadingSides: Int,
+    plates: List<PlateInventoryItem>,
+    targetCeiling: Double,
+): Pair<List<Double>, String> {
+    val base = roundTo(max(0.0, baseLoadKg))
+    val sides = loadingSides.takeIf { it > 0 } ?: 2
+    val normalized = plates
+        .filter { it.weightKg.isFinite() && it.weightKg > 0 }
+        .associateBy { roundTo(it.weightKg) }
+        .map { (weight, item) -> PlateInventoryItem(weight, item.quantity) }
+        .sortedBy { it.weightKg }
+    if (normalized.isEmpty()) {
+        return (if (base > 0) listOf(base) else emptyList()) to "KNOWN"
+    }
+
+    val hasUnknownQuantity = normalized.any { it.quantity == null }
+    val maxPlate = normalized.lastOrNull()?.weightKg ?: 0.0
+    val maxTotal = min(5000.0, max(base, targetCeiling + maxPlate * sides * 4 + 50))
+    val maxAddedUnits = max(0, toUnits(maxTotal - base))
+    val reachable = BooleanArray(maxAddedUnits + 1)
+    reachable[0] = true
+
+    for (item in normalized) {
+        val increment = toUnits(item.weightKg * sides)
+        if (increment <= 0) continue
+        if (increment > maxAddedUnits) continue
+        if (item.quantity == null) {
+            for (current in 0..(maxAddedUnits - increment)) {
+                if (reachable[current]) reachable[current + increment] = true
+            }
+            continue
+        }
+        val usableGroups = floor(max(0, item.quantity).toDouble() / sides).toInt()
+        repeat(usableGroups) {
+            for (current in (maxAddedUnits - increment) downTo 0) {
+                if (reachable[current]) reachable[current + increment] = true
+            }
+        }
+    }
+
+    val attainable = buildList {
+        for (added in 0..maxAddedUnits) {
+            if (reachable[added]) add(roundTo(base + added / 100.0))
+        }
+    }
+    return attainable to if (hasUnknownQuantity) "UNKNOWN_QUANTITIES" else "KNOWN"
+}
+
+private fun selectDirectionalWeight(options: List<Double>, target: Double, reference: Double): Double {
+    val directional = when {
+        target < reference -> options.filter { it < reference }
+        target > reference -> options.filter { it > reference }
+        else -> options
+    }
+    if (directional.isEmpty()) return roundTo(reference)
+    return roundTo(nearest(directional, target))
 }
 
 private fun defaultFatigueRate(programExercise: ProgramExerciseDto): Double {

@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -52,6 +52,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
+                MIGRATION_8_9,
             )
                 .build()
                 .also { instance = it }
@@ -436,6 +437,17 @@ abstract class GymCoachDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_watch_resync_markers_updatedAtEpochMs " +
                         "ON watch_resync_markers(updatedAtEpochMs)",
                 )
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN gymEquipmentId TEXT")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN equipmentNameSnapshot TEXT")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN selectedLoadKg REAL")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN selectedLoadMultiplierSnapshot REAL")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN nominalResistanceKg REAL")
+                db.execSQL("ALTER TABLE local_sets ADD COLUMN equipmentLoadSnapshotJson TEXT")
             }
         }
     }
