@@ -68,6 +68,9 @@ Only protocol-generated identifiers such as `eventId`, `ackId`, `batchId`,
 `WorkoutSession.workoutProgramId` maps to the existing
 `LocalSessionEntity.workoutId`; its historical field name does not authorize a
 second workout or program identifier.
+`SetRecord.rir` may be `null` when an existing phone or server set never
+recorded RIR. A new set completed on the watch still requires an explicit
+integer RIR from 0 to 5.
 
 1. The producer creates a stable UUID `eventId` once and persists the event in
    its local outbox before attempting delivery.
