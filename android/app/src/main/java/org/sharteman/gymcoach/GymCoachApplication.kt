@@ -48,6 +48,7 @@ class GymCoachApplication : Application() {
         )
         watchSyncPreferences = WatchSyncPreferences(this)
         watchCompanionRuntime = WatchCompanionRuntimeFactory.create(
+            context = this,
             phoneDeviceId = accountStore.deviceId,
             dao = database.dao(),
             repository = repository,
