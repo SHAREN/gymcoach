@@ -1,4 +1,10 @@
-import { MAX_MESSAGE_BYTES, SCHEMA_VERSION, PROTOCOL_VERSION, utf8ByteLength } from './messages.js';
+import {
+  MAX_MESSAGE_BYTES,
+  TARGET_MESSAGE_BYTES,
+  SCHEMA_VERSION,
+  PROTOCOL_VERSION,
+  utf8ByteLength,
+} from './messages.js';
 import { canonicalJson, canonicalSha256 } from './canonical-json.js';
 
 export const MAX_FILE_BYTES = 4_000_000;
@@ -589,8 +595,8 @@ export function parseRestHeartRateSummary(serialized) {
 export function serializeSyncAck(value) {
   const serialized = serializeValidated(value, validateSyncAck);
   const bytes = utf8ByteLength(serialized);
-  if (bytes > MAX_MESSAGE_BYTES) {
-    throw new DataEnvelopeTooLargeError(bytes, MAX_MESSAGE_BYTES);
+  if (bytes > TARGET_MESSAGE_BYTES) {
+    throw new DataEnvelopeTooLargeError(bytes, TARGET_MESSAGE_BYTES);
   }
   return serialized;
 }
@@ -736,7 +742,7 @@ export function createWatchEvent({
 
 function encodeDataEnvelope(serialized) {
   const bytes = utf8ByteLength(serialized);
-  if (bytes <= MAX_MESSAGE_BYTES) {
+  if (bytes <= TARGET_MESSAGE_BYTES) {
     return { mode: 'MESSAGE', serialized, bytes };
   }
   if (bytes < MAX_FILE_BYTES) {

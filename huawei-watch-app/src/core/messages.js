@@ -1,6 +1,7 @@
 export const PROTOCOL_VERSION = '1.0';
 export const SCHEMA_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 1024;
+export const TARGET_MESSAGE_BYTES = 900;
 
 export const ControlMessageType = Object.freeze({
   PING: 'PING',
@@ -82,7 +83,7 @@ export function createControlMessage({
   });
 }
 
-export function serializeControlMessage(message, maxBytes = MAX_MESSAGE_BYTES) {
+export function serializeControlMessage(message, maxBytes = TARGET_MESSAGE_BYTES) {
   validateControlMessage(message);
   const serialized = JSON.stringify(message);
   const actualBytes = utf8ByteLength(serialized);

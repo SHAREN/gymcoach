@@ -1,12 +1,12 @@
 # Huawei Watch GT 4 companion architecture
 
-Status: target architecture and implementation contract. Hardware-dependent behavior remains unverified until it passes the real-device gate described in `huawei-watch-testing.md`.
+Status: implemented local architecture through Stage 6, with hardware-dependent adapters still blocked by the official-toolchain and real-device gates in `huawei-watch-testing.md`.
 
 ## Existing Android application
 
 The Android client is a Kotlin, Jetpack Compose, single-activity application. It uses repositories as the boundary between UI and data, OkHttp with Kotlin serialization for the mobile API, Room for offline persistence, and WorkManager for deferred server synchronization. Authentication uses the existing mobile bearer token on the phone. The token is encrypted with Android Keystore and must never be copied to the watch.
 
-Room database `gymcoach-android.db` is currently schema version 4. Its workout source of truth is:
+Room database `gymcoach-android.db` is currently schema version 7. Its workout source of truth is:
 
 - `WorkoutDto`: the workout plan received in the mobile bootstrap.
 - `ProgramExerciseDto`: the planned exercise, order, target sets, repetitions, RIR, rest, and related metadata.
@@ -89,12 +89,13 @@ flowchart LR
 | Workout session                                | Existing `LocalSessionEntity`                                     | The wire `WorkoutSession` is a projection of this row plus active runtime fields. It is not a new duplicate session table.                                                               |
 | Exercise session                               | Derived from `ProgramExerciseDto` and session ID                  | It is a wire and UI projection. Do not persist a duplicate exercise-session row unless a later migration proves it necessary.                                                            |
 | Completed set                                  | Existing `LocalSetEntity`                                         | A watch completion, edit, or deletion is applied through the existing repository transaction and server outbox.                                                                          |
-| Active exercise, active set, pause, and timers | New `active_workout_state` row keyed by session ID                | This persists state that is currently Compose-only, including `activeExerciseId`, `activeSetId`, `setStartedAt`, `restEndsAt`, pause timestamps, revision, `updatedAt`, and `updatedBy`. |
-| Watch events                                   | New event journal tables                                          | Store inbox receipts for deduplication, an ordered outbox until ACK, and sanitized error metadata.                                                                                       |
-| Conflicts                                      | New `watch_sync_conflicts` table                                  | Preserve both versions, resolution status, timestamps, and sanitized reason. Never silently discard a user action.                                                                       |
-| Sensor data                                    | New sensor batch/sample tables plus summaries on `LocalSetEntity` | Raw samples are buffered and written in batches. Set-level summaries extend the existing set record instead of creating another set entity.                                              |
+| Active exercise, active set, pause, and timers | `active_workout_runtime` keyed by session ID                      | Persists active exercise/set, absolute timer timestamps, accumulated pause time, revision, `updatedAt`, and `updatedBy`.                                                                  |
+| Watch events                                   | `watch_inbox_events`, `watch_outbox_events`, `watch_ack_journal`  | Store canonical hashes, replayable inbound events, ordered outbound events until ACK, bounded ACK receipts, and sanitized error metadata.                                                 |
+| Peer state and conflicts                       | `watch_peers` and `watch_conflicts`                               | Keep monotonic per-session peer revisions and preserve conflicting versions instead of silently discarding user actions.                                                                 |
+| File transport                                 | `watch_file_transfers`                                            | Persist immutable hash-checked multipart envelopes and pair them with their exact event IDs before applying data.                                                                         |
+| Sensor data                                    | `watch_sensor_batches`, `watch_sensor_samples`, set summaries     | Raw samples are written in batches. Heart-rate summaries extend `LocalSetEntity`; rest recovery uses `rest_recovery_summaries`.                                                           |
 
-Recommended phone-side additions are `ActiveWorkoutStateEntity`, `WatchEventJournalEntity`, `WatchSyncAckEntity`, `WatchSyncConflictEntity`, `SensorBatchEntity`, and `SensorSampleEntity`. The exact Room migration must remain additive and must include migration tests from every supported schema version.
+These tables are implemented by additive migrations through Room schema 7. Instrumentation tests cover migrations 3 to 4, 4 to 5, 5 to 6, and 6 to 7, plus account-data cleanup for the watch inbox, outbox, ACK journal, peer state, conflicts, and file transfers.
 
 On the watch, `WorkoutSession`, `ExerciseSession`, and `SetRecord` are compact local JSON projections backed by Lite Wearable storage. The watch retains the active snapshot, unacknowledged events, inbox receipt IDs, pending sensor batches, and the last acknowledged revision. Storage is bounded by deleting only acknowledged data after a verified snapshot and checksum.
 
@@ -117,7 +118,7 @@ This preserves the current offline-first behavior and prevents the phone UI, wat
 
 ### Transport
 
-`WatchTransport` is an interface with a production Wear Engine implementation and a debug-only simulated implementation. It exposes discovery, connection state, message send/receive, file send/receive, and transport errors. Transport callbacks only decode and enqueue work. They do not mutate workout state directly.
+`WatchTransport` is an interface with a debug-only simulated implementation and an explicit unavailable production fallback until the official Wear Engine SDK can be compiled locally. It exposes connection state, message send/receive, file send/receive, size limits, and transport errors. Transport callbacks route through durable sync coordinators and do not mutate workout state directly.
 
 The production adapter uses the phone as the trusted bridge. The watch receives a short-lived pairing context and protocol metadata, never the GymCoach bearer token, server cookie, base URL credentials, or encryption keys from Android Keystore.
 
@@ -127,7 +128,7 @@ The production adapter uses the phone as the trusted bridge. The watch receives 
 
 ### UI and diagnostics
 
-Production UI shows watch model, connection, sync status, protocol version, last sync, supported sensors, current heart rate when permitted, pending count, and last sanitized error. Debug UI additionally exposes latency, queue details, conflict journal, forced snapshot, simulated disconnect/reconnect, duplicate delivery, and a redacted diagnostics export.
+The release-safe UI exposes the Huawei Watch section and never claims a real connection while the Wear Engine adapter is unavailable. The debug UI additionally exposes simulated connection state, protocol version, sensor support, current simulated heart rate, latency, queue and conflict counters, forced synchronization, and a redacted diagnostics export.
 
 ## Watch application
 
@@ -204,7 +205,7 @@ Raw data is associated with session, exercise, set, phase, sensor type, unit, so
 3. Active snapshot, exercise changes, set entry, and existing `LocalSetEntity` integration.
 4. Runtime-gated sensors, summaries, absolute timers, and supported vibration.
 5. Durable offline journals, reconnection, revision reconciliation, and conflict diagnostics.
-6. Automated suites, real-device verification, installation runbook, and release evidence.
+6. Workout summaries, compact diagnostics, automated suites, installation runbook, and release evidence. Previewer, HAP, Wear Engine, and real-device evidence remain blocked until the official toolchain is installed by the owner.
 
 Each stage requires both projects to build, all applicable tests to pass, and a separate focused Git commit. A stage that depends on GT 4 hardware remains incomplete until its real-device evidence is recorded.
 

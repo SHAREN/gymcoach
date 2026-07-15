@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   ControlMessageType,
   MAX_MESSAGE_BYTES,
+  TARGET_MESSAGE_BYTES,
   MessageTooLargeError,
   createControlMessage,
   parseControlMessage,
@@ -41,16 +42,30 @@ function validMessage(overrides = {}) {
   };
 }
 
-test('direct message accepts exactly 1,024 UTF-8 bytes', () => {
-  const message = messageWithExactByteLength(MAX_MESSAGE_BYTES);
+test('outbound control message accepts the 900-byte engineering target', () => {
+  const message = messageWithExactByteLength(TARGET_MESSAGE_BYTES);
   const serialized = serializeControlMessage(message);
-  assert.equal(utf8ByteLength(serialized), MAX_MESSAGE_BYTES);
+  assert.equal(utf8ByteLength(serialized), TARGET_MESSAGE_BYTES);
 });
 
-test('direct message rejects 1,025 UTF-8 bytes', () => {
-  const message = messageWithExactByteLength(MAX_MESSAGE_BYTES + 1);
+test('outbound control message rejects data above the 900-byte engineering target', () => {
+  const message = messageWithExactByteLength(TARGET_MESSAGE_BYTES + 1);
   assert.throws(
     () => serializeControlMessage(message),
+    (error) =>
+      error instanceof MessageTooLargeError &&
+      error.actualBytes === TARGET_MESSAGE_BYTES + 1 &&
+      error.maxBytes === TARGET_MESSAGE_BYTES,
+  );
+});
+
+test('inbound parser accepts the 1,024-byte hard limit and rejects 1,025 bytes', () => {
+  const accepted = JSON.stringify(messageWithExactByteLength(MAX_MESSAGE_BYTES));
+  assert.equal(parseControlMessage(accepted).payload.padding.length > 0, true);
+
+  const rejected = JSON.stringify(messageWithExactByteLength(MAX_MESSAGE_BYTES + 1));
+  assert.throws(
+    () => parseControlMessage(rejected),
     (error) => error instanceof MessageTooLargeError && error.actualBytes === MAX_MESSAGE_BYTES + 1,
   );
 });
