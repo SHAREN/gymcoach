@@ -225,7 +225,7 @@ class RoomWatchSyncPersistence(
                 )
             },
         )
-        if (inserted && successful) {
+        if (inserted && successful && outboxEvents.any { it.sessionId == ack.sessionId }) {
             dao.deleteWatchResyncMarker(ack.sessionId, ack.revision)
         }
         return inserted
@@ -389,7 +389,10 @@ class InMemoryWatchSyncPersistence(
                 peer
             }
         }
-        if (ack.status == WatchSyncAckStatus.APPLIED || ack.status == WatchSyncAckStatus.DUPLICATE) {
+        if (
+            (ack.status == WatchSyncAckStatus.APPLIED || ack.status == WatchSyncAckStatus.DUPLICATE) &&
+            acknowledgedEvents.any { it.sessionId == ack.sessionId }
+        ) {
             resyncMarkers[ack.sessionId]?.takeIf { it.revision <= ack.revision }?.let {
                 resyncMarkers.remove(ack.sessionId)
             }

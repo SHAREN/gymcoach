@@ -29,6 +29,8 @@ class WatchSyncPersistenceTest {
         )
         val sink = RecordingReplaySink(failSnapshots = 1)
         val coordinator = WatchReconnectReplayCoordinator(store, sink, snapshotProvider = { snapshot() })
+        store.enqueue(event(EVENT_ONE, revision = 1, timestamp = 100))
+        store.enqueue(event(EVENT_TWO, revision = 2, timestamp = 200))
 
         assertTrue(runCatching { coordinator.repairMarkers() }.isFailure)
         assertEquals(1, store.resyncMarkers().size)
@@ -43,6 +45,20 @@ class WatchSyncPersistenceTest {
 
         store.applyAck(ack(ACK_TWO, WatchSyncAckStatus.DUPLICATE, listOf(EVENT_TWO), revision = 2))
         assertTrue(store.resyncMarkers().isEmpty())
+    }
+
+    @Test
+    fun `successful ack without a known session event keeps crash marker`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        store.saveResyncMarkerForTest(
+            WatchResyncMarkerEntity(SESSION, 2, "SET_UPDATED", 100, 100),
+        )
+
+        store.applyAck(ack(ACK_ONE, WatchSyncAckStatus.APPLIED, listOf(EVENT_THREE), revision = 2))
+        store.applyAck(ack(ACK_TWO, WatchSyncAckStatus.DUPLICATE, emptyList(), revision = 3))
+
+        assertEquals(1, store.resyncMarkers().size)
+        assertEquals(2L, store.resyncMarkers().single().revision)
     }
 
     @Test
