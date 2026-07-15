@@ -5,6 +5,7 @@ import {
   createLiteFileStore,
   createLiteStorageBackend,
 } from '../src/platform/lite-file-store.js';
+import { WatchStateRepository } from '../src/core/storage.js';
 
 function createFileApi() {
   const files = new Map();
@@ -57,6 +58,51 @@ test('Lite storage backend persists the durable watch document', async () => {
   assert.equal(await backend.get('ignored'), '{"version":6}');
   await backend.remove('ignored');
   assert.equal(await backend.get('ignored'), null);
+});
+
+test('non-not-found reads reject without replacing durable workout state', async () => {
+  const fileApi = createFileApi();
+  const stateUri = 'internal://app/test-watch-state.json';
+  const backend = createLiteStorageBackend({ fileApi, stateUri });
+  const repository = new WatchStateRepository(backend);
+  await repository.load();
+  await repository.enqueue({ messageId: 'pending-message' });
+  await repository.saveActiveWorkout({
+    session: { sessionId: 'active-session', status: 'ACTIVE' },
+  });
+  const persisted = fileApi.files.get(stateUri);
+
+  let writes = 0;
+  const writeText = fileApi.writeText.bind(fileApi);
+  fileApi.writeText = (options) => {
+    writes += 1;
+    writeText(options);
+  };
+  fileApi.readText = ({ fail }) => fail('permission denied', 403);
+
+  const restored = new WatchStateRepository(backend);
+  await assert.rejects(restored.load(), /permission denied.*403/);
+
+  assert.equal(writes, 0);
+  assert.equal(fileApi.files.get(stateUri), persisted);
+  const document = JSON.parse(persisted);
+  assert.equal(document.activeWorkout.session.sessionId, 'active-session');
+  assert.deepEqual(document.outbox.map((entry) => entry.messageId), ['pending-message']);
+});
+
+test('non-not-found delete failures remain visible for every Lite delete path', async () => {
+  const fileApi = createFileApi();
+  fileApi.delete = ({ fail }) => fail('permission denied', 403);
+  const store = createLiteFileStore({ fileApi });
+  const backend = createLiteStorageBackend({ fileApi });
+
+  for (const remove of [
+    () => store.removeOutbound('internal://app/outbound.json'),
+    () => store.removeInbound('internal://app/inbound.json'),
+    () => backend.remove('ignored'),
+  ]) {
+    await assert.rejects(remove, /permission denied.*403/);
+  }
 });
 
 test('Lite file write failures remain visible to synchronization code', async () => {

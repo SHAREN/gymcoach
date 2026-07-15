@@ -1,4 +1,5 @@
 const DEFAULT_STATE_URI = 'internal://app/gymcoach-state-v1.json';
+const FILE_NOT_FOUND_CODE = 301;
 
 function requiredFunction(value, name) {
   if (typeof value !== 'function') {
@@ -19,7 +20,7 @@ function invoke(fileApi, method, options, { missingValue, result } = {}) {
       ...options,
       success: (value) => resolve(result ? result(value) : value),
       fail: (data, code) => {
-        if (missingValue !== undefined) {
+        if (missingValue !== undefined && code === FILE_NOT_FOUND_CODE) {
           resolve(missingValue);
           return;
         }

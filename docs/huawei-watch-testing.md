@@ -103,24 +103,26 @@ documented in `huawei-development-environment.md`, including DevEco Studio
 signed HAP or physical GT 4 test. The Android database is Room schema version 9.
 On this workstation:
 
-- `huawei-watch-app/npm run check`: 77 tests passed, 0 failed; bundle freshness and formatting also passed.
-- Production watch HAP: official Hvigor `assembleHap` passed; unsigned output is 762,950 bytes with SHA-256 `1B43A66A9908C5204AB93895032BF07A8D593B5D619B841C09550AD1C9ADB384`.
-- Preview harness HAP: official Hvigor `assembleHap` passed; unsigned output is 162,636 bytes with SHA-256 `DD76812C8DD10FD90A7FD349B9128C0630EC6182BE57DE0A8D3C1B7A63CA4178`. DevEco synchronized the integration worktree project successfully, but the required current-worktree rendering and navigation smoke could not be completed through the available GUI control. The earlier source-branch Previewer pass is retained as historical evidence and does not satisfy this integration gate.
+- `huawei-watch-app/npm run check`: 80 tests passed, 0 failed; bundle freshness and formatting also passed.
+- Production watch HAP: official Hvigor `assembleHap` passed; unsigned output is 766,342 bytes with SHA-256 `280162AF829419C10279690D2BCADC601ADF95ABE82D4029187FBC65ED1D53AC`.
+- Preview harness HAP: official Hvigor `assembleHap` passed; unsigned output is 162,636 bytes with SHA-256 `EC60F974D4AE4A357B05A26EF2B960013C27D13EFA44ACC2FF99BAFB7FF0F6BC`. DevEco synchronized the integration worktree project, and owner-provided current-worktree evidence covers the Russian home render, workout/rest navigation, rest controls and locale switching. The frozen rest countdown is accepted for this integration and tracked separately.
 - `shared-contracts/test-contracts.mjs`: 15 schemas and 15 examples passed.
 - `scripts/verify.sh` and `scripts/verify.sh --full`: 125 web test files and 1058 tests, 41 integration files and 275 tests, and 18 Playwright tests passed, followed by lint, typecheck and production build.
-- `android/gradlew.bat testDebugUnitTest`: 48 test suites and 234 tests passed, 0 failed.
+- `android/gradlew.bat testDebugUnitTest`: 49 test suites and 237 tests passed, 0 failed.
 - Android `testDebugUnitTest`, `lintDebug`, `assembleDebug` and release Kotlin compilation passed with Wear Engine `5.0.3.304`.
-- Published APK `gymcoach-26-ca2bf7ae292e.apk`: 21,675,068 bytes; SHA-256 `ca2bf7ae292e02f06d50155ca062db92e5b369323ad0c228daf58a9d4e368b3a`. The source APK, hash-qualified published APK and `latest.json` match; no `gymcoach-latest.apk` alias was produced.
+- Published APK `gymcoach-26-407545c58172.apk`: 21,675,068 bytes; SHA-256 `407545c581725b8ab004f239c81a168e09a666dbc763df0b2518496362700d68`. The source APK, hash-qualified published APK and `latest.json` match; no `gymcoach-latest.apk` alias was produced.
 - API 34 Room instrumentation: 6 migration tests passed, including migration 8 to 9.
 
-The final local blocker audit passed for idempotent event replay, conflict
+The final local recovery audit passed for idempotent event replay, conflict
 deduplication and resolution, large offline workouts, bounded storage,
-equipment-snapshot validation, and the 900/1,024-byte plus 3.5 MiB transport
-targets. Production Wear Engine transport, Lite file storage and both DevEco
-builds are implemented or verified locally. The current integration-worktree
-Previewer rendering and navigation smoke remains an unmet verification gate.
-Huawei service approval, App ID, `DEVICE_MANAGER`, HAP signing and
-physical-watch behavior also remain blocked.
+non-destructive Lite file read/delete failures, SDK timeout normalization,
+continued Android command processing after a transport failure, and in-process
+Wear Engine reconnect with durable pending replay. Equipment-snapshot
+validation and the 900/1,024-byte plus 3.5 MiB transport targets also remain
+green. Production Wear Engine transport, Lite file storage, both DevEco builds
+and the accepted current-worktree Previewer smoke are verified locally. Huawei
+service approval, App ID, `DEVICE_MANAGER`, HAP signing and physical-watch
+behavior remain owner-controlled external gates.
 
 `automated-pass` means that the deterministic local assertions listed in the
 evidence column passed. It does not promote a simulator result to real-device
