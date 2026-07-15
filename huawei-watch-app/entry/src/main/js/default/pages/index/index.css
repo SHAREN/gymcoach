@@ -179,6 +179,12 @@
   color: #45d483;
 }
 
+.heart-rate-line {
+  margin-top: 2px;
+  font-size: 15px;
+  color: #aab3c2;
+}
+
 .target-card {
   width: 330px;
   height: 72px;
@@ -296,4 +302,70 @@
 
 .delete {
   background-color: #75343c;
+}
+
+.rest-screen {
+  padding-top: 34px;
+}
+
+.heart-rate-compact {
+  width: 110px;
+  font-size: 18px;
+  text-align: right;
+  color: #ff7b87;
+}
+
+.rest-countdown {
+  margin-top: 4px;
+  font-size: 68px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.rest-summary {
+  width: 340px;
+  height: 76px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-radius: 18px;
+  background-color: #151a22;
+}
+
+.summary-value {
+  width: 150px;
+  font-size: 13px;
+  color: #aab3c2;
+}
+
+.rest-actions {
+  width: 340px;
+  height: 46px;
+  margin-top: 7px;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.two {
+  margin-top: 5px;
+}
+
+.rest-button {
+  width: 108px;
+  height: 42px;
+  border-radius: 21px;
+  font-size: 13px;
+  color: #ffffff;
+  background-color: #29313e;
+}
+
+.wide-half {
+  width: 164px;
+}
+
+.primary {
+  color: #07110b;
+  background-color: #45d483;
 }

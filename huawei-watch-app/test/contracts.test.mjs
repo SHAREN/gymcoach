@@ -4,15 +4,20 @@ import test from 'node:test';
 
 import {
   DataEnvelopeTooLargeError,
+  encodeSensorBatchForTransport,
   encodeSyncSnapshotForTransport,
   encodeWatchEventForTransport,
   MAX_FILE_BYTES,
   parseExerciseSession,
+  parseRestHeartRateSummary,
+  parseSensorBatch,
   parseSetRecord,
   parseSyncSnapshot,
   parseWatchEvent,
   parseWorkoutSession,
   serializeExerciseSession,
+  serializeRestHeartRateSummary,
+  serializeSensorBatch,
   serializeSetRecord,
   serializeSyncSnapshot,
   serializeWatchEvent,
@@ -38,12 +43,42 @@ test('shared v1 DTO fixtures round-trip through strict watch serializers', async
   const set = await sharedJson('examples/set-record.json');
   const event = await sharedJson('examples/watch-event.json');
   const snapshot = await sharedJson('examples/sync-snapshot.json');
+  const sensorBatch = await sharedJson('examples/sensor-batch.json');
+  const restSummary = await sharedJson('examples/rest-heart-rate-summary.json');
 
   assert.deepEqual(parseWorkoutSession(serializeWorkoutSession(workout)), workout);
   assert.deepEqual(parseExerciseSession(serializeExerciseSession(exercise)), exercise);
   assert.deepEqual(parseSetRecord(serializeSetRecord(set)), set);
   assert.deepEqual(parseWatchEvent(serializeWatchEvent(event)), event);
   assert.deepEqual(parseSyncSnapshot(serializeSyncSnapshot(snapshot)), snapshot);
+  assert.deepEqual(parseSensorBatch(serializeSensorBatch(sensorBatch)), sensorBatch);
+  assert.deepEqual(
+    parseRestHeartRateSummary(serializeRestHeartRateSummary(restSummary)),
+    restSummary,
+  );
+  assert.equal(encodeSensorBatchForTransport(sensorBatch).mode, 'FILE');
+});
+
+test('Stage 4 rest payload fixture keeps the normative exact shapes', async () => {
+  const payloads = await sharedJson('fixtures/stage4-rest-payloads.json');
+  const summary = await sharedJson('examples/rest-heart-rate-summary.json');
+
+  assert.deepEqual(Object.keys(payloads.restStarted).sort(), [
+    'restEndsAt',
+    'setId',
+    'startedAt',
+  ]);
+  assert.deepEqual(Object.keys(payloads.restUpdated).sort(), ['reason', 'restEndsAt']);
+  assert.deepEqual(Object.keys(payloads.restSkipped), ['skippedAt']);
+  assert.deepEqual(Object.keys(payloads.restFinished).sort(), ['finishedAt', 'summary']);
+  assert.deepEqual(payloads.restFinished.summary, summary);
+  assert.deepEqual(Object.keys(payloads.sensorBatchRecorded).sort(), [
+    'batchId',
+    'deliveryMode',
+    'sampleCount',
+    'sequence',
+    'totalSequences',
+  ]);
 });
 
 test('Stage 3 payload fixture matches exact event payload contracts', async () => {

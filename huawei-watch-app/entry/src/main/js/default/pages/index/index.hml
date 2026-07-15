@@ -37,6 +37,7 @@
 
     <text class="exercise-name large">{{ exerciseName }}</text>
     <text class="set-progress">{{ setLabel }} {{ setProgress }}</text>
+    <text class="heart-rate-line">{{ currentHrLabel }}: {{ currentHeartRate }}</text>
     <div class="target-card">
       <text class="target-label">{{ targetLabel }}</text>
       <text class="target-value">{{ targetSummary }}</text>
@@ -89,5 +90,33 @@
     </div>
 
     <button class="wide-button" onclick="closeSetEntry">{{ backLabel }}</button>
+  </div>
+
+  <div if="{{ showRest }}" class="screen rest-screen">
+    <div class="top-row">
+      <text class="compact-title">{{ restLabel }}</text>
+      <text class="heart-rate-compact">{{ currentHeartRate }}</text>
+    </div>
+
+    <text class="rest-countdown">{{ restCountdown }}</text>
+    <text class="exercise-name">{{ exerciseName }}</text>
+    <text class="card-detail">{{ targetSummary }}</text>
+
+    <div class="rest-summary">
+      <text class="summary-value">{{ restMinimumLabel }}: {{ restMinimum }}</text>
+      <text class="summary-value">{{ restAverageLabel }}: {{ restAverage }}</text>
+      <text class="summary-value">{{ restAt30Label }}: {{ restAt30 }}</text>
+      <text class="summary-value">{{ restAt60Label }}: {{ restAt60 }}</text>
+    </div>
+
+    <div class="rest-actions">
+      <button class="rest-button" onclick="skipRest">{{ skipLabel }}</button>
+      <button class="rest-button" onclick="add15Seconds">{{ add15Label }}</button>
+      <button class="rest-button" onclick="add30Seconds">{{ add30Label }}</button>
+    </div>
+    <div class="rest-actions two">
+      <button class="rest-button wide-half" onclick="togglePause">{{ pauseResumeLabel }}</button>
+      <button class="rest-button wide-half primary" onclick="startNextSet">{{ startSetLabel }}</button>
+    </div>
   </div>
 </div>

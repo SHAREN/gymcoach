@@ -3,15 +3,17 @@ const MAX_RECEIPTS = 256;
 
 function createEmptyDocument() {
   return {
-    version: 2,
+    version: 3,
     state: {
       lastPongAt: null,
       lastSnapshotAt: null,
       lastError: null,
+      currentHeartRate: null,
     },
     outbox: [],
     receipts: [],
     activeWorkout: null,
+    sensorSamples: [],
   };
 }
 
@@ -58,11 +60,36 @@ export class WatchStateRepository {
       parsed.version = 2;
       parsed.activeWorkout = null;
     }
-    if (parsed.version !== 2 || !Array.isArray(parsed.outbox) || !Array.isArray(parsed.receipts)) {
+    if (parsed.version === 2) {
+      parsed.version = 3;
+      parsed.sensorSamples = [];
+      parsed.state.currentHeartRate = null;
+    }
+    if (
+      parsed.version !== 3 ||
+      !Array.isArray(parsed.outbox) ||
+      !Array.isArray(parsed.receipts) ||
+      !Array.isArray(parsed.sensorSamples)
+    ) {
       throw new Error('Unsupported watch state document.');
     }
     if (!Object.prototype.hasOwnProperty.call(parsed, 'activeWorkout')) {
       parsed.activeWorkout = null;
+    }
+    if (parsed.activeWorkout) {
+      parsed.activeWorkout.timing = parsed.activeWorkout.timing || {
+        accumulatedPauseMs: 0,
+        pauseStartedAt: null,
+      };
+      parsed.activeWorkout.rest = parsed.activeWorkout.rest || null;
+      parsed.activeWorkout.lastRestSummary = parsed.activeWorkout.lastRestSummary || null;
+      if (parsed.activeWorkout.pendingSet) {
+        parsed.activeWorkout.pendingSet.accumulatedPauseMs =
+          parsed.activeWorkout.pendingSet.accumulatedPauseMs || 0;
+        if (!Number.isInteger(parsed.activeWorkout.pendingSet.pauseStartedAt)) {
+          parsed.activeWorkout.pendingSet.pauseStartedAt = null;
+        }
+      }
     }
 
     this.document = parsed;
@@ -151,6 +178,32 @@ export class WatchStateRepository {
       this.document.outbox.push(JSON.parse(JSON.stringify(event)));
     }
     this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    await this.persist();
+  }
+
+  async saveActiveWorkout(activeWorkout) {
+    this.requireLoaded();
+    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    await this.persist();
+  }
+
+  sensorSamples() {
+    this.requireLoaded();
+    return this.document.sensorSamples.map((sample) => JSON.parse(JSON.stringify(sample)));
+  }
+
+  async appendSensorSample(sample, maxSamples = 2_048) {
+    this.requireLoaded();
+    if (this.document.sensorSamples.length >= maxSamples) {
+      throw new Error('Persistent sensor sample buffer is full and must be flushed.');
+    }
+    this.document.sensorSamples.push(JSON.parse(JSON.stringify(sample)));
+    await this.persist();
+  }
+
+  async clearSensorSamples() {
+    this.requireLoaded();
+    this.document.sensorSamples = [];
     await this.persist();
   }
 

@@ -115,6 +115,31 @@ const SENSOR_SAMPLE_FIELDS = [
   'valid',
   'quality',
 ];
+const SENSOR_BATCH_FIELDS = [
+  'protocolVersion',
+  'schemaVersion',
+  'batchId',
+  'sessionId',
+  'source',
+  'deviceId',
+  'createdAt',
+  'sequence',
+  'totalSequences',
+  'sampleCount',
+  'samples',
+];
+const REST_HEART_RATE_FIELDS = [
+  'startedAt',
+  'finishedAt',
+  'start',
+  'min',
+  'average',
+  'at30Seconds',
+  'at60Seconds',
+  'drop30Seconds',
+  'drop60Seconds',
+  'sampleCount',
+];
 
 export class DataEnvelopeTooLargeError extends Error {
   constructor(actualBytes, maxBytes = MAX_FILE_BYTES) {
@@ -252,6 +277,58 @@ export function validateSetRecord(value) {
   return value;
 }
 
+export function validateSensorSample(value) {
+  return validateSensorSampleValue(value);
+}
+
+export function validateSensorBatch(value) {
+  exactObject(value, SENSOR_BATCH_FIELDS, [], 'SensorBatch');
+  wireVersion(value, 'SensorBatch');
+  uuid(value.batchId, 'SensorBatch.batchId');
+  opaqueId(value.sessionId, 'SensorBatch.sessionId');
+  enumValue(value.source, SOURCES, 'SensorBatch.source');
+  nonBlankString(value.deviceId, 'SensorBatch.deviceId');
+  if (codePointLength(value.deviceId) > 128) {
+    throw new Error('SensorBatch.deviceId must not exceed 128 characters.');
+  }
+  nonNegativeInteger(value.createdAt, 'SensorBatch.createdAt');
+  positiveInteger(value.sequence, 'SensorBatch.sequence');
+  positiveInteger(value.totalSequences, 'SensorBatch.totalSequences');
+  if (value.sequence > value.totalSequences) {
+    throw new Error('SensorBatch.sequence must not exceed totalSequences.');
+  }
+  positiveInteger(value.sampleCount, 'SensorBatch.sampleCount');
+  arrayOf(value.samples, validateSensorSampleValue, 'SensorBatch.samples');
+  if (value.samples.length !== value.sampleCount) {
+    throw new Error('SensorBatch.sampleCount must match samples length.');
+  }
+  for (const sample of value.samples) {
+    sameSession(sample.sessionId, value.sessionId, 'SensorBatch sample');
+    if (sample.source !== value.source) {
+      throw new Error('SensorBatch sample source differs from the batch source.');
+    }
+  }
+  return value;
+}
+
+export function validateRestHeartRateSummary(value) {
+  exactObject(value, REST_HEART_RATE_FIELDS, [], 'RestHeartRateSummary');
+  nonNegativeInteger(value.startedAt, 'RestHeartRateSummary.startedAt');
+  nonNegativeInteger(value.finishedAt, 'RestHeartRateSummary.finishedAt');
+  if (value.finishedAt < value.startedAt) {
+    throw new Error('RestHeartRateSummary.finishedAt must not precede startedAt.');
+  }
+  nullablePositiveNumber(value.start, 'RestHeartRateSummary.start');
+  nullablePositiveNumber(value.min, 'RestHeartRateSummary.min');
+  nullablePositiveNumber(value.average, 'RestHeartRateSummary.average');
+  nullablePositiveNumber(value.at30Seconds, 'RestHeartRateSummary.at30Seconds');
+  nullablePositiveNumber(value.at60Seconds, 'RestHeartRateSummary.at60Seconds');
+  nullableFiniteNumber(value.drop30Seconds, 'RestHeartRateSummary.drop30Seconds');
+  nullableFiniteNumber(value.drop60Seconds, 'RestHeartRateSummary.drop60Seconds');
+  nonNegativeInteger(value.sampleCount, 'RestHeartRateSummary.sampleCount');
+  return value;
+}
+
 export function serializeWatchEvent(value) {
   return serializeValidated(value, validateWatchEvent);
 }
@@ -290,6 +367,31 @@ export function serializeSetRecord(value) {
 
 export function parseSetRecord(serialized) {
   return parseValidated(serialized, validateSetRecord);
+}
+
+export function serializeSensorBatch(value) {
+  return serializeValidated(value, validateSensorBatch);
+}
+
+export function parseSensorBatch(serialized) {
+  return parseValidated(serialized, validateSensorBatch);
+}
+
+export function serializeRestHeartRateSummary(value) {
+  return serializeValidated(value, validateRestHeartRateSummary);
+}
+
+export function parseRestHeartRateSummary(serialized) {
+  return parseValidated(serialized, validateRestHeartRateSummary);
+}
+
+export function encodeSensorBatchForTransport(value) {
+  const serialized = serializeSensorBatch(value);
+  const bytes = utf8ByteLength(serialized);
+  if (bytes >= MAX_FILE_BYTES) {
+    throw new DataEnvelopeTooLargeError(bytes, MAX_FILE_BYTES);
+  }
+  return { mode: 'FILE', serialized, bytes };
 }
 
 export function encodeWatchEventForTransport(value) {
@@ -361,7 +463,7 @@ function validateHeartRateSummary(value) {
   nonNegativeInteger(value.sampleCount, 'HeartRateSummary.sampleCount');
 }
 
-function validateSensorSample(value) {
+function validateSensorSampleValue(value) {
   exactObject(value, SENSOR_SAMPLE_FIELDS, [], 'SensorSample');
   uuid(value.sampleId, 'SensorSample.sampleId');
   opaqueId(value.sessionId, 'SensorSample.sessionId');
@@ -485,6 +587,12 @@ function boundedNumber(value, minimum, maximum, label) {
 function nullablePositiveNumber(value, label) {
   if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)) {
     throw new Error(`${label} must be a positive finite number or null.`);
+  }
+}
+
+function nullableFiniteNumber(value, label) {
+  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
+    throw new Error(`${label} must be a finite number or null.`);
   }
 }
 

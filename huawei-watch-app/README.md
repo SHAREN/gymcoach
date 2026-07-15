@@ -1,6 +1,6 @@
 # GymCoach Huawei Watch companion
 
-This directory contains the Stage 3 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
+This directory contains the Stage 4 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
 
 ## Verified target
 
@@ -14,7 +14,7 @@ This directory contains the Stage 3 source project for the Huawei Watch GT 4 com
 
 The normative Stage 2 control-plane envelope is `../shared-contracts/schemas/v1/control-message.schema.json`. It is separate from workout events and uses only `PING`, `PONG`, `SYNC_REQUESTED`, and `SYNC_SNAPSHOT`.
 
-## Current Stage 3 scope
+## Current Stage 4 scope
 
 Implemented now:
 
@@ -31,15 +31,25 @@ Implemented now:
 - A round-screen home card, active-workout screen, touch-first set entry, and Russian or English labels.
 - Correction and deletion of the last completed set for the active exercise.
 - Direct-message delivery through 1,024 bytes with file fallback below 4,000,000 bytes.
-- Node tests for connection, snapshots, exercise changes, sets, restart recovery, deduplication, strict DTOs, and transport limits.
+- A strict `SensorCollector` abstraction and explicit unavailable production collectors for every documented candidate sensor.
+- Debug-only sensor and vibration adapters that never enter the production page entry.
+- Valid and invalid sensor sample normalization. Off-wrist and invalid heart rate is stored as `null`, never as a real zero pulse.
+- Bounded persistent sensor storage, strict `SensorBatch` validation, batch splitting, and file-only transfer below 4,000,000 bytes.
+- Deterministic set and rest heart-rate summaries that exclude invalid samples and use the earlier sample for equal-distance 30-second or 60-second ties.
+- Absolute workout, set, pause, and rest timing that survives page sleep, application restart, and transport loss.
+- Automatic rest start after set completion, plus skip, add 15 seconds, add 30 seconds, pause, resume, and start-next-set controls.
+- Persisted one-shot warning and completion vibration cues through an adapter boundary.
+- A round-screen rest view with Russian and English labels, current pulse, countdown, summary values, and touch controls.
+- Node tests for connection, snapshots, exercise changes, sets, sensors, rest, restart recovery, deduplication, strict DTOs, and transport limits.
 
-Not implemented in Stage 2:
+Not implemented or not claimed in Stage 4:
 
-- Rest timer and rest screens.
-- Sensor APIs or health permissions.
-- Production Wear Engine calls.
+- Official production sensor APIs or health permission calls, because the installed SDK is unavailable.
+- Production Wear Engine calls or a verified physical-device transport.
+- Rotating crown input. No crown UI or API is present until official support is verified.
+- Guaranteed continuous heart-rate collection while the screen is asleep or the application is in deep background.
 - HAP signing or installation.
-- Production simulation or fake sensor values.
+- Production simulation or fake sensor values. Test readings remain under `src/debug`.
 
 ## Source layout
 
@@ -56,15 +66,22 @@ huawei-watch-app/
     contracts.js
     i18n.js
     messages.js
+    sensors.js
     storage.js
+    timers.js
     transport.js
+    vibration.js
     workout-state.js
   src/debug/
+    debug-sensor-collector.js
     debug-transport.js
+    debug-vibration.js
   test/
     companion.test.mjs
     contracts.test.mjs
+    entry.test.mjs
     messages.test.mjs
+    stage4.test.mjs
     workout.test.mjs
   scripts/
     check-format.mjs
@@ -106,7 +123,7 @@ npm run check
 
 No npm dependencies are installed or downloaded. Tests use the Node built-in test runner.
 
-## Implemented Stage 3 flow
+## Implemented Stage 4 flow
 
 With a future official transport adapter, the page flow is:
 
@@ -119,6 +136,12 @@ With a future official transport adapter, the page flow is:
 7. Reuse a stable `setId` from `SET_STARTED` through `SET_COMPLETED`.
 8. Preserve explicit weight, repetitions, and RIR after strict range validation.
 9. Replay unacknowledged watch events after reconnect or application restart.
-10. Keep raw sensor and rest behavior out of Stage 3.
+10. Start a rest interval automatically after a completed set and preserve it with absolute timestamps.
+11. Collect supported adapter samples in bounded buffers and persist them before summaries or lifecycle transitions.
+12. Exclude invalid and off-wrist heart-rate readings from current pulse and aggregate calculations.
+13. Split sensor samples into strict file batches and emit durable `SENSOR_BATCH_RECORDED` metadata events.
+14. Restore timers and one-shot vibration state after sleep, restart, or connection loss.
+
+The production sensor and vibration adapters intentionally report unavailable until the official DevEco and Lite Wearable SDK APIs can be compiled and verified. This is a safety boundary, not a claim that Watch GT 4 exposes every candidate sensor to third-party Lite Wearable applications.
 
 See `../docs/huawei-watch-gt4-capabilities.md` and `../docs/huawei-development-environment.md` for official capability and environment evidence.
