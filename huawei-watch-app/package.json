@@ -4,8 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bundle": "node scripts/bundle-lite.mjs",
+    "bundle:check": "node scripts/bundle-lite.mjs --check",
     "test": "node --test test/*.test.mjs",
     "format:check": "node scripts/check-format.mjs",
-    "check": "npm run format:check && npm test"
+    "check": "npm run bundle:check && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/preset-env": "7.29.7",
+    "esbuild": "0.28.1"
   }
 }

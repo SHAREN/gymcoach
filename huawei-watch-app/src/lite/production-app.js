@@ -1,16 +1,16 @@
 import file from '@system.file';
 
-import { P2pClient, Message, Builder } from './pages/wearengine.js';
+import { P2pClient, Message, Builder } from '../../entry/src/main/js/MainAbility/pages/wearengine.js';
 import {
   createLiteFileStore,
   createLiteStorageBackend,
-} from '../../../../../src/platform/lite-file-store.js';
-import { createWearEngineTransport } from '../../../../../src/platform/wear-engine-transport.js';
+} from '../platform/lite-file-store.js';
+import { createWearEngineTransport } from '../platform/wear-engine-transport.js';
 import {
   PHONE_DEBUG_SHA256_FINGERPRINT,
   PHONE_PACKAGE_NAME,
   WATCH_DEVICE_ID,
-} from '../../../../../src/platform/watch-peer-config.js';
+} from '../platform/watch-peer-config.js';
 
 function createPlatformBindings() {
   const fileStore = createLiteFileStore({ fileApi: file });
@@ -32,5 +32,5 @@ export default {
   },
   onDestroy() {
     globalThis.__gymCoachWatchPlatform = null;
-  },
+  }
 };

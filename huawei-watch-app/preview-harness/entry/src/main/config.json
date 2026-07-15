@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "org.sharteman.gymcoach.watch",
+    "bundleName": "org.sharteman.gymcoach.watch.preview",
     "vendor": "sharteman",
     "version": {
       "code": 1000000,

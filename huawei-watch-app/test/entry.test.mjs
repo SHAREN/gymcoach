@@ -2,13 +2,20 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const entryUrl = new URL('../entry/src/main/js/default/pages/index/index.js', import.meta.url);
-const hmlUrl = new URL('../entry/src/main/js/default/pages/index/index.hml', import.meta.url);
-const cssUrl = new URL('../entry/src/main/js/default/pages/index/index.css', import.meta.url);
+const entryUrl = new URL('../src/lite/watch-page.js', import.meta.url);
+const generatedEntryUrl = new URL(
+  '../entry/src/main/js/MainAbility/pages/index/index.js',
+  import.meta.url,
+);
+const hmlUrl = new URL('../entry/src/main/js/MainAbility/pages/index/index.hml', import.meta.url);
+const cssUrl = new URL('../entry/src/main/js/MainAbility/pages/index/index.css', import.meta.url);
 
 test('watch page entry resolves and does not import the debug transport', async () => {
   const source = await readFile(entryUrl, 'utf8');
+  const generated = await readFile(generatedEntryUrl, 'utf8');
   assert.equal(source.includes('/debug/'), false);
+  assert.equal(generated.includes('/debug/'), false);
+  assert.equal(/\brequire\s*\(\s*['"](?:@babel\/runtime|\.\.?\/)/u.test(generated), false);
 
   const module = await import(entryUrl.href);
   assert.equal(typeof module.default.onInit, 'function');
