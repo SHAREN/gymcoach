@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "eventId": "450436fc-f06c-4b3a-b718-7a21d7fd9657",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "type": "SET_COMPLETED",
+  "timestamp": 1784102580000,
+  "source": "WATCH",
+  "deviceId": "watch-gt4-debug-001",
+  "revision": 8,
+  "payload": {
+    "setId": "34599d14-fb23-4ff2-837a-d7dc453ec21a"
+  }
+}

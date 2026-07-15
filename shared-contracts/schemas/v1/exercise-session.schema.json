@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/exercise-session.schema.json",
+  "title": "ExerciseSession",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exerciseSessionId",
+    "sessionId",
+    "exerciseId",
+    "exerciseName",
+    "order",
+    "status",
+    "targetSets",
+    "targetReps",
+    "targetRir",
+    "restDurationSeconds"
+  ],
+  "properties": {
+    "exerciseSessionId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "exerciseId": { "type": "string", "format": "uuid" },
+    "exerciseName": { "type": "string", "minLength": 1 },
+    "order": { "type": "integer", "minimum": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["PENDING", "ACTIVE", "COMPLETED", "SKIPPED"]
+    },
+    "targetSets": { "type": "integer", "minimum": 1 },
+    "targetReps": { "type": "integer", "minimum": 0 },
+    "targetRir": { "type": "number", "minimum": 0 },
+    "restDurationSeconds": { "type": "integer", "minimum": 0 }
+  }
+}

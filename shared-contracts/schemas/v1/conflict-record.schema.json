@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/conflict-record.schema.json",
+  "title": "ConflictRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "conflictId",
+    "sessionId",
+    "entityType",
+    "entityId",
+    "localRevision",
+    "remoteRevision",
+    "localEvent",
+    "remoteEvent",
+    "detectedAt",
+    "resolution",
+    "resolvedAt"
+  ],
+  "properties": {
+    "conflictId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "entityType": { "type": "string", "minLength": 1 },
+    "entityId": { "type": "string", "minLength": 1 },
+    "localRevision": { "type": "integer", "minimum": 1 },
+    "remoteRevision": { "type": "integer", "minimum": 1 },
+    "localEvent": { "$ref": "watch-event.schema.json" },
+    "remoteEvent": { "$ref": "watch-event.schema.json" },
+    "detectedAt": { "type": "integer", "minimum": 0 },
+    "resolution": { "type": ["string", "null"] },
+    "resolvedAt": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}

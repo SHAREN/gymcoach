@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/watch-event.schema.json",
+  "title": "WatchEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "schemaVersion",
+    "eventId",
+    "sessionId",
+    "type",
+    "timestamp",
+    "source",
+    "deviceId",
+    "revision",
+    "payload"
+  ],
+  "properties": {
+    "protocolVersion": { "type": "string", "const": "1.0" },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "eventId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "WORKOUT_STARTED",
+        "WORKOUT_PAUSED",
+        "WORKOUT_RESUMED",
+        "WORKOUT_FINISHED",
+        "ACTIVE_EXERCISE_CHANGED",
+        "SET_STARTED",
+        "SET_UPDATED",
+        "SET_COMPLETED",
+        "SET_DELETED",
+        "REST_STARTED",
+        "REST_UPDATED",
+        "REST_FINISHED",
+        "REST_SKIPPED",
+        "SENSOR_BATCH_RECORDED",
+        "HEART_RATE_UPDATED",
+        "WATCH_CONNECTED",
+        "WATCH_DISCONNECTED",
+        "SYNC_REQUESTED",
+        "SYNC_SNAPSHOT",
+        "SYNC_ACKNOWLEDGED"
+      ]
+    },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "payload": { "type": "object" }
+  }
+}

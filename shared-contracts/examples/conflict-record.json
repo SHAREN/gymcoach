@@ -1,0 +1,35 @@
+{
+  "conflictId": "7bfdbade-2919-4758-ab53-4ddd30c08a3c",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "entityType": "SET_RECORD",
+  "entityId": "34599d14-fb23-4ff2-837a-d7dc453ec21a",
+  "localRevision": 9,
+  "remoteRevision": 9,
+  "localEvent": {
+    "protocolVersion": "1.0",
+    "schemaVersion": 1,
+    "eventId": "44ca234f-7ac5-4c93-8626-d336d29e18ee",
+    "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+    "type": "SET_UPDATED",
+    "timestamp": 1784102600000,
+    "source": "PHONE",
+    "deviceId": "android-debug-001",
+    "revision": 9,
+    "payload": { "setId": "34599d14-fb23-4ff2-837a-d7dc453ec21a", "reps": 9 }
+  },
+  "remoteEvent": {
+    "protocolVersion": "1.0",
+    "schemaVersion": 1,
+    "eventId": "bc7af4b0-bc37-42a9-85f3-327e5e976f52",
+    "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+    "type": "SET_UPDATED",
+    "timestamp": 1784102600100,
+    "source": "WATCH",
+    "deviceId": "watch-gt4-debug-001",
+    "revision": 9,
+    "payload": { "setId": "34599d14-fb23-4ff2-837a-d7dc453ec21a", "reps": 8 }
+  },
+  "detectedAt": 1784102600200,
+  "resolution": null,
+  "resolvedAt": null
+}

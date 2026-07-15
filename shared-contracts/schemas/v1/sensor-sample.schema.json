@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gymcoach.local/contracts/watch/v1/sensor-sample.schema.json",
+  "title": "SensorSample",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sampleId",
+    "sessionId",
+    "exerciseSessionId",
+    "setId",
+    "phase",
+    "sensorType",
+    "value",
+    "unit",
+    "timestamp",
+    "source",
+    "valid",
+    "quality"
+  ],
+  "properties": {
+    "sampleId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "format": "uuid" },
+    "exerciseSessionId": { "type": ["string", "null"], "format": "uuid" },
+    "setId": { "type": ["string", "null"], "format": "uuid" },
+    "phase": {
+      "type": "string",
+      "enum": ["WORKOUT", "SET", "REST", "PAUSE", "WARMUP", "RECOVERY"]
+    },
+    "sensorType": { "type": "string", "minLength": 1 },
+    "value": { "type": ["number", "string", "boolean", "null"] },
+    "unit": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
+    "valid": { "type": "boolean" },
+    "quality": { "type": ["string", "null"] }
+  }
+}

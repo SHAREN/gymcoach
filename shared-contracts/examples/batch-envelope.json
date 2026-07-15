@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "batchId": "11b73cdf-724f-41bc-9fed-d828ae9b5dd8",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "source": "WATCH",
+  "deviceId": "watch-gt4-debug-001",
+  "createdAt": 1784102580500,
+  "sequence": 1,
+  "totalSequences": 1,
+  "deliveryMode": "P2P",
+  "eventCount": 1,
+  "events": [
+    {
+      "protocolVersion": "1.0",
+      "schemaVersion": 1,
+      "eventId": "e9916255-a4e4-4266-a50d-b01ec82a7d2b",
+      "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+      "type": "HEART_RATE_UPDATED",
+      "timestamp": 1784102580000,
+      "source": "WATCH",
+      "deviceId": "watch-gt4-debug-001",
+      "revision": 8,
+      "payload": { "heartRate": 140 }
+    }
+  ]
+}

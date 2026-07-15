@@ -1,0 +1,14 @@
+{
+  "sampleId": "f972dc2b-60c5-411d-b0ec-c89d398bc9d2",
+  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "exerciseSessionId": "17b70728-c8a5-4338-b28a-45b40c83092c",
+  "setId": "34599d14-fb23-4ff2-837a-d7dc453ec21a",
+  "phase": "SET",
+  "sensorType": "HEART_RATE",
+  "value": 140,
+  "unit": "BPM",
+  "timestamp": 1784102580000,
+  "source": "WATCH",
+  "valid": true,
+  "quality": "GOOD"
+}
