@@ -96,6 +96,9 @@ data class ActiveWorkoutRuntimeEntity(
     val restStartedAtEpochMs: Long? = null,
     val restEndsAtEpochMs: Long? = null,
     val restDurationSeconds: Int? = null,
+    val workoutAccumulatedPauseMs: Long = 0,
+    val setAccumulatedPauseMs: Long = 0,
+    val restPausedRemainingMs: Long? = null,
     val revision: Long = 1,
     val updatedAtEpochMs: Long,
     val updatedBy: String = "PHONE",
@@ -110,6 +113,138 @@ data class WatchProcessedEventEntity(
     val sessionId: String,
     val revision: Long,
     val processedAtEpochMs: Long,
+    val canonicalEventHash: String = "",
+    val resultStatus: String = "APPLIED",
+    val resultRevision: Long = revision,
+    val errorCode: String? = null,
+)
+
+@Entity(
+    tableName = "watch_inbox_events",
+    indices = [Index("sessionId"), Index("status"), Index("receivedAtEpochMs")],
+)
+data class WatchInboxEventEntity(
+    @PrimaryKey val eventId: String,
+    val sessionId: String,
+    val revision: Long,
+    val timestampEpochMs: Long,
+    val canonicalEventHash: String,
+    val envelopeJson: String,
+    val status: String = "RECEIVED",
+    val resultStatus: String? = null,
+    val resultRevision: Long? = null,
+    val errorCode: String? = null,
+    val receivedAtEpochMs: Long,
+    val processedAtEpochMs: Long? = null,
+)
+
+@Entity(
+    tableName = "watch_outbox_events",
+    indices = [
+        Index("sessionId"),
+        Index("status"),
+        Index(value = ["sessionId", "revision", "timestampEpochMs", "eventId"]),
+        Index("relatedTransferId"),
+    ],
+)
+data class WatchOutboxEventEntity(
+    @PrimaryKey val eventId: String,
+    val sessionId: String,
+    val revision: Long,
+    val timestampEpochMs: Long,
+    val eventType: String,
+    val canonicalEventHash: String,
+    val envelopeJson: String,
+    val status: String = "PENDING",
+    val attempts: Int = 0,
+    val lastAttemptAtEpochMs: Long? = null,
+    val ackStatus: String? = null,
+    val errorCode: String? = null,
+    val relatedTransferId: String? = null,
+    val createdAtEpochMs: Long,
+    val acknowledgedAtEpochMs: Long? = null,
+)
+
+@Entity(
+    tableName = "watch_ack_journal",
+    indices = [Index("sessionId"), Index("receivedAtEpochMs")],
+)
+data class WatchAckJournalEntity(
+    @PrimaryKey val ackId: String,
+    val sessionId: String,
+    val eventIdsJson: String,
+    val status: String,
+    val revision: Long,
+    val errorCode: String?,
+    val source: String,
+    val deviceId: String,
+    val receivedAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "watch_peers",
+    indices = [Index("sessionId"), Index("lastSyncAtEpochMs")],
+)
+data class WatchPeerEntity(
+    @PrimaryKey val deviceId: String,
+    val sessionId: String?,
+    val protocolVersion: String,
+    val schemaVersion: Int,
+    val lastRevision: Long = 0,
+    val lastSyncAtEpochMs: Long? = null,
+    val lastError: String? = null,
+    val updatedAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "watch_conflicts",
+    indices = [Index("sessionId"), Index("eventId"), Index("resolution"), Index("detectedAtEpochMs")],
+)
+data class WatchConflictEntity(
+    @PrimaryKey val conflictId: String,
+    val sessionId: String,
+    val eventId: String,
+    val entityType: String,
+    val entityId: String,
+    val localRevision: Long,
+    val remoteRevision: Long,
+    val localEventJson: String,
+    val remoteEventJson: String,
+    val status: String,
+    val errorCode: String?,
+    val detectedAtEpochMs: Long,
+    val resolution: String? = null,
+    val resolvedAtEpochMs: Long? = null,
+)
+
+@Entity(
+    tableName = "watch_file_transfers",
+    primaryKeys = ["transferId", "sequence"],
+    indices = [
+        Index("sessionId"),
+        Index("relatedEventId"),
+        Index(value = ["payloadId", "sequence"]),
+        Index("status"),
+    ],
+)
+data class WatchFileTransferEntity(
+    val transferId: String,
+    val sequence: Int,
+    val sessionId: String,
+    val relatedEventId: String?,
+    val payloadType: String,
+    val payloadId: String,
+    val totalSequences: Int,
+    val byteLength: Int,
+    val sha256: String,
+    val source: String,
+    val deviceId: String,
+    val direction: String,
+    val status: String,
+    val canonicalPayloadJson: String?,
+    val errorCode: String?,
+    val createdAtEpochMs: Long,
+    val updatedAtEpochMs: Long,
 )
 
 @Entity(

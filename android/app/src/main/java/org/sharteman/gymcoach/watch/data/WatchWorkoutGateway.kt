@@ -5,6 +5,8 @@ import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
@@ -62,7 +64,7 @@ interface WatchWorkoutRepository {
     suspend fun sets(sessionId: String): List<LocalSetEntity>
     suspend fun set(setId: String): LocalSetEntity?
     suspend fun runtime(sessionId: String): ActiveWorkoutRuntimeEntity?
-    suspend fun hasProcessedEvent(eventId: String): Boolean
+    suspend fun processedEvent(eventId: String): WatchProcessedEventEntity?
     suspend fun hasSensorBatch(batchId: String, sequence: Int): Boolean
     suspend fun saveRuntime(runtime: ActiveWorkoutRuntimeEntity)
     suspend fun updateActiveExercise(
@@ -129,7 +131,7 @@ class GymCoachWatchWorkoutRepository(
     override suspend fun sets(sessionId: String) = repository.localSets(sessionId)
     override suspend fun set(setId: String) = repository.localSet(setId)
     override suspend fun runtime(sessionId: String) = repository.activeWorkoutRuntime(sessionId)
-    override suspend fun hasProcessedEvent(eventId: String) = repository.hasProcessedWatchEvent(eventId)
+    override suspend fun processedEvent(eventId: String) = repository.processedWatchEvent(eventId)
     override suspend fun hasSensorBatch(batchId: String, sequence: Int) =
         repository.hasWatchSensorBatch(batchId, sequence)
     override suspend fun saveRuntime(runtime: ActiveWorkoutRuntimeEntity) =
@@ -273,8 +275,8 @@ class PersistentWatchWorkoutGateway(
                 activeSetId = runtime.activeSetId,
                 setStartedAt = runtime.setStartedAtEpochMs,
                 pausedAt = runtime.pausedAtEpochMs,
-                workoutAccumulatedPauseMs = 0,
-                setAccumulatedPauseMs = 0,
+                workoutAccumulatedPauseMs = runtime.workoutAccumulatedPauseMs,
+                setAccumulatedPauseMs = runtime.setAccumulatedPauseMs,
                 rest = if (
                     runtime.activeSetId != null &&
                     runtime.restStartedAtEpochMs != null &&
@@ -284,7 +286,7 @@ class PersistentWatchWorkoutGateway(
                         setId = runtime.activeSetId,
                         startedAt = runtime.restStartedAtEpochMs,
                         endsAt = runtime.restEndsAtEpochMs,
-                        pausedRemainingMs = null,
+                        pausedRemainingMs = runtime.restPausedRemainingMs,
                     )
                 } else {
                     null
@@ -304,8 +306,16 @@ class PersistentWatchWorkoutGateway(
         if (event.source != WatchEventSource.WATCH) return rejected(event, "INVALID_SOURCE")
         val context = loadContext(event.sessionId) ?: return rejected(event, "SESSION_NOT_FOUND")
         val current = normalizeRuntime(context)
-        if (repository.hasProcessedEvent(event.eventId)) {
-            return WatchWorkoutApplyResult(WatchSyncAckStatus.DUPLICATE, current.revision)
+        val canonicalHash = CanonicalJson.event(event).sha256
+        repository.processedEvent(event.eventId)?.let { processed ->
+            if (processed.canonicalEventHash.isNotEmpty() && processed.canonicalEventHash != canonicalHash) {
+                return WatchWorkoutApplyResult(WatchSyncAckStatus.REJECTED, current.revision, "EVENT_ID_REUSE")
+            }
+            return WatchWorkoutApplyResult(
+                WatchSyncAckStatus.DUPLICATE,
+                processed.resultRevision.takeIf { it > 0 } ?: current.revision,
+                processed.errorCode,
+            )
         }
         if (event.revision <= current.revision) {
             return WatchWorkoutApplyResult(WatchSyncAckStatus.STALE, current.revision, "STALE_REVISION")
@@ -319,8 +329,76 @@ class PersistentWatchWorkoutGateway(
             sessionId = event.sessionId,
             revision = event.revision,
             processedAtEpochMs = nowEpochMs(),
+            canonicalEventHash = canonicalHash,
+            resultStatus = WatchSyncAckStatus.APPLIED.name,
+            resultRevision = event.revision,
         )
         return when (event.type) {
+            WatchEventType.WORKOUT_STARTED -> {
+                val updated = current.copy(
+                    status = WatchWorkoutStatus.ACTIVE.name,
+                    revision = nextRevision,
+                    updatedAtEpochMs = event.timestamp,
+                    updatedBy = WatchEventSource.WATCH.name,
+                )
+                appliedResult(repository.applyRuntimeEvent(processed, updated), updated.revision)
+            }
+            WatchEventType.WORKOUT_PAUSED -> {
+                val pausedAt = event.payload.singleTimestamp("pausedAt")
+                    ?: return rejected(event, "INVALID_PAUSE")
+                if (current.pausedAtEpochMs != null) return rejected(event, "ALREADY_PAUSED")
+                val updated = current.copy(
+                    status = WatchWorkoutStatus.PAUSED.name,
+                    pausedAtEpochMs = pausedAt,
+                    restPausedRemainingMs = current.restEndsAtEpochMs?.let { (it - pausedAt).coerceAtLeast(0) },
+                    revision = nextRevision,
+                    updatedAtEpochMs = event.timestamp,
+                    updatedBy = WatchEventSource.WATCH.name,
+                )
+                appliedResult(repository.applyRuntimeEvent(processed, updated), updated.revision)
+            }
+            WatchEventType.WORKOUT_RESUMED -> {
+                val resumedAt = event.payload.singleTimestamp("resumedAt")
+                    ?: return rejected(event, "INVALID_RESUME")
+                val pausedAt = current.pausedAtEpochMs ?: return rejected(event, "NOT_PAUSED")
+                if (resumedAt < pausedAt) return rejected(event, "INVALID_RESUME")
+                val pauseDelta = resumedAt - pausedAt
+                val updated = current.copy(
+                    status = WatchWorkoutStatus.ACTIVE.name,
+                    pausedAtEpochMs = null,
+                    workoutAccumulatedPauseMs = current.workoutAccumulatedPauseMs + pauseDelta,
+                    setAccumulatedPauseMs = if (current.activeSetId != null && current.setStartedAtEpochMs != null) {
+                        current.setAccumulatedPauseMs + pauseDelta
+                    } else {
+                        current.setAccumulatedPauseMs
+                    },
+                    restEndsAtEpochMs = current.restPausedRemainingMs?.let { resumedAt + it }
+                        ?: current.restEndsAtEpochMs,
+                    restPausedRemainingMs = null,
+                    revision = nextRevision,
+                    updatedAtEpochMs = event.timestamp,
+                    updatedBy = WatchEventSource.WATCH.name,
+                )
+                appliedResult(repository.applyRuntimeEvent(processed, updated), updated.revision)
+            }
+            WatchEventType.WORKOUT_FINISHED -> {
+                val finishedAt = event.payload.singleTimestamp("finishedAt")
+                    ?: return rejected(event, "INVALID_FINISH")
+                val updated = current.copy(
+                    status = WatchWorkoutStatus.FINISHED.name,
+                    activeSetId = null,
+                    setStartedAtEpochMs = null,
+                    pausedAtEpochMs = null,
+                    restStartedAtEpochMs = null,
+                    restEndsAtEpochMs = null,
+                    restDurationSeconds = null,
+                    restPausedRemainingMs = null,
+                    revision = nextRevision,
+                    updatedAtEpochMs = finishedAt,
+                    updatedBy = WatchEventSource.WATCH.name,
+                )
+                appliedResult(repository.applyRuntimeEvent(processed, updated), updated.revision)
+            }
             WatchEventType.ACTIVE_EXERCISE_CHANGED -> {
                 val payload = codec.decodeActiveExerciseChangedPayload(event.payload)
                 val target = context.workout.exercises.findPayloadTarget(payload)
@@ -336,6 +414,7 @@ class PersistentWatchWorkoutGateway(
                     activeExerciseId = target.exerciseId,
                     activeSetId = payload.setId,
                     setStartedAtEpochMs = payload.startedAt,
+                    setAccumulatedPauseMs = 0,
                     revision = nextRevision,
                     updatedAtEpochMs = event.timestamp,
                     updatedBy = WatchEventSource.WATCH.name,
@@ -364,6 +443,7 @@ class PersistentWatchWorkoutGateway(
                     restStartedAtEpochMs = if (clearsActiveSet) null else current.restStartedAtEpochMs,
                     restEndsAtEpochMs = if (clearsActiveSet) null else current.restEndsAtEpochMs,
                     restDurationSeconds = if (clearsActiveSet) null else current.restDurationSeconds,
+                    restPausedRemainingMs = if (clearsActiveSet) null else current.restPausedRemainingMs,
                     revision = nextRevision,
                     updatedAtEpochMs = event.timestamp,
                     updatedBy = WatchEventSource.WATCH.name,
@@ -428,10 +508,14 @@ class PersistentWatchWorkoutGateway(
         }
         val context = loadContext(event.sessionId) ?: return rejected(event, "SESSION_NOT_FOUND")
         val current = normalizeRuntime(context)
-        if (
-            repository.hasProcessedEvent(event.eventId) ||
-            repository.hasSensorBatch(batch.batchId, batch.sequence)
-        ) {
+        val canonicalHash = CanonicalJson.event(event).sha256
+        repository.processedEvent(event.eventId)?.let { processed ->
+            if (processed.canonicalEventHash.isNotEmpty() && processed.canonicalEventHash != canonicalHash) {
+                return WatchWorkoutApplyResult(WatchSyncAckStatus.REJECTED, current.revision, "EVENT_ID_REUSE")
+            }
+            return WatchWorkoutApplyResult(WatchSyncAckStatus.DUPLICATE, current.revision)
+        }
+        if (repository.hasSensorBatch(batch.batchId, batch.sequence)) {
             return WatchWorkoutApplyResult(WatchSyncAckStatus.DUPLICATE, current.revision)
         }
         if (event.revision <= current.revision) {
@@ -445,6 +529,9 @@ class PersistentWatchWorkoutGateway(
             sessionId = event.sessionId,
             revision = event.revision,
             processedAtEpochMs = nowEpochMs(),
+            canonicalEventHash = canonicalHash,
+            resultStatus = WatchSyncAckStatus.APPLIED.name,
+            resultRevision = event.revision,
         )
         val updated = current.copy(
             revision = event.revision,
@@ -516,6 +603,7 @@ class PersistentWatchWorkoutGateway(
                 activeExerciseId = target.exerciseId,
                 activeSetId = null,
                 setStartedAtEpochMs = null,
+                setAccumulatedPauseMs = 0,
                 revision = nextRevision,
                 updatedAtEpochMs = event.timestamp,
                 updatedBy = WatchEventSource.WATCH.name,
@@ -548,6 +636,7 @@ class PersistentWatchWorkoutGateway(
             restStartedAtEpochMs = payload.startedAt,
             restEndsAtEpochMs = payload.restEndsAt,
             restDurationSeconds = durationSeconds(payload.startedAt, payload.restEndsAt),
+            restPausedRemainingMs = null,
             revision = event.revision,
             updatedAtEpochMs = event.timestamp,
             updatedBy = WatchEventSource.WATCH.name,
@@ -787,9 +876,11 @@ private fun ActiveWorkoutRuntimeEntity.changeExercise(
     activeExerciseId = exerciseId,
     activeSetId = null,
     setStartedAtEpochMs = null,
+    setAccumulatedPauseMs = 0,
     restStartedAtEpochMs = null,
     restEndsAtEpochMs = null,
     restDurationSeconds = null,
+    restPausedRemainingMs = null,
     revision = nextRevision,
     updatedAtEpochMs = updatedAt,
     updatedBy = WatchEventSource.WATCH.name,
@@ -802,6 +893,7 @@ private fun ActiveWorkoutRuntimeEntity.finishRest(
     restStartedAtEpochMs = null,
     restEndsAtEpochMs = null,
     restDurationSeconds = null,
+    restPausedRemainingMs = null,
     revision = event.revision,
     updatedAtEpochMs = event.timestamp,
     updatedBy = WatchEventSource.WATCH.name,
@@ -809,6 +901,13 @@ private fun ActiveWorkoutRuntimeEntity.finishRest(
 
 private fun durationSeconds(startedAtEpochMs: Long, endedAtEpochMs: Long): Int =
     ((endedAtEpochMs - startedAtEpochMs) / 1_000L).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+
+private fun kotlinx.serialization.json.JsonObject.singleTimestamp(name: String): Long? =
+    takeIf { it.keys == setOf(name) }
+        ?.get(name)
+        ?.jsonPrimitive
+        ?.longOrNull
+        ?.takeIf { it >= 0 }
 
 private fun LocalSetEntity.toWatchSetRecord(
     target: ProgramExerciseDto,

@@ -1,8 +1,10 @@
 package org.sharteman.gymcoach.watch.sync
 
 import java.util.UUID
+import kotlinx.coroutines.sync.withLock
 import org.sharteman.gymcoach.watch.data.WatchWorkoutGateway
 import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
+import org.sharteman.gymcoach.watch.data.WatchProtocolCodec
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
@@ -22,20 +24,84 @@ class WatchWorkoutCoordinator(
     private val sink: WatchWorkoutResponseSink,
     private val phoneDeviceId: String,
     private val codec: WatchWorkoutProtocolCodec = WatchWorkoutProtocolCodec(),
+    private val eventCodec: WatchProtocolCodec = WatchProtocolCodec(),
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     private val newUuid: () -> String = { UUID.randomUUID().toString() },
-) : WatchEventConsumer {
+    private val syncPersistence: WatchSyncPersistence = InMemoryWatchSyncPersistence(nowEpochMs),
+) : WatchEventConsumer, WatchAckConsumer {
+    private val replayMutex = kotlinx.coroutines.sync.Mutex()
+
     override suspend fun onEvent(event: WatchEventEnvelopeDto) {
+        when (val inbox = syncPersistence.recordIncoming(event).registration) {
+            WatchInboxRegistration.EVENT_ID_REUSE -> {
+                sendAck(
+                    event,
+                    org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult(
+                        org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.REJECTED,
+                        event.revision,
+                        "EVENT_ID_REUSE",
+                    ),
+                )
+                return
+            }
+            WatchInboxRegistration.DUPLICATE -> {
+                sendAck(
+                    event,
+                    org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult(
+                        org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.DUPLICATE,
+                        event.revision,
+                    ),
+                )
+                return
+            }
+            WatchInboxRegistration.NEW -> Unit
+        }
         if (event.type == WatchEventType.SYNC_REQUESTED) {
             gateway.buildSnapshot(event.sessionId)?.let { sink.sendSnapshot(it) }
+            syncPersistence.finishIncoming(
+                event.eventId,
+                org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.APPLIED,
+                event.revision,
+                null,
+            )
             return
         }
         val result = gateway.applyWatchEvent(event)
+        syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
         sendAck(event, result)
+        if (result.errorCode == "SYNC_REQUIRED") {
+            gateway.buildSnapshot(event.sessionId)?.let { sink.sendSnapshot(it) }
+        }
     }
 
     suspend fun onSensorBatch(event: WatchEventEnvelopeDto, batch: WatchSensorBatchDto) {
-        sendAck(event, gateway.applySensorBatch(event, batch))
+        when (syncPersistence.recordIncoming(event).registration) {
+            WatchInboxRegistration.EVENT_ID_REUSE -> {
+                sendAck(
+                    event,
+                    org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult(
+                        org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.REJECTED,
+                        event.revision,
+                        "EVENT_ID_REUSE",
+                    ),
+                )
+                return
+            }
+            WatchInboxRegistration.DUPLICATE -> {
+                sendAck(
+                    event,
+                    org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult(
+                        org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.DUPLICATE,
+                        event.revision,
+                    ),
+                )
+                return
+            }
+            WatchInboxRegistration.NEW -> Unit
+        }
+        val result = gateway.applySensorBatch(event, batch)
+        syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
+        sendAck(event, result)
     }
 
     private suspend fun sendAck(
@@ -61,7 +127,7 @@ class WatchWorkoutCoordinator(
 
     suspend fun changeActiveExerciseFromPhone(sessionId: String, exerciseId: String): Boolean {
         val change = gateway.changeActiveExerciseFromPhone(sessionId, exerciseId) ?: return false
-        sink.sendEvent(
+        persistAndSend(
             WatchEventEnvelopeDto(
                 protocolVersion = WatchProtocol.VERSION,
                 schemaVersion = WatchProtocol.SCHEMA_VERSION,
@@ -76,5 +142,23 @@ class WatchWorkoutCoordinator(
             ),
         )
         return true
+    }
+
+    override suspend fun onAck(ack: WatchSyncAckDto) {
+        syncPersistence.applyAck(ack)
+    }
+
+    suspend fun replayPending(sessionId: String? = null) = replayMutex.withLock {
+        syncPersistence.replayable(sessionId).forEach { pending ->
+            val event = eventCodec.decodeEvent(pending.envelopeJson.encodeToByteArray())
+            syncPersistence.markAttempt(event.eventId)
+            sink.sendEvent(event)
+        }
+    }
+
+    suspend fun persistAndSend(event: WatchEventEnvelopeDto, relatedTransferId: String? = null) {
+        syncPersistence.enqueue(event, relatedTransferId)
+        syncPersistence.markAttempt(event.eventId)
+        sink.sendEvent(event)
     }
 }

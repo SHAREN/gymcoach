@@ -21,6 +21,12 @@ import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
+import org.sharteman.gymcoach.data.local.WatchInboxEventEntity
+import org.sharteman.gymcoach.data.local.WatchOutboxEventEntity
+import org.sharteman.gymcoach.data.local.WatchAckJournalEntity
+import org.sharteman.gymcoach.data.local.WatchPeerEntity
+import org.sharteman.gymcoach.data.local.WatchConflictEntity
+import org.sharteman.gymcoach.data.local.WatchFileTransferEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
@@ -1214,7 +1220,13 @@ class GymCoachRepositorySyncTest {
         private val sessions = linkedMapOf<String, LocalSessionEntity>()
         private val sets = linkedMapOf<String, LocalSetEntity>()
         private val activeRuntimes = linkedMapOf<String, ActiveWorkoutRuntimeEntity>()
-        private val processedWatchEvents = mutableSetOf<String>()
+        private val processedWatchEvents = linkedMapOf<String, WatchProcessedEventEntity>()
+        private val watchInbox = linkedMapOf<String, WatchInboxEventEntity>()
+        private val watchOutbox = linkedMapOf<String, WatchOutboxEventEntity>()
+        private val watchAcks = linkedMapOf<String, WatchAckJournalEntity>()
+        private val watchPeers = linkedMapOf<String, WatchPeerEntity>()
+        private val watchConflicts = linkedMapOf<String, WatchConflictEntity>()
+        private val watchFiles = linkedMapOf<Pair<String, Int>, WatchFileTransferEntity>()
         private val sensorBatches = linkedMapOf<Pair<String, Int>, WatchSensorBatchEntity>()
         private val sensorSamples = linkedMapOf<String, WatchSensorSampleEntity>()
         private val restSummaries = linkedMapOf<String, RestRecoverySummaryEntity>()
@@ -1280,9 +1292,76 @@ class GymCoachRepositorySyncTest {
             activeRuntimes.remove(sessionId)
         }
         override suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long =
-            if (processedWatchEvents.add(entity.eventId)) processedWatchEvents.size.toLong() else -1L
+            if (processedWatchEvents.putIfAbsent(entity.eventId, entity) == null) processedWatchEvents.size.toLong() else -1L
         override suspend fun hasProcessedWatchEvent(eventId: String) =
             if (eventId in processedWatchEvents) 1 else 0
+        override suspend fun getProcessedWatchEvent(eventId: String) = processedWatchEvents[eventId]
+        override suspend fun insertWatchInboxEvent(entity: WatchInboxEventEntity): Long =
+            if (watchInbox.putIfAbsent(entity.eventId, entity) == null) watchInbox.size.toLong() else -1L
+        override suspend fun getWatchInboxEvent(eventId: String) = watchInbox[eventId]
+        override suspend fun finishWatchInboxEvent(
+            eventId: String,
+            status: String,
+            resultStatus: String,
+            resultRevision: Long,
+            errorCode: String?,
+            processedAtEpochMs: Long,
+        ) {
+            watchInbox[eventId]?.let {
+                watchInbox[eventId] = it.copy(
+                    status = status,
+                    resultStatus = resultStatus,
+                    resultRevision = resultRevision,
+                    errorCode = errorCode,
+                    processedAtEpochMs = processedAtEpochMs,
+                )
+            }
+        }
+        override suspend fun insertWatchOutboxEvent(entity: WatchOutboxEventEntity): Long =
+            if (watchOutbox.putIfAbsent(entity.eventId, entity) == null) watchOutbox.size.toLong() else -1L
+        override suspend fun getWatchOutboxEvent(eventId: String) = watchOutbox[eventId]
+        override suspend fun getReplayableWatchOutboxEvents() = replayableWatchOutbox(null)
+        override suspend fun getReplayableWatchOutboxEvents(sessionId: String) = replayableWatchOutbox(sessionId)
+        override suspend fun countReplayableWatchOutboxEvents() = replayableWatchOutbox(null).size
+        override suspend fun markWatchOutboxAttempt(eventId: String, attemptedAtEpochMs: Long) {
+            watchOutbox[eventId]?.let {
+                watchOutbox[eventId] = it.copy(
+                    status = "SENT",
+                    attempts = it.attempts + 1,
+                    lastAttemptAtEpochMs = attemptedAtEpochMs,
+                )
+            }
+        }
+        override suspend fun updateWatchOutboxAcknowledgement(
+            eventId: String,
+            status: String,
+            ackStatus: String,
+            errorCode: String?,
+            acknowledgedAtEpochMs: Long,
+        ) {
+            watchOutbox[eventId]?.let {
+                watchOutbox[eventId] = it.copy(
+                    status = status,
+                    ackStatus = ackStatus,
+                    errorCode = errorCode,
+                    acknowledgedAtEpochMs = acknowledgedAtEpochMs,
+                )
+            }
+        }
+        override suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long =
+            if (watchAcks.putIfAbsent(entity.ackId, entity) == null) watchAcks.size.toLong() else -1L
+        override suspend fun getWatchAckJournal(ackId: String) = watchAcks[ackId]
+        override suspend fun saveWatchPeer(entity: WatchPeerEntity) { watchPeers[entity.deviceId] = entity }
+        override suspend fun getWatchPeer(deviceId: String) = watchPeers[deviceId]
+        override suspend fun saveWatchConflict(entity: WatchConflictEntity) { watchConflicts[entity.conflictId] = entity }
+        override suspend fun getWatchConflicts(sessionId: String) = watchConflicts.values.filter { it.sessionId == sessionId }
+        override suspend fun saveWatchFileTransfer(entity: WatchFileTransferEntity) {
+            watchFiles[entity.transferId to entity.sequence] = entity
+        }
+        override suspend fun getWatchFileTransferParts(transferId: String) =
+            watchFiles.values.filter { it.transferId == transferId }.sortedBy { it.sequence }
+        override suspend fun getWatchFileTransfersForEvent(eventId: String) =
+            watchFiles.values.filter { it.relatedEventId == eventId }.sortedBy { it.sequence }
         override suspend fun hasWatchSensorBatch(batchId: String, sequence: Int) =
             if (batchId to sequence in sensorBatches) 1 else 0
         override suspend fun insertWatchSensorBatch(entity: WatchSensorBatchEntity) {
@@ -1418,5 +1497,10 @@ class GymCoachRepositorySyncTest {
             pendingCountFlow.value = outbox.size
             blockedOperationFlow.value = outbox.filter { it.status == "BLOCKED" }.minByOrNull { it.sequence }
         }
+
+        private fun replayableWatchOutbox(sessionId: String?) = watchOutbox.values
+            .filter { it.status == "PENDING" || it.status == "SENT" }
+            .filter { sessionId == null || it.sessionId == sessionId }
+            .sortedWith(compareBy<WatchOutboxEventEntity> { it.revision }.thenBy { it.timestampEpochMs }.thenBy { it.eventId })
     }
 }

@@ -9,6 +9,7 @@ object WatchProtocol {
     const val SCHEMA_VERSION = 1
     const val MAX_P2P_MESSAGE_BYTES = 1_024
     const val MAX_FILE_BYTES_EXCLUSIVE = 4_000_000
+    const val TARGET_FILE_PAYLOAD_BYTES = 3_670_016
     const val MAX_CONTROL_ID_LENGTH = 128
     const val MAX_DEVICE_ID_LENGTH = 128
 }
@@ -125,6 +126,37 @@ data class WatchBatchEnvelopeDto(
 )
 
 @Serializable
+enum class WatchFilePayloadType {
+    @SerialName("SENSOR_BATCH")
+    SENSOR_BATCH,
+
+    @SerialName("SYNC_SNAPSHOT")
+    SYNC_SNAPSHOT,
+
+    @SerialName("EVENT_BATCH")
+    EVENT_BATCH,
+}
+
+@Serializable
+data class WatchFileTransferEnvelopeDto(
+    val protocolVersion: String,
+    val schemaVersion: Int,
+    val transferId: String,
+    val sessionId: String,
+    val relatedEventId: String?,
+    val payloadType: WatchFilePayloadType,
+    val payloadId: String,
+    val sequence: Int,
+    val totalSequences: Int,
+    val byteLength: Int,
+    val sha256: String,
+    val createdAt: Long,
+    val source: WatchEventSource,
+    val deviceId: String,
+    val payload: JsonObject,
+)
+
+@Serializable
 enum class WatchControlMessageType {
     @SerialName("PING")
     PING,
@@ -156,4 +188,6 @@ sealed interface WatchIncomingMessage {
     data class Control(val message: WatchControlMessageDto) : WatchIncomingMessage
 
     data class Event(val event: WatchEventEnvelopeDto) : WatchIncomingMessage
+
+    data class Ack(val ack: WatchSyncAckDto) : WatchIncomingMessage
 }

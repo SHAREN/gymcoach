@@ -27,6 +27,9 @@ import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
+import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
 import org.sharteman.gymcoach.watch.transport.WatchTransport
 import org.sharteman.gymcoach.watch.transport.WatchTransportCapabilities
 
@@ -134,6 +137,37 @@ class WatchConnectionCoordinatorTest {
     }
 
     @Test
+    fun `incoming ack is routed to persistent ack consumer`() = runTest {
+        val transport = FakeWatchTransport()
+        val received = mutableListOf<WatchSyncAckDto>()
+        val coordinator = coordinator(
+            transport,
+            backgroundScope,
+            ackConsumer = WatchAckConsumer { received += it },
+        )
+        val ack = WatchSyncAckDto(
+            protocolVersion = WatchProtocol.VERSION,
+            schemaVersion = WatchProtocol.SCHEMA_VERSION,
+            ackId = "50000000-0000-0000-0000-000000000001",
+            sessionId = SESSION_ID,
+            eventIds = listOf("50000000-0000-0000-0000-000000000002"),
+            status = WatchSyncAckStatus.APPLIED,
+            timestamp = 1_000,
+            source = WatchEventSource.WATCH,
+            deviceId = "watch-test",
+            revision = 2,
+            errorCode = null,
+        )
+
+        coordinator.connect()
+        runCurrent()
+        transport.emitRaw(WatchWorkoutProtocolCodec().encodeSyncAck(ack))
+        runCurrent()
+
+        assertEquals(listOf(ack), received)
+    }
+
+    @Test
     fun `control messages over 1024 bytes are rejected before transport`() = runTest {
         val transport = FakeWatchTransport()
         val coordinator = coordinator(transport, backgroundScope)
@@ -166,6 +200,7 @@ class WatchConnectionCoordinatorTest {
         processedEventStore: InMemoryProcessedWatchEventStore = InMemoryProcessedWatchEventStore(),
         processedControlStore: InMemoryProcessedWatchControlMessageStore =
             InMemoryProcessedWatchControlMessageStore(),
+        ackConsumer: WatchAckConsumer? = null,
     ): WatchConnectionCoordinator {
         val ids = AtomicInteger(1)
         return WatchConnectionCoordinator(
@@ -174,6 +209,7 @@ class WatchConnectionCoordinatorTest {
             processedEventStore = processedEventStore,
             processedControlMessageStore = processedControlStore,
             scope = scope,
+            ackConsumer = ackConsumer,
             codec = codec,
             nowEpochMs = nowEpochMs,
             newId = { "phone-msg-${ids.getAndIncrement()}" },
@@ -231,6 +267,10 @@ class WatchConnectionCoordinatorTest {
                 throw WatchProtocolException(WatchProtocolErrorCode.TRANSPORT_DISCONNECTED)
             }
             sentMessages += message.copyOf()
+        }
+
+        suspend fun emitRaw(message: ByteArray) {
+            mutableIncomingMessages.emit(message)
         }
 
         suspend fun emitControlFromWatch(message: WatchControlMessageDto, codec: WatchProtocolCodec) {

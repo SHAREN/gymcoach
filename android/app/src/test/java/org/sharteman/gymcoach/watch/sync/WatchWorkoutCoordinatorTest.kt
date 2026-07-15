@@ -46,6 +46,7 @@ import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutPhase
+import org.sharteman.gymcoach.watch.domain.WatchWorkoutStatus
 
 class WatchWorkoutCoordinatorTest {
     private val codec = WatchWorkoutProtocolCodec()
@@ -176,7 +177,7 @@ class WatchWorkoutCoordinatorTest {
             ),
         )
 
-        assertEquals(1, sink.snapshots.size)
+        assertEquals(2, sink.snapshots.size)
         assertEquals(WatchSyncAckStatus.REJECTED, sink.acks.single().status)
         assertEquals("SYNC_REQUIRED", sink.acks.single().errorCode)
         assertTrue(SESSION_ID.startsWith("mob_session_"))
@@ -470,6 +471,57 @@ class WatchWorkoutCoordinatorTest {
         assertEquals(null, repository.runtime?.activeSetId)
     }
 
+    @Test
+    fun `event id reuse with changed immutable envelope is rejected`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val coordinator = coordinator(gateway(repository), sink)
+        val original = watchEvent(
+            eventId = EVENT_EXERCISE,
+            type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
+            revision = 2,
+            payload = codec.encodeActiveExerciseChangedPayload(
+                ActiveExerciseChangedPayloadDto(EXERCISE_TWO_ID, EXERCISE_SESSION_TWO_ID, 2),
+            ),
+        )
+
+        coordinator.onEvent(original)
+        coordinator.onEvent(original.copy(timestamp = original.timestamp + 1))
+
+        assertEquals(WatchSyncAckStatus.APPLIED, sink.acks.first().status)
+        assertEquals(WatchSyncAckStatus.REJECTED, sink.acks.last().status)
+        assertEquals("EVENT_ID_REUSE", sink.acks.last().errorCode)
+    }
+
+    @Test
+    fun `snapshot preserves accumulated pause and paused rest runtime`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        repository.runtime = ActiveWorkoutRuntimeEntity(
+            sessionId = SESSION_ID,
+            workoutId = WORKOUT_ID,
+            status = WatchWorkoutStatus.PAUSED.name,
+            activeExerciseId = EXERCISE_ONE_ID,
+            activeSetId = WATCH_SET_ID,
+            setStartedAtEpochMs = 1_500,
+            pausedAtEpochMs = 2_000,
+            restStartedAtEpochMs = 1_800,
+            restEndsAtEpochMs = 3_800,
+            restDurationSeconds = 2,
+            workoutAccumulatedPauseMs = 700,
+            setAccumulatedPauseMs = 400,
+            restPausedRemainingMs = 1_800,
+            revision = 9,
+            updatedAtEpochMs = 2_000,
+            updatedBy = WatchEventSource.PHONE.name,
+        )
+
+        val runtime = requireNotNull(gateway(repository).buildSnapshot(SESSION_ID)?.runtimeState)
+
+        assertEquals(700L, runtime.workoutAccumulatedPauseMs)
+        assertEquals(400L, runtime.setAccumulatedPauseMs)
+        assertEquals(1_800L, runtime.rest?.pausedRemainingMs)
+    }
+
     private fun gateway(repository: FakeWatchWorkoutRepository) = PersistentWatchWorkoutGateway(
         repository = repository,
         phoneDeviceId = "phone-stage3",
@@ -617,7 +669,7 @@ class WatchWorkoutCoordinatorTest {
             gymId = null,
             startedAt = Instant.ofEpochMilli(1_000L).toString(),
         )
-        private val processedEventIds = mutableSetOf<String>()
+        private val processedEvents = linkedMapOf<String, WatchProcessedEventEntity>()
         val sensorBatches = mutableSetOf<Pair<String, Int>>()
         private val sensorSamples = linkedMapOf<String, WatchSensorSampleEntity>()
         val restRecoverySummaries = linkedMapOf<String, RestRecoverySummaryEntity>()
@@ -642,7 +694,7 @@ class WatchWorkoutCoordinatorTest {
         override suspend fun sets(sessionId: String) = sets.values.filter { it.sessionId == sessionId }
         override suspend fun set(setId: String) = sets[setId]
         override suspend fun runtime(sessionId: String) = runtime?.takeIf { it.sessionId == sessionId }
-        override suspend fun hasProcessedEvent(eventId: String) = eventId in processedEventIds
+        override suspend fun processedEvent(eventId: String) = processedEvents[eventId]
         override suspend fun hasSensorBatch(batchId: String, sequence: Int) =
             batchId to sequence in sensorBatches
 
@@ -671,7 +723,7 @@ class WatchWorkoutCoordinatorTest {
             processed: WatchProcessedEventEntity,
             runtime: ActiveWorkoutRuntimeEntity,
         ): Boolean {
-            if (!processedEventIds.add(processed.eventId)) return false
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
             this.runtime = runtime
             return true
         }
@@ -681,7 +733,7 @@ class WatchWorkoutCoordinatorTest {
             set: LocalSetEntity,
             runtime: ActiveWorkoutRuntimeEntity,
         ): Boolean {
-            if (!processedEventIds.add(processed.eventId)) return false
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
             sets[set.id] = set
             outboxSetIds += set.id
             this.runtime = runtime
@@ -693,7 +745,7 @@ class WatchWorkoutCoordinatorTest {
             setId: String,
             runtime: ActiveWorkoutRuntimeEntity,
         ): Boolean {
-            if (!processedEventIds.add(processed.eventId)) return false
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
             sets[setId]?.let { sets[setId] = it.copy(deleted = true) }
             outboxSetIds += setId
             this.runtime = runtime
@@ -707,7 +759,7 @@ class WatchWorkoutCoordinatorTest {
             runtime: ActiveWorkoutRuntimeEntity,
         ): Boolean {
             if (
-                !processedEventIds.add(processed.eventId) ||
+                processedEvents.putIfAbsent(processed.eventId, processed) != null ||
                 !sensorBatches.add(batch.batchId to batch.sequence)
             ) return false
             samples.forEach { sensorSamples[it.sampleId] = it }
@@ -720,7 +772,7 @@ class WatchWorkoutCoordinatorTest {
             runtime: ActiveWorkoutRuntimeEntity,
             summary: RestRecoverySummaryEntity?,
         ): Boolean {
-            if (!processedEventIds.add(processed.eventId)) return false
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
             this.runtime = runtime
             summary?.let { restRecoverySummaries[it.restId] = it }
             return true

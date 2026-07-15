@@ -91,6 +91,126 @@ interface GymCoachDao {
     @Query("SELECT COUNT(*) FROM watch_processed_events WHERE eventId = :eventId")
     suspend fun hasProcessedWatchEvent(eventId: String): Int
 
+    @Query("SELECT * FROM watch_processed_events WHERE eventId = :eventId")
+    suspend fun getProcessedWatchEvent(eventId: String): WatchProcessedEventEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWatchInboxEvent(entity: WatchInboxEventEntity): Long
+
+    @Query("SELECT * FROM watch_inbox_events WHERE eventId = :eventId")
+    suspend fun getWatchInboxEvent(eventId: String): WatchInboxEventEntity?
+
+    @Query(
+        "UPDATE watch_inbox_events SET status = :status, resultStatus = :resultStatus, " +
+            "resultRevision = :resultRevision, errorCode = :errorCode, " +
+            "processedAtEpochMs = :processedAtEpochMs WHERE eventId = :eventId",
+    )
+    suspend fun finishWatchInboxEvent(
+        eventId: String,
+        status: String,
+        resultStatus: String,
+        resultRevision: Long,
+        errorCode: String?,
+        processedAtEpochMs: Long,
+    )
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWatchOutboxEvent(entity: WatchOutboxEventEntity): Long
+
+    @Query("SELECT * FROM watch_outbox_events WHERE eventId = :eventId")
+    suspend fun getWatchOutboxEvent(eventId: String): WatchOutboxEventEntity?
+
+    @Query(
+        "SELECT * FROM watch_outbox_events WHERE status IN ('PENDING', 'SENT') " +
+            "ORDER BY revision, timestampEpochMs, eventId",
+    )
+    suspend fun getReplayableWatchOutboxEvents(): List<WatchOutboxEventEntity>
+
+    @Query(
+        "SELECT * FROM watch_outbox_events WHERE sessionId = :sessionId " +
+            "AND status IN ('PENDING', 'SENT') ORDER BY revision, timestampEpochMs, eventId",
+    )
+    suspend fun getReplayableWatchOutboxEvents(sessionId: String): List<WatchOutboxEventEntity>
+
+    @Query("SELECT COUNT(*) FROM watch_outbox_events WHERE status IN ('PENDING', 'SENT')")
+    suspend fun countReplayableWatchOutboxEvents(): Int
+
+    @Query(
+        "UPDATE watch_outbox_events SET status = 'SENT', attempts = attempts + 1, " +
+            "lastAttemptAtEpochMs = :attemptedAtEpochMs, errorCode = NULL WHERE eventId = :eventId",
+    )
+    suspend fun markWatchOutboxAttempt(eventId: String, attemptedAtEpochMs: Long)
+
+    @Query(
+        "UPDATE watch_outbox_events SET status = :status, ackStatus = :ackStatus, " +
+            "errorCode = :errorCode, acknowledgedAtEpochMs = :acknowledgedAtEpochMs " +
+            "WHERE eventId = :eventId",
+    )
+    suspend fun updateWatchOutboxAcknowledgement(
+        eventId: String,
+        status: String,
+        ackStatus: String,
+        errorCode: String?,
+        acknowledgedAtEpochMs: Long,
+    )
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long
+
+    @Query("SELECT * FROM watch_ack_journal WHERE ackId = :ackId")
+    suspend fun getWatchAckJournal(ackId: String): WatchAckJournalEntity?
+
+    @Upsert
+    suspend fun saveWatchPeer(entity: WatchPeerEntity)
+
+    @Query("SELECT * FROM watch_peers WHERE deviceId = :deviceId")
+    suspend fun getWatchPeer(deviceId: String): WatchPeerEntity?
+
+    @Upsert
+    suspend fun saveWatchConflict(entity: WatchConflictEntity)
+
+    @Query("SELECT * FROM watch_conflicts WHERE sessionId = :sessionId ORDER BY detectedAtEpochMs, conflictId")
+    suspend fun getWatchConflicts(sessionId: String): List<WatchConflictEntity>
+
+    @Upsert
+    suspend fun saveWatchFileTransfer(entity: WatchFileTransferEntity)
+
+    @Query(
+        "SELECT * FROM watch_file_transfers WHERE transferId = :transferId " +
+            "ORDER BY sequence",
+    )
+    suspend fun getWatchFileTransferParts(transferId: String): List<WatchFileTransferEntity>
+
+    @Query(
+        "SELECT * FROM watch_file_transfers WHERE relatedEventId = :eventId " +
+            "ORDER BY sequence",
+    )
+    suspend fun getWatchFileTransfersForEvent(eventId: String): List<WatchFileTransferEntity>
+
+    @Transaction
+    suspend fun applyWatchAcknowledgement(
+        journal: WatchAckJournalEntity,
+        eventIds: List<String>,
+        outboxStatus: String,
+        ackStatus: String,
+        errorCode: String?,
+        acknowledgedAtEpochMs: Long,
+        conflicts: List<WatchConflictEntity>,
+    ): Boolean {
+        if (insertWatchAckJournal(journal) == -1L) return false
+        eventIds.forEach { eventId ->
+            updateWatchOutboxAcknowledgement(
+                eventId = eventId,
+                status = outboxStatus,
+                ackStatus = ackStatus,
+                errorCode = errorCode,
+                acknowledgedAtEpochMs = acknowledgedAtEpochMs,
+            )
+        }
+        conflicts.forEach { saveWatchConflict(it) }
+        return true
+    }
+
     @Query(
         "SELECT COUNT(*) FROM watch_sensor_batches " +
             "WHERE batchId = :batchId AND sequence = :sequence",

@@ -24,13 +24,27 @@ import org.sharteman.gymcoach.watch.domain.WatchCoordinatorState
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchIncomingMessage
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 import org.sharteman.gymcoach.watch.transport.WatchTransport
+import org.sharteman.gymcoach.watch.transport.WatchTransportFile
 
 fun interface WatchEventConsumer {
     suspend fun onEvent(event: WatchEventEnvelopeDto)
+}
+
+fun interface WatchAckConsumer {
+    suspend fun onAck(ack: WatchSyncAckDto)
+}
+
+fun interface WatchFileConsumer {
+    suspend fun onFile(file: WatchTransportFile)
+}
+
+fun interface WatchConnectionLifecycleConsumer {
+    suspend fun onConnectionChanged(status: WatchConnectionStatus)
 }
 
 class WatchConnectionCoordinator(
@@ -40,6 +54,9 @@ class WatchConnectionCoordinator(
     private val processedControlMessageStore: ProcessedWatchControlMessageStore,
     private val scope: CoroutineScope,
     private val eventConsumer: WatchEventConsumer? = null,
+    private val ackConsumer: WatchAckConsumer? = null,
+    private val fileConsumer: WatchFileConsumer? = null,
+    private val lifecycleConsumer: WatchConnectionLifecycleConsumer? = null,
     private val codec: WatchProtocolCodec = WatchProtocolCodec(),
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
@@ -63,10 +80,14 @@ class WatchConnectionCoordinator(
                         pendingPingSentAt = if (status == WatchConnectionStatus.DISCONNECTED) null else current.pendingPingSentAt,
                     )
                 }
+                lifecycleConsumer?.onConnectionChanged(status)
             }
         }
         jobs += scope.launch {
             transport.incomingMessages.collect(::handleIncomingMessage)
+        }
+        jobs += scope.launch {
+            transport.incomingFiles.collect { file -> fileConsumer?.onFile(file) }
         }
     }
 
@@ -125,6 +146,21 @@ class WatchConnectionCoordinator(
         sendEncoded { codec.encodeEvent(event) }
     }
 
+    suspend fun sendFile(file: WatchTransportFile) {
+        if (!transport.capabilities.supportsFileTransfer || file.bytes.size >= transport.capabilities.maxFileBytesExclusive) {
+            reject(WatchProtocolErrorCode.FILE_TOO_LARGE)
+            throw WatchProtocolException(WatchProtocolErrorCode.FILE_TOO_LARGE)
+        }
+        try {
+            transport.sendFile(file)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            reject(WatchProtocolErrorCode.TRANSPORT_FAILURE)
+            throw WatchProtocolException(WatchProtocolErrorCode.TRANSPORT_FAILURE)
+        }
+    }
+
     private suspend fun sendEncoded(encode: () -> ByteArray) {
         try {
             val message = encode()
@@ -156,6 +192,7 @@ class WatchConnectionCoordinator(
             when (val incoming = codec.decodeIncomingMessage(message)) {
                 is WatchIncomingMessage.Control -> handleIncomingControl(incoming.message)
                 is WatchIncomingMessage.Event -> handleIncomingEvent(incoming.event)
+                is WatchIncomingMessage.Ack -> handleIncomingAck(incoming.ack)
             }
         } catch (error: WatchProtocolException) {
             reject(error.code)
@@ -210,6 +247,16 @@ class WatchConnectionCoordinator(
         }
         mutableState.update {
             it.copy(processedEventCount = it.processedEventCount + 1, lastErrorCode = null)
+        }
+    }
+
+    private suspend fun handleIncomingAck(ack: WatchSyncAckDto) {
+        if (ack.source != WatchEventSource.WATCH) {
+            throw WatchProtocolException(WatchProtocolErrorCode.INVALID_SOURCE)
+        }
+        ackConsumer?.onAck(ack)
+        mutableState.update {
+            it.copy(processedControlMessageCount = it.processedControlMessageCount + 1, lastErrorCode = null)
         }
     }
 
