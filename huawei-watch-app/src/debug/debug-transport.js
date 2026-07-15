@@ -7,7 +7,9 @@ class DebugTransportEndpoint {
     this.peer = null;
     this.connectionHandler = () => {};
     this.messageHandler = async () => {};
+    this.fileHandler = async () => {};
     this.sent = [];
+    this.filesSent = [];
   }
 
   link(peer) {
@@ -20,6 +22,10 @@ class DebugTransportEndpoint {
 
   setMessageHandler(handler) {
     this.messageHandler = handler;
+  }
+
+  setFileHandler(handler) {
+    this.fileHandler = handler;
   }
 
   async connect() {
@@ -51,6 +57,22 @@ class DebugTransportEndpoint {
 
   async inject(serialized) {
     await this.messageHandler(serialized);
+  }
+
+  async sendFile(serialized) {
+    if (!this.connected) {
+      throw new Error(`${this.name} debug transport is disconnected.`);
+    }
+    if (!this.peer || !this.peer.connected) {
+      throw new Error(`${this.name} debug transport peer is disconnected.`);
+    }
+
+    this.filesSent.push(serialized);
+    await this.peer.fileHandler(serialized);
+  }
+
+  async injectFile(serialized) {
+    await this.fileHandler(serialized);
   }
 }
 

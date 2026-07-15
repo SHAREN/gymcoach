@@ -3,7 +3,7 @@ const MAX_RECEIPTS = 256;
 
 function createEmptyDocument() {
   return {
-    version: 1,
+    version: 2,
     state: {
       lastPongAt: null,
       lastSnapshotAt: null,
@@ -11,6 +11,7 @@ function createEmptyDocument() {
     },
     outbox: [],
     receipts: [],
+    activeWorkout: null,
   };
 }
 
@@ -53,11 +54,19 @@ export class WatchStateRepository {
     }
 
     const parsed = JSON.parse(serialized);
-    if (parsed.version !== 1 || !Array.isArray(parsed.outbox) || !Array.isArray(parsed.receipts)) {
+    if (parsed.version === 1) {
+      parsed.version = 2;
+      parsed.activeWorkout = null;
+    }
+    if (parsed.version !== 2 || !Array.isArray(parsed.outbox) || !Array.isArray(parsed.receipts)) {
       throw new Error('Unsupported watch state document.');
+    }
+    if (!Object.prototype.hasOwnProperty.call(parsed, 'activeWorkout')) {
+      parsed.activeWorkout = null;
     }
 
     this.document = parsed;
+    await this.persist();
     return this.snapshot();
   }
 
@@ -68,7 +77,8 @@ export class WatchStateRepository {
 
   async enqueue(message) {
     this.requireLoaded();
-    if (!this.document.outbox.some((entry) => entry.messageId === message.messageId)) {
+    const id = envelopeId(message);
+    if (!this.document.outbox.some((entry) => envelopeId(entry) === id)) {
       this.document.outbox.push(message);
       await this.persist();
     }
@@ -76,7 +86,7 @@ export class WatchStateRepository {
 
   async removePending(messageId) {
     this.requireLoaded();
-    const next = this.document.outbox.filter((entry) => entry.messageId !== messageId);
+    const next = this.document.outbox.filter((entry) => envelopeId(entry) !== messageId);
     if (next.length !== this.document.outbox.length) {
       this.document.outbox = next;
       await this.persist();
@@ -113,6 +123,37 @@ export class WatchStateRepository {
     await this.persist();
   }
 
+  activeWorkout() {
+    this.requireLoaded();
+    return this.document.activeWorkout === null
+      ? null
+      : JSON.parse(JSON.stringify(this.document.activeWorkout));
+  }
+
+  async commitSnapshot(snapshotId, activeWorkout) {
+    this.requireLoaded();
+    addReceipt(this.document, snapshotId);
+    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    await this.persist();
+  }
+
+  async commitInboundWorkoutEvent(eventId, activeWorkout) {
+    this.requireLoaded();
+    addReceipt(this.document, eventId);
+    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    await this.persist();
+  }
+
+  async commitOutboundWorkoutEvent(event, activeWorkout) {
+    this.requireLoaded();
+    addReceipt(this.document, event.eventId);
+    if (!this.document.outbox.some((entry) => envelopeId(entry) === event.eventId)) {
+      this.document.outbox.push(JSON.parse(JSON.stringify(event)));
+    }
+    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    await this.persist();
+  }
+
   async persist() {
     await this.backend.set(STORAGE_KEY, JSON.stringify(this.document));
   }
@@ -120,6 +161,23 @@ export class WatchStateRepository {
   requireLoaded() {
     if (this.document === null) {
       throw new Error('Watch state repository must be loaded first.');
+    }
+  }
+}
+
+function envelopeId(envelope) {
+  const id = envelope?.messageId || envelope?.eventId;
+  if (typeof id !== 'string' || id.length === 0) {
+    throw new Error('Outbox envelope must have messageId or eventId.');
+  }
+  return id;
+}
+
+function addReceipt(document, id) {
+  if (!document.receipts.includes(id)) {
+    document.receipts.push(id);
+    if (document.receipts.length > MAX_RECEIPTS) {
+      document.receipts.splice(0, document.receipts.length - MAX_RECEIPTS);
     }
   }
 }
