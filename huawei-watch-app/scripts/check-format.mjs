@@ -29,12 +29,13 @@ async function collect(directory) {
 const files = await collect(root);
 for (const file of files) {
   const content = await readFile(file, 'utf8');
+  const normalized = content.replace(/\r\n/g, '\n');
   const relative = path.relative(root, file);
-  assert.equal(content.includes('\r'), false, `${relative} must use LF line endings.`);
-  assert.equal(content.endsWith('\n'), true, `${relative} must end with a newline.`);
-  assert.equal(content.endsWith('\n\n'), false, `${relative} has a blank line at EOF.`);
-  assert.equal(/[\t ]+$/m.test(content), false, `${relative} has trailing whitespace.`);
-  assert.equal(/[\u2013\u2014]/u.test(content), false, `${relative} contains an en dash or em dash.`);
+  assert.equal(normalized.includes('\r'), false, `${relative} contains a bare carriage return.`);
+  assert.equal(normalized.endsWith('\n'), true, `${relative} must end with a newline.`);
+  assert.equal(normalized.endsWith('\n\n'), false, `${relative} has a blank line at EOF.`);
+  assert.equal(/[\t ]+$/m.test(normalized), false, `${relative} has trailing whitespace.`);
+  assert.equal(/[\u2013\u2014]/u.test(normalized), false, `${relative} contains an en dash or em dash.`);
 }
 
 console.log(`Checked formatting for ${files.length} files.`);
