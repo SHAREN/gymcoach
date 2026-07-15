@@ -9,7 +9,17 @@
     <string name="watch_status_protocol_label">Protocol</string>
     <string name="watch_status_unavailable">Unavailable</string>
     <string name="watch_status_not_configured">Not configured</string>
+    <string name="watch_status_connected">Connected</string>
+    <string name="watch_status_connecting">Connecting</string>
+    <string name="watch_status_disconnected">Disconnected</string>
+    <string name="watch_status_queue_count">%1$d queued events</string>
+    <string name="watch_status_peer_revision">Peer revision</string>
+    <string name="watch_status_last_sync">Last synchronization (epoch ms)</string>
+    <string name="watch_status_conflicts">Unresolved conflicts</string>
+    <string name="watch_status_last_error">Last error</string>
+    <string name="watch_status_no_error">None</string>
     <string name="watch_status_sync_setting">Sync workouts with the watch</string>
     <string name="watch_status_sync_setting_disabled">The official Wear Engine adapter is not installed in this build.</string>
+    <string name="watch_status_sync_setting_available">Keep the debug transport synchronized with the durable watch queue.</string>
     <string name="watch_status_toolchain_notice">Install the official Huawei DevEco Studio, Lite Wearable SDK, and Wear Engine SDK before enabling real-watch pairing. The local simulator remains available only in debug builds.</string>
 </resources>

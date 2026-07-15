@@ -16,6 +16,8 @@ import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
+import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 
@@ -41,7 +43,9 @@ class WatchIntegrationRuntime(
             buildJsonObject { put("startedAt", startedAt) },
             startedAt,
         )
-        snapshotProvider(sessionId)?.let { dispatch.sendSnapshot(it) }
+        snapshotProvider(sessionId)?.let { snapshot ->
+            tryOfflineDispatch { dispatch.sendSnapshot(snapshot) }
+        }
         return eventId
     }
 
@@ -150,8 +154,23 @@ class WatchIntegrationRuntime(
             payload = payload,
         )
         check(persistence.enqueue(event, relatedTransferId)) { "Duplicate generated watch event ID" }
-        persistence.markAttempt(event.eventId)
-        dispatch.sendEvent(event)
+        tryOfflineDispatch {
+            persistence.markAttempt(event.eventId)
+            dispatch.sendEvent(event)
+        }
         return event.eventId
+    }
+
+    private suspend fun tryOfflineDispatch(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (error: WatchProtocolException) {
+            if (
+                error.code != WatchProtocolErrorCode.TRANSPORT_DISCONNECTED &&
+                error.code != WatchProtocolErrorCode.TRANSPORT_FAILURE
+            ) {
+                throw error
+            }
+        }
     }
 }

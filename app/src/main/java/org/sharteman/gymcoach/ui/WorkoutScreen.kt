@@ -190,12 +190,16 @@ fun WorkoutScreen(
 
     val exercises = workout.exercises
     if (selectedIndex !in exercises.indices) selectedIndex = 0
-    fun selectExercise(index: Int, persist: Boolean = true) {
+    fun selectExercise(index: Int, persist: Boolean = true, preserveRest: Boolean = false) {
         val selected = exercises.getOrNull(index) ?: return
         selectedIndex = index
         if (persist) {
             scope.launch {
-                repository.updateActiveExercise(sessionId, selected.exerciseId)
+                repository.updateActiveExercise(
+                    sessionId,
+                    selected.exerciseId,
+                    preserveRest = preserveRest,
+                )
             }
         }
     }
@@ -302,12 +306,22 @@ fun WorkoutScreen(
         rirText = (recommendation?.rir ?: target.targetRIR).toString()
     }
 
+    LaunchedEffect(activeRuntime?.restEndsAtEpochMs) {
+        val persistedRestEnd = activeRuntime?.restEndsAtEpochMs ?: 0L
+        if (persistedRestEnd != restEndsAt) restEndsAt = persistedRestEnd
+    }
+
     LaunchedEffect(restEndsAt) {
+        val activeEnd = restEndsAt
         while (restEndsAt > System.currentTimeMillis()) {
             restRemaining = max(0, ((restEndsAt - System.currentTimeMillis() + 999) / 1000).toInt())
             delay(250)
         }
         restRemaining = 0
+        if (activeEnd > 0 && activeEnd <= System.currentTimeMillis()) {
+            restEndsAt = 0
+            repository.finishRest(sessionId, activeEnd)
+        }
     }
 
     Scaffold(
@@ -394,7 +408,7 @@ fun WorkoutScreen(
                         val rir = if (rirText.isBlank()) null else rirText.toIntOrNull()
                         if (weight != null && reps != null && (rirText.isBlank() || rir != null)) {
                             scope.launch {
-                                repository.addSet(
+                                val addedSet = repository.addSet(
                                     sessionId = sessionId,
                                     exerciseId = current.exerciseId,
                                     weight = weight,
@@ -406,13 +420,20 @@ fun WorkoutScreen(
                                 )
                                 notesText = ""
                                 if (!isWarmup) isDropSet = false
-                                restEndsAt = System.currentTimeMillis() + target.restSec * 1000L
+                                val restStartedAt = System.currentTimeMillis()
+                                restEndsAt = restStartedAt + target.restSec * 1000L
+                                repository.startRest(
+                                    sessionId,
+                                    addedSet.id,
+                                    restStartedAt,
+                                    restEndsAt,
+                                )
                                 val group = current.supersetGroup
                                 if (group != null) {
                                     val next = exercises.indices.firstOrNull { index ->
                                         index != selectedIndex && exercises[index].supersetGroup == group
                                     }
-                                    if (next != null) selectExercise(next)
+                                    if (next != null) selectExercise(next, preserveRest = true)
                                 }
                             }
                         }
@@ -426,8 +447,15 @@ fun WorkoutScreen(
                         totalSec = target.restSec,
                         recommendation = recommendation,
                         unit = unit,
-                        onAdd30 = { restEndsAt += 30_000 },
-                        onSkip = { restEndsAt = 0 },
+                        onAdd30 = {
+                            val updatedEnd = restEndsAt + 30_000
+                            restEndsAt = updatedEnd
+                            scope.launch { repository.updateRest(sessionId, updatedEnd, "MANUAL_EXTEND") }
+                        },
+                        onSkip = {
+                            restEndsAt = 0
+                            scope.launch { repository.skipRest(sessionId) }
+                        },
                     )
                 }
             }

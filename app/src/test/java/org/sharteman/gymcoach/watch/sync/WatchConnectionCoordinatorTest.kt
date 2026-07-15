@@ -168,20 +168,25 @@ class WatchConnectionCoordinatorTest {
     }
 
     @Test
-    fun `control messages over 1024 bytes are rejected before transport`() = runTest {
+    fun `outbound messages above 900 byte target are rejected before 1024 byte hard limit`() = runTest {
         val transport = FakeWatchTransport()
         val coordinator = coordinator(transport, backgroundScope)
-        val oversized = WatchControlMessageDto(
-            protocolVersion = WatchProtocol.VERSION,
-            schemaVersion = WatchProtocol.SCHEMA_VERSION,
-            messageId = "phone-sync-snapshot-1",
-            type = WatchControlMessageType.SYNC_SNAPSHOT,
-            timestamp = 1_000L,
-            source = WatchEventSource.PHONE,
-            deviceId = "phone-test",
-            replyTo = null,
-            payload = buildJsonObject { put("snapshot", "x".repeat(2_000)) },
-        )
+        val oversized = (1..1_024).asSequence().map { length ->
+            WatchControlMessageDto(
+                protocolVersion = WatchProtocol.VERSION,
+                schemaVersion = WatchProtocol.SCHEMA_VERSION,
+                messageId = "phone-sync-snapshot-1",
+                type = WatchControlMessageType.SYNC_SNAPSHOT,
+                timestamp = 1_000L,
+                source = WatchEventSource.PHONE,
+                deviceId = "phone-test",
+                replyTo = null,
+                payload = buildJsonObject { put("snapshot", "x".repeat(length)) },
+            )
+        }.first { message ->
+            codec.encodeControlMessage(message).size in
+                (WatchProtocol.P2P_SEND_TARGET_BYTES + 1)..WatchProtocol.MAX_P2P_MESSAGE_BYTES
+        }
 
         coordinator.connect()
         runCurrent()
