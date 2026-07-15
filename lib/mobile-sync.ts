@@ -177,6 +177,13 @@ async function applyOperationInTransaction(
       if (existing && existing.session.userId !== userId) {
         throw new ApiError(404, 'Set not found.');
       }
+      if (
+        existing &&
+        (existing.sessionId !== operation.set.sessionId ||
+          existing.exerciseId !== operation.set.exerciseId)
+      ) {
+        throw new ApiError(400, 'An existing set cannot change its session or exercise.');
+      }
       const isCardio = exercise.category === 'CARDIO';
       const equipmentSnapshot = isCardio
         ? null

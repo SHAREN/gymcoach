@@ -332,6 +332,178 @@ describe('Android mobile API', () => {
     });
   });
 
+  it('keeps an existing mobile set bound to its original session and exercise', async () => {
+    const seeded = await seedUser('mobile-set-identity@test.dev');
+    const otherExercise = await db.exercise.create({
+      data: {
+        userId: seeded.user.id,
+        name: 'Cable Row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const otherGym = await db.gym.create({
+      data: { userId: seeded.user.id, name: 'Other gym' },
+    });
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const originalSessionId = 'mob_identity_session_1';
+    const otherSessionId = 'mob_identity_session_2';
+    const setId = 'mob_identity_set_0001';
+
+    const initial = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'identity_start_original',
+              type: 'START_SESSION',
+              session: {
+                id: originalSessionId,
+                workoutId: seeded.workout.id,
+                gymId: seeded.gym.id,
+                startedAt: '2026-07-14T10:00:00.000Z',
+              },
+            },
+            {
+              operationId: 'identity_set_original',
+              type: 'UPSERT_SET',
+              set: {
+                id: setId,
+                sessionId: originalSessionId,
+                exerciseId: seeded.exercise.id,
+                gymEquipmentId: seeded.equipment.id,
+                setNumber: 1,
+                weight: 80,
+                reps: 10,
+                rir: 2,
+                isWarmup: false,
+                isDropSet: false,
+                completedAt: '2026-07-14T10:05:00.000Z',
+              },
+            },
+            {
+              operationId: 'identity_start_other',
+              type: 'START_SESSION',
+              session: {
+                id: otherSessionId,
+                workoutId: seeded.workout.id,
+                gymId: otherGym.id,
+                startedAt: '2026-07-14T11:00:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await initial.json()).results.map((item: { status: string }) => item.status)).toEqual([
+      'APPLIED',
+      'APPLIED',
+      'APPLIED',
+    ]);
+
+    const crossSession = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'identity_cross_session',
+              type: 'UPSERT_SET',
+              set: {
+                id: setId,
+                sessionId: otherSessionId,
+                exerciseId: seeded.exercise.id,
+                setNumber: 1,
+                weight: 85,
+                reps: 9,
+                rir: 2,
+                isWarmup: false,
+                isDropSet: false,
+                completedAt: '2026-07-14T11:05:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await crossSession.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'An existing set cannot change its session or exercise.',
+    });
+
+    const crossExercise = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'identity_cross_exercise',
+              type: 'UPSERT_SET',
+              set: {
+                id: setId,
+                sessionId: originalSessionId,
+                exerciseId: otherExercise.id,
+                setNumber: 1,
+                weight: 85,
+                reps: 9,
+                rir: 2,
+                isWarmup: false,
+                isDropSet: false,
+                completedAt: '2026-07-14T10:06:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await crossExercise.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'An existing set cannot change its session or exercise.',
+    });
+
+    const validUpdate = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'identity_valid_update',
+              type: 'UPSERT_SET',
+              set: {
+                id: setId,
+                sessionId: originalSessionId,
+                exerciseId: seeded.exercise.id,
+                gymEquipmentId: seeded.equipment.id,
+                setNumber: 1,
+                weight: 85,
+                reps: 9,
+                rir: 1,
+                isWarmup: false,
+                isDropSet: false,
+                completedAt: '2026-07-14T10:07:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await validUpdate.json()).results[0]).toMatchObject({ status: 'APPLIED' });
+    expect(await db.set.findUniqueOrThrow({ where: { id: setId } })).toMatchObject({
+      sessionId: originalSessionId,
+      exerciseId: seeded.exercise.id,
+      weight: 85,
+      reps: 9,
+      gymEquipmentId: seeded.equipment.id,
+      equipmentNameSnapshot: 'Bench station',
+    });
+  });
+
   it('rejects references to another user workout or exercise', async () => {
     const owner = await seedUser('mobile-owner@test.dev');
     const stranger = await seedUser('mobile-stranger@test.dev');
