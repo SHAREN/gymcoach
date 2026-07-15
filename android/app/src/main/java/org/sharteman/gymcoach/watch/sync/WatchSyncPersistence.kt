@@ -12,6 +12,7 @@ import org.sharteman.gymcoach.data.local.WatchFileTransferEntity
 import org.sharteman.gymcoach.data.local.WatchInboxEventEntity
 import org.sharteman.gymcoach.data.local.WatchOutboxEventEntity
 import org.sharteman.gymcoach.data.local.WatchPeerEntity
+import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.watch.data.CanonicalJson
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchFileTransferEnvelopeDto
@@ -50,6 +51,8 @@ interface WatchSyncPersistence {
     suspend fun saveFile(envelope: WatchFileTransferEnvelopeDto, direction: String, status: String, error: String? = null)
     suspend fun filesForEvent(eventId: String): List<WatchFileTransferEntity>
     suspend fun filesForTransfer(transferId: String): List<WatchFileTransferEntity>
+    suspend fun resyncMarkers(): List<WatchResyncMarkerEntity>
+    suspend fun clearResyncMarker(sessionId: String, throughRevision: Long)
 }
 
 class RoomWatchSyncPersistence(
@@ -222,6 +225,9 @@ class RoomWatchSyncPersistence(
                 )
             },
         )
+        if (inserted && successful) {
+            dao.deleteWatchResyncMarker(ack.sessionId, ack.revision)
+        }
         return inserted
     }
 
@@ -238,6 +244,9 @@ class RoomWatchSyncPersistence(
 
     override suspend fun filesForEvent(eventId: String) = dao.getWatchFileTransfersForEvent(eventId)
     override suspend fun filesForTransfer(transferId: String) = dao.getWatchFileTransferParts(transferId)
+    override suspend fun resyncMarkers() = dao.getWatchResyncMarkers()
+    override suspend fun clearResyncMarker(sessionId: String, throughRevision: Long) =
+        dao.deleteWatchResyncMarker(sessionId, throughRevision)
 }
 
 class InMemoryWatchSyncPersistence(
@@ -251,6 +260,7 @@ class InMemoryWatchSyncPersistence(
     private val peers = mutableMapOf<String, WatchPeerEntity>()
     private val conflictRecords = mutableListOf<WatchConflictEntity>()
     private val files = mutableMapOf<Pair<String, Int>, WatchFileTransferEntity>()
+    private val resyncMarkers = mutableMapOf<String, WatchResyncMarkerEntity>()
 
     override suspend fun recordIncoming(event: WatchEventEnvelopeDto) = mutex.withLock {
         val canonical = CanonicalJson.event(event)
@@ -379,6 +389,11 @@ class InMemoryWatchSyncPersistence(
                 peer
             }
         }
+        if (ack.status == WatchSyncAckStatus.APPLIED || ack.status == WatchSyncAckStatus.DUPLICATE) {
+            resyncMarkers[ack.sessionId]?.takeIf { it.revision <= ack.revision }?.let {
+                resyncMarkers.remove(ack.sessionId)
+            }
+        }
         true
     }
 
@@ -396,6 +411,20 @@ class InMemoryWatchSyncPersistence(
 
     override suspend fun filesForTransfer(transferId: String) = mutex.withLock {
         files.values.filter { it.transferId == transferId }.sortedBy { it.sequence }
+    }
+
+    override suspend fun resyncMarkers() = mutex.withLock { resyncMarkers.values.sortedBy { it.updatedAtEpochMs } }
+
+    override suspend fun clearResyncMarker(sessionId: String, throughRevision: Long) {
+        mutex.withLock {
+            resyncMarkers[sessionId]?.takeIf { it.revision <= throughRevision }?.let {
+                resyncMarkers.remove(sessionId)
+            }
+        }
+    }
+
+    suspend fun saveResyncMarkerForTest(marker: WatchResyncMarkerEntity) {
+        mutex.withLock { resyncMarkers[marker.sessionId] = marker }
     }
 }
 

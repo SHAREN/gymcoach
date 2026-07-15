@@ -160,6 +160,18 @@ interface GymCoachDao {
     @Query("DELETE FROM watch_outbox_events WHERE eventId IN (:eventIds)")
     suspend fun deleteWatchOutboxEvents(eventIds: List<String>)
 
+    @Upsert
+    suspend fun saveWatchResyncMarker(entity: WatchResyncMarkerEntity)
+
+    @Query("SELECT * FROM watch_resync_markers WHERE sessionId = :sessionId")
+    suspend fun getWatchResyncMarker(sessionId: String): WatchResyncMarkerEntity?
+
+    @Query("SELECT * FROM watch_resync_markers ORDER BY updatedAtEpochMs, sessionId")
+    suspend fun getWatchResyncMarkers(): List<WatchResyncMarkerEntity>
+
+    @Query("DELETE FROM watch_resync_markers WHERE sessionId = :sessionId AND revision <= :throughRevision")
+    suspend fun deleteWatchResyncMarker(sessionId: String, throughRevision: Long)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long
 
@@ -382,6 +394,9 @@ interface GymCoachDao {
     @Query("DELETE FROM watch_outbox_events")
     suspend fun clearWatchOutboxEvents()
 
+    @Query("DELETE FROM watch_resync_markers")
+    suspend fun clearWatchResyncMarkers()
+
     @Query("DELETE FROM watch_ack_journal")
     suspend fun clearWatchAckJournal()
 
@@ -401,6 +416,7 @@ interface GymCoachDao {
         clearWatchConflicts()
         clearWatchAckJournal()
         clearWatchOutboxEvents()
+        clearWatchResyncMarkers()
         clearWatchInboxEvents()
         clearWatchPeers()
         clearActiveWorkoutRuntime()
@@ -427,10 +443,12 @@ interface GymCoachDao {
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
         runtime: ActiveWorkoutRuntimeEntity,
+        marker: WatchResyncMarkerEntity? = null,
     ) {
         saveSession(session)
         enqueue(operation)
         saveActiveWorkoutRuntime(runtime)
+        marker?.let { saveWatchResyncMarker(it) }
     }
 
     @Transaction
@@ -438,11 +456,49 @@ interface GymCoachDao {
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
         bootstrap: BootstrapCacheEntity?,
+        watchEvent: WatchOutboxEventEntity? = null,
     ) {
         saveSession(session)
         enqueue(operation)
         deleteActiveWorkoutRuntime(session.id)
+        watchEvent?.let { insertWatchOutboxEvent(it) }
+        deleteWatchResyncMarker(session.id, Long.MAX_VALUE)
         bootstrap?.let { saveBootstrap(it) }
+    }
+
+    @Transaction
+    suspend fun saveActiveWorkoutRuntimeAndMarker(
+        runtime: ActiveWorkoutRuntimeEntity,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        saveActiveWorkoutRuntime(runtime)
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun saveSetOperationRuntimeAndMarker(
+        set: LocalSetEntity,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        saveSet(set)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun deleteSetOperationRuntimeAndMarker(
+        setId: String,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        markSetDeleted(setId)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+        marker?.let { saveWatchResyncMarker(it) }
     }
 
     @Transaction
@@ -489,6 +545,7 @@ interface GymCoachDao {
         saveSession(session)
         enqueue(operation)
         deleteActiveWorkoutRuntime(session.id)
+        deleteWatchResyncMarker(session.id, Long.MAX_VALUE)
         return true
     }
 

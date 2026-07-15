@@ -107,7 +107,15 @@ class WatchConnectionCoordinator(
             transport.incomingMessages.collect(::handleIncomingMessage)
         }
         jobs += scope.launch {
-            transport.incomingFiles.collect { file -> fileConsumer?.onFile(file) }
+            transport.incomingFiles.collect { file ->
+                try {
+                    fileConsumer?.onFile(file)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    reject(WatchProtocolErrorCode.TRANSPORT_FAILURE)
+                }
+            }
         }
     }
 
@@ -190,6 +198,17 @@ class WatchConnectionCoordinator(
                     put("sessionId", sessionId)
                     put("revision", revision)
                 },
+            ),
+        )
+    }
+
+    suspend fun acknowledgeNoActiveWorkout(request: WatchControlMessageDto) {
+        sendControlMessage(
+            newPhoneControlMessage(
+                type = WatchControlMessageType.SYNC_SNAPSHOT,
+                timestamp = nowEpochMs(),
+                replyTo = request.messageId,
+                payload = buildJsonObject { put("status", "NO_ACTIVE_WORKOUT") },
             ),
         )
     }
@@ -290,6 +309,13 @@ class WatchConnectionCoordinator(
         if (message.source != WatchEventSource.WATCH) {
             throw WatchProtocolException(WatchProtocolErrorCode.INVALID_SOURCE)
         }
+        if (message.type == WatchControlMessageType.SYNC_REQUESTED) {
+            syncRequestConsumer?.onSyncRequested(message)
+            mutableState.update {
+                it.copy(processedControlMessageCount = it.processedControlMessageCount + 1, lastErrorCode = null)
+            }
+            return
+        }
         if (!processedControlMessageStore.markProcessed(message.messageId)) {
             mutableState.update {
                 it.copy(
@@ -305,7 +331,7 @@ class WatchConnectionCoordinator(
         when (message.type) {
             WatchControlMessageType.PING -> handlePing(message)
             WatchControlMessageType.PONG -> handlePong(message)
-            WatchControlMessageType.SYNC_REQUESTED -> syncRequestConsumer?.onSyncRequested(message)
+            WatchControlMessageType.SYNC_REQUESTED -> error("Handled before idempotency store")
             WatchControlMessageType.SYNC_SNAPSHOT -> Unit
         }
     }

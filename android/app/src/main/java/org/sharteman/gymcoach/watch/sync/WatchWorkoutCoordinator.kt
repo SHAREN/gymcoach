@@ -169,7 +169,15 @@ class WatchWorkoutCoordinator(
     }
 
     suspend fun replayPending(sessionId: String? = null) = replayMutex.withLock {
-        syncPersistence.replayable(sessionId).forEach { pending ->
+        replay(syncPersistence.replayable(sessionId))
+    }
+
+    suspend fun replayPendingExcept(sessionId: String) = replayMutex.withLock {
+        replay(syncPersistence.replayable().filterNot { it.sessionId == sessionId })
+    }
+
+    private suspend fun replay(pendingEvents: List<org.sharteman.gymcoach.data.local.WatchOutboxEventEntity>) {
+        pendingEvents.forEach { pending ->
             val event = eventCodec.decodeEvent(pending.envelopeJson.encodeToByteArray())
             syncPersistence.markAttempt(event.eventId)
             sink.sendEvent(event)

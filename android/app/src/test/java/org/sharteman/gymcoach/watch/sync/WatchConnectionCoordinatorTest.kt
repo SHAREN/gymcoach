@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -32,6 +33,7 @@ import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
 import org.sharteman.gymcoach.watch.transport.WatchTransport
 import org.sharteman.gymcoach.watch.transport.WatchTransportCapabilities
+import org.sharteman.gymcoach.watch.transport.WatchTransportFile
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WatchConnectionCoordinatorTest {
@@ -195,6 +197,38 @@ class WatchConnectionCoordinatorTest {
     }
 
     @Test
+    fun `failed sync request retries same message id and no active response is terminal`() = runTest {
+        val transport = FakeWatchTransport()
+        var attempts = 0
+        lateinit var coordinator: WatchConnectionCoordinator
+        coordinator = coordinator(
+            transport,
+            backgroundScope,
+            syncRequestConsumer = WatchSyncRequestConsumer { request ->
+                attempts += 1
+                if (attempts == 1) error("lost reply")
+                coordinator.acknowledgeNoActiveWorkout(request)
+            },
+        )
+        val request = controlMessage(
+            messageId = "watch-sync-retry-1",
+            type = WatchControlMessageType.SYNC_REQUESTED,
+        )
+
+        coordinator.connect()
+        runCurrent()
+        transport.emitControlFromWatch(request, codec)
+        runCurrent()
+        transport.emitControlFromWatch(request, codec)
+        runCurrent()
+
+        assertEquals(2, attempts)
+        val response = codec.decodeControlMessage(transport.sentMessages.single())
+        assertEquals(request.messageId, response.replyTo)
+        assertEquals("NO_ACTIVE_WORKOUT", response.payload.getValue("status").jsonPrimitive.content)
+    }
+
+    @Test
     fun `lifecycle replay failure does not stop later connection states`() = runTest {
         val transport = FakeWatchTransport()
         var callbacks = 0
@@ -214,6 +248,29 @@ class WatchConnectionCoordinatorTest {
 
         assertEquals(2, callbacks)
         assertEquals(WatchConnectionStatus.DISCONNECTED, coordinator.state.value.connectionStatus)
+        assertEquals(WatchProtocolErrorCode.TRANSPORT_FAILURE, coordinator.state.value.lastErrorCode)
+    }
+
+    @Test
+    fun `incoming file consumer failure does not stop subsequent files`() = runTest {
+        val transport = FakeWatchTransport()
+        var calls = 0
+        val coordinator = coordinator(
+            transport,
+            backgroundScope,
+            fileConsumer = WatchFileConsumer {
+                calls += 1
+                if (calls == 1) error("file apply failed")
+            },
+        )
+
+        coordinator.connect()
+        runCurrent()
+        transport.emitFile(WatchTransportFile("file-1", byteArrayOf(1)))
+        transport.emitFile(WatchTransportFile("file-2", byteArrayOf(2)))
+        runCurrent()
+
+        assertEquals(2, calls)
         assertEquals(WatchProtocolErrorCode.TRANSPORT_FAILURE, coordinator.state.value.lastErrorCode)
     }
 
@@ -258,6 +315,7 @@ class WatchConnectionCoordinatorTest {
         ackConsumer: WatchAckConsumer? = null,
         syncRequestConsumer: WatchSyncRequestConsumer? = null,
         lifecycleConsumer: WatchConnectionLifecycleConsumer? = null,
+        fileConsumer: WatchFileConsumer? = null,
     ): WatchConnectionCoordinator {
         val ids = AtomicInteger(1)
         return WatchConnectionCoordinator(
@@ -269,6 +327,7 @@ class WatchConnectionCoordinatorTest {
             ackConsumer = ackConsumer,
             syncRequestConsumer = syncRequestConsumer,
             lifecycleConsumer = lifecycleConsumer,
+            fileConsumer = fileConsumer,
             codec = codec,
             nowEpochMs = nowEpochMs,
             newId = { "phone-msg-${ids.getAndIncrement()}" },
@@ -307,9 +366,11 @@ class WatchConnectionCoordinatorTest {
     private class FakeWatchTransport : WatchTransport {
         private val mutableConnectionStatus = MutableStateFlow(WatchConnectionStatus.DISCONNECTED)
         private val mutableIncomingMessages = MutableSharedFlow<ByteArray>(extraBufferCapacity = 16)
+        private val mutableIncomingFiles = MutableSharedFlow<WatchTransportFile>(extraBufferCapacity = 16)
 
         override val connectionStatus: StateFlow<WatchConnectionStatus> = mutableConnectionStatus
         override val incomingMessages: Flow<ByteArray> = mutableIncomingMessages
+        override val incomingFiles: Flow<WatchTransportFile> = mutableIncomingFiles
         override val capabilities = WatchTransportCapabilities()
         val sentMessages = mutableListOf<ByteArray>()
 
@@ -330,6 +391,10 @@ class WatchConnectionCoordinatorTest {
 
         suspend fun emitRaw(message: ByteArray) {
             mutableIncomingMessages.emit(message)
+        }
+
+        suspend fun emitFile(file: WatchTransportFile) {
+            mutableIncomingFiles.emit(file)
         }
 
         suspend fun emitControlFromWatch(message: WatchControlMessageDto, codec: WatchProtocolCodec) {

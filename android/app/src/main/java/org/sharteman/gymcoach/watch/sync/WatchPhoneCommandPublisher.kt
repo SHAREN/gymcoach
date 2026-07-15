@@ -9,6 +9,9 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
  * transport delivery.
  */
 interface WatchPhoneCommandPublisher {
+    val enabled: Boolean
+        get() = true
+
     suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long)
 
     suspend fun activeExerciseChanged(
@@ -60,9 +63,12 @@ interface WatchPhoneCommandPublisher {
     )
 
     suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long)
+
+    suspend fun flush(sessionId: String) = Unit
 }
 
 object NoOpWatchPhoneCommandPublisher : WatchPhoneCommandPublisher {
+    override val enabled = false
     override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) = Unit
     override suspend fun activeExerciseChanged(
         sessionId: String,
@@ -111,6 +117,9 @@ class SwitchableWatchPhoneCommandPublisher(
     fun attach(publisher: WatchPhoneCommandPublisher) {
         delegate.set(publisher)
     }
+
+    override val enabled: Boolean
+        get() = delegate.get().enabled
 
     override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) =
         delegate.get().workoutStarted(sessionId, revision, startedAtEpochMs)
@@ -164,4 +173,6 @@ class SwitchableWatchPhoneCommandPublisher(
 
     override suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long) =
         delegate.get().workoutFinished(sessionId, revision, finishedAtEpochMs)
+
+    override suspend fun flush(sessionId: String) = delegate.get().flush(sessionId)
 }

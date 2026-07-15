@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -31,6 +32,7 @@ import org.sharteman.gymcoach.data.local.WatchConflictEntity
 import org.sharteman.gymcoach.data.local.WatchFileTransferEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
+import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
@@ -64,6 +66,7 @@ import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.watch.sync.NoOpWatchPhoneCommandPublisher
 import org.sharteman.gymcoach.watch.sync.WatchPhoneCommandPublisher
+import org.sharteman.gymcoach.watch.domain.WatchEventType
 
 class GymCoachRepositorySyncTest {
     @Test
@@ -110,6 +113,7 @@ class GymCoachRepositorySyncTest {
         val conflicts = fixture.dao.getWatchConflicts(sessionId)
         assertEquals(2, conflicts.size)
         assertTrue(conflicts.all { it.errorCode == "PHONE_EVENT_MAPPING_FAILED" })
+        assertEquals(2L, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
     }
 
     @Test
@@ -165,6 +169,28 @@ class GymCoachRepositorySyncTest {
         assertTrue(fixture.dao.getSet(set.id)?.deleted == true)
         assertEquals(listOf(3L, 4L), publisher.revisions.takeLast(2).sorted())
         assertEquals(setOf("SET_UPDATED", "SET_DELETED"), publisher.commands.takeLast(2).toSet())
+    }
+
+    @Test
+    fun concurrentFinishPreventsSetMutationAfterRuntimeDeletionAndQueuesExactWatchFinish() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+
+        val finish = async { fixture.repository.finishSession(sessionId, null, 8) }
+        val update = async {
+            yield()
+            fixture.repository.updateSet(set, 90.0, 10, 1)
+        }
+        awaitAll(finish, update)
+
+        assertEquals(null, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(80.0, fixture.dao.getSet(set.id)?.weight ?: 0.0, 0.0)
+        val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
+        assertEquals(WatchEventType.WORKOUT_FINISHED.name, watchFinish.eventType)
+        assertEquals(3L, watchFinish.revision)
     }
 
     @Test
@@ -1279,6 +1305,11 @@ class GymCoachRepositorySyncTest {
             record("REST_SKIPPED", revision)
         override suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long) =
             record("FINISH", revision)
+
+        override suspend fun flush(sessionId: String) {
+            if (fail) error("watch unavailable")
+            commands += "FINISH"
+        }
     }
 
     private class TestAccountStore : AccountStore {
@@ -1390,6 +1421,7 @@ class GymCoachRepositorySyncTest {
         private val processedWatchEvents = linkedMapOf<String, WatchProcessedEventEntity>()
         private val watchInbox = linkedMapOf<String, WatchInboxEventEntity>()
         private val watchOutbox = linkedMapOf<String, WatchOutboxEventEntity>()
+        private val watchResyncMarkers = linkedMapOf<String, WatchResyncMarkerEntity>()
         private val watchAcks = linkedMapOf<String, WatchAckJournalEntity>()
         private val watchPeers = linkedMapOf<String, WatchPeerEntity>()
         private val watchConflicts = linkedMapOf<String, WatchConflictEntity>()
@@ -1519,6 +1551,16 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun deleteWatchOutboxEvents(eventIds: List<String>) {
             eventIds.forEach(watchOutbox::remove)
+        }
+        override suspend fun saveWatchResyncMarker(entity: WatchResyncMarkerEntity) {
+            watchResyncMarkers[entity.sessionId] = entity
+        }
+        override suspend fun getWatchResyncMarker(sessionId: String) = watchResyncMarkers[sessionId]
+        override suspend fun getWatchResyncMarkers() = watchResyncMarkers.values.sortedBy { it.updatedAtEpochMs }
+        override suspend fun deleteWatchResyncMarker(sessionId: String, throughRevision: Long) {
+            watchResyncMarkers[sessionId]?.takeIf { it.revision <= throughRevision }?.let {
+                watchResyncMarkers.remove(sessionId)
+            }
         }
         override suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long =
             if (watchAcks.putIfAbsent(entity.ackId, entity) == null) watchAcks.size.toLong() else -1L
@@ -1664,6 +1706,7 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun clearWatchInboxEvents() { watchInbox.clear() }
         override suspend fun clearWatchOutboxEvents() { watchOutbox.clear() }
+        override suspend fun clearWatchResyncMarkers() { watchResyncMarkers.clear() }
         override suspend fun clearWatchAckJournal() { watchAcks.clear() }
         override suspend fun clearWatchConflicts() { watchConflicts.clear() }
         override suspend fun clearWatchFileTransfers() { watchFiles.clear() }
