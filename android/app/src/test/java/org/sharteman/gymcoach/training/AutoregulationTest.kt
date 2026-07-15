@@ -5,6 +5,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.GymDto
+import org.sharteman.gymcoach.data.model.GymEquipmentDto
+import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
+import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 
 class AutoregulationTest {
@@ -58,7 +63,139 @@ class AutoregulationTest {
         assertTrue(65.0 in weights)
     }
 
-    private fun programExercise(mode: String, muscle: String) = ProgramExerciseDto(
+    @Test
+    fun selectorizedEquipmentKeepsDisplayedLoadsAndCalculatesNominalResistance() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "BACK_WIDTH",
+            equipmentType = "CABLE",
+        )
+        val equipment = GymEquipmentDto(
+            id = "equipment_cable_1",
+            gymId = "gym_1",
+            name = "Lat pulldown",
+            equipmentType = "CABLE",
+            loadType = "SELECTORIZED",
+            weightOptions = listOf(40.0, 45.0, 50.0),
+            selectedLoadMultiplier = 0.5,
+            exerciseLinks = listOf(
+                GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+            ),
+        )
+
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(id = "gym_1", name = "Olymp", equipment = listOf(equipment)),
+        )
+
+        assertEquals(listOf(40.0, 45.0, 50.0), inventory.weightOptions)
+        assertEquals(25.0, nominalResistanceKg(selectedEquipment(inventory), 50.0) ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun compatiblePlatePoolIsSharedWithoutInventingMissingPlatePairs() {
+        val pool = GymPlatePoolDto(
+            id = "pool_olympic",
+            gymId = "gym_1",
+            name = "Olympic plates",
+            compatibilityKey = "OLYMPIC_50MM",
+            plates = listOf(
+                GymPlateInventoryItemDto(weightKg = 5.0, quantity = 2),
+                GymPlateInventoryItemDto(weightKg = 20.0, quantity = 4),
+            ),
+        )
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "QUADS",
+            equipmentType = "MACHINE",
+        )
+        val linked = listOf(
+            GymEquipmentDto(
+                id = "smith_1",
+                gymId = "gym_1",
+                name = "Smith",
+                equipmentType = "MACHINE",
+                loadType = "PLATE_LOADED",
+                baseLoadKg = 20.0,
+                platePoolId = pool.id,
+                loadingSides = 2,
+                exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = exercise.exerciseId)),
+            ),
+            GymEquipmentDto(
+                id = "leg_press_1",
+                gymId = "gym_1",
+                name = "Leg press",
+                equipmentType = "MACHINE",
+                loadType = "PLATE_LOADED",
+                baseLoadKg = 20.0,
+                platePoolId = pool.id,
+                loadingSides = 2,
+                exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = exercise.exerciseId)),
+            ),
+        )
+        val gym = GymDto(
+            id = "gym_1",
+            name = "Olymp",
+            inventoryMode = "EQUIPMENT_FIRST",
+            equipment = linked,
+            platePools = listOf(pool),
+        )
+
+        val smith = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "smith_1")
+        val legPress = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "leg_press_1")
+
+        assertTrue(60.0 in smith.weightOptions)
+        assertTrue(60.0 in legPress.weightOptions)
+        assertTrue(50.0 !in smith.weightOptions)
+    }
+
+    @Test
+    fun multipleMachinesNeverMergeTheirLoadScales() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "TRICEPS",
+            equipmentType = "CABLE",
+        )
+        val gym = GymDto(
+            id = "gym_1",
+            name = "Olymp",
+            equipment = listOf(
+                selectorized("cable_a", exercise.exerciseId, listOf(40.0, 45.0, 50.0)),
+                selectorized("cable_b", exercise.exerciseId, listOf(5.0, 10.0, 15.0)),
+            ),
+        )
+
+        val unresolved = resolveExerciseInventory(exercise, gym)
+        val selected = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "cable_b")
+
+        assertTrue(unresolved.requiresEquipmentSelection)
+        assertTrue(unresolved.weightOptions.isEmpty())
+        assertEquals(listOf(5.0, 10.0, 15.0), selected.weightOptions)
+    }
+
+    @Test
+    fun equipmentFirstGymStillUsesItsSharedDumbbellSet() {
+        val exercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS")
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_1",
+                name = "Olymp",
+                inventoryMode = "EQUIPMENT_FIRST",
+                dumbbellWeights = listOf(10.0, 12.5, 15.0),
+            ),
+        )
+
+        assertTrue(inventory.isAvailable)
+        assertEquals("shared-dumbbells", inventory.source)
+        assertEquals(listOf(10.0, 12.5, 15.0), inventory.weightOptions)
+    }
+
+    private fun programExercise(
+        mode: String,
+        muscle: String,
+        equipmentType: String = if (muscle == "BICEPS") "DUMBBELL" else "BARBELL",
+    ) = ProgramExerciseDto(
         id = "pe_00000001",
         workoutId = "workout_0001",
         exerciseId = "exercise_001",
@@ -76,9 +213,20 @@ class AutoregulationTest {
             name = "Test exercise",
             muscleGroup = muscle,
             category = if (muscle == "BICEPS") "ISOLATION" else "COMPOUND",
-            equipmentType = if (muscle == "BICEPS") "DUMBBELL" else "BARBELL",
+            equipmentType = equipmentType,
         ),
     )
+
+    private fun selectorized(id: String, exerciseId: String, loads: List<Double>) =
+        GymEquipmentDto(
+            id = id,
+            gymId = "gym_1",
+            name = id,
+            equipmentType = "CABLE",
+            loadType = "SELECTORIZED",
+            weightOptions = loads,
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = exerciseId)),
+        )
 
     private fun set(weight: Double, reps: Int, rir: Int?) = LocalSetEntity(
         id = "set_00000001",

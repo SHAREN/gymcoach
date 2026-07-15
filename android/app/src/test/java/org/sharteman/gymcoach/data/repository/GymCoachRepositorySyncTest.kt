@@ -16,6 +16,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -44,6 +45,7 @@ import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
+import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileSetPayload
@@ -966,6 +968,126 @@ class GymCoachRepositorySyncTest {
         assertEquals(5, laterOperation.previousTargetSets)
         assertEquals(6, laterOperation.targetSets)
         assertEquals(6, fixture.dao.cachedTargetSets())
+    }
+
+    @Test
+    fun equipmentIdentityAndLoadSnapshotStayWithTheOfflineSetAndOutbox() = runTest {
+        val fixture = fixture()
+        val bootstrap = bootstrapWithTargetSets(3)
+        fixture.api.bootstrapResponse = bootstrap
+        fixture.repository.refreshBootstrap()
+        val workout = requireNotNull(bootstrap.activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = "gym_1")
+        val equipment = GymEquipmentDto(
+            id = "equipment_cable_1",
+            gymId = "gym_1",
+            name = "Cable station",
+            equipmentType = "CABLE",
+            loadType = "SELECTORIZED",
+            weightOptions = listOf(40.0, 45.0, 50.0),
+            selectedLoadMultiplier = 0.5,
+        )
+
+        val set = fixture.repository.addSet(
+            sessionId = sessionId,
+            exerciseId = "exercise_1",
+            weight = 50.0,
+            reps = 10,
+            rir = 2,
+            notes = null,
+            equipment = equipment,
+        )
+
+        assertEquals(equipment.id, set.gymEquipmentId)
+        assertEquals("Cable station", set.equipmentNameSnapshot)
+        assertEquals(50.0, set.selectedLoadKg ?: 0.0, 0.001)
+        assertEquals(25.0, set.nominalResistanceKg ?: 0.0, 0.001)
+        assertTrue(set.equipmentLoadSnapshotJson?.contains("\"loadType\":\"SELECTORIZED\"") == true)
+        val operation = fixture.dao.queuedOperations()
+            .map { TestApi.jsonConfig.decodeFromString<SyncOperation>(it.payloadJson) }
+            .filterIsInstance<UpsertSetOperation>()
+            .single()
+        assertEquals(equipment.id, operation.set.gymEquipmentId)
+        assertEquals(50.0, operation.set.weight, 0.001)
+
+        fixture.repository.updateSet(set, weight = 45.0, reps = 11, rir = 2)
+        val updated = requireNotNull(fixture.dao.getSet(set.id))
+        assertEquals(equipment.id, updated.gymEquipmentId)
+        assertEquals("Cable station", updated.equipmentNameSnapshot)
+        assertEquals(0.5, updated.selectedLoadMultiplierSnapshot ?: 0.0, 0.001)
+        assertEquals(45.0, updated.selectedLoadKg ?: 0.0, 0.001)
+        assertEquals(22.5, updated.nominalResistanceKg ?: 0.0, 0.001)
+        assertTrue(updated.equipmentLoadSnapshotJson?.contains("\"selectedLoadKg\":45.0") == true)
+    }
+
+    @Test
+    fun legacyQueuedSetPayloadStillOmitsAbsentEquipmentIdentityAfterDecode() {
+        val legacyJson = """
+            {
+              "type":"UPSERT_SET",
+              "operationId":"operation_legacy",
+              "set":{
+                "id":"set_legacy",
+                "sessionId":"session_legacy",
+                "exerciseId":"exercise_legacy",
+                "setNumber":1,
+                "weight":40.0,
+                "reps":10,
+                "rir":null,
+                "isWarmup":false,
+                "isDropSet":false,
+                "completedAt":"2026-07-13T10:05:00Z"
+              }
+            }
+        """.trimIndent()
+
+        val operation = TestApi.jsonConfig.decodeFromString<SyncOperation>(legacyJson)
+        val encoded = TestApi.jsonConfig.encodeToString<SyncOperation>(operation)
+
+        assertFalse(encoded.contains("gymEquipmentId"))
+        assertFalse(encoded.contains("equipmentSnapshotAction"))
+    }
+
+    @Test
+    fun bootstrapImportsServerEquipmentSnapshotsIntoRoomState() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = bootstrap(
+            openSessions = listOf(
+                SessionDto(
+                    id = "session_equipment",
+                    workoutId = "workout_1",
+                    gymId = "gym_1",
+                    startedAt = "2026-07-13T10:00:00Z",
+                    sets = listOf(
+                        SetDto(
+                            id = "set_equipment",
+                            sessionId = "session_equipment",
+                            exerciseId = "exercise_1",
+                            gymEquipmentId = "equipment_cable_1",
+                            equipmentNameSnapshot = "Cable station",
+                            selectedLoadKg = 50.0,
+                            selectedLoadMultiplierSnapshot = 0.5,
+                            nominalResistanceKg = 25.0,
+                            equipmentLoadSnapshot = Json.parseToJsonElement(
+                                "{\"version\":1,\"loadType\":\"SELECTORIZED\"}",
+                            ).jsonObject,
+                            setNumber = 1,
+                            weight = 50.0,
+                            reps = 10,
+                            rir = 2,
+                            completedAt = "2026-07-13T10:05:00Z",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        fixture.repository.refreshBootstrap()
+
+        val imported = requireNotNull(fixture.dao.getSet("set_equipment"))
+        assertEquals("equipment_cable_1", imported.gymEquipmentId)
+        assertEquals(25.0, imported.nominalResistanceKg ?: 0.0, 0.001)
+        assertTrue(imported.equipmentLoadSnapshotJson?.contains("SELECTORIZED") == true)
     }
 
     @Test
