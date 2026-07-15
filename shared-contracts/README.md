@@ -31,6 +31,9 @@ simulators.
   message for every UI frame or sensor callback.
 - `SensorBatch` is the normative batch/file payload for raw samples. It keeps
   invalid readings explicit and never substitutes zero for a missing value.
+- Heart-rate summaries select the nearest valid boundary/30-second/60-second
+  sample with an earlier-sample tie break and exclude invalid samples from all
+  aggregates.
 
 These are protocol operating limits. An implementation must also enforce any
 stricter limit reported by the installed Huawei SDK/runtime.
