@@ -20,7 +20,11 @@ export async function PUT(req: Request, props: Params) {
     const parsed = await parseJsonBody(req, gymEquipmentInputSchema);
     const { equipmentId: _ignored, ...input } = parsed;
     return NextResponse.json(
-      await upsertOwnedGymEquipment(userId, current.gymId, { ...input, equipmentId: id }),
+      await upsertOwnedGymEquipment(userId, current.gymId, {
+        ...input,
+        equipmentId: id,
+        markExercisesAvailable: input.markExercisesAvailable ?? true,
+      }),
     );
   } catch (err) {
     return handleApiError(err);

@@ -46,7 +46,8 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
-// - Session / Set: all user content incl durationSec, distanceM, avgHr.
+// - Session / SessionExercise / Set: all user content incl durable exercise
+//   membership, durationSec, distanceM, avgHr.
 // - CoachSession, ExerciseGoal, BodyweightEntry, ReadinessCheckin,
 //   Conversation / Message: all user content.
 //
@@ -57,7 +58,7 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 8;
+const VERSION = 9;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -118,6 +119,10 @@ export async function GET(req: Request) {
         orderBy: { startedAt: 'asc' },
         include: {
           sets: { orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }] },
+          exerciseMemberships: {
+            orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+            include: { exercise: { select: { name: true } } },
+          },
         },
       }),
       db.coachSession.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
@@ -265,6 +270,11 @@ export async function GET(req: Request) {
         notes: s.notes,
         sessionRpe: s.sessionRpe,
         gymName: gyms.find((gym) => gym.id === s.gymId)?.name ?? null,
+        exerciseNames: s.exerciseMemberships.map((membership) => membership.exercise.name),
+        exerciseMemberships: s.exerciseMemberships.map((membership) => ({
+          exerciseName: membership.exercise.name,
+          addedAt: membership.addedAt.toISOString(),
+        })),
         sets: s.sets.map((set) => ({
           exerciseName: exercises.find((e) => e.id === set.exerciseId)?.name ?? null,
           setNumber: set.setNumber,
@@ -444,6 +454,18 @@ const importSchema = z.object({
         notes: z.string().max(5000).nullable().optional(),
         sessionRpe: z.number().int().min(1).max(10).nullable().optional(),
         gymName: z.string().max(80).nullable().optional(),
+        // v9; absent in earlier backups, whose memberships are reconstructed
+        // from their set rows by the database trigger.
+        exerciseNames: z.array(z.string().max(120)).max(500).optional(),
+        exerciseMemberships: z
+          .array(
+            z.object({
+              exerciseName: z.string().max(120),
+              addedAt: dateString,
+            }),
+          )
+          .max(500)
+          .optional(),
         sets: z
           .array(
             z.object({
@@ -904,6 +926,24 @@ export async function POST(req: Request) {
               gymId: s.gymName ? (gymIdByName.get(s.gymName) ?? null) : null,
             },
           });
+          if (s.exerciseMemberships !== undefined) {
+            const seenExerciseIds = new Set<string>();
+            const membershipRows = s.exerciseMemberships.flatMap((membership) => {
+              const exerciseId = exerciseIdByName.get(membership.exerciseName);
+              if (!exerciseId || seenExerciseIds.has(exerciseId)) return [];
+              seenExerciseIds.add(exerciseId);
+              return [
+                {
+                  sessionId: session.id,
+                  exerciseId,
+                  addedAt: new Date(membership.addedAt),
+                },
+              ];
+            });
+            if (membershipRows.length > 0) {
+              await tx.sessionExercise.createMany({ data: membershipRows, skipDuplicates: true });
+            }
+          }
           const setRows = s.sets.flatMap((set) => {
             const exId = set.exerciseName ? exerciseIdByName.get(set.exerciseName) : undefined;
             if (!exId) return [];
@@ -941,6 +981,15 @@ export async function POST(req: Request) {
             ];
           });
           if (setRows.length > 0) await tx.set.createMany({ data: setRows });
+          if (s.exerciseMemberships === undefined) {
+            const membershipRows = (s.exerciseNames ?? []).flatMap((exerciseName) => {
+              const exerciseId = exerciseIdByName.get(exerciseName);
+              return exerciseId ? [{ sessionId: session.id, exerciseId }] : [];
+            });
+            if (membershipRows.length > 0) {
+              await tx.sessionExercise.createMany({ data: membershipRows, skipDuplicates: true });
+            }
+          }
         }
 
         for (const c of payload.coachSessions ?? []) {

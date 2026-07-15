@@ -18,7 +18,7 @@ export async function PATCH(req: Request, props: Params) {
     const userId = await requireApiUserId();
     const set = await db.set.findUnique({
       where: { id: params.id },
-      include: { session: { select: { userId: true, gymId: true } } },
+      include: { session: { select: { userId: true, gymId: true, finishedAt: true } } },
     });
     if (!set || set.session.userId !== userId) {
       throw new ApiError(404, 'Set not found.');
@@ -40,6 +40,7 @@ export async function PATCH(req: Request, props: Params) {
       existing: set,
       requestedGymEquipmentId: data.gymEquipmentId,
       action: data.equipmentSnapshotAction,
+      allowLegacySnapshot: set.session.finishedAt != null,
     });
     const updated = await db.set.update({
       where: { id: set.id },

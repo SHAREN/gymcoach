@@ -280,35 +280,58 @@ real Postgres), and end to end (Playwright driving the built app).
 npm run test            # unit and component tests
 npm run test:coverage   # with coverage report
 
-# Integration + E2E use a dedicated Postgres (docker-compose.test.yml, port 5434):
-docker compose -f docker-compose.test.yml up -d
-DATABASE_URL=postgresql://gymcoach_test:gymcoach_test@localhost:5434/gymcoach_test \
-  npx prisma migrate deploy
-npm run test:integration
-npm run build && npm run test:e2e
-docker compose -f docker-compose.test.yml down
+# Full local gate: snapshots the canonical runtime, owns the isolated test DB
+# and E2E server, then cleans ports 5434 and 3031 in an EXIT trap.
+bash scripts/verify.sh --full
 ```
+
+On the GymCoach Windows Home PC, run the same gate through Git Bash because the
+default WSL shell does not have the repository Node.js toolchain:
+
+```powershell
+& 'D:\Program Files\Git\bin\bash.exe' scripts/verify.sh --full
+```
+
+The helper uses direct Docker when available and otherwise uses WSL Docker. For
+manual database diagnostics from PowerShell, keep the same explicit test-only
+project identity on every command:
+
+```powershell
+wsl.exe --cd (Get-Location).Path docker compose --project-name gymcoach-test --file docker-compose.test.yml up -d --wait test-db
+$env:DATABASE_URL = 'postgresql://gymcoach_test:gymcoach_test@localhost:5434/gymcoach_test'
+npx prisma migrate deploy
+npx vitest run --config vitest.integration.config.ts
+wsl.exe --cd (Get-Location).Path docker compose --project-name gymcoach-test --file docker-compose.test.yml down --volumes
+Remove-Item Env:DATABASE_URL
+```
+
+The explicit PowerShell environment assignment is the fallback for npm scripts
+that use POSIX inline environment syntax, which `cmd.exe` does not understand.
+Never add `--remove-orphans` to test cleanup. The full gate is preferred because
+it also verifies that `gymcoach-app`, `gymcoach-db`, the canonical database
+volume and port 3030 did not change.
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit, integration,
 build and E2E on every push and pull request.
 
 ## Scripts
 
-| Script                | Description                                |
-| --------------------- | ------------------------------------------ |
-| `npm run dev`         | Next.js dev server (port 3030)             |
-| `npm run build`       | Production build                           |
-| `npm run start`       | Run the production build                   |
-| `npm run lint`        | ESLint                                     |
-| `npm run typecheck`   | TypeScript type checking                   |
-| `npm run test`        | Unit and component tests                   |
-| `npm run test:e2e`    | End to end tests                           |
-| `npm run format`      | Prettier                                   |
-| `npm run db:migrate`  | Apply migrations (dev)                     |
-| `npm run db:reset`    | Reset the database (drop + migrate + seed) |
-| `npm run db:seed`     | Load the demo dataset                      |
-| `npm run db:studio`   | Open Prisma Studio                         |
-| `npm run db:generate` | Regenerate the Prisma client               |
+| Script                          | Description                                |
+| ------------------------------- | ------------------------------------------ |
+| `npm run dev`                   | Next.js dev server (port 3030)             |
+| `npm run build`                 | Production build                           |
+| `npm run start`                 | Run the production build                   |
+| `npm run lint`                  | ESLint                                     |
+| `npm run typecheck`             | TypeScript type checking                   |
+| `npm run test`                  | Unit and component tests                   |
+| `npm run test:e2e`              | End to end tests                           |
+| `bash scripts/verify.sh --full` | Safe local integration and E2E gate        |
+| `npm run format`                | Prettier                                   |
+| `npm run db:migrate`            | Apply migrations (dev)                     |
+| `npm run db:reset`              | Reset the database (drop + migrate + seed) |
+| `npm run db:seed`               | Load the demo dataset                      |
+| `npm run db:studio`             | Open Prisma Studio                         |
+| `npm run db:generate`           | Regenerate the Prisma client               |
 
 ## Project layout
 

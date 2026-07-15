@@ -180,7 +180,7 @@ export function ProgressDashboard({
   const router = useRouter();
   const search = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  const [progressMetric, setProgressMetric] = useState<ProgressMetric>('maxWeight');
+  const [progressMetric, setProgressMetric] = useState<ProgressMetric>('estimated1RM');
   const [progressRange, setProgressRange] = useState<ProgressChartRange>('all');
   const shortDate = (iso: string) =>
     format.dateTime(new Date(iso), { day: '2-digit', month: '2-digit' });

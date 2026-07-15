@@ -12,10 +12,11 @@
 #
 # Tiers:
 #   (default)  prisma generate + lint + typecheck + unit tests + production build
-#   --full     also runs integration + E2E (needs the test Postgres on :5434)
+#   --full     owns an isolated test Postgres on :5434 and E2E server on :3031
 #
-# The integration/E2E tiers need Docker + a database, so the default gate stays
-# fast and hermetic; CI runs the full pyramid on every PR.
+# The full tier snapshots the canonical runtime, starts only the explicit
+# gymcoach-test Compose project, and removes its own DB and E2E process in an
+# EXIT trap. The default gate stays fast and hermetic.
 
 set -uo pipefail
 
@@ -33,10 +34,61 @@ cd "$ROOT" || exit 1
 FULL=0
 [ "${1:-}" = "--full" ] && FULL=1
 
+TEST_DATABASE_URL="postgresql://gymcoach_test:gymcoach_test@localhost:5434/gymcoach_test"
+FULL_SNAPSHOT=""
+E2E_PID=""
+
 fail() { echo ""; echo "❌ GREEN-GATE FAILED at: $1"; exit 1; }
 step() { echo ""; echo "▶ $1"; }
 
+cleanup_e2e() {
+  local cleanup_status=0
+
+  if [ -n "$E2E_PID" ]; then
+    if kill -0 "$E2E_PID" >/dev/null 2>&1; then
+      kill "$E2E_PID" >/dev/null 2>&1 || cleanup_status=1
+      for _ in $(seq 1 40); do
+        kill -0 "$E2E_PID" >/dev/null 2>&1 || break
+        sleep 0.25
+      done
+      if kill -0 "$E2E_PID" >/dev/null 2>&1; then
+        kill -KILL "$E2E_PID" >/dev/null 2>&1 || cleanup_status=1
+      fi
+    fi
+    wait "$E2E_PID" >/dev/null 2>&1 || true
+    E2E_PID=""
+  fi
+
+  node scripts/test-port.mjs wait-closed 3031 15000 || cleanup_status=1
+  return "$cleanup_status"
+}
+
+cleanup_full() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT INT TERM
+
+  cleanup_e2e || cleanup_status=1
+  if [ -n "$FULL_SNAPSHOT" ]; then
+    node scripts/test-compose-safety.mjs down "$FULL_SNAPSHOT" || cleanup_status=1
+  fi
+
+  if [ "$original_status" -ne 0 ]; then
+    exit "$original_status"
+  fi
+  exit "$cleanup_status"
+}
+
 echo "GymCoach green-gate — node $(node -v 2>/dev/null || echo '??'), npm $(npm -v 2>/dev/null || echo '??')"
+
+if [ "$FULL" = "1" ]; then
+  step "full-gate production safety preflight"
+  node scripts/test-port.mjs assert-free 3031 || fail "port 3031 preflight"
+  FULL_SNAPSHOT="$(node scripts/test-compose-safety.mjs snapshot)" || fail "test Compose preflight"
+  trap cleanup_full EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+fi
 
 step "prisma generate"
 npx prisma generate >/dev/null || fail "prisma generate"
@@ -58,10 +110,33 @@ JWT_SECRET="ci-build-placeholder-secret-at-least-32-chars" \
   npm run build || fail "production build"
 
 if [ "$FULL" = "1" ]; then
-  step "integration tests (needs Postgres on :5434)"
-  npm run test:integration || fail "integration tests"
+  step "start isolated test Postgres"
+  node scripts/test-compose-safety.mjs up "$FULL_SNAPSHOT" || fail "isolated test Postgres startup"
+
+  export DATABASE_URL="$TEST_DATABASE_URL"
+
+  step "apply migrations to isolated test Postgres"
+  npx prisma migrate deploy || fail "test database migrations"
+
+  step "integration tests"
+  npx vitest run --config vitest.integration.config.ts || fail "integration tests"
+
   step "E2E tests (Playwright)"
-  npm run test:e2e || fail "E2E tests"
+  node scripts/test-port.mjs assert-free 3031 || fail "port 3031 ownership preflight"
+  export JWT_SECRET="e2e-test-secret-at-least-32-characters"
+  export LLM_PROVIDER="demo"
+  node node_modules/next/dist/bin/next start -p 3031 &
+  E2E_PID=$!
+  node scripts/test-port.mjs wait-http http://127.0.0.1:3031/login 120000 || fail "E2E server startup"
+  export E2E_EXTERNAL_SERVER=1
+  export CI=1
+  npx playwright test || fail "E2E tests"
+  cleanup_e2e || fail "E2E server cleanup"
+
+  step "scoped test cleanup and canonical runtime comparison"
+  node scripts/test-compose-safety.mjs down "$FULL_SNAPSHOT" || fail "scoped test cleanup"
+  FULL_SNAPSHOT=""
+  trap - EXIT INT TERM
 fi
 
 echo ""

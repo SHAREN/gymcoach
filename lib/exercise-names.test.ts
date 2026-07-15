@@ -16,6 +16,10 @@ describe('exercise name localization', () => {
     expect(getExerciseDisplayName('Шея зад · Misc', 'ru')).toBe('Шея зад · Misc');
   });
 
+  it('presents the canonical cycling import identity as Biking in English', () => {
+    expect(getExerciseDisplayName('Cycling', 'en')).toBe('Biking');
+  });
+
   it('matches known names case-insensitively', () => {
     expect(getExerciseDisplayName('bEnCh PrEsS', 'ru')).toBe('Жим лёжа');
   });

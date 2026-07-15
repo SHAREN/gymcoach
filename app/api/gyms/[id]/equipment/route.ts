@@ -31,7 +31,10 @@ export async function POST(req: Request, props: Params) {
     await requireOwnedGym(id, userId);
     const parsed = await parseJsonBody(req, gymEquipmentInputSchema);
     const { equipmentId: _ignored, ...input } = parsed;
-    const saved = await upsertOwnedGymEquipment(userId, id, input);
+    const saved = await upsertOwnedGymEquipment(userId, id, {
+      ...input,
+      markExercisesAvailable: input.markExercisesAvailable ?? true,
+    });
     return NextResponse.json(saved, { status: 201 });
   } catch (err) {
     return handleApiError(err);

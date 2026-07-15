@@ -181,6 +181,7 @@ model Exercise {
   goals             ExerciseGoal[]
   gymConfigs        GymExerciseConfig[]
   gymEquipmentLinks GymEquipmentExercise[]
+  sessionMemberships SessionExercise[]
 
   @@unique([userId, name])
 }
@@ -327,8 +328,23 @@ model Session {
   gymId      String?
   gym        Gym?      @relation(fields: [gymId], references: [id], onDelete: SetNull)
   sets       Set[]
+  exerciseMemberships SessionExercise[]
 
   @@index([userId, startedAt])
+}
+
+// A performed exercise remains part of a session even after its final set is
+// deleted. A database trigger creates this membership on every Set insert, so
+// web, imports, MCP, and mobile sync share the same durable behavior.
+model SessionExercise {
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now())
+
+  @@id([sessionId, exerciseId])
+  @@index([exerciseId])
 }
 
 model Gym {

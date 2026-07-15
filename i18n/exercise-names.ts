@@ -6,6 +6,12 @@ type ExerciseNameDictionary = Readonly<Record<string, string>>;
 // These dictionaries are display-only, so another locale can be added without
 // coupling exercise data to the application's message catalog.
 export const exerciseNameDictionaries: Partial<Record<Locale, ExerciseNameDictionary>> = {
+  en: {
+    // Keep the canonical stored/catalog identity as Cycling so FIT, GPX and
+    // TCX imports reuse one exercise, while presenting the activity label used
+    // by those import formats in history.
+    Cycling: 'Biking',
+  },
   ru: {
     'Back extension (hyperextension)': 'Гиперэкстензия',
     'Back Squat': 'Приседания со штангой на спине',

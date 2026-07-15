@@ -1,10 +1,16 @@
 import bcrypt from 'bcrypt';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/lib/db';
+import { getCurrentUserId } from '@/lib/auth';
+
+vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
+const mockUserId = vi.mocked(getCurrentUserId);
+
 import { POST as login } from '@/app/api/mobile/auth/login/route';
 import { GET as bootstrap } from '@/app/api/mobile/bootstrap/route';
 import { POST as saveReadiness } from '@/app/api/mobile/readiness/route';
 import { POST as sync } from '@/app/api/mobile/sync/route';
+import { PATCH as patchSet } from '@/app/api/sets/[id]/route';
 
 function jsonRequest(url: string, body: unknown, token?: string): Request {
   return new Request(url, {
@@ -183,6 +189,8 @@ function frozenSnapshot(equipment: BootstrapEquipment, selectedLoadKg: number) {
   };
 }
 
+beforeEach(() => mockUserId.mockReset());
+
 describe('Android mobile API', () => {
   it('stores a bearer-authenticated readiness check-in and exposes it in bootstrap', async () => {
     const seeded = await seedUser('mobile-readiness@test.dev');
@@ -263,7 +271,9 @@ describe('Android mobile API', () => {
       result: { entityId: session.id, deleted: true },
     });
     expect(await db.session.findUnique({ where: { id: session.id } })).toBeNull();
-    expect((await db.exerciseGoal.findUniqueOrThrow({ where: { id: goal.id } })).achievedAt).toBeNull();
+    expect(
+      (await db.exerciseGoal.findUniqueOrThrow({ where: { id: goal.id } })).achievedAt,
+    ).toBeNull();
 
     const replay = await sync(
       jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
@@ -675,6 +685,40 @@ describe('Android mobile API', () => {
         loadingSides: 2,
         selectedLoadKg: 90,
       }),
+    });
+
+    const beforeHistoryCorrection = await db.set.findUniqueOrThrow({ where: { id: setId } });
+    if (
+      !beforeHistoryCorrection.equipmentLoadSnapshot ||
+      typeof beforeHistoryCorrection.equipmentLoadSnapshot !== 'object' ||
+      Array.isArray(beforeHistoryCorrection.equipmentLoadSnapshot)
+    ) {
+      throw new Error('Expected a frozen legacy equipment snapshot.');
+    }
+    mockUserId.mockResolvedValue(seeded.user.id);
+    const historyCorrection = await patchSet(
+      new Request(`http://test.local/api/sets/${setId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weight: 95, reps: 7, rir: 1 }),
+      }),
+      { params: Promise.resolve({ id: setId }) },
+    );
+    expect(historyCorrection.status).toBe(200);
+    expect(await historyCorrection.json()).toMatchObject({
+      weight: 95,
+      reps: 7,
+      rir: 1,
+      gymEquipmentId: null,
+      equipmentNameSnapshot: beforeHistoryCorrection.equipmentNameSnapshot,
+      selectedLoadKg: 95,
+      selectedLoadMultiplierSnapshot: beforeHistoryCorrection.selectedLoadMultiplierSnapshot,
+      nominalResistanceKg: null,
+      equipmentLoadSnapshot: {
+        ...beforeHistoryCorrection.equipmentLoadSnapshot,
+        selectedLoadKg: 95,
+        nominalResistanceKg: null,
+      },
     });
   });
 

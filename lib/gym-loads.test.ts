@@ -176,4 +176,17 @@ describe('saved gym load constraints', () => {
       15, 25,
     ]);
   });
+
+  it('marks equipment-first exercises unavailable after links and legacy config are removed', () => {
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'triceps', name: 'Cable pushdown', equipmentType: 'CABLE' },
+      linkedEquipment: [],
+      legacyConfig: null,
+    });
+
+    expect(resolved.source).toBe('none');
+    expect(resolved.isAvailable).toBe(false);
+    expect(resolved.weightOptions).toEqual([]);
+  });
 });

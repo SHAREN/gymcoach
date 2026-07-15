@@ -34,13 +34,34 @@ change.
 npm run test              # unit + component (Vitest, jsdom)
 npm run test:coverage     # with coverage
 
-# Integration + E2E need the test database:
-docker compose -f docker-compose.test.yml up -d
-npx prisma migrate deploy   # DATABASE_URL pointing at the test DB (port 5434)
-npm run test:integration    # Vitest against real Postgres
-npm run build && npm run test:e2e   # Playwright (builds, then drives the app)
-docker compose -f docker-compose.test.yml down
+# Recommended integration + E2E workflow. This owns and cleans the isolated
+# gymcoach-test database and its E2E server even when a test fails:
+bash scripts/verify.sh --full
 ```
+
+On Windows, invoke that script through Git Bash:
+
+```powershell
+& 'D:\Program Files\Git\bin\bash.exe' scripts/verify.sh --full
+```
+
+Docker is available through WSL on the GymCoach Home PC. If manual database
+diagnostics are required, use the explicit test project on both startup and
+cleanup:
+
+```powershell
+wsl.exe --cd (Get-Location).Path docker compose --project-name gymcoach-test --file docker-compose.test.yml up -d --wait test-db
+$env:DATABASE_URL = 'postgresql://gymcoach_test:gymcoach_test@localhost:5434/gymcoach_test'
+npx prisma migrate deploy
+npx vitest run --config vitest.integration.config.ts
+wsl.exe --cd (Get-Location).Path docker compose --project-name gymcoach-test --file docker-compose.test.yml down --volumes
+Remove-Item Env:DATABASE_URL
+```
+
+Setting `DATABASE_URL` in PowerShell is the supported fallback when an npm
+script contains POSIX inline environment syntax. Never use an unscoped Compose
+cleanup or append `--remove-orphans`: the canonical `gymcoach` project shares
+the Docker daemon and must remain untouched.
 
 CI runs lint, typecheck, unit, integration, build and E2E on every pull
 request (see `.github/workflows/ci.yml`).

@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.training
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.LocalSetEntity
@@ -171,6 +172,29 @@ class AutoregulationTest {
         assertTrue(unresolved.requiresEquipmentSelection)
         assertTrue(unresolved.weightOptions.isEmpty())
         assertEquals(listOf(5.0, 10.0, 15.0), selected.weightOptions)
+    }
+
+    @Test
+    fun equipmentFirstGymWithoutLinksOrLegacyConfigIsUnavailable() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "TRICEPS",
+            equipmentType = "CABLE",
+        )
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_1",
+                name = "Olymp",
+                inventoryMode = "EQUIPMENT_FIRST",
+                equipment = emptyList(),
+                exerciseConfigs = emptyList(),
+            ),
+        )
+
+        assertFalse(inventory.isAvailable)
+        assertEquals("none", inventory.source)
+        assertTrue(inventory.weightOptions.isEmpty())
     }
 
     @Test
