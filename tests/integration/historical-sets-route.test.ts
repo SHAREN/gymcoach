@@ -160,7 +160,7 @@ describe('POST /api/sessions/[id]/historical-sets', () => {
 
     const latest = await getLastPerformancesForEquipmentTargets(
       owner.id,
-      [{ exerciseId: exercise.id, gymEquipmentId: equipment.id }],
+      [{ exerciseId: exercise.id, gymId: gym.id, gymEquipmentId: equipment.id }],
       null,
     );
     expect(latest[0]?.sessionId).toBe(newerSession.id);

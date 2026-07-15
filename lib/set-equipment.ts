@@ -3,6 +3,7 @@ import { Prisma, type Set } from '@/lib/prisma-client';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
 import { resolveEquipmentLoadProfile } from '@/lib/gym-loads';
 import { mobileFrozenEquipmentLoadSnapshotSchema } from '@/lib/schemas/mobile';
+import { z } from 'zod';
 
 type EquipmentReader = Pick<
   Prisma.TransactionClient,
@@ -19,6 +20,35 @@ export interface SetEquipmentSnapshot {
 }
 
 export type SetEquipmentSnapshotAction = 'REPLACE' | 'CLEAR';
+
+const legacyMobileEquipmentLoadSnapshotSchema = z
+  .object({
+    version: z.literal(1),
+    loadType: z.enum(['NONE', 'FIXED', 'SELECTORIZED', 'PLATE_LOADED']),
+    equipmentType: z.enum([
+      'BARBELL',
+      'DUMBBELL',
+      'CABLE',
+      'MACHINE',
+      'BODYWEIGHT',
+      'CARDIO',
+      'OTHER',
+    ]),
+    selectedLoadKg: z.number().min(0).max(500),
+    selectedLoadMultiplier: z.number().positive().max(20),
+    nominalResistanceKg: z.number().min(0).max(10_000).nullable(),
+    baseLoadKg: z.number().min(0).max(5_000),
+    loadingSides: z.number().int().min(1).max(8),
+    platePool: z
+      .object({
+        id: z.string().trim().min(1).max(120),
+        name: z.string().trim().min(1).max(120),
+        compatibilityKey: z.string().trim().min(1).max(80),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
 
 type StoredSetEquipmentSnapshot = Pick<
   Set,
@@ -38,6 +68,7 @@ export async function resolveSetEquipmentSnapshot(
     exerciseId: string;
     gymEquipmentId?: string | null;
     selectedLoadKg: number;
+    snapshotVersion?: 1 | 2;
   },
 ): Promise<SetEquipmentSnapshot> {
   if (!input.gymEquipmentId) {
@@ -92,6 +123,32 @@ export async function resolveSetEquipmentSnapshot(
   const multiplier = equipment.selectedLoadMultiplier;
   const nominalResistanceKg =
     equipment.loadType === 'SELECTORIZED' ? round(selectedLoadKg * multiplier) : null;
+  if (input.snapshotVersion === 1) {
+    return {
+      gymEquipmentId: equipment.id,
+      equipmentNameSnapshot: equipment.name,
+      selectedLoadKg,
+      selectedLoadMultiplierSnapshot: multiplier,
+      nominalResistanceKg,
+      equipmentLoadSnapshot: {
+        version: 1,
+        loadType: equipment.loadType,
+        equipmentType: equipment.equipmentType,
+        selectedLoadKg,
+        selectedLoadMultiplier: multiplier,
+        nominalResistanceKg,
+        baseLoadKg: equipment.baseLoadKg,
+        loadingSides: equipment.loadingSides,
+        platePool: equipment.platePool
+          ? {
+              id: equipment.platePool.id,
+              name: equipment.platePool.name,
+              compatibilityKey: equipment.platePool.compatibilityKey,
+            }
+          : null,
+      },
+    };
+  }
   const revisionId = await ensureMobileEquipmentSnapshotRevision(client, equipment);
   const snapshot = {
     version: 2,
@@ -135,6 +192,8 @@ export async function resolveSetEquipmentUpdate(
     existing: StoredSetEquipmentSnapshot | null;
     requestedGymEquipmentId?: string | null;
     action?: SetEquipmentSnapshotAction;
+    createSnapshotVersion?: 1 | 2;
+    allowLegacySnapshot?: boolean;
   },
 ): Promise<SetEquipmentSnapshot> {
   if (!input.existing) {
@@ -145,6 +204,7 @@ export async function resolveSetEquipmentUpdate(
       exerciseId: input.exerciseId,
       gymEquipmentId: input.requestedGymEquipmentId,
       selectedLoadKg: input.selectedLoadKg,
+      snapshotVersion: input.createSnapshotVersion,
     });
   }
 
@@ -164,6 +224,7 @@ export async function resolveSetEquipmentUpdate(
       exerciseId: input.exerciseId,
       gymEquipmentId: input.requestedGymEquipmentId,
       selectedLoadKg: input.selectedLoadKg,
+      snapshotVersion: input.createSnapshotVersion,
     });
   }
 
@@ -176,12 +237,15 @@ export async function resolveSetEquipmentUpdate(
       'Changing set equipment requires equipmentSnapshotAction REPLACE or CLEAR.',
     );
   }
-  return preserveSetEquipmentSnapshot(input.existing, input.selectedLoadKg);
+  return preserveSetEquipmentSnapshot(input.existing, input.selectedLoadKg, {
+    allowLegacySnapshot: input.allowLegacySnapshot,
+  });
 }
 
 export function preserveSetEquipmentSnapshot(
   existing: StoredSetEquipmentSnapshot,
   selectedLoadKg: number,
+  options: { allowLegacySnapshot?: boolean } = {},
 ): SetEquipmentSnapshot {
   const hasSnapshot =
     existing.equipmentNameSnapshot != null ||
@@ -192,25 +256,30 @@ export function preserveSetEquipmentSnapshot(
   if (!hasSnapshot) return emptySetEquipmentSnapshot();
 
   const selected = round(selectedLoadKg);
-  const frozenLoadSnapshot = requireSupportedFrozenLoadSnapshot(existing);
-  const resolved = resolveEquipmentLoadProfile({
-    equipmentId: frozenLoadSnapshot.gymEquipmentId,
-    equipmentName: existing.equipmentNameSnapshot ?? frozenLoadSnapshot.gymEquipmentId,
-    equipmentType: frozenLoadSnapshot.equipmentType,
-    loadType: frozenLoadSnapshot.loadType,
-    weightOptions: frozenLoadSnapshot.weightOptions,
-    selectedLoadMultiplier: frozenLoadSnapshot.selectedLoadMultiplier,
-    baseLoadKg: frozenLoadSnapshot.baseLoadKg,
-    loadingSides: frozenLoadSnapshot.loadingSides,
-    platePoolId: frozenLoadSnapshot.platePool?.id ?? null,
-    platePoolName: frozenLoadSnapshot.platePool?.name ?? null,
-    plates: frozenLoadSnapshot.platePool?.plates ?? [],
-  });
-  if (
-    frozenLoadSnapshot.loadType !== 'NONE' &&
-    !resolved.attainableLoads.includes(selected)
-  ) {
-    throw new ApiError(400, 'Selected weight is not attainable with the recorded equipment snapshot.');
+  const frozenLoadSnapshot = requireSupportedFrozenLoadSnapshot(
+    existing,
+    options.allowLegacySnapshot === true,
+  );
+  if (frozenLoadSnapshot.version === 2) {
+    const resolved = resolveEquipmentLoadProfile({
+      equipmentId: frozenLoadSnapshot.gymEquipmentId,
+      equipmentName: existing.equipmentNameSnapshot ?? frozenLoadSnapshot.gymEquipmentId,
+      equipmentType: frozenLoadSnapshot.equipmentType,
+      loadType: frozenLoadSnapshot.loadType,
+      weightOptions: frozenLoadSnapshot.weightOptions,
+      selectedLoadMultiplier: frozenLoadSnapshot.selectedLoadMultiplier,
+      baseLoadKg: frozenLoadSnapshot.baseLoadKg,
+      loadingSides: frozenLoadSnapshot.loadingSides,
+      platePoolId: frozenLoadSnapshot.platePool?.id ?? null,
+      platePoolName: frozenLoadSnapshot.platePool?.name ?? null,
+      plates: frozenLoadSnapshot.platePool?.plates ?? [],
+    });
+    if (frozenLoadSnapshot.loadType !== 'NONE' && !resolved.attainableLoads.includes(selected)) {
+      throw new ApiError(
+        400,
+        'Selected weight is not attainable with the recorded equipment snapshot.',
+      );
+    }
   }
   const selectorized =
     snapshotLoadType(existing.equipmentLoadSnapshot) === 'SELECTORIZED' ||
@@ -233,18 +302,24 @@ export function preserveSetEquipmentSnapshot(
   };
 }
 
-function requireSupportedFrozenLoadSnapshot(existing: StoredSetEquipmentSnapshot) {
+function requireSupportedFrozenLoadSnapshot(
+  existing: StoredSetEquipmentSnapshot,
+  allowLegacySnapshot: boolean,
+) {
   const parsed = mobileFrozenEquipmentLoadSnapshotSchema.safeParse(existing.equipmentLoadSnapshot);
-  if (!parsed.success) {
-    throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
+  if (parsed.success) {
+    if (existing.gymEquipmentId != null && existing.gymEquipmentId !== parsed.data.gymEquipmentId) {
+      throw new ApiError(400, 'The recorded equipment snapshot does not match the set equipment.');
+    }
+    return parsed.data;
   }
-  if (
-    existing.gymEquipmentId != null &&
-    existing.gymEquipmentId !== parsed.data.gymEquipmentId
-  ) {
-    throw new ApiError(400, 'The recorded equipment snapshot does not match the set equipment.');
+  if (allowLegacySnapshot) {
+    const legacy = legacyMobileEquipmentLoadSnapshotSchema.safeParse(
+      existing.equipmentLoadSnapshot,
+    );
+    if (legacy.success) return legacy.data;
   }
-  return parsed.data;
+  throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
 }
 
 export function emptySetEquipmentSnapshot(): SetEquipmentSnapshot {

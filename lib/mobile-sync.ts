@@ -210,6 +210,8 @@ async function applyOperationInTransaction(
               existing,
               requestedGymEquipmentId: operation.set.gymEquipmentId,
               action: operation.set.equipmentSnapshotAction,
+              createSnapshotVersion: 1,
+              allowLegacySnapshot: true,
             });
       const data = {
         sessionId: operation.set.sessionId,

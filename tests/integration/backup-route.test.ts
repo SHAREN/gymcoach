@@ -524,7 +524,7 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     await db.set.delete({ where: { id: temporarySet.id } });
 
     actAs(userA.id);
-    const dump = await (await getBackup()).json();
+    const dump = await (await getBackup(getReq())).json();
     expect(dump.sessions[0].exerciseNames).toContain('Pull-up');
     expect(
       dump.sessions[0].sets.some((set: { exerciseName: string }) => set.exerciseName === 'Pull-up'),

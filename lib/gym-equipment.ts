@@ -10,8 +10,8 @@ export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type UpsertGymEquipmentInput = GymEquipmentInput & {
-  // Accepted temporarily for old MCP clients. Equipment links now resolve
-  // availability directly, so no GymExerciseConfig copy is written.
+  // REST and older Android clients still consume GymExerciseConfig. New
+  // equipment-first callers can omit this legacy mirror and rely on links.
   markExercisesAvailable?: boolean;
 };
 
@@ -387,6 +387,20 @@ export async function upsertOwnedGymEquipment(
             equipmentId: item.id,
             exerciseId,
           })),
+        });
+      }
+    }
+    if (input.markExercisesAvailable === true && exerciseIds.length > 0) {
+      for (const exerciseId of exerciseIds) {
+        await tx.gymExerciseConfig.upsert({
+          where: { gymId_exerciseId: { gymId: gym.id, exerciseId } },
+          update: { isAvailable: true, weightOptions: effectiveWeightOptions },
+          create: {
+            gymId: gym.id,
+            exerciseId,
+            isAvailable: true,
+            weightOptions: effectiveWeightOptions,
+          },
         });
       }
     }
