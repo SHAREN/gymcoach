@@ -19,6 +19,7 @@ const expectedSchemas = new Set([
   'exercise-session.schema.json',
   'heart-rate-summary.schema.json',
   'sensor-sample.schema.json',
+  'sensor-batch.schema.json',
   'set-record.schema.json',
   'sync-ack.schema.json',
   'sync-snapshot.schema.json',
@@ -63,6 +64,7 @@ const opaqueDomainIdSchemas = [
   ['set-record.schema.json', 'sessionId'],
   ['set-record.schema.json', 'exerciseSessionId'],
   ['sensor-sample.schema.json', 'sessionId'],
+  ['sensor-batch.schema.json', 'sessionId'],
   ['watch-event.schema.json', 'sessionId'],
   ['sync-ack.schema.json', 'sessionId'],
   ['sync-snapshot.schema.json', 'sessionId'],
@@ -189,6 +191,7 @@ for (const name of [
   'sync-ack.schema.json',
   'sync-snapshot.schema.json',
   'batch-envelope.schema.json',
+  'sensor-batch.schema.json',
 ]) {
   const schema = schemas.get(name);
   assert.ok(schema.required.includes('protocolVersion'), `${name} must require protocolVersion`);
@@ -277,6 +280,52 @@ required(
 );
 assert.ok(phases.has(sensor.phase), 'SensorSample.phase is not in the protocol enum');
 assert.ok(sources.has(sensor.source), 'SensorSample.source is invalid');
+
+const sensorBatch = examples.get('sensor-batch.json').parsed;
+required(
+  sensorBatch,
+  [
+    'protocolVersion',
+    'schemaVersion',
+    'batchId',
+    'sessionId',
+    'source',
+    'deviceId',
+    'createdAt',
+    'sequence',
+    'totalSequences',
+    'sampleCount',
+    'samples',
+  ],
+  'SensorBatch',
+);
+validateWireVersion(sensorBatch, 'SensorBatch');
+assert.equal(
+  sensorBatch.sampleCount,
+  sensorBatch.samples.length,
+  'SensorBatch sampleCount mismatch',
+);
+assert.ok(
+  sensorBatch.sequence <= sensorBatch.totalSequences,
+  'SensorBatch sequence is out of range',
+);
+assert.ok(
+  sensorBatch.samples.every((sample) => sample.sessionId === sensorBatch.sessionId),
+  'SensorBatch samples must use the envelope sessionId',
+);
+assert.equal(
+  sensorBatch.samples.filter((sample) => sample.valid).length,
+  2,
+  'SensorBatch fixture must include two valid readings',
+);
+assert.ok(
+  sensorBatch.samples.some((sample) => !sample.valid && sample.value === null),
+  'SensorBatch fixture must preserve an invalid off-wrist reading without zero',
+);
+assert.ok(
+  examples.get('sensor-batch.json').bytes < fileMaxBytes,
+  'SensorBatch fixture exceeds file limit',
+);
 
 const setRecord = examples.get('set-record.json').parsed;
 required(

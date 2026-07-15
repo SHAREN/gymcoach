@@ -1,0 +1,56 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "batchId": "af16d6d4-8f3f-42b3-8d70-3705d67bc5a1",
+  "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+  "source": "WATCH",
+  "deviceId": "watch-gt4-stage4",
+  "createdAt": 1784102700000,
+  "sequence": 1,
+  "totalSequences": 1,
+  "sampleCount": 3,
+  "samples": [
+    {
+      "sampleId": "fdba8b06-ff92-4a7b-91bc-84d046f22421",
+      "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+      "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",
+      "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+      "phase": "SET",
+      "sensorType": "HEART_RATE",
+      "value": 154,
+      "unit": "BPM",
+      "timestamp": 1784102575000,
+      "source": "WATCH",
+      "valid": true,
+      "quality": "VALID"
+    },
+    {
+      "sampleId": "b81bf1d8-beb5-4d1a-afc1-a5a4bd2567a1",
+      "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+      "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",
+      "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+      "phase": "REST",
+      "sensorType": "HEART_RATE",
+      "value": 132,
+      "unit": "BPM",
+      "timestamp": 1784102610000,
+      "source": "WATCH",
+      "valid": true,
+      "quality": "VALID"
+    },
+    {
+      "sampleId": "22581366-c2b8-41af-87c2-d5d3bc5ec9cb",
+      "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+      "exerciseSessionId": "exercise_session_17b70728c8a54338b28a45b40c83092c",
+      "setId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
+      "phase": "REST",
+      "sensorType": "HEART_RATE",
+      "value": null,
+      "unit": "BPM",
+      "timestamp": 1784102640000,
+      "source": "WATCH",
+      "valid": false,
+      "quality": "OFF_WRIST"
+    }
+  ]
+}
