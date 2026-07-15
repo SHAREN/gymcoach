@@ -22,7 +22,7 @@
     "protocolVersion": { "type": "string", "const": "1.0" },
     "schemaVersion": { "type": "integer", "const": 1 },
     "batchId": { "type": "string", "format": "uuid" },
-    "sessionId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "source": { "type": "string", "enum": ["PHONE", "WATCH"] },
     "deviceId": { "type": "string", "minLength": 1 },
     "createdAt": { "type": "integer", "minimum": 0 },

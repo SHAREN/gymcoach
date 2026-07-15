@@ -1,12 +1,12 @@
 {
-  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
-  "workoutProgramId": "2e16599e-045f-4db2-8243-393e45cbf2d7",
-  "userId": "bd57db6a-0240-411d-85ee-dd5a588863a2",
+  "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
+  "workoutProgramId": "workout_2e16599e045f4db28243393e45cbf2d7",
+  "userId": "user_bd57db6a0240411d85eedd5a588863a2",
   "status": "ACTIVE",
   "startedAt": 1784102400000,
   "finishedAt": null,
-  "activeExerciseId": "17b70728-c8a5-4338-b28a-45b40c83092c",
-  "activeSetId": "34599d14-fb23-4ff2-837a-d7dc453ec21a",
+  "activeExerciseId": "exercise_198d94eb671f48609039b1d5e6f4fb70",
+  "activeSetId": "mob_set_34599d14fb234ff2837ad7dc453ec21a",
   "revision": 7,
   "updatedAt": 1784102580000,
   "updatedBy": "PHONE"

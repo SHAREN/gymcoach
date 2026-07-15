@@ -35,6 +35,13 @@ stricter limit reported by the installed Huawei SDK/runtime.
 
 ## Delivery, ordering, and acknowledgement
 
+Domain identifiers are opaque stable strings. Android currently uses prefixed
+values such as `mob_session_<hex>` and `mob_set_<hex>`, while server-originated
+entities may use a different non-UUID format. Implementations must preserve
+these IDs exactly and must not replace them with watch-generated duplicates.
+Only protocol-generated identifiers such as `eventId`, `ackId`, `batchId`,
+`snapshotId`, `conflictId`, and `sampleId` are UUIDs.
+
 1. The producer creates a stable UUID `eventId` once and persists the event in
    its local outbox before attempting delivery.
 2. The consumer stores processed `eventId` values. Re-delivery of an already

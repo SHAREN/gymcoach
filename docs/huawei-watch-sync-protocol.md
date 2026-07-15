@@ -31,7 +31,7 @@ compatibility handling.
   "protocolVersion": "1.0",
   "schemaVersion": 1,
   "eventId": "uuid",
-  "sessionId": "uuid",
+  "sessionId": "opaque-existing-session-id",
   "type": "SET_COMPLETED",
   "timestamp": 0,
   "source": "WATCH",
@@ -45,6 +45,11 @@ Required rules:
 
 - `eventId` is generated once and is globally unique.
 - `sessionId` is the existing `LocalSessionEntity.id`.
+- Session, workout, user, exercise, exercise-session, entity, and set IDs are
+  opaque stable strings. Existing prefixed Android IDs and server IDs must be
+  preserved exactly; they are not required to be UUIDs.
+- Protocol-generated event, ACK, batch, snapshot, conflict, and sample IDs are
+  UUIDs.
 - `timestamp` is Unix epoch milliseconds and records when the user action occurred.
 - `source` is `PHONE` or `WATCH`. A debug simulator uses `WATCH` with a
   debug-only `deviceId`; `SIMULATOR` is not a v1 source value.
@@ -90,7 +95,7 @@ order. Wire replay order is revision, timestamp, then lexical `eventId`.
   "protocolVersion": "1.0",
   "schemaVersion": 1,
   "ackId": "uuid",
-  "sessionId": "uuid",
+  "sessionId": "opaque-existing-session-id",
   "eventIds": ["uuid-of-received-event"],
   "status": "APPLIED",
   "timestamp": 0,

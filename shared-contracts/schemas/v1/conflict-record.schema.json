@@ -19,9 +19,9 @@
   ],
   "properties": {
     "conflictId": { "type": "string", "format": "uuid" },
-    "sessionId": { "type": "string", "format": "uuid" },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "entityType": { "type": "string", "minLength": 1 },
-    "entityId": { "type": "string", "minLength": 1 },
+    "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "localRevision": { "type": "integer", "minimum": 1 },
     "remoteRevision": { "type": "integer", "minimum": 1 },
     "localEvent": { "$ref": "watch-event.schema.json" },

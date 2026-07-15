@@ -20,9 +20,9 @@
     "revision"
   ],
   "properties": {
-    "setId": { "type": "string", "format": "uuid" },
-    "sessionId": { "type": "string", "format": "uuid" },
-    "exerciseSessionId": { "type": "string", "format": "uuid" },
+    "setId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "exerciseSessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "setNumber": { "type": "integer", "minimum": 1 },
     "weight": { "type": "number", "minimum": 0 },
     "reps": { "type": "integer", "minimum": 0 },
