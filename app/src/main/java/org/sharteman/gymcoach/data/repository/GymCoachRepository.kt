@@ -15,8 +15,11 @@ import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.ProgressCacheEntity
+import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
+import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
+import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
@@ -394,6 +397,9 @@ class GymCoachRepository(
     suspend fun hasProcessedWatchEvent(eventId: String): Boolean =
         dao.hasProcessedWatchEvent(eventId) > 0
 
+    suspend fun hasWatchSensorBatch(batchId: String, sequence: Int): Boolean =
+        dao.hasWatchSensorBatch(batchId, sequence) > 0
+
     suspend fun saveActiveWorkoutRuntime(runtime: ActiveWorkoutRuntimeEntity) {
         dao.saveActiveWorkoutRuntime(runtime)
     }
@@ -447,6 +453,64 @@ class GymCoachRepository(
         )
         if (applied) scheduleSyncNow()
         return applied
+    }
+
+    suspend fun applyWatchSensorBatch(
+        processed: WatchProcessedEventEntity,
+        batch: WatchSensorBatchEntity,
+        samples: List<WatchSensorSampleEntity>,
+        runtime: ActiveWorkoutRuntimeEntity,
+    ): Boolean = dao.applyWatchSensorBatch(processed, batch, samples, runtime)
+
+    suspend fun applyWatchRestEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        summary: RestRecoverySummaryEntity?,
+    ): Boolean = dao.applyWatchRestEvent(processed, runtime, summary)
+
+    suspend fun watchSensorSamplesForSet(
+        sessionId: String,
+        setId: String,
+        phase: String,
+    ): List<WatchSensorSampleEntity> = dao.getWatchSensorSamplesForSet(sessionId, setId, phase)
+
+    suspend fun watchSensorSamplesForInterval(
+        sessionId: String,
+        setId: String,
+        phase: String,
+        startedAtEpochMs: Long,
+        endedAtEpochMs: Long,
+    ): List<WatchSensorSampleEntity> = dao.getWatchSensorSamplesForInterval(
+        sessionId,
+        setId,
+        phase,
+        startedAtEpochMs,
+        endedAtEpochMs,
+    )
+
+    suspend fun restRecoverySummaries(sessionId: String): List<RestRecoverySummaryEntity> =
+        dao.getRestRecoverySummaries(sessionId)
+
+    suspend fun updateSetHeartRateSummary(
+        setId: String,
+        minHr: Int?,
+        maxHr: Int?,
+        avgHr: Int?,
+        startHr: Int?,
+        endHr: Int?,
+        sampleCount: Int,
+    ): Boolean = dao.updateSetHeartRateSummary(
+        setId,
+        minHr,
+        maxHr,
+        avgHr,
+        startHr,
+        endHr,
+        sampleCount,
+    ) > 0
+
+    suspend fun saveRestRecoverySummary(summary: RestRecoverySummaryEntity) {
+        dao.saveRestRecoverySummary(summary)
     }
 
     suspend fun queuedSyncOperations(): List<SyncOutboxEntity> = dao.queuedOperations()

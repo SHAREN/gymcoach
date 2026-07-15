@@ -68,5 +68,59 @@ class WatchWorkoutProtocolCodecTest {
         assertEquals(WatchProtocolErrorCode.INVALID_JSON, (failure as WatchProtocolException).code)
     }
 
+    @Test
+    fun `sensor batch round trip preserves explicit off wrist sample`() {
+        val decoded = codec.decodeSensorBatch(resource("sensor-batch.json").encodeToByteArray())
+        val roundTripped = codec.decodeSensorBatch(codec.encodeSensorBatch(decoded))
+
+        assertEquals(3, decoded.sampleCount)
+        assertEquals(1, decoded.sequence)
+        assertEquals(false, decoded.samples.last().valid)
+        assertEquals("OFF_WRIST", decoded.samples.last().quality)
+        assertEquals("null", decoded.samples.last().value.toString())
+        assertEquals(decoded, roundTripped)
+    }
+
+    @Test
+    fun `decodes normative sensor and rest event payloads`() {
+        val root = Json.parseToJsonElement(resource("stage4-rest-payloads.json")).jsonObject
+
+        val sensor = codec.decodeSensorBatchRecordedPayload(root.getValue("sensorBatchRecorded").jsonObject)
+        val started = codec.decodeRestStartedPayload(root.getValue("restStarted").jsonObject)
+        val updated = codec.decodeRestUpdatedPayload(root.getValue("restUpdated").jsonObject)
+        val finished = codec.decodeRestFinishedPayload(root.getValue("restFinished").jsonObject)
+        val skipped = codec.decodeRestSkippedPayload(root.getValue("restSkipped").jsonObject)
+
+        assertEquals(3, sensor.sampleCount)
+        assertEquals(1784102580000L, started.startedAt)
+        assertEquals("ADD_30_SECONDS", updated.reason)
+        assertEquals(20, finished.summary.sampleCount)
+        assertEquals(14.0, finished.summary.drop30Seconds ?: Double.NaN, 0.0)
+        assertEquals(1784102640000L, skipped.skippedAt)
+    }
+
+    @Test
+    fun `sensor batch rejects inconsistent count and file size`() {
+        val decoded = codec.decodeSensorBatch(resource("sensor-batch.json").encodeToByteArray())
+        val countFailure = runCatching {
+            codec.encodeSensorBatch(decoded.copy(sampleCount = decoded.sampleCount + 1))
+        }.exceptionOrNull()
+        val sizeFailure = runCatching {
+            codec.encodeSensorBatch(
+                decoded.copy(
+                    samples = listOf(
+                        decoded.samples.first().copy(
+                            value = kotlinx.serialization.json.JsonPrimitive("x".repeat(4_000_000)),
+                        ),
+                    ),
+                    sampleCount = 1,
+                ),
+            )
+        }.exceptionOrNull()
+
+        assertEquals(WatchProtocolErrorCode.INVALID_EVENT, (countFailure as WatchProtocolException).code)
+        assertEquals(WatchProtocolErrorCode.FILE_TOO_LARGE, (sizeFailure as WatchProtocolException).code)
+    }
+
     private fun resource(name: String): String = requireNotNull(javaClass.classLoader?.getResource(name)).readText()
 }

@@ -128,6 +128,21 @@ data class WatchSensorSampleDto(
 )
 
 @Serializable
+data class WatchSensorBatchDto(
+    val protocolVersion: String,
+    val schemaVersion: Int,
+    val batchId: String,
+    val sessionId: String,
+    val source: WatchEventSource,
+    val deviceId: String,
+    val createdAt: Long,
+    val sequence: Int,
+    val totalSequences: Int,
+    val sampleCount: Int,
+    val samples: List<WatchSensorSampleDto>,
+)
+
+@Serializable
 data class WatchSyncSnapshotDto(
     val protocolVersion: String,
     val schemaVersion: Int,
@@ -197,4 +212,51 @@ data class SetDeletedPayloadDto(
     val setId: String,
     val deletedAt: Long,
     val baseRevision: Long,
+)
+
+@Serializable
+data class SensorBatchRecordedPayloadDto(
+    val batchId: String,
+    val sequence: Int,
+    val totalSequences: Int,
+    val deliveryMode: WatchDeliveryMode,
+    val sampleCount: Int,
+)
+
+@Serializable
+data class RestStartedPayloadDto(
+    val setId: String,
+    val startedAt: Long,
+    val restEndsAt: Long,
+)
+
+@Serializable
+data class RestUpdatedPayloadDto(
+    val restEndsAt: Long,
+    val reason: String,
+)
+
+@Serializable
+data class RestHeartRateSummaryDto(
+    val startedAt: Long,
+    val finishedAt: Long,
+    val start: Double?,
+    val min: Double?,
+    val average: Double?,
+    val at30Seconds: Double?,
+    val at60Seconds: Double?,
+    val drop30Seconds: Double?,
+    val drop60Seconds: Double?,
+    val sampleCount: Int,
+)
+
+@Serializable
+data class RestFinishedPayloadDto(
+    val finishedAt: Long,
+    val summary: RestHeartRateSummaryDto,
+)
+
+@Serializable
+data class RestSkippedPayloadDto(
+    val skippedAt: Long,
 )

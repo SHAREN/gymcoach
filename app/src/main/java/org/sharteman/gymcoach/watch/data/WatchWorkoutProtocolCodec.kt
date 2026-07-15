@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.watch.data
 
 import java.util.UUID
+import kotlin.math.abs
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -10,6 +11,12 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import org.sharteman.gymcoach.watch.domain.ActiveExerciseChangedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestHeartRateSummaryDto
+import org.sharteman.gymcoach.watch.domain.RestFinishedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestSkippedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestStartedPayloadDto
+import org.sharteman.gymcoach.watch.domain.RestUpdatedPayloadDto
+import org.sharteman.gymcoach.watch.domain.SensorBatchRecordedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetDeletedPayloadDto
 import org.sharteman.gymcoach.watch.domain.SetStartedPayloadDto
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
@@ -19,6 +26,7 @@ import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 import org.sharteman.gymcoach.watch.domain.WatchSensorSampleDto
+import org.sharteman.gymcoach.watch.domain.WatchSensorBatchDto
 import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
@@ -66,6 +74,16 @@ class WatchWorkoutProtocolCodec(
         return decodeValidated(message, ::validateSyncAck)
     }
 
+    fun encodeSensorBatch(value: WatchSensorBatchDto): ByteArray {
+        validateSensorBatch(value)
+        return json.encodeToString(value).encodeToByteArray().also(::requireFileSize)
+    }
+
+    fun decodeSensorBatch(message: ByteArray): WatchSensorBatchDto {
+        requireFileSize(message)
+        return decodeValidated(message, ::validateSensorBatch)
+    }
+
     fun decodeActiveExerciseChangedPayload(payload: JsonObject): ActiveExerciseChangedPayloadDto =
         decodePayload(payload, ::validateActiveExerciseChanged)
 
@@ -89,6 +107,36 @@ class WatchWorkoutProtocolCodec(
 
     fun encodeSetRecordPayload(payload: WatchSetRecordDto): JsonObject =
         encodePayload(payload, ::validateSetRecord)
+
+    fun decodeSensorBatchRecordedPayload(payload: JsonObject): SensorBatchRecordedPayloadDto =
+        decodePayload(payload, ::validateSensorBatchRecorded)
+
+    fun encodeSensorBatchRecordedPayload(payload: SensorBatchRecordedPayloadDto): JsonObject =
+        encodePayload(payload, ::validateSensorBatchRecorded)
+
+    fun decodeRestStartedPayload(payload: JsonObject): RestStartedPayloadDto =
+        decodePayload(payload, ::validateRestStarted)
+
+    fun encodeRestStartedPayload(payload: RestStartedPayloadDto): JsonObject =
+        encodePayload(payload, ::validateRestStarted)
+
+    fun decodeRestUpdatedPayload(payload: JsonObject): RestUpdatedPayloadDto =
+        decodePayload(payload, ::validateRestUpdated)
+
+    fun encodeRestUpdatedPayload(payload: RestUpdatedPayloadDto): JsonObject =
+        encodePayload(payload, ::validateRestUpdated)
+
+    fun decodeRestFinishedPayload(payload: JsonObject): RestFinishedPayloadDto =
+        decodePayload(payload, ::validateRestFinished)
+
+    fun encodeRestFinishedPayload(payload: RestFinishedPayloadDto): JsonObject =
+        encodePayload(payload, ::validateRestFinished)
+
+    fun decodeRestSkippedPayload(payload: JsonObject): RestSkippedPayloadDto =
+        decodePayload(payload, ::validateRestSkipped)
+
+    fun encodeRestSkippedPayload(payload: RestSkippedPayloadDto): JsonObject =
+        encodePayload(payload, ::validateRestSkipped)
 
     private inline fun <reified T> encodeValidated(value: T, validate: (T) -> Unit): ByteArray {
         validate(value)
@@ -190,6 +238,26 @@ class WatchWorkoutProtocolCodec(
         ) invalid()
     }
 
+    private fun validateSensorBatch(value: WatchSensorBatchDto) {
+        requireProtocol(value.protocolVersion, value.schemaVersion)
+        requireUuid(value.batchId)
+        requireOpaqueId(value.sessionId)
+        if (
+            value.deviceId.isBlank() ||
+            value.deviceId.codePointCount(0, value.deviceId.length) > MAX_OPAQUE_ID_CODE_POINTS ||
+            value.createdAt < 0 ||
+            value.sequence < 1 ||
+            value.totalSequences < 1 ||
+            value.sequence > value.totalSequences ||
+            value.samples.isEmpty() ||
+            value.sampleCount != value.samples.size
+        ) invalid()
+        value.samples.forEach { sample ->
+            validateSensorSample(sample)
+            if (sample.sessionId != value.sessionId || sample.source != value.source) invalid()
+        }
+    }
+
     private fun validateSyncSnapshot(value: WatchSyncSnapshotDto) {
         requireProtocol(value.protocolVersion, value.schemaVersion)
         requireUuid(value.snapshotId)
@@ -270,6 +338,52 @@ class WatchWorkoutProtocolCodec(
         if (value.deletedAt < 0 || value.baseRevision < 1) invalid()
     }
 
+    private fun validateSensorBatchRecorded(value: SensorBatchRecordedPayloadDto) {
+        requireUuid(value.batchId)
+        if (
+            value.sequence < 1 ||
+            value.totalSequences < 1 ||
+            value.sequence > value.totalSequences ||
+            value.sampleCount < 1
+        ) invalid()
+    }
+
+    private fun validateRestStarted(value: RestStartedPayloadDto) {
+        requireOpaqueId(value.setId)
+        if (value.startedAt < 0 || value.restEndsAt < value.startedAt) invalid()
+    }
+
+    private fun validateRestUpdated(value: RestUpdatedPayloadDto) {
+        if (value.restEndsAt < 0 || value.reason.isBlank()) invalid()
+    }
+
+    private fun validateRestFinished(value: RestFinishedPayloadDto) {
+        if (value.finishedAt < 0 || value.summary.finishedAt != value.finishedAt) invalid()
+        validateRestHeartRateSummary(value.summary)
+    }
+
+    private fun validateRestSkipped(value: RestSkippedPayloadDto) {
+        if (value.skippedAt < 0) invalid()
+    }
+
+    private fun validateRestHeartRateSummary(value: RestHeartRateSummaryDto) {
+        val readings = listOf(value.start, value.min, value.average, value.at30Seconds, value.at60Seconds)
+        val drops = listOf(value.drop30Seconds, value.drop60Seconds)
+        if (
+            value.startedAt < 0 ||
+            value.finishedAt < value.startedAt ||
+            value.sampleCount < 0 ||
+            readings.any { it != null && (!it.isFinite() || it <= 0) } ||
+            drops.any { it != null && !it.isFinite() } ||
+            (value.start == null || value.at30Seconds == null) != (value.drop30Seconds == null) ||
+            (value.start == null || value.at60Seconds == null) != (value.drop60Seconds == null) ||
+            (value.drop30Seconds != null &&
+                abs(value.drop30Seconds - (value.start!! - value.at30Seconds!!)) > DOUBLE_TOLERANCE) ||
+            (value.drop60Seconds != null &&
+                abs(value.drop60Seconds - (value.start!! - value.at60Seconds!!)) > DOUBLE_TOLERANCE)
+        ) invalid()
+    }
+
     private fun requireProtocol(protocolVersion: String, schemaVersion: Int) {
         if (protocolVersion != WatchProtocol.VERSION || schemaVersion != WatchProtocol.SCHEMA_VERSION) {
             throw WatchProtocolException(WatchProtocolErrorCode.UNSUPPORTED_PROTOCOL)
@@ -301,6 +415,7 @@ class WatchWorkoutProtocolCodec(
 
     private companion object {
         const val MAX_OPAQUE_ID_CODE_POINTS = 128
+        const val DOUBLE_TOLERANCE = 1e-9
 
         val STRICT_JSON = Json {
             ignoreUnknownKeys = false
