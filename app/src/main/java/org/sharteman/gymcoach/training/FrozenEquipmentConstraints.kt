@@ -8,13 +8,28 @@ import org.sharteman.gymcoach.data.model.MobileFrozenEquipmentLoadSnapshot
 
 private val frozenSnapshotJson = Json { ignoreUnknownKeys = true }
 
-fun frozenEquipmentLoadConstraints(set: LocalSetEntity): LoadConstraints? {
+sealed interface FrozenEquipmentLoadState {
+    data object NoSnapshot : FrozenEquipmentLoadState
+    data object Invalid : FrozenEquipmentLoadState
+    data class Supported(val constraints: LoadConstraints) : FrozenEquipmentLoadState
+}
+
+fun frozenEquipmentLoadState(set: LocalSetEntity): FrozenEquipmentLoadState {
+    if (set.equipmentLoadSnapshotJson == null) return FrozenEquipmentLoadState.NoSnapshot
     val snapshot = runCatching {
-        set.equipmentLoadSnapshotJson?.let {
-            frozenSnapshotJson.decodeFromString<MobileFrozenEquipmentLoadSnapshot>(it)
-        }
-    }.getOrNull() ?: return null
-    if (snapshot.version != 2 || snapshot.gymEquipmentId != set.gymEquipmentId) return null
+        frozenSnapshotJson.decodeFromString<MobileFrozenEquipmentLoadSnapshot>(
+            set.equipmentLoadSnapshotJson,
+        )
+    }.getOrNull() ?: return FrozenEquipmentLoadState.Invalid
+    if (
+        snapshot.version != 2 ||
+        snapshot.revisionId.isBlank() ||
+        snapshot.gymEquipmentId.isBlank() ||
+        snapshot.loadType !in setOf("NONE", "FIXED", "SELECTORIZED", "PLATE_LOADED") ||
+        (set.gymEquipmentId != null && snapshot.gymEquipmentId != set.gymEquipmentId)
+    ) {
+        return FrozenEquipmentLoadState.Invalid
+    }
 
     val plates = snapshot.platePool?.plates.orEmpty().map { plate ->
         PlateInventoryItem(weightKg = plate.weightKg, quantity = plate.quantity)
@@ -33,6 +48,9 @@ fun frozenEquipmentLoadConstraints(set: LocalSetEntity): LoadConstraints? {
             .sorted()
         else -> emptyList()
     }
+    if (snapshot.loadType != "NONE" && attainableLoads.isEmpty()) {
+        return FrozenEquipmentLoadState.Invalid
+    }
     val profile = ResolvedEquipmentLoadProfile(
         equipmentId = snapshot.gymEquipmentId,
         equipmentName = set.equipmentNameSnapshot.orEmpty(),
@@ -48,12 +66,17 @@ fun frozenEquipmentLoadConstraints(set: LocalSetEntity): LoadConstraints? {
         attainableLoads = attainableLoads,
         inventoryPrecision = "FROZEN",
     )
-    return LoadConstraints(
-        equipmentType = snapshot.equipmentType,
-        isAvailable = true,
-        equipmentId = snapshot.gymEquipmentId,
-        equipmentOptions = listOf(profile),
+    return FrozenEquipmentLoadState.Supported(
+        LoadConstraints(
+            equipmentType = snapshot.equipmentType,
+            isAvailable = true,
+            equipmentId = snapshot.gymEquipmentId,
+            equipmentOptions = listOf(profile),
+        ),
     )
 }
+
+fun frozenEquipmentLoadConstraints(set: LocalSetEntity): LoadConstraints? =
+    (frozenEquipmentLoadState(set) as? FrozenEquipmentLoadState.Supported)?.constraints
 
 private fun roundFrozenLoad(value: Double): Double = round(value * 100.0) / 100.0

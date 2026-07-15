@@ -68,7 +68,8 @@ import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
-import org.sharteman.gymcoach.training.frozenEquipmentLoadConstraints
+import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
+import org.sharteman.gymcoach.training.frozenEquipmentLoadState
 import org.sharteman.gymcoach.training.isAchievableLoad
 import java.time.Duration
 import java.time.Instant
@@ -553,13 +554,21 @@ class GymCoachRepository(
         runtime: ActiveWorkoutRuntimeEntity,
     ): WatchSetEventApplyResult {
         val existing = dao.getSet(set.id)
-        val existingFrozenConstraints = existing?.let(::frozenEquipmentLoadConstraints)
-        if (
-            existingFrozenConstraints != null &&
-            !isAchievableLoad(existingFrozenConstraints, set.weight)
-        ) {
-            saveWatchEquipmentConflict(processed, set, runtime, "INVALID_EQUIPMENT_LOAD")
-            return WatchSetEventApplyResult(applied = false, errorCode = "INVALID_EQUIPMENT_LOAD")
+        when (val frozen = existing?.let(::frozenEquipmentLoadState)) {
+            FrozenEquipmentLoadState.Invalid -> {
+                saveWatchEquipmentConflict(processed, set, runtime, "INVALID_EQUIPMENT_SNAPSHOT")
+                return WatchSetEventApplyResult(
+                    applied = false,
+                    errorCode = "INVALID_EQUIPMENT_SNAPSHOT",
+                )
+            }
+            is FrozenEquipmentLoadState.Supported -> if (
+                !isAchievableLoad(frozen.constraints, set.weight)
+            ) {
+                saveWatchEquipmentConflict(processed, set, runtime, "INVALID_EQUIPMENT_LOAD")
+                return WatchSetEventApplyResult(applied = false, errorCode = "INVALID_EQUIPMENT_LOAD")
+            }
+            FrozenEquipmentLoadState.NoSnapshot, null -> Unit
         }
         val inferred = if (existing == null) {
             when (val resolution = resolveNewWatchSetEquipment(set)) {
@@ -826,9 +835,16 @@ class GymCoachRepository(
             val currentRuntime = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
             val current = dao.getSet(set.id) ?: return@withLock
             if (current.deleted) return@withLock
-            val frozenConstraints = frozenEquipmentLoadConstraints(current)
-            require(frozenConstraints == null || isAchievableLoad(frozenConstraints, weight)) {
-                "Selected weight is not attainable with the recorded equipment snapshot."
+            when (val frozen = frozenEquipmentLoadState(current)) {
+                FrozenEquipmentLoadState.Invalid -> error(
+                    "The recorded equipment snapshot is unsupported or invalid.",
+                )
+                FrozenEquipmentLoadState.NoSnapshot -> Unit
+                is FrozenEquipmentLoadState.Supported -> require(
+                    isAchievableLoad(frozen.constraints, weight),
+                ) {
+                    "Selected weight is not attainable with the recorded equipment snapshot."
+                }
             }
             val selectedLoad = current.selectedLoadKg?.let { roundLoad(weight) }
             val storedWeight = selectedLoad ?: weight
@@ -1544,8 +1560,11 @@ class GymCoachRepository(
                 frozenSnapshot.equipmentLoadSnapshot,
             ),
         )
-        val frozenConstraints = frozenEquipmentLoadConstraints(inferredSet)
-        if (frozenConstraints == null || !isAchievableLoad(frozenConstraints, selectedLoad)) {
+        val frozenState = frozenEquipmentLoadState(inferredSet)
+        if (
+            frozenState !is FrozenEquipmentLoadState.Supported ||
+            !isAchievableLoad(frozenState.constraints, selectedLoad)
+        ) {
             return WatchSetEquipmentResolution.Rejected("INVALID_EQUIPMENT_LOAD")
         }
         return WatchSetEquipmentResolution.Allowed(
