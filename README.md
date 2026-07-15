@@ -115,24 +115,23 @@ command publisher; the watch core implements active workout, set and rest
 flows, offline replay, heart-rate summaries, exercise/workout summaries and
 compact Russian/English diagnostics.
 
-The final Stage 6 local evidence for implementation base `408a06d` is:
+The current local evidence on branch `codex/huawei-watch-companion` is:
 
-- 66/66 Huawei watch JavaScript/core tests passed.
+- 77/77 Huawei watch JavaScript/core tests passed.
 - 15 shared schemas and 15 examples validated.
-- 121 web test files with 1042 tests passed, followed by lint, typecheck and production build.
-- 46 Android unit-test classes with 227 tests passed, followed by lint and release/debug builds.
+- Production watch HAP and the separate Previewer harness both build successfully with official DevEco Studio/Hvigor.
+- The official round Lite Wearable Previewer renders the UI and accepts navigation, set start/completion and rest controls.
+- Android `testDebugUnitTest`, `lintDebug`, `assembleDebug` and release Kotlin compilation pass with Huawei Wear Engine `5.0.3.304`.
 - 6/6 Room migration tests passed on an API 34 Android emulator, including migration 8 to 9.
 
-These results include automated conflict reconciliation, large offline-workout
-stress, and transport-boundary tests. They validate source, contracts and local
-simulation only. The production watch entry deliberately still uses an
-unavailable transport and a
-volatile storage adapter until the exact official Huawei APIs are installed.
-DevEco Studio, Lite Wearable SDK, Previewer, Wear Engine SDK and DevEco
-Assistant are not installed on this workstation because the official setup
-requires owner-controlled HUAWEI ID access. Therefore no HAP build, signing,
-Previewer run, Watch GT 4 installation, real Wear Engine connection, real
-sensor callback, screen-off or background result is claimed.
+DevEco Studio `6.1.1.280` is installed with its bundled SDK. The official watch
+SDK `5.0.2.306` is integrated, and the Android app uses the official Maven
+artifact `com.huawei.hms:wearengine:5.0.3.304`. Production transports and watch
+file-backed storage are implemented. The remaining owner-controlled gates are
+Huawei App ID/service approval, `DEVICE_MANAGER` permission, watch HAP signing,
+the signed watch certificate fingerprint, DevEco Assistant connection and
+physical Watch GT 4 testing. No real sensor, screen-off or background result is
+claimed before that hardware pass.
 
 Huawei does not publish a model-specific statement that explicitly labels the
 WATCH GT 4 as a Lite Wearable. The implementation therefore treats that device

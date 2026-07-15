@@ -1,6 +1,6 @@
 # Huawei Watch GT 4 companion architecture
 
-Status: implemented and locally verified source architecture through Stage 6. Production transport, production watch storage, DevEco/Previewer/HAP evidence and hardware-dependent adapters remain blocked by the official-toolchain and real-device gates in `huawei-watch-testing.md`.
+Status: implemented and locally verified through the official DevEco/Hvigor and Android build gates. Production watch storage and Wear Engine transports compile, and the separate Previewer harness is interactive. Signing, service approval, permissions, sensors and real Watch GT 4 behavior remain blocked by the owner-controlled hardware gates in `huawei-watch-testing.md`.
 
 ## Existing Android application
 
@@ -31,7 +31,10 @@ android/
     simulator/    debug-source-set watch simulator only
     ui/           watch status, settings, and debug diagnostics
 huawei-watch-app/
-  ...             independent DevEco Studio Lite Wearable project
+  entry/          independent production DevEco Studio Lite Wearable HAP
+  preview-harness/ separate system-API-free DevEco Previewer project
+  src/lite/       canonical page/app sources and Previewer state
+  src/platform/   official Wear Engine and Lite file-storage adapters
 shared-contracts/
   ...             versioned schemas and cross-platform fixtures
 docs/
@@ -103,10 +106,10 @@ retention rules preserve the active snapshot, unacknowledged events, inbox
 receipt IDs, pending sensor batches, and the last acknowledged revision, and
 delete only acknowledged data after a verified snapshot and checksum.
 
-The storage abstractions, replay rules and restart behavior are automated-test
-evidence only. The current production watch entry still uses a volatile storage
-adapter and an unavailable production transport until the official Huawei APIs
-can be compiled and verified.
+The replay and restart rules are automated-test evidence. The production watch
+entry now injects Lite file-backed storage and the official Wear Engine adapter.
+Persistence and reconnect behavior on a sleeping or restarted physical GT 4
+still require signed-HAP verification.
 
 ## Android integration layers
 
@@ -119,7 +122,7 @@ The domain layer accepts commands such as start, pause, resume, select exercise,
 One Room transaction must:
 
 1. Validate the command against the current session and revision.
-2. Update `LocalSessionEntity`, `LocalSetEntity`, or `active_workout_state`.
+2. Update `LocalSessionEntity`, `LocalSetEntity`, or `active_workout_runtime`.
 3. Insert the watch event receipt and any required outbound response.
 4. Enqueue the existing server mutation when durable workout history changed.
 
@@ -127,7 +130,7 @@ This preserves the current offline-first behavior and prevents the phone UI, wat
 
 ### Transport
 
-`WatchTransport` is an interface with a debug-only simulated implementation and an explicit unavailable production fallback until the official Wear Engine SDK can be compiled locally. It exposes connection state, message send/receive, file send/receive, size limits, and transport errors. Transport callbacks route through durable sync coordinators and do not mutate workout state directly.
+`WatchTransport` is an interface with a debug-only simulator, the official Huawei Wear Engine `5.0.3.304` adapter and an explicit unavailable fallback when App ID, package or certificate configuration is incomplete. It exposes connection state, message send/receive, file send/receive, size limits and transport errors. Transport callbacks route through durable sync coordinators and do not mutate workout state directly.
 
 The production adapter uses the phone as the trusted bridge. The watch receives a short-lived pairing context and protocol metadata, never the GymCoach bearer token, server cookie, base URL credentials, or encryption keys from Android Keystore.
 
@@ -137,7 +140,7 @@ The production adapter uses the phone as the trusted bridge. The watch receives 
 
 ### UI and diagnostics
 
-The release-safe UI exposes the Huawei Watch section and never claims a real connection while the Wear Engine adapter is unavailable. The debug UI additionally exposes simulated connection state, protocol version, sensor support, current simulated heart rate, latency, queue and conflict counters, forced synchronization, and a redacted diagnostics export.
+The release-safe UI exposes the Huawei Watch section and never claims a real connection when Huawei configuration, permission or a peer device is unavailable. Debug builds use the simulator by default and can select the Huawei adapter explicitly with a Gradle property. The debug UI additionally exposes simulated connection state, protocol version, sensor support, current simulated heart rate, latency, queue and conflict counters, forced synchronization and a redacted diagnostics export.
 
 ## Watch application
 
@@ -174,7 +177,7 @@ Raw data is associated with session, exercise, set, phase, sensor type, unit, so
 ### Start on phone
 
 1. The existing repository creates `LocalSessionEntity` and server outbox operation.
-2. `active_workout_state` is initialized from the selected `WorkoutDto`.
+2. `active_workout_runtime` is initialized from the selected `WorkoutDto`.
 3. The sync coordinator sends a compact `SYNC_SNAPSHOT`.
 4. The watch stores the snapshot before rendering it.
 5. The watch ACKs the snapshot revision.
@@ -210,11 +213,11 @@ Raw data is associated with session, exercise, set, phase, sensor type, unit, so
 ## Delivery stages
 
 1. Audit and capability matrix, environment inventory, contracts, and this architecture.
-2. Minimal watch source project, connection status, ping/pong, UI intended for official Previewer verification, and simulated transport. A signed HAP remains an external gate.
+2. Minimal watch source project, connection status, ping/pong, interactive official Previewer harness and simulated transport. A signed HAP remains an external gate.
 3. Active snapshot, exercise changes, set entry, and existing `LocalSetEntity` integration.
 4. Runtime-gated sensors, summaries, absolute timers, and supported vibration.
 5. Durable offline journals, reconnection, revision reconciliation, and conflict diagnostics.
-6. Workout summaries, compact diagnostics, automated suites, installation runbook, and release evidence. Previewer, HAP, Wear Engine, and real-device evidence remain blocked until the official toolchain is installed by the owner.
+6. Workout summaries, compact diagnostics, automated suites, installation runbook, official Previewer evidence, unsigned production/preview HAP builds and Android Wear Engine integration. Signed installation and real-device evidence remain blocked until the owner completes Huawei account, certificate, permission and device steps.
 
 Each stage requires both projects to build, all applicable tests to pass, and a separate focused Git commit. A stage that depends on GT 4 hardware remains incomplete until its real-device evidence is recorded.
 

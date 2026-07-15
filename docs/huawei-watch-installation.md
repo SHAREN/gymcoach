@@ -11,14 +11,14 @@ Use the exact versions and paths recorded in `huawei-development-environment.md`
 - Windows development PC with DevEco Studio and the official Lite Wearable SDK.
 - Supported JDK selected by DevEco Studio.
 - Android SDK and ADB for the paired Huawei phone workflow.
-- Huawei phone with current Huawei Health and HMS Core.
+- Huawei phone with Huawei Health `14.0.12.310` or newer. Keep HMS Core current if the phone provides it, but the reviewed Wear Engine `5.0.3.304` documentation does not establish a separate minimum HMS Core version.
 - Huawei Watch GT 4 paired to that phone in Huawei Health.
 - Official DevEco Assistant required by the fitness-watch device workflow.
 - A Huawei Developer account eligible to create an app, certificate, profile, and Wear Engine service configuration.
 
 Do not install SDKs, Assistant packages, certificates, or drivers from unofficial mirrors.
 
-The official DevEco Studio and SDK download flow currently redirects to HUAWEI ID sign-in. That sign-in, account verification, license acceptance, and SDK download approval must be completed by the owner. Automation must stop at the sign-in page and must not request credentials, cookies, one-time codes, or account recovery data. Contract, simulator, Android integration, and Previewer-independent work can continue while the official toolchain install is waiting, but a HAP build cannot be reported as complete.
+DevEco Studio `6.1.1.280`, its bundled SDK, the official Lite Wearable Wear Engine SDK `5.0.2.306`, and the Android Wear Engine artifact `5.0.3.304` are already installed or integrated. The owner must still complete Huawei sign-in, service approval, App ID, DevEco Assistant, certificate/profile creation, device registration and on-device approvals. Automation must not request credentials, cookies, one-time codes or account recovery data.
 
 ## 1. Enable developer mode on the watch
 
@@ -74,13 +74,14 @@ Never commit private keys, keystores, certificate requests, developer certificat
 
 ## 5. Build and sign the HAP
 
-1. Open `huawei-watch-app` as an independent project in DevEco Studio.
-2. Select the Lite Wearable module and its debug product or build variant.
-3. Confirm the project SDK and API level match `huawei-watch-gt4-capabilities.md` and the installed environment inventory.
-4. Select the debug signing configuration created above.
-5. Run the IDE build action for signed HAP packages.
-6. Treat any unsigned-package, certificate-expired, package-name, profile, or device mismatch as a build failure. Do not disable signature checks.
-7. Record the output HAP path, package name, version, size, SHA-256, certificate alias or public fingerprint, and build timestamp. Do not record a private-key path or password in shared logs.
+1. Run `npm install` and `npm run bundle` in `huawei-watch-app` after any canonical JavaScript change.
+2. Open `huawei-watch-app` as an independent project in DevEco Studio from a physical worktree path without spaces. The verified path is `D:\DevEcoProjects\GymCoachWatchIDE\huawei-watch-app`.
+3. Select the Lite Wearable module and its debug product or build variant.
+4. Record the generated HarmonyOS 6.1.1/API 24 target and retain the documented compile-SDK 6/10 discrepancy as a physical-device compatibility gate.
+5. Select the debug signing configuration created above.
+6. Run the IDE build action for signed HAP packages. The unsigned production build already passes Hvigor; this step must replace it with a correctly signed artifact.
+7. An unsigned HAP is valid local build evidence but is insufficient for the installation gate. Certificate, profile, identity or device mismatches remain failures, and signature checks must not be disabled.
+8. Record the output HAP path, package name, version, size, SHA-256, certificate alias or public fingerprint, and build timestamp. Do not record a private-key path or password in shared logs.
 
 ## 6. Connect the phone and watch for installation
 
