@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_status_settings_label">Huawei Watch</string>
+    <string name="watch_status_title">Huawei Watch</string>
+    <string name="watch_status_back">Назад</string>
+    <string name="watch_status_connection_heading">Подключение часов</string>
+    <string name="watch_status_connection_label">Соединение</string>
+    <string name="watch_status_sync_label">Синхронизация</string>
+    <string name="watch_status_protocol_label">Протокол</string>
+    <string name="watch_status_unavailable">Недоступно</string>
+    <string name="watch_status_not_configured">Не настроено</string>
+    <string name="watch_status_sync_setting">Синхронизировать тренировки с часами</string>
+    <string name="watch_status_sync_setting_disabled">В этой сборке не установлен официальный адаптер Wear Engine.</string>
+    <string name="watch_status_toolchain_notice">Для подключения реальных часов установите официальные Huawei DevEco Studio, Lite Wearable SDK и Wear Engine SDK. Локальный симулятор доступен только в debug-сборке.</string>
+</resources>

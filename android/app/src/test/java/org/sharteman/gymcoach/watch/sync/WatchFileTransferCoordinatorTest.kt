@@ -82,6 +82,34 @@ class WatchFileTransferCoordinatorTest {
         assertEquals(WatchProtocolErrorCode.FILE_HASH_MISMATCH.name, corrupt.errorCode)
     }
 
+    @Test
+    fun `same transfer sequence cannot be overwritten with different metadata or payload`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        val coordinator = WatchFileTransferCoordinator(store, fileCodec, workoutCodec)
+        val original = envelope(sequence = 1, totalSequences = 1, relatedEventId = EVENT_ONE)
+        val reused = fileCodec.createEnvelope(
+            transferId = original.transferId,
+            sessionId = original.sessionId,
+            relatedEventId = EVENT_TWO,
+            payloadType = original.payloadType,
+            payloadId = original.payloadId,
+            sequence = original.sequence,
+            totalSequences = original.totalSequences,
+            createdAt = original.createdAt + 1,
+            source = original.source,
+            deviceId = original.deviceId,
+            payload = json.encodeToJsonElement(batch(1, 1).copy(createdAt = 9_999)).jsonObject,
+        )
+
+        assertTrue(coordinator.receive(fileCodec.encode(original)).accepted)
+        assertTrue(coordinator.receive(fileCodec.encode(original)).accepted)
+        val conflict = coordinator.receive(fileCodec.encode(reused))
+
+        assertFalse(conflict.accepted)
+        assertEquals(WatchProtocolErrorCode.FILE_PAIR_MISMATCH.name, conflict.errorCode)
+        assertEquals(original.sha256, store.filesForTransfer(TRANSFER_ID).single().sha256)
+    }
+
     private fun envelope(sequence: Int, totalSequences: Int, relatedEventId: String) =
         fileCodec.createEnvelope(
             transferId = TRANSFER_ID,

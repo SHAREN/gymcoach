@@ -31,16 +31,35 @@ class WatchFileTransferCoordinator(
         receive(file.bytes)
     }
 
-    suspend fun receive(bytes: ByteArray): WatchFileReceiveResult = try {
-        val validated = fileCodec.decode(bytes)
-        persistence.saveFile(validated.envelope, direction = "INCOMING", status = "RECEIVED")
-        WatchFileReceiveResult(
-            accepted = true,
-            transferId = validated.envelope.transferId,
-            sequence = validated.envelope.sequence,
-        )
-    } catch (error: WatchProtocolException) {
-        WatchFileReceiveResult(accepted = false, errorCode = error.code.name)
+    suspend fun receive(bytes: ByteArray): WatchFileReceiveResult {
+        return try {
+            val validated = fileCodec.decode(bytes)
+            val existing = persistence.filesForTransfer(validated.envelope.transferId)
+                .firstOrNull { it.sequence == validated.envelope.sequence }
+            if (existing != null) {
+                if (!existing.matches(validated.envelope)) {
+                    return WatchFileReceiveResult(
+                        accepted = false,
+                        transferId = validated.envelope.transferId,
+                        sequence = validated.envelope.sequence,
+                        errorCode = WatchProtocolErrorCode.FILE_PAIR_MISMATCH.name,
+                    )
+                }
+                return WatchFileReceiveResult(
+                    accepted = true,
+                    transferId = validated.envelope.transferId,
+                    sequence = validated.envelope.sequence,
+                )
+            }
+            persistence.saveFile(validated.envelope, direction = "INCOMING", status = "RECEIVED")
+            WatchFileReceiveResult(
+                accepted = true,
+                transferId = validated.envelope.transferId,
+                sequence = validated.envelope.sequence,
+            )
+        } catch (error: WatchProtocolException) {
+            WatchFileReceiveResult(accepted = false, errorCode = error.code.name)
+        }
     }
 
     suspend fun sensorBatchForEvent(event: WatchEventEnvelopeDto): WatchSensorBatchDto {
@@ -97,3 +116,17 @@ class WatchFileTransferCoordinator(
         }
     }
 }
+
+private fun org.sharteman.gymcoach.data.local.WatchFileTransferEntity.matches(
+    envelope: org.sharteman.gymcoach.watch.domain.WatchFileTransferEnvelopeDto,
+) =
+    sessionId == envelope.sessionId &&
+        relatedEventId == envelope.relatedEventId &&
+        payloadType == envelope.payloadType.name &&
+        payloadId == envelope.payloadId &&
+        totalSequences == envelope.totalSequences &&
+        byteLength == envelope.byteLength &&
+        sha256 == envelope.sha256 &&
+        source == envelope.source.name &&
+        deviceId == envelope.deviceId &&
+        createdAtEpochMs == envelope.createdAt

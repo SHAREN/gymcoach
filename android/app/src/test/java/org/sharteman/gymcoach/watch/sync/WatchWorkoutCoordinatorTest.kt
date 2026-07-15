@@ -185,6 +185,45 @@ class WatchWorkoutCoordinatorTest {
     }
 
     @Test
+    fun `revision gap remains replayable after missing revision is applied`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val coordinator = coordinator(gateway(repository), sink)
+        val gap = watchEvent(
+            eventId = EVENT_GAP,
+            type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
+            revision = 3,
+            payload = codec.encodeActiveExerciseChangedPayload(
+                ActiveExerciseChangedPayloadDto(EXERCISE_ONE_ID, EXERCISE_SESSION_ONE_ID, 1),
+            ),
+        )
+
+        coordinator.onEvent(gap)
+        coordinator.onEvent(
+            watchEvent(
+                eventId = EVENT_EXERCISE,
+                type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
+                revision = 2,
+                payload = codec.encodeActiveExerciseChangedPayload(
+                    ActiveExerciseChangedPayloadDto(EXERCISE_TWO_ID, EXERCISE_SESSION_TWO_ID, 2),
+                ),
+            ),
+        )
+        coordinator.onEvent(gap)
+
+        assertEquals(
+            listOf(
+                WatchSyncAckStatus.REJECTED,
+                WatchSyncAckStatus.APPLIED,
+                WatchSyncAckStatus.APPLIED,
+            ),
+            sink.acks.map { it.status },
+        )
+        assertEquals(3L, repository.runtime?.revision)
+        assertEquals(EXERCISE_ONE_ID, repository.runtime?.activeExerciseId)
+    }
+
+    @Test
     fun `set start survives restart and update delete reuse stable set id`() = runTest {
         val repository = FakeWatchWorkoutRepository()
         val sink = RecordingSink()
@@ -287,6 +326,44 @@ class WatchWorkoutCoordinatorTest {
         assertEquals(setOf(SENSOR_BATCH_ID to 1, SENSOR_BATCH_ID to 2), repository.sensorBatches)
         assertEquals(WatchSyncAckStatus.DUPLICATE, sink.acks[sink.acks.lastIndex - 1].status)
         assertEquals(WatchSyncAckStatus.APPLIED, sink.acks.last().status)
+    }
+
+    @Test
+    fun `sensor revision gap remains replayable after missing event arrives`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val coordinator = coordinator(gateway(repository), sink)
+        val batch = sensorBatch(
+            sequence = 1,
+            samples = listOf(heartRateSample(SENSOR_GAP_SAMPLE_ID, 2_000L, 145)),
+            batchId = SENSOR_GAP_BATCH_ID,
+            totalSequences = 1,
+        )
+        val gap = sensorBatchEvent(EVENT_SENSOR_GAP, 3, batch)
+
+        coordinator.onSensorBatch(gap, batch)
+        coordinator.onEvent(
+            watchEvent(
+                eventId = EVENT_EXERCISE,
+                type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
+                revision = 2,
+                payload = codec.encodeActiveExerciseChangedPayload(
+                    ActiveExerciseChangedPayloadDto(EXERCISE_TWO_ID, EXERCISE_SESSION_TWO_ID, 2),
+                ),
+            ),
+        )
+        coordinator.onSensorBatch(gap, batch)
+
+        assertEquals(
+            listOf(
+                WatchSyncAckStatus.REJECTED,
+                WatchSyncAckStatus.APPLIED,
+                WatchSyncAckStatus.APPLIED,
+            ),
+            sink.acks.map { it.status },
+        )
+        assertTrue(SENSOR_GAP_BATCH_ID to 1 in repository.sensorBatches)
+        assertEquals(3L, repository.runtime?.revision)
     }
 
     @Test
@@ -847,8 +924,11 @@ class WatchWorkoutCoordinatorTest {
         const val EVENT_REST_UPDATED = "10000000-0000-0000-0000-000000000014"
         const val EVENT_REST_BATCH = "10000000-0000-0000-0000-000000000015"
         const val EVENT_REST_FINISHED = "10000000-0000-0000-0000-000000000016"
+        const val EVENT_SENSOR_GAP = "10000000-0000-0000-0000-000000000017"
         const val SENSOR_BATCH_ID = "40000000-0000-0000-0000-000000000001"
         const val REST_BATCH_ID = "40000000-0000-0000-0000-000000000002"
+        const val SENSOR_GAP_BATCH_ID = "40000000-0000-0000-0000-000000000003"
+        const val SENSOR_GAP_SAMPLE_ID = "40000000-0000-0000-0000-000000000004"
 
         fun testWorkout(): WorkoutDto {
             fun target(
