@@ -424,6 +424,9 @@ class GymCoachRepository(
     suspend fun latestActiveWorkoutRuntime(): ActiveWorkoutRuntimeEntity? =
         dao.getLatestActiveWorkoutRuntime()
 
+    suspend fun <T> withWatchMutationLock(block: suspend () -> T): T =
+        watchCommandMutex.withLock { block() }
+
     suspend fun hasProcessedWatchEvent(eventId: String): Boolean =
         dao.hasProcessedWatchEvent(eventId) > 0
 

@@ -1,16 +1,20 @@
 package org.sharteman.gymcoach.data.repository
 
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -66,8 +70,18 @@ import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.watch.sync.NoOpWatchPhoneCommandPublisher
 import org.sharteman.gymcoach.watch.sync.WatchPhoneCommandPublisher
+import org.sharteman.gymcoach.watch.data.GymCoachWatchWorkoutRepository
+import org.sharteman.gymcoach.watch.data.PersistentWatchWorkoutGateway
+import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
+import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
+import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
+import org.sharteman.gymcoach.watch.domain.WatchHeartRateSummaryDto
+import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class GymCoachRepositorySyncTest {
     @Test
     fun phoneWorkoutMutationsPublishOrderedWatchCommandsWithoutTouchingServerOutbox() = runTest {
@@ -188,6 +202,89 @@ class GymCoachRepositorySyncTest {
 
         assertEquals(null, fixture.dao.getActiveWorkoutRuntime(sessionId))
         assertEquals(80.0, fixture.dao.getSet(set.id)?.weight ?: 0.0, 0.0)
+        val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
+        assertEquals(WatchEventType.WORKOUT_FINISHED.name, watchFinish.eventType)
+        assertEquals(3L, watchFinish.revision)
+    }
+
+    @Test
+    fun inboundWatchMutationSerializesWithPhoneFinishWithoutResurrectingRuntime() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val bootstrap = bootstrapWithTargetSets(3)
+        fixture.dao.saveBootstrap(
+            BootstrapCacheEntity(
+                payloadJson = fixture.api.json.encodeToString(bootstrap),
+                updatedAtEpochMs = 1,
+            ),
+        )
+        val workout = requireNotNull(bootstrap.activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+        val codec = WatchWorkoutProtocolCodec()
+        val watchEvent = WatchEventEnvelopeDto(
+            protocolVersion = WatchProtocol.VERSION,
+            schemaVersion = WatchProtocol.SCHEMA_VERSION,
+            eventId = WATCH_CONCURRENT_EVENT_ID,
+            sessionId = sessionId,
+            type = WatchEventType.SET_UPDATED,
+            timestamp = 4_000,
+            source = WatchEventSource.WATCH,
+            deviceId = "watch-concurrent",
+            revision = 3,
+            payload = codec.encodeSetRecordPayload(
+                WatchSetRecordDto(
+                    setId = set.id,
+                    sessionId = sessionId,
+                    exerciseSessionId = "program_exercise_1",
+                    setNumber = set.setNumber,
+                    weight = 90.0,
+                    reps = 10,
+                    rir = 1,
+                    startedAt = 3_000,
+                    completedAt = 4_000,
+                    source = WatchEventSource.WATCH,
+                    heartRateSummary = WatchHeartRateSummaryDto(null, null, null, null, null, 0),
+                    sensorSummary = buildJsonObject {},
+                    revision = 3,
+                ),
+            ),
+        )
+        val gateway = PersistentWatchWorkoutGateway(
+            repository = GymCoachWatchWorkoutRepository(fixture.repository),
+            phoneDeviceId = fixture.accountStore.deviceId,
+        )
+        val lockHeld = CompletableDeferred<Unit>()
+        val releaseLock = CompletableDeferred<Unit>()
+        val holder = async {
+            fixture.repository.withWatchMutationLock {
+                lockHeld.complete(Unit)
+                releaseLock.await()
+            }
+        }
+        lockHeld.await()
+        val finish = async { fixture.repository.finishSession(sessionId, null, 8) }
+        runCurrent()
+        val watchApply = async { gateway.applyWatchEvent(watchEvent) }
+        runCurrent()
+
+        assertFalse(finish.isCompleted)
+        assertFalse(watchApply.isCompleted)
+        releaseLock.complete(Unit)
+        holder.await()
+        finish.await()
+        val watchResult = watchApply.await()
+
+        assertEquals(WatchSyncAckStatus.REJECTED, watchResult.status)
+        assertEquals("SESSION_NOT_FOUND", watchResult.errorCode)
+        assertEquals(null, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertTrue(fixture.dao.getSession(sessionId)?.finishedAt != null)
+        assertEquals(80.0, fixture.dao.getSet(set.id)?.weight ?: 0.0, 0.0)
+        assertEquals(null, fixture.dao.getProcessedWatchEvent(WATCH_CONCURRENT_EVENT_ID))
+        assertEquals(
+            listOf("StartSessionOperation", "UpsertSetOperation", "FinishSessionOperation"),
+            fixture.dao.queuedOperations().map { it.type },
+        )
         val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
         assertEquals(WatchEventType.WORKOUT_FINISHED.name, watchFinish.eventType)
         assertEquals(3L, watchFinish.revision)
@@ -1734,5 +1831,9 @@ class GymCoachRepositorySyncTest {
             .filter { it.status == "PENDING" || it.status == "SENT" }
             .filter { sessionId == null || it.sessionId == sessionId }
             .sortedWith(compareBy<WatchOutboxEventEntity> { it.revision }.thenBy { it.timestampEpochMs }.thenBy { it.eventId })
+    }
+
+    private companion object {
+        const val WATCH_CONCURRENT_EVENT_ID = "75000000-0000-0000-0000-000000000002"
     }
 }

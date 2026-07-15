@@ -59,6 +59,7 @@ data class PhoneExerciseChange(
 )
 
 interface WatchWorkoutRepository {
+    suspend fun <T> withWatchMutationLock(block: suspend () -> T): T
     suspend fun bootstrap(): BootstrapResponse?
     suspend fun session(sessionId: String): LocalSessionEntity?
     suspend fun sets(sessionId: String): List<LocalSetEntity>
@@ -131,6 +132,9 @@ interface WatchWorkoutRepository {
 class GymCoachWatchWorkoutRepository(
     private val repository: GymCoachRepository,
 ) : WatchWorkoutRepository {
+    override suspend fun <T> withWatchMutationLock(block: suspend () -> T): T =
+        repository.withWatchMutationLock(block)
+
     override suspend fun bootstrap() = repository.cachedBootstrapSnapshot()
     override suspend fun session(sessionId: String) = repository.localSession(sessionId)
     override suspend fun sets(sessionId: String) = repository.localSets(sessionId)
@@ -319,7 +323,10 @@ class PersistentWatchWorkoutGateway(
         ).also { codec.decodeSyncSnapshot(codec.encodeSyncSnapshot(it)) }
     }
 
-    override suspend fun applyWatchEvent(event: WatchEventEnvelopeDto): WatchWorkoutApplyResult {
+    override suspend fun applyWatchEvent(event: WatchEventEnvelopeDto): WatchWorkoutApplyResult =
+        repository.withWatchMutationLock { applyWatchEventLocked(event) }
+
+    private suspend fun applyWatchEventLocked(event: WatchEventEnvelopeDto): WatchWorkoutApplyResult {
         if (event.source != WatchEventSource.WATCH) return rejected(event, "INVALID_SOURCE")
         val context = loadContext(event.sessionId) ?: return rejected(event, "SESSION_NOT_FOUND")
         val current = normalizeRuntime(context)
@@ -503,6 +510,13 @@ class PersistentWatchWorkoutGateway(
     }
 
     override suspend fun applySensorBatch(
+        event: WatchEventEnvelopeDto,
+        batch: WatchSensorBatchDto,
+    ): WatchWorkoutApplyResult = repository.withWatchMutationLock {
+        applySensorBatchLocked(event, batch)
+    }
+
+    private suspend fun applySensorBatchLocked(
         event: WatchEventEnvelopeDto,
         batch: WatchSensorBatchDto,
     ): WatchWorkoutApplyResult {
