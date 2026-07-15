@@ -12,10 +12,7 @@ import {
 vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
 const mockUserId = vi.mocked(getCurrentUserId);
 
-import {
-  GET as getInventory,
-  POST as createEquipment,
-} from '@/app/api/gyms/[id]/equipment/route';
+import { GET as getInventory, POST as createEquipment } from '@/app/api/gyms/[id]/equipment/route';
 import {
   DELETE as deleteEquipment,
   PUT as updateEquipment,
@@ -165,11 +162,7 @@ describe('gym equipment REST API', () => {
     ).toBe(200);
 
     const imageResponse = await getImage(
-      request(
-        `http://test.local/api/gym-equipment/${created.equipment.id}/image`,
-        'GET',
-        token,
-      ),
+      request(`http://test.local/api/gym-equipment/${created.equipment.id}/image`, 'GET', token),
       params(created.equipment.id),
     );
     expect(imageResponse.status).toBe(200);
@@ -196,6 +189,76 @@ describe('gym equipment REST API', () => {
       ).status,
     ).toBe(200);
     expect(await db.gymEquipment.count()).toBe(0);
+  });
+
+  it('reconciles legacy availability when REST equipment links are replaced or deleted', async () => {
+    const { user, token, gym } = await seedUser('equipment-legacy-mirror@test.dev');
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Legacy mirrored cable row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+
+    const createLinked = async (name: string, weightOptions: number[]) => {
+      const response = await createEquipment(
+        request(`http://test.local/api/gyms/${gym.id}/equipment`, 'POST', token, {
+          name,
+          equipmentType: 'CABLE',
+          loadType: 'SELECTORIZED',
+          weightOptions,
+          exerciseIds: [exercise.id],
+        }),
+        params(gym.id),
+      );
+      expect(response.status).toBe(201);
+      return ((await response.json()) as { equipment: { id: string } }).equipment.id;
+    };
+
+    const firstId = await createLinked('Legacy cable A', [10, 20]);
+    const secondId = await createLinked('Legacy cable B', [30, 40]);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ isAvailable: true, weightOptions: [10, 20, 30, 40] });
+
+    const unlinkFirst = await updateEquipment(
+      request(`http://test.local/api/gym-equipment/${firstId}`, 'PUT', token, {
+        name: 'Legacy cable A',
+        equipmentType: 'CABLE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [15, 25],
+        exerciseIds: [],
+      }),
+      params(firstId),
+    );
+    expect(unlinkFirst.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ isAvailable: true, weightOptions: [30, 40] });
+
+    expect(
+      (
+        await deleteEquipment(
+          request(`http://test.local/api/gym-equipment/${secondId}`, 'DELETE', token),
+          params(secondId),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      await db.gymExerciseConfig.count({ where: { gymId: gym.id, exerciseId: exercise.id } }),
+    ).toBe(0);
+
+    await deleteEquipment(
+      request(`http://test.local/api/gym-equipment/${firstId}`, 'DELETE', token),
+      params(firstId),
+    );
   });
 
   it('keeps cookie authentication and ownership boundaries', async () => {
@@ -233,12 +296,9 @@ describe('gym equipment REST API', () => {
     expect(
       (
         await setImage(
-          request(
-            `http://test.local/api/gym-equipment/${equipment.id}/image`,
-            'PUT',
-            undefined,
-            { imageUrl: 'https://images.example.test/private.jpg' },
-          ),
+          request(`http://test.local/api/gym-equipment/${equipment.id}/image`, 'PUT', undefined, {
+            imageUrl: 'https://images.example.test/private.jpg',
+          }),
           params(equipment.id),
         )
       ).status,
@@ -265,12 +325,10 @@ describe('gym equipment REST API', () => {
     expect(
       (
         await setImage(
-          request(
-            `http://test.local/api/gym-equipment/${equipment.id}/image`,
-            'PUT',
-            token,
-            { imageBase64: 'not-an-image', mimeType: 'image/png' },
-          ),
+          request(`http://test.local/api/gym-equipment/${equipment.id}/image`, 'PUT', token, {
+            imageBase64: 'not-an-image',
+            mimeType: 'image/png',
+          }),
           params(equipment.id),
         )
       ).status,

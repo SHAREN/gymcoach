@@ -3,6 +3,7 @@ import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
 import { getExerciseMedia } from '@/lib/exercise-media';
 import { resolveExerciseInventory, type EquipmentLoadProfile } from '@/lib/gym-loads';
+import type { Prisma } from '@/lib/prisma-client';
 import type { GymEquipmentInput, GymPlatePoolInput } from '@/lib/schemas/gym-equipment';
 
 export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
@@ -300,8 +301,8 @@ export async function upsertOwnedGymEquipment(
       });
   if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
 
-  const exerciseIds =
-    requestedExerciseIds ?? current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
+  const previousExerciseIds = current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
+  const exerciseIds = requestedExerciseIds ?? previousExerciseIds;
   const exercises = exerciseIds.length
     ? await db.exercise.findMany({
         where: { userId, id: { in: exerciseIds } },
@@ -390,19 +391,8 @@ export async function upsertOwnedGymEquipment(
         });
       }
     }
-    if (input.markExercisesAvailable === true && exerciseIds.length > 0) {
-      for (const exerciseId of exerciseIds) {
-        await tx.gymExerciseConfig.upsert({
-          where: { gymId_exerciseId: { gymId: gym.id, exerciseId } },
-          update: { isAvailable: true, weightOptions: effectiveWeightOptions },
-          create: {
-            gymId: gym.id,
-            exerciseId,
-            isAvailable: true,
-            weightOptions: effectiveWeightOptions,
-          },
-        });
-      }
+    if (input.markExercisesAvailable === true) {
+      await reconcileLegacyExerciseConfigs(tx, gym.id, [...previousExerciseIds, ...exerciseIds]);
     }
     return item;
   });
@@ -430,11 +420,63 @@ export async function upsertOwnedGymEquipment(
 export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
   const equipment = await db.gymEquipment.findFirst({
     where: { id: equipmentId, gym: { userId } },
-    select: { id: true },
+    select: {
+      id: true,
+      gymId: true,
+      exerciseLinks: { select: { exerciseId: true } },
+    },
   });
   if (!equipment) throw new ApiError(404, 'Gym equipment not found.');
-  await db.gymEquipment.delete({ where: { id: equipment.id } });
+  await db.$transaction(async (tx) => {
+    await tx.gymEquipment.delete({ where: { id: equipment.id } });
+    await reconcileLegacyExerciseConfigs(
+      tx,
+      equipment.gymId,
+      equipment.exerciseLinks.map((link) => link.exerciseId),
+    );
+  });
   return { ok: true };
+}
+
+async function reconcileLegacyExerciseConfigs(
+  tx: Prisma.TransactionClient,
+  gymId: string,
+  affectedExerciseIds: string[],
+) {
+  const exerciseIds = [...new Set(affectedExerciseIds)];
+  if (exerciseIds.length === 0) return;
+
+  const remainingLinks = await tx.gymEquipmentExercise.findMany({
+    where: {
+      exerciseId: { in: exerciseIds },
+      equipment: { gymId },
+    },
+    select: {
+      exerciseId: true,
+      equipment: { select: { weightOptions: true } },
+    },
+  });
+  const linkedWeightsByExercise = new Map<string, number[]>();
+  for (const link of remainingLinks) {
+    const weights = linkedWeightsByExercise.get(link.exerciseId) ?? [];
+    weights.push(...link.equipment.weightOptions);
+    linkedWeightsByExercise.set(link.exerciseId, weights);
+  }
+
+  for (const exerciseId of exerciseIds) {
+    const linkedWeights = linkedWeightsByExercise.get(exerciseId);
+    if (!linkedWeights) {
+      await tx.gymExerciseConfig.deleteMany({ where: { gymId, exerciseId } });
+      continue;
+    }
+
+    const weightOptions = [...new Set(linkedWeights)].sort((left, right) => left - right);
+    await tx.gymExerciseConfig.upsert({
+      where: { gymId_exerciseId: { gymId, exerciseId } },
+      update: { isAvailable: true, weightOptions },
+      create: { gymId, exerciseId, isAvailable: true, weightOptions },
+    });
+  }
 }
 
 export async function upsertOwnedGymPlatePool(

@@ -505,30 +505,71 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     expect(profileB?.email).toBe('b@test.dev');
   });
 
-  it('round-trips an exercise membership after its final set was deleted', async () => {
+  it('round-trips ordered membership timestamps and accepts legacy v9 name-only rows', async () => {
     const userA = await seedFullUser('membership-a@test.dev');
     const [sessionA, pullupA] = await Promise.all([
       db.session.findFirstOrThrow({ where: { userId: userA.id } }),
       db.exercise.findFirstOrThrow({ where: { userId: userA.id, name: 'Pull-up' } }),
     ]);
-    const temporarySet = await db.set.create({
-      data: {
-        sessionId: sessionA.id,
-        exerciseId: pullupA.id,
-        setNumber: 1,
-        weight: 0,
-        reps: 8,
-        completedAt: new Date('2026-06-01T10:30:00.000Z'),
-      },
-    });
-    await db.set.delete({ where: { id: temporarySet.id } });
+    const [dipA, rowA] = await Promise.all([
+      db.exercise.create({
+        data: {
+          userId: userA.id,
+          name: 'Dip',
+          muscleGroup: 'TRICEPS',
+          category: 'COMPOUND',
+          equipmentType: 'BODYWEIGHT',
+        },
+      }),
+      db.exercise.create({
+        data: {
+          userId: userA.id,
+          name: 'Membership row',
+          muscleGroup: 'BACK_THICKNESS',
+          category: 'COMPOUND',
+          equipmentType: 'CABLE',
+        },
+      }),
+    ]);
+    const orphanMemberships = [
+      { exercise: dipA, completedAt: '2026-06-01T10:20:00.000Z' },
+      { exercise: pullupA, completedAt: '2026-06-01T10:30:00.000Z' },
+      { exercise: rowA, completedAt: '2026-06-01T10:40:00.000Z' },
+    ];
+    for (const [index, membership] of orphanMemberships.entries()) {
+      const temporarySet = await db.set.create({
+        data: {
+          sessionId: sessionA.id,
+          exerciseId: membership.exercise.id,
+          setNumber: index + 1,
+          weight: 0,
+          reps: 8,
+          completedAt: new Date(membership.completedAt),
+        },
+      });
+      await db.set.delete({ where: { id: temporarySet.id } });
+    }
 
     actAs(userA.id);
     const dump = await (await getBackup(getReq())).json();
-    expect(dump.sessions[0].exerciseNames).toContain('Pull-up');
-    expect(
-      dump.sessions[0].sets.some((set: { exerciseName: string }) => set.exerciseName === 'Pull-up'),
-    ).toBe(false);
+    const expectedMemberships = [
+      { exerciseName: 'Bench Press', addedAt: '2026-06-01T10:10:00.000Z' },
+      { exerciseName: 'Dip', addedAt: '2026-06-01T10:20:00.000Z' },
+      { exerciseName: 'Pull-up', addedAt: '2026-06-01T10:30:00.000Z' },
+      { exerciseName: 'Membership row', addedAt: '2026-06-01T10:40:00.000Z' },
+      { exerciseName: 'Running', addedAt: '2026-06-01T10:50:00.000Z' },
+    ];
+    expect(dump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
+    expect(dump.sessions[0].exerciseNames).toEqual(
+      expectedMemberships.map((membership) => membership.exerciseName),
+    );
+    for (const { exerciseName } of expectedMemberships.slice(1, 4)) {
+      expect(
+        dump.sessions[0].sets.some(
+          (set: { exerciseName: string }) => set.exerciseName === exerciseName,
+        ),
+      ).toBe(false);
+    }
 
     const userB = await db.user.create({
       data: { email: 'membership-b@test.dev', passwordHash: 'x' },
@@ -537,21 +578,41 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
     expect(response.status).toBe(200);
 
-    const membership = await db.sessionExercise.findFirst({
-      where: {
-        session: { userId: userB.id },
-        exercise: { name: 'Pull-up', userId: userB.id },
-      },
+    const restoredMemberships = await db.sessionExercise.findMany({
+      where: { session: { userId: userB.id } },
+      orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+      include: { exercise: { select: { name: true } } },
     });
-    expect(membership).not.toBeNull();
     expect(
-      await db.set.count({
-        where: {
-          session: { userId: userB.id },
-          exercise: { name: 'Pull-up' },
-        },
-      }),
-    ).toBe(0);
+      restoredMemberships.map((membership) => ({
+        exerciseName: membership.exercise.name,
+        addedAt: membership.addedAt.toISOString(),
+      })),
+    ).toEqual(expectedMemberships);
+
+    const restoredDump = await (await getBackup(getReq())).json();
+    expect(restoredDump.sessions[0].exerciseMemberships).toEqual(expectedMemberships);
+
+    const legacyV9Dump = structuredClone(dump);
+    delete legacyV9Dump.sessions[0].exerciseMemberships;
+    const userC = await db.user.create({
+      data: { email: 'membership-c@test.dev', passwordHash: 'x' },
+    });
+    actAs(userC.id);
+    const legacyResponse = await postBackup(
+      jsonReq({ payload: legacyV9Dump, confirmReplace: true }),
+    );
+    expect(legacyResponse.status).toBe(200);
+    expect(
+      (
+        await db.sessionExercise.findMany({
+          where: { session: { userId: userC.id } },
+          include: { exercise: { select: { name: true } } },
+        })
+      )
+        .map((membership) => membership.exercise.name)
+        .sort(),
+    ).toEqual(expectedMemberships.map((membership) => membership.exerciseName).sort());
   });
 
   it('still restores a version 1 backup (fields and models added in v2 absent)', async () => {

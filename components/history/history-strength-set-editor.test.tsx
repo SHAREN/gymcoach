@@ -16,18 +16,6 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: toastErrorMock },
 }));
 
-const set = {
-  id: 'set-1',
-  setNumber: 1,
-  weight: 10,
-  reps: 10,
-  rir: 2,
-  isWarmup: false,
-  isDropSet: false,
-  gymEquipmentId: 'cable-a',
-  equipmentNameSnapshot: 'Cable A',
-};
-
 const equipmentOptions: ResolvedEquipmentLoadProfile[] = [
   {
     equipmentId: 'cable-a',
@@ -58,6 +46,24 @@ const equipmentOptions: ResolvedEquipmentLoadProfile[] = [
     inventoryPrecision: 'NOT_APPLICABLE',
   },
 ];
+
+const set = {
+  id: 'set-1',
+  setNumber: 1,
+  weight: 10,
+  reps: 10,
+  rir: 2,
+  isWarmup: false,
+  isDropSet: false,
+  gymEquipmentId: 'cable-a',
+  equipmentNameSnapshot: 'Cable A',
+  frozenLoadConstraints: {
+    equipmentType: 'CABLE' as const,
+    isAvailable: true,
+    equipmentId: 'cable-a',
+    equipmentOptions: [equipmentOptions[0]!],
+  },
+};
 
 const baseProps = {
   sessionId: 'session-1',
@@ -109,13 +115,40 @@ describe('HistoryStrengthSetEditor', () => {
     expect(refreshMock).toHaveBeenCalled();
   });
 
+  it('uses frozen row loads after the original equipment is unlinked from the gym profile', () => {
+    render(
+      <HistoryStrengthSetEditor
+        {...baseProps}
+        loadConstraints={{
+          equipmentType: 'CABLE',
+          equipmentId: null,
+          equipmentOptions: [equipmentOptions[1]!],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit set 1 weight in KG' }));
+    const options = within(screen.getByTestId('set-value-options'));
+    expect(options.getByText('10 kg')).toBeInTheDocument();
+    expect(options.getByText('20 kg')).toBeInTheDocument();
+    expect(options.queryByText('15 kg')).not.toBeInTheDocument();
+    expect(options.queryByText('25 kg')).not.toBeInTheDocument();
+  });
+
   it('requires a linked machine for new rows and exposes only its achievable loads', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
     render(
       <HistoryStrengthSetEditor
         {...baseProps}
-        sets={[{ ...set, gymEquipmentId: null, equipmentNameSnapshot: null }]}
+        sets={[
+          {
+            ...set,
+            gymEquipmentId: null,
+            equipmentNameSnapshot: null,
+            frozenLoadConstraints: null,
+          },
+        ]}
       />,
     );
 
@@ -151,7 +184,14 @@ describe('HistoryStrengthSetEditor', () => {
     render(
       <HistoryStrengthSetEditor
         {...baseProps}
-        sets={[{ ...set, gymEquipmentId: null, equipmentNameSnapshot: null }]}
+        sets={[
+          {
+            ...set,
+            gymEquipmentId: null,
+            equipmentNameSnapshot: null,
+            frozenLoadConstraints: null,
+          },
+        ]}
         loadConstraints={{ equipmentType: 'CABLE', isAvailable: false }}
       />,
     );

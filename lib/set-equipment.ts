@@ -1,7 +1,7 @@
 import { ApiError } from '@/lib/api';
 import { Prisma, type Set } from '@/lib/prisma-client';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
-import { resolveEquipmentLoadProfile } from '@/lib/gym-loads';
+import { resolveEquipmentLoadProfile, type GymLoadConstraints } from '@/lib/gym-loads';
 import { mobileFrozenEquipmentLoadSnapshotSchema } from '@/lib/schemas/mobile';
 import { z } from 'zod';
 
@@ -20,6 +20,36 @@ export interface SetEquipmentSnapshot {
 }
 
 export type SetEquipmentSnapshotAction = 'REPLACE' | 'CLEAR';
+
+export function frozenSetLoadConstraints(
+  equipmentNameSnapshot: string | null,
+  equipmentLoadSnapshot: Prisma.JsonValue | null,
+): GymLoadConstraints | null {
+  const parsed = mobileFrozenEquipmentLoadSnapshotSchema.safeParse(equipmentLoadSnapshot);
+  if (!parsed.success) return null;
+
+  const snapshot = parsed.data;
+  const profile = resolveEquipmentLoadProfile({
+    equipmentId: snapshot.gymEquipmentId,
+    equipmentName: equipmentNameSnapshot ?? snapshot.gymEquipmentId,
+    equipmentType: snapshot.equipmentType,
+    loadType: snapshot.loadType,
+    weightOptions: snapshot.weightOptions,
+    selectedLoadMultiplier: snapshot.selectedLoadMultiplier,
+    baseLoadKg: snapshot.baseLoadKg,
+    loadingSides: snapshot.loadingSides,
+    platePoolId: snapshot.platePool?.id ?? null,
+    platePoolName: snapshot.platePool?.name ?? null,
+    plates: snapshot.platePool?.plates ?? [],
+  });
+
+  return {
+    equipmentType: profile.equipmentType,
+    isAvailable: true,
+    equipmentId: profile.equipmentId,
+    equipmentOptions: [profile],
+  };
+}
 
 const legacyMobileEquipmentLoadSnapshotSchema = z
   .object({
