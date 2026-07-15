@@ -1,0 +1,11 @@
+{
+  "name": "gymcoach-huawei-watch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "format:check": "node scripts/check-format.mjs",
+    "check": "npm run format:check && npm test"
+  }
+}
