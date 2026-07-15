@@ -5,6 +5,7 @@ import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { stampGoalIfAchieved } from '@/lib/set-goal-sync';
 import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
+import { assertWebSetEquipmentMayBeNull } from '@/lib/web-set-equipment-policy';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -68,15 +69,20 @@ export async function POST(req: Request, props: Params) {
       }
     }
 
-    const equipmentSnapshot = isCardio
-      ? null
-      : await resolveSetEquipmentSnapshot(db, {
-          userId,
-          sessionGymId: session.gymId,
-          exerciseId: data.exerciseId,
-          gymEquipmentId: data.gymEquipmentId,
-          selectedLoadKg: data.weight,
-        });
+    if (!data.gymEquipmentId) {
+      await assertWebSetEquipmentMayBeNull(db, {
+        userId,
+        sessionGymId: session.gymId,
+        exerciseId: data.exerciseId,
+      });
+    }
+    const equipmentSnapshot = await resolveSetEquipmentSnapshot(db, {
+      userId,
+      sessionGymId: session.gymId,
+      exerciseId: data.exerciseId,
+      gymEquipmentId: data.gymEquipmentId,
+      selectedLoadKg: isCardio ? 0 : data.weight,
+    });
     const createData = { ...requestedData, ...(equipmentSnapshot ?? {}) };
 
     let created;

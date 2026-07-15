@@ -91,6 +91,10 @@ test('a workout selects one physical machine, shows its loads, and logs its snap
   const { sessionId, cableAId } = await createEquipmentWorkout(page);
   await page.goto(`/session/${sessionId}`);
 
+  await expect(page.getByText(/legacy \/ manual load/i)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Set 1 weight in KG' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm set 1' })).toBeDisabled();
+
   await page.getByRole('combobox', { name: 'Equipment used' }).click();
   await page.getByRole('option', { name: 'Cable A' }).click();
   await expect(page.getByText(/displayed load x 0.5/i)).toBeVisible();

@@ -45,6 +45,7 @@ import {
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
   sets: PendingSet[];
+  historySets?: PendingSet[];
   lastPerformance: SerializedLastPerformance | undefined;
   readiness: ReadinessSignal | null;
   deloadActive: boolean;
@@ -55,6 +56,7 @@ interface Props {
   gym?: SessionGym | null;
   onGymUpdated?: (gym: SessionGym) => void;
   disabled?: boolean;
+  equipmentSelectionRequired?: boolean;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -69,6 +71,7 @@ interface Props {
     set: PendingSet,
     values: { weight: number; reps: number; rir: number | null },
   ) => Promise<void>;
+  onChangeSetEquipment?: (set: PendingSet, equipmentId: string | null) => Promise<void>;
   onDeleteSet?: (set: PendingSet) => Promise<boolean | void>;
   onTargetSetsChange?: (targetSets: number) => Promise<void>;
 }
@@ -118,9 +121,27 @@ function draftFromSet(set: PendingSet): DraftSet {
   };
 }
 
+function loadConstraintsForSet(
+  loadConstraints: GymLoadConstraints | null,
+  set: PendingSet,
+): GymLoadConstraints | null {
+  if (!loadConstraints?.equipmentOptions?.length) return loadConstraints;
+  const gymEquipmentId = set.gymEquipmentId ?? null;
+  if (
+    !gymEquipmentId ||
+    !loadConstraints.equipmentOptions.some((equipment) => equipment.equipmentId === gymEquipmentId)
+  ) {
+    // A deleted or unlinked historical snapshot must not be normalized onto
+    // whichever physical machine is currently selected for the exercise.
+    return null;
+  }
+  return { ...loadConstraints, equipmentId: gymEquipmentId };
+}
+
 function initialDraft(
   pe: Props['programExercise'],
   sets: PendingSet[],
+  historySets: PendingSet[],
   lastPerformance: SerializedLastPerformance | undefined,
   recommendation: IntraSetRecommendation | null,
   returnRecommendation: ReturnRecommendation | null,
@@ -128,7 +149,7 @@ function initialDraft(
   deloadActive: boolean,
   loadConstraints: GymLoadConstraints | null,
 ): DraftSet {
-  const loggedSets = sets.filter((set) => !set.isWarmup);
+  const loggedSets = historySets.filter((set) => !set.isWarmup);
   if (
     loggedSets.length === 0 &&
     returnRecommendation != null &&
@@ -196,6 +217,7 @@ function initialDraft(
 export function EditableSetsTable({
   programExercise,
   sets,
+  historySets,
   lastPerformance,
   readiness,
   deloadActive,
@@ -206,8 +228,10 @@ export function EditableSetsTable({
   gym = null,
   onGymUpdated,
   disabled = false,
+  equipmentSelectionRequired = false,
   onSubmit,
   onUpdateSet,
+  onChangeSetEquipment,
   onDeleteSet,
   onTargetSetsChange,
 }: Props) {
@@ -218,11 +242,13 @@ export function EditableSetsTable({
     () => projectSetsToTarget(programExercise, sets).visible,
     [programExercise, sets],
   );
+  const equipmentHistorySets = historySets ?? visibleSets;
   const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
   const [draft, setDraft] = useState<DraftSet>(() =>
     initialDraft(
       programExercise,
       visibleSets,
+      equipmentHistorySets,
       lastPerformance,
       recommendation,
       returnRecommendation,
@@ -237,6 +263,7 @@ export function EditableSetsTable({
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [setControlsOpen, setSetControlsOpen] = useState(false);
+  const [setControlsSet, setSetControlsSet] = useState<PendingSet | null>(null);
   const [setControlsBusy, setSetControlsBusy] = useState(false);
   const [appliedRecommendationKey, setAppliedRecommendationKey] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
@@ -252,6 +279,9 @@ export function EditableSetsTable({
     loadConstraints?.weightOptions?.join(',') ?? '',
     loadConstraints?.equipmentId ?? '',
   ].join('|');
+  const historyKey = equipmentHistorySets
+    .map((set) => `${set.localId}:${set.weight}:${set.reps}:${set.rir ?? ''}`)
+    .join('|');
 
   useEffect(() => {
     setMetrics(loadPreferences().setTableMetrics);
@@ -262,6 +292,7 @@ export function EditableSetsTable({
       initialDraft(
         programExercise,
         visibleSets,
+        equipmentHistorySets,
         lastPerformance,
         recommendation,
         returnRecommendation,
@@ -274,6 +305,7 @@ export function EditableSetsTable({
     setAiOpen(false);
     setInventoryOpen(false);
     setSetControlsOpen(false);
+    setSetControlsSet(null);
     setSetControlsBusy(false);
     setAiText('');
     setAiHint(null);
@@ -287,6 +319,9 @@ export function EditableSetsTable({
     returnRecommendation?.suggestedWeight,
     returnRecommendation?.targetRIR,
     visibleSets.length,
+    historyKey,
+    lastPerformance?.sessionId,
+    lastPerformance?.gymEquipmentId,
   ]);
 
   useEffect(() => {
@@ -296,7 +331,19 @@ export function EditableSetsTable({
     };
     setDraft(normalize);
     setEditingSet((current) =>
-      current == null ? current : { ...current, draft: normalize(current.draft) },
+      current == null
+        ? current
+        : {
+            ...current,
+            draft: {
+              ...current.draft,
+              weight: constrainGymWeight(
+                current.draft.weight,
+                current.draft.weight,
+                loadConstraintsForSet(loadConstraints, current.set),
+              ),
+            },
+          },
     );
     // inventoryKey is a stable scalar representation of the active gym inventory.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -319,6 +366,10 @@ export function EditableSetsTable({
 
   const allLoggedSets = useMemo(() => sets.filter((set) => !set.isWarmup), [sets]);
   const loggedSets = useMemo(() => visibleSets.filter((set) => !set.isWarmup), [visibleSets]);
+  const historyLoggedSets = useMemo(
+    () => equipmentHistorySets.filter((set) => !set.isWarmup),
+    [equipmentHistorySets],
+  );
   const currentNumber = loggedSets.length + 1;
   const dropSetCount = targetDropSets(programExercise);
   const plannedRows = programExercise.targetSets + dropSetCount;
@@ -330,12 +381,16 @@ export function EditableSetsTable({
     unit === 'LB' ? roundWeight(toDisplayWeight(draft.weight, unit), 1) : draft.weight;
   const gridColumns = metrics.length > 1 ? DUAL_METRIC_GRID_COLUMNS : SINGLE_METRIC_GRID_COLUMNS;
   const pickerDraft = editingSet?.draft ?? draft;
+  const pickerLoadConstraints = editingSet
+    ? loadConstraintsForSet(loadConstraints, editingSet.set)
+    : loadConstraints;
   const availableWeights = useMemo(() => {
-    const constrained = gymWeightOptions(loadConstraints, pickerDraft.weight);
+    const constrained = gymWeightOptions(pickerLoadConstraints, pickerDraft.weight);
+    if (pickerLoadConstraints?.equipmentOptions?.length) return constrained;
     if (constrained.length > 0) return constrained;
     const step = programExercise.exercise.category === 'ISOLATION' ? 1 : 2.5;
     return Array.from({ length: 81 }, (_, index) => +(index * step).toFixed(2));
-  }, [pickerDraft.weight, loadConstraints, programExercise.exercise.category]);
+  }, [pickerDraft.weight, pickerLoadConstraints, programExercise.exercise.category]);
   const repOptions = useMemo(() => Array.from({ length: 30 }, (_, index) => index + 1), []);
   const recommendationKey = recommendation
     ? `${recommendation.weight}:${recommendation.reps}:${recommendation.rir}`
@@ -435,7 +490,7 @@ export function EditableSetsTable({
             weight: constrainGymWeight(
               fromDisplayWeight(value, unit),
               current.weight,
-              loadConstraints,
+              pickerLoadConstraints,
             ),
           }
         : { ...current, reps: Math.max(1, Math.round(value)) };
@@ -458,7 +513,15 @@ export function EditableSetsTable({
   }
 
   async function confirmRow() {
-    if (disabled || submitting || draft.reps <= 0 || draft.weight < 0) return;
+    if (
+      disabled ||
+      equipmentSelectionRequired ||
+      submitting ||
+      draft.reps <= 0 ||
+      draft.weight < 0
+    ) {
+      return;
+    }
     setSubmitting(true);
     try {
       await onSubmit({
@@ -477,9 +540,10 @@ export function EditableSetsTable({
   }
 
   async function persistEditedSet(set: PendingSet, nextDraft: DraftSet) {
+    const setLoadConstraints = loadConstraintsForSet(loadConstraints, set);
     const normalizedDraft = {
       ...nextDraft,
-      weight: constrainGymWeight(nextDraft.weight, nextDraft.weight, loadConstraints),
+      weight: constrainGymWeight(nextDraft.weight, nextDraft.weight, setLoadConstraints),
     };
 
     if (
@@ -503,11 +567,26 @@ export function EditableSetsTable({
     }
   }
 
-  function openSetControls() {
-    if (disabled || (!onTargetSetsChange && !onDeleteSet)) return;
+  function openSetControls(set: PendingSet | null = null) {
+    if (disabled || (!onTargetSetsChange && !onDeleteSet && !onChangeSetEquipment)) return;
     setPicker(null);
     setEditingSet(null);
+    setSetControlsSet(set);
     setSetControlsOpen(true);
+  }
+
+  async function changeSetEquipment(equipmentId: string | null) {
+    if (!setControlsSet || !onChangeSetEquipment || disabled || setControlsBusy) return;
+    setSetControlsBusy(true);
+    try {
+      await onChangeSetEquipment(setControlsSet, equipmentId);
+      setSetControlsOpen(false);
+      setSetControlsSet(null);
+    } catch {
+      // The parent owns the localized error toast and the dialog stays open.
+    } finally {
+      setSetControlsBusy(false);
+    }
   }
 
   async function changePlannedRows(nextTotal: number) {
@@ -596,7 +675,7 @@ export function EditableSetsTable({
         >
           <button
             type="button"
-            onClick={openSetControls}
+            onClick={() => openSetControls()}
             disabled={disabled || !onTargetSetsChange}
             aria-label={t('setControls.open')}
             title={t('setControls.open')}
@@ -740,8 +819,10 @@ export function EditableSetsTable({
                 ) : (
                   <button
                     type="button"
-                    onClick={openSetControls}
-                    disabled={disabled || (!onTargetSetsChange && !onDeleteSet)}
+                    onClick={() => openSetControls(set)}
+                    disabled={
+                      disabled || (!onTargetSetsChange && !onDeleteSet && !onChangeSetEquipment)
+                    }
                     aria-label={t('setControls.openForSet', { number: rowNumber })}
                     title={t('setControls.openForSet', { number: rowNumber })}
                     className="flex size-8 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground disabled:opacity-40"
@@ -789,6 +870,7 @@ export function EditableSetsTable({
             <button
               type="button"
               onClick={() => openPicker('weight')}
+              disabled={equipmentSelectionRequired}
               aria-label={t('weight', { number: currentNumber, unit })}
               className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-1 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-2 sm:text-base"
             >
@@ -797,6 +879,7 @@ export function EditableSetsTable({
             <button
               type="button"
               onClick={() => openPicker('reps')}
+              disabled={equipmentSelectionRequired}
               aria-label={t('reps', { number: currentNumber })}
               className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-0.5 text-center text-sm font-semibold tabular-nums sm:h-11 sm:px-1 sm:text-base"
             >
@@ -805,6 +888,7 @@ export function EditableSetsTable({
             <select
               aria-label={t('rir', { number: currentNumber })}
               value={draft.rir ?? ''}
+              disabled={equipmentSelectionRequired}
               onFocus={() => setEditingSet(null)}
               onChange={(event) => {
                 setDraft((current) => ({
@@ -835,7 +919,7 @@ export function EditableSetsTable({
               type="button"
               size="icon"
               onClick={confirmRow}
-              disabled={disabled || submitting || draft.reps <= 0}
+              disabled={disabled || equipmentSelectionRequired || submitting || draft.reps <= 0}
               aria-label={t('confirm', { number: currentNumber })}
               className="size-10 justify-self-center sm:size-11"
             >
@@ -854,7 +938,7 @@ export function EditableSetsTable({
             const rowNumber = currentNumber + index + 1;
             const isUpcomingDropSet =
               rowNumber > programExercise.targetSets && rowNumber <= plannedRows;
-            const previous = lastPerformance?.sets[rowNumber - 1];
+            const previous = lastPerformance?.sets[historyLoggedSets.length + index + 1];
             return (
               <div
                 key={`upcoming-${rowNumber}`}
@@ -895,11 +979,35 @@ export function EditableSetsTable({
         busy={setControlsBusy}
         canUndo={allLoggedSets.length > 0 && onDeleteSet != null}
         onOpenChange={(open) => {
-          if (!setControlsBusy) setSetControlsOpen(open);
+          if (!setControlsBusy) {
+            setSetControlsOpen(open);
+            if (!open) setSetControlsSet(null);
+          }
         }}
         onDecrease={() => void changePlannedRows(plannedRows - 1)}
         onIncrease={() => void changePlannedRows(plannedRows + 1)}
         onUndo={() => void undoLastSet()}
+        equipment={
+          setControlsSet && onChangeSetEquipment
+            ? {
+                setNumber:
+                  loggedSets.findIndex((set) => set.localId === setControlsSet.localId) + 1,
+                equipmentId: setControlsSet.gymEquipmentId ?? null,
+                equipmentName:
+                  setControlsSet.equipmentNameSnapshot ??
+                  loadConstraints?.equipmentOptions?.find(
+                    (equipment) => equipment.equipmentId === setControlsSet.gymEquipmentId,
+                  )?.equipmentName ??
+                  null,
+                options: loadConstraints?.equipmentOptions ?? [],
+                canClear:
+                  !loadConstraints?.equipmentOptions?.length &&
+                  setControlsSet.gymEquipmentId != null,
+                onReplace: (equipmentId) => void changeSetEquipment(equipmentId),
+                onClear: () => void changeSetEquipment(null),
+              }
+            : null
+        }
       />
 
       {gym && canEditLegacyInventory && (
@@ -931,7 +1039,7 @@ export function EditableSetsTable({
               )
         }
         unit={unit}
-        loadConstraints={loadConstraints}
+        loadConstraints={pickerLoadConstraints}
         onClose={() => setPicker(null)}
         onChoose={chooseValue}
       />

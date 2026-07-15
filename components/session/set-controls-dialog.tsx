@@ -1,9 +1,18 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Loader2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { ResolvedEquipmentLoadProfile } from '@/lib/gym-loads';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Props {
   open: boolean;
@@ -16,6 +25,15 @@ interface Props {
   onDecrease: () => void;
   onIncrease: () => void;
   onUndo: () => void;
+  equipment?: {
+    setNumber: number;
+    equipmentId: string | null;
+    equipmentName: string | null;
+    options: ResolvedEquipmentLoadProfile[];
+    canClear: boolean;
+    onReplace: (equipmentId: string) => void;
+    onClear: () => void;
+  } | null;
 }
 
 export function SetControlsDialog({
@@ -29,8 +47,20 @@ export function SetControlsDialog({
   onDecrease,
   onIncrease,
   onUndo,
+  equipment = null,
 }: Props) {
   const t = useTranslations('session.editableSets.setControls');
+  const [replacementId, setReplacementId] = useState('');
+
+  useEffect(() => {
+    if (!open || !equipment) return;
+    const currentAvailable = equipment.options.some(
+      (item) => item.equipmentId === equipment.equipmentId,
+    );
+    setReplacementId(
+      currentAvailable ? (equipment.equipmentId ?? '') : (equipment.options[0]?.equipmentId ?? ''),
+    );
+  }, [equipment, open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -74,6 +104,58 @@ export function SetControlsDialog({
             <Plus className="size-7" />
           </Button>
         </div>
+
+        {equipment && (
+          <div className="space-y-3 rounded-md border p-3">
+            <div>
+              <p className="text-sm font-semibold">
+                {t('equipmentTitle', { number: equipment.setNumber })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {equipment.equipmentName ?? t('equipmentNone')}
+              </p>
+              <p className="text-xs text-muted-foreground">{t('equipmentDescription')}</p>
+            </div>
+            {equipment.options.length > 0 && (
+              <>
+                <Select value={replacementId} onValueChange={setReplacementId}>
+                  <SelectTrigger aria-label={t('equipmentSelect')}>
+                    <SelectValue placeholder={t('equipmentSelect')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {equipment.options.map((item) => (
+                      <SelectItem key={item.equipmentId} value={item.equipmentId}>
+                        {item.equipmentName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => replacementId && equipment.onReplace(replacementId)}
+                  disabled={
+                    busy || !replacementId || replacementId === (equipment.equipmentId ?? '')
+                  }
+                  className="w-full"
+                >
+                  {t('equipmentReplace')}
+                </Button>
+              </>
+            )}
+            {equipment.equipmentId && equipment.canClear && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={equipment.onClear}
+                disabled={busy}
+                className="w-full text-destructive"
+              >
+                {t('equipmentClear')}
+              </Button>
+            )}
+          </div>
+        )}
 
         {canUndo && (
           <Button
