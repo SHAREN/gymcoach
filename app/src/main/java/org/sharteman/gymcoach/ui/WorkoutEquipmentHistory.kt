@@ -1,8 +1,13 @@
 package org.sharteman.gymcoach.ui
 
+import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.EquipmentReturnRecommendationDto
+import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
+import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
+import org.sharteman.gymcoach.training.resolveExerciseInventory
+import org.sharteman.gymcoach.training.selectedEquipment
 
 internal fun sameEquipmentIdentity(first: String?, second: String?): Boolean = first == second
 
@@ -29,3 +34,51 @@ internal fun selectReturnRecommendationForEquipment(
     ?: fallback?.takeIf {
         sameEquipmentIdentity(fallbackPerformance?.gymEquipmentId, gymEquipmentId)
     }
+
+internal fun resolveWorkoutEquipmentId(
+    exercise: ProgramExerciseDto,
+    gym: GymDto?,
+    sets: List<LocalSetEntity>,
+    selectedEquipmentId: String?,
+): String? {
+    if (selectedEquipmentId != null) return selectedEquipmentId
+
+    val lastRecordedSet = sets
+        .asSequence()
+        .filter { set ->
+            set.exerciseId == exercise.exerciseId && !set.deleted
+        }
+        .maxWithOrNull(compareBy<LocalSetEntity> { it.completedAt }.thenBy { it.setNumber })
+    if (lastRecordedSet != null) return lastRecordedSet.gymEquipmentId
+
+    return selectedEquipment(resolveExerciseInventory(exercise, gym))?.equipmentId
+}
+
+internal data class WorkoutExerciseSetProgress(
+    val programExerciseId: String,
+    val exerciseId: String,
+    val completedRows: Int,
+    val plannedRows: Int,
+)
+
+internal fun workoutExerciseSetProgress(
+    exercises: List<ProgramExerciseDto>,
+    sets: List<LocalSetEntity>,
+    returnRecommendations: Map<String, ReturnRecommendationDto>,
+): List<WorkoutExerciseSetProgress> = exercises.map { exercise ->
+    val recommendation = returnRecommendations[exercise.id]
+    val plannedRows = (recommendation?.targetSets ?: exercise.targetSets) +
+        if (recommendation?.mode != null && recommendation.mode != "normal") {
+            0
+        } else {
+            exercise.targetDropSets
+        }
+    WorkoutExerciseSetProgress(
+        programExerciseId = exercise.id,
+        exerciseId = exercise.exerciseId,
+        completedRows = sets.count { set ->
+            set.exerciseId == exercise.exerciseId && !set.deleted && !set.isWarmup
+        },
+        plannedRows = plannedRows,
+    )
+}
