@@ -93,7 +93,7 @@ Use it to test:
 - revision conflicts;
 - Bluetooth-loss simulation at the transport boundary;
 - watch restart and phone restart simulation;
-- sensor batching and the 1 KB message and 4 MB file limits.
+- sensor batching with the 900-byte outbound target, 1,024-byte inbound hard limit, and 3.5 MiB file target strictly below 4 MB.
 
 Do not report a Wear Engine integration as verified from this AVD. Huawei Health, HMS Core, actual pairing, watch sensors, screen-off lifecycle, and signed-HAP installation require supported physical hardware.
 
