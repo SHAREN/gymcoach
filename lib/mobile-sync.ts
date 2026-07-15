@@ -3,6 +3,7 @@ import { Prisma } from '@/prisma/generated/client';
 import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
 import type { MobilePrincipal } from '@/lib/mobile-auth';
+import { resolveFrozenMobileSetEquipmentSnapshot } from '@/lib/mobile-equipment-snapshot';
 import type { MobileSyncOperation } from '@/lib/schemas/mobile';
 import { validateSetForCategory } from '@/lib/schemas/set';
 import { rederiveGoalAchievement, stampGoalIfAchieved } from '@/lib/set-goal-sync';
@@ -185,17 +186,31 @@ async function applyOperationInTransaction(
         throw new ApiError(400, 'An existing set cannot change its session or exercise.');
       }
       const isCardio = exercise.category === 'CARDIO';
+      if (isCardio && operation.set.frozenEquipmentSnapshot) {
+        throw new ApiError(400, 'Cardio sets cannot include an equipment load snapshot.');
+      }
+      if (existing && operation.set.frozenEquipmentSnapshot) {
+        throw new ApiError(400, 'Frozen equipment snapshots are accepted only for new sets.');
+      }
       const equipmentSnapshot = isCardio
         ? null
-        : await resolveSetEquipmentUpdate(tx, {
-            userId,
-            sessionGymId: session.gymId,
-            exerciseId: operation.set.exerciseId,
-            selectedLoadKg: operation.set.weight,
-            existing,
-            requestedGymEquipmentId: operation.set.gymEquipmentId,
-            action: operation.set.equipmentSnapshotAction,
-          });
+        : operation.set.frozenEquipmentSnapshot
+          ? await resolveFrozenMobileSetEquipmentSnapshot(tx, {
+              userId,
+              sessionGymId: session.gymId,
+              exerciseId: operation.set.exerciseId,
+              requestedGymEquipmentId: operation.set.gymEquipmentId,
+              snapshot: operation.set.frozenEquipmentSnapshot,
+            })
+          : await resolveSetEquipmentUpdate(tx, {
+              userId,
+              sessionGymId: session.gymId,
+              exerciseId: operation.set.exerciseId,
+              selectedLoadKg: operation.set.weight,
+              existing,
+              requestedGymEquipmentId: operation.set.gymEquipmentId,
+              action: operation.set.equipmentSnapshotAction,
+            });
       const data = {
         sessionId: operation.set.sessionId,
         exerciseId: operation.set.exerciseId,

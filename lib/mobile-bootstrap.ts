@@ -1,10 +1,11 @@
 import { db } from '@/lib/db';
 import { isDeloadActive } from '@/lib/deload';
 import { getLastPerformances } from '@/lib/last-performance';
+import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 2;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 3;
 export const MOBILE_CALCULATION_VERSION = '2026-07-15-equipment-v1';
 
 export async function buildMobileBootstrap(userId: string) {
@@ -90,6 +91,18 @@ export async function buildMobileBootstrap(userId: string) {
   ]);
   if (!user) throw new Error('User not found.');
 
+  const mobileGyms = await Promise.all(
+    gyms.map(async (gym) => ({
+      ...gym,
+      equipment: await Promise.all(
+        gym.equipment.map(async (equipment) => ({
+          ...equipment,
+          snapshotRevisionId: await ensureMobileEquipmentSnapshotRevision(db, equipment),
+        })),
+      ),
+    })),
+  );
+
   const activeGym = gyms.find((gym) => gym.id === user.activeGymId) ?? null;
   const programExercises = activeProgram?.workouts.flatMap((workout) => workout.exercises) ?? [];
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
@@ -151,7 +164,7 @@ export async function buildMobileBootstrap(userId: string) {
       deloadActive: isDeloadActive(user.deloadUntil, new Date()),
     },
     activeProgram,
-    gyms,
+    gyms: mobileGyms,
     catalog,
     openSessions,
     lastPerformances: serializedPerformances,

@@ -71,7 +71,7 @@ export async function resolveSetEquipmentSnapshot(
   }
 
   const selectedLoadKg = round(input.selectedLoadKg);
-  const multiplier = round(equipment.selectedLoadMultiplier);
+  const multiplier = equipment.selectedLoadMultiplier;
   const nominalResistanceKg =
     equipment.loadType === 'SELECTORIZED' ? round(selectedLoadKg * multiplier) : null;
   const snapshot = {
