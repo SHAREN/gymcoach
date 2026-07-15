@@ -2,8 +2,8 @@ import { notFound, redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import {
+  buildEquipmentPerformanceTargets,
   getLastPerformancesForEquipmentTargets,
-  type EquipmentPerformanceTarget,
   type LastPerformance,
 } from '@/lib/last-performance';
 import { getReturnToTrainingRecommendationsByEquipment } from '@/lib/return-to-training-history';
@@ -77,7 +77,7 @@ export default async function SessionRunPage(props: Props) {
   if (!session.workout) notFound();
 
   const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
-  const performanceTargets = buildPerformanceTargets(session, exerciseIds);
+  const performanceTargets = buildEquipmentPerformanceTargets(exerciseIds, session.gym);
   const [lastPerformances, user, latestCheckin, catalog] = await Promise.all([
     getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
     db.user.findUnique({
@@ -173,27 +173,4 @@ function serializePerf(p: LastPerformance): SerializedLastPerformance {
     repsAtMaxWeight: p.repsAtMaxWeight,
     cardio: p.cardio,
   };
-}
-
-function buildPerformanceTargets(
-  session: {
-    gym: {
-      equipment: { id: string; exerciseLinks: { exerciseId: string }[] }[];
-    } | null;
-  },
-  exerciseIds: string[],
-): EquipmentPerformanceTarget[] {
-  return exerciseIds.flatMap<EquipmentPerformanceTarget>((exerciseId) => {
-    const linkedEquipment =
-      session.gym?.equipment.filter((equipment) =>
-        equipment.exerciseLinks.some((link) => link.exerciseId === exerciseId),
-      ) ?? [];
-    if (linkedEquipment.length > 0) {
-      return linkedEquipment.map((equipment) => ({
-        exerciseId,
-        gymEquipmentId: equipment.id,
-      }));
-    }
-    return [{ exerciseId, gymEquipmentId: null }];
-  });
 }

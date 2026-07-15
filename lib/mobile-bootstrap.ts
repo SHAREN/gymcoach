@@ -1,9 +1,18 @@
 import { db } from '@/lib/db';
 import { isDeloadActive } from '@/lib/deload';
-import { getLastPerformances } from '@/lib/last-performance';
+import {
+  buildEquipmentPerformanceTargets,
+  getLastPerformances,
+  getLastPerformancesForEquipmentTargets,
+  type LastPerformance,
+} from '@/lib/last-performance';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
-import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
+import {
+  getReturnToTrainingRecommendations,
+  getReturnToTrainingRecommendationsByEquipment,
+  type EquipmentReturnRecommendation,
+} from '@/lib/return-to-training-history';
 
 export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 4;
 export const MOBILE_CALCULATION_VERSION = '2026-07-15-equipment-v1';
@@ -38,6 +47,33 @@ interface MobileExerciseHistorySession {
     avgHr: number | null;
     maxHr: number | null;
   }>;
+}
+
+function serializeMobilePerformance(performance: LastPerformance) {
+  return {
+    ...performance,
+    sessionStartedAt: performance.sessionStartedAt.toISOString(),
+  };
+}
+
+export function buildMobileEquipmentHistoryContract(
+  performances: LastPerformance[],
+  returnEntries: Array<readonly [string, Record<string, EquipmentReturnRecommendation[]>]>,
+) {
+  const lastPerformancesByEquipment: Record<
+    string,
+    ReturnType<typeof serializeMobilePerformance>[]
+  > = {};
+  for (const performance of performances) {
+    (lastPerformancesByEquipment[performance.exerciseId] ??= []).push(
+      serializeMobilePerformance(performance),
+    );
+  }
+
+  return {
+    lastPerformancesByEquipment,
+    returnRecommendationsByEquipmentByWorkout: Object.fromEntries(returnEntries),
+  };
 }
 
 export async function buildMobileBootstrap(userId: string) {
@@ -190,9 +226,10 @@ export async function buildMobileBootstrap(userId: string) {
   const activeGym = gyms.find((gym) => gym.id === user.activeGymId) ?? null;
   const programExercises = activeProgram?.workouts.flatMap((workout) => workout.exercises) ?? [];
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
-  const lastPerformances = await getLastPerformances(userId, exerciseIds, null);
-  const returnEntries = activeProgram
-    ? await Promise.all(
+  const performanceTargets = buildEquipmentPerformanceTargets(exerciseIds, activeGym);
+  const now = new Date();
+  const returnEntriesPromise = activeProgram
+    ? Promise.all(
         activeProgram.workouts.map(
           async (workout) =>
             [
@@ -201,23 +238,49 @@ export async function buildMobileBootstrap(userId: string) {
                 userId,
                 programExercises: workout.exercises,
                 excludeSessionId: null,
-                now: new Date(),
+                now,
                 bodyweight: user.bodyweight,
                 gym: activeGym,
               }),
             ] as const,
         ),
       )
-    : [];
+    : Promise.resolve([]);
+  const equipmentReturnEntriesPromise = activeProgram
+    ? Promise.all(
+        activeProgram.workouts.map(
+          async (workout) =>
+            [
+              workout.id,
+              await getReturnToTrainingRecommendationsByEquipment({
+                userId,
+                programExercises: workout.exercises,
+                excludeSessionId: null,
+                now,
+                bodyweight: user.bodyweight,
+                gym: activeGym,
+              }),
+            ] as const,
+        ),
+      )
+    : Promise.resolve([]);
+  const [lastPerformances, equipmentLastPerformances, returnEntries, equipmentReturnEntries] =
+    await Promise.all([
+      getLastPerformances(userId, exerciseIds, null),
+      getLastPerformancesForEquipmentTargets(userId, performanceTargets, null),
+      returnEntriesPromise,
+      equipmentReturnEntriesPromise,
+    ]);
 
   const serializedPerformances = Object.fromEntries(
     [...lastPerformances.entries()].map(([exerciseId, performance]) => [
       exerciseId,
-      {
-        ...performance,
-        sessionStartedAt: performance.sessionStartedAt.toISOString(),
-      },
+      serializeMobilePerformance(performance),
     ]),
+  );
+  const equipmentHistoryContract = buildMobileEquipmentHistoryContract(
+    equipmentLastPerformances,
+    equipmentReturnEntries,
   );
   const readinessAgeHours = latestReadiness
     ? (Date.now() - latestReadiness.createdAt.getTime()) / 3_600_000
@@ -276,6 +339,7 @@ export async function buildMobileBootstrap(userId: string) {
     catalog,
     openSessions,
     lastPerformances: serializedPerformances,
+    ...equipmentHistoryContract,
     exerciseHistoryByExerciseId,
     returnRecommendationsByWorkout: Object.fromEntries(returnEntries),
     readiness,

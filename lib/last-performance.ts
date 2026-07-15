@@ -30,6 +30,32 @@ export interface EquipmentPerformanceTarget {
   gymEquipmentId: string | null;
 }
 
+interface EquipmentTargetGym {
+  equipment?: Array<{
+    id: string;
+    exerciseLinks: Array<{ exerciseId: string }>;
+  }>;
+}
+
+export function buildEquipmentPerformanceTargets(
+  exerciseIds: string[],
+  gym: EquipmentTargetGym | null | undefined,
+): EquipmentPerformanceTarget[] {
+  return exerciseIds.flatMap<EquipmentPerformanceTarget>((exerciseId) => {
+    const linkedEquipment =
+      gym?.equipment?.filter((equipment) =>
+        equipment.exerciseLinks.some((link) => link.exerciseId === exerciseId),
+      ) ?? [];
+    if (linkedEquipment.length > 0) {
+      return linkedEquipment.map((equipment) => ({
+        exerciseId,
+        gymEquipmentId: equipment.id,
+      }));
+    }
+    return [{ exerciseId, gymEquipmentId: null }];
+  });
+}
+
 // Fetches the previous performances for a list of exerciseIds, excluding the
 // current session. For each exercise, we take the most recent session that
 // contains it, then pull up all of its non-warmup sets.
