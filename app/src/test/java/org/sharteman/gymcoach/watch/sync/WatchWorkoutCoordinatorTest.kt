@@ -838,6 +838,8 @@ class WatchWorkoutCoordinatorTest {
     }
 
     private class FakeWatchWorkoutRepository : WatchWorkoutRepository {
+        override suspend fun <T> withWatchMutationLock(block: suspend () -> T): T = block()
+
         private val workout = testWorkout()
         private val session = LocalSessionEntity(
             id = SESSION_ID,
