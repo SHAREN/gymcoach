@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const includedExtensions = new Set(['.css', '.hml', '.js', '.json', '.md', '.mjs']);
-const ignoredDirectories = new Set(['node_modules']);
+const ignoredDirectories = new Set(['build', 'node_modules', 'oh_modules']);
 
 async function collect(directory) {
   const entries = await readdir(directory, { withFileTypes: true });

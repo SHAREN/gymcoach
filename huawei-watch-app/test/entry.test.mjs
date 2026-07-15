@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const entryUrl = new URL('../entry/src/main/js/default/pages/index/index.js', import.meta.url);
 const hmlUrl = new URL('../entry/src/main/js/default/pages/index/index.hml', import.meta.url);
+const cssUrl = new URL('../entry/src/main/js/default/pages/index/index.css', import.meta.url);
 
 test('watch page entry resolves and does not import the debug transport', async () => {
   const source = await readFile(entryUrl, 'utf8');
@@ -26,6 +27,7 @@ test('watch page entry resolves and does not import the debug transport', async 
 
 test('HML exposes workout, set, and rest controls without unsupported crown APIs', async () => {
   const hml = await readFile(hmlUrl, 'utf8');
+  const css = await readFile(cssUrl, 'utf8');
   const source = await readFile(entryUrl, 'utf8');
   assert.equal(hml.includes('showHome'), true);
   assert.equal(hml.includes('showWorkout'), true);
@@ -44,6 +46,12 @@ test('HML exposes workout, set, and rest controls without unsupported crown APIs
   assert.equal(hml.includes('showPauseButton'), true);
   assert.equal(hml.includes('onclick="startNextSet"'), true);
   assert.equal(hml.includes('{{ setElapsed }}'), true);
+  assert.equal(hml.includes('<button'), false);
+  assert.equal(/class="[^"]*\{\{/.test(hml), false);
+  assert.equal(hml.includes('class="home-card-main home-card-small"'), true);
+  assert.equal(css.includes('.home-card-main.small'), false);
+  assert.equal(css.includes('font-weight:'), false);
+  assert.equal(css.includes('min-height:'), false);
   assert.equal(`${hml}\n${source}`.toLowerCase().includes('crown'), false);
   assert.equal(`${hml}\n${source}`.toLowerCase().includes('rotary'), false);
 });
