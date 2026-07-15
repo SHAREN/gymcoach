@@ -6,7 +6,7 @@ import type { MobilePrincipal } from '@/lib/mobile-auth';
 import type { MobileSyncOperation } from '@/lib/schemas/mobile';
 import { validateSetForCategory } from '@/lib/schemas/set';
 import { rederiveGoalAchievement, stampGoalIfAchieved } from '@/lib/set-goal-sync';
-import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
+import { resolveSetEquipmentUpdate } from '@/lib/set-equipment';
 
 export interface MobileSyncResult {
   operationId: string;
@@ -180,15 +180,14 @@ async function applyOperationInTransaction(
       const isCardio = exercise.category === 'CARDIO';
       const equipmentSnapshot = isCardio
         ? null
-        : await resolveSetEquipmentSnapshot(tx, {
+        : await resolveSetEquipmentUpdate(tx, {
             userId,
             sessionGymId: session.gymId,
             exerciseId: operation.set.exerciseId,
-            gymEquipmentId:
-              operation.set.gymEquipmentId === undefined
-                ? existing?.gymEquipmentId
-                : operation.set.gymEquipmentId,
             selectedLoadKg: operation.set.weight,
+            existing,
+            requestedGymEquipmentId: operation.set.gymEquipmentId,
+            action: operation.set.equipmentSnapshotAction,
           });
       const data = {
         sessionId: operation.set.sessionId,

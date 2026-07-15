@@ -252,6 +252,84 @@ describe('Android mobile API', () => {
       status: 'REJECTED',
       error: expect.stringContaining('different payload'),
     });
+
+    await db.gymEquipment.update({
+      where: { id: seeded.equipment.id },
+      data: { name: 'Renamed bench', baseLoadKg: 99, loadingSides: 1 },
+    });
+    const updatedAfterConfigChange = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'operation_set_update_1',
+              type: 'UPSERT_SET',
+              set: {
+                ...operations[1]!.set,
+                weight: 85,
+                reps: 9,
+                completedAt: '2026-07-13T10:06:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await updatedAfterConfigChange.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+    });
+    expect(await db.set.findUniqueOrThrow({ where: { id: setId } })).toMatchObject({
+      gymEquipmentId: seeded.equipment.id,
+      equipmentNameSnapshot: 'Bench station',
+      selectedLoadKg: 85,
+      selectedLoadMultiplierSnapshot: 1,
+      equipmentLoadSnapshot: expect.objectContaining({
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 20,
+        loadingSides: 2,
+        selectedLoadKg: 85,
+      }),
+    });
+
+    await db.gymEquipment.delete({ where: { id: seeded.equipment.id } });
+    const updatedAfterEquipmentDelete = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'operation_set_update_2',
+              type: 'UPSERT_SET',
+              set: {
+                ...operations[1]!.set,
+                gymEquipmentId: null,
+                weight: 90,
+                reps: 8,
+                completedAt: '2026-07-13T10:07:00.000Z',
+              },
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await updatedAfterEquipmentDelete.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+    });
+    expect(await db.set.findUniqueOrThrow({ where: { id: setId } })).toMatchObject({
+      gymEquipmentId: null,
+      equipmentNameSnapshot: 'Bench station',
+      selectedLoadKg: 90,
+      selectedLoadMultiplierSnapshot: 1,
+      equipmentLoadSnapshot: expect.objectContaining({
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 20,
+        loadingSides: 2,
+        selectedLoadKg: 90,
+      }),
+    });
   });
 
   it('rejects references to another user workout or exercise', async () => {
