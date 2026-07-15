@@ -18,6 +18,7 @@ import org.sharteman.gymcoach.ui.GymCoachApp
 import org.sharteman.gymcoach.ui.WorkoutScreenPreview
 import org.sharteman.gymcoach.ui.settings.SettingsScreen
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
+import org.sharteman.gymcoach.watch.ui.diagnostics.WatchDiagnosticsFeature
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,6 +35,9 @@ class MainActivity : ComponentActivity() {
                 GymCoachTheme(darkTheme = true) { WorkoutScreenPreview() }
             } else {
                 val preferences = remember { AndroidPreferences(applicationContext) }
+                val watchDiagnosticsDestination = remember {
+                    WatchDiagnosticsFeature.create(applicationContext)
+                }
                 var preferenceState by remember { mutableStateOf(preferences.load()) }
                 DisposableEffect(preferences) {
                     val registration = preferences.registerThemeListener {
@@ -47,11 +51,16 @@ class MainActivity : ComponentActivity() {
                     AppThemeMode.SYSTEM -> isSystemInDarkTheme()
                 }
                 GymCoachTheme(darkTheme = darkTheme) {
-                    GymCoachApp(repository = repository) { onBack, onOpenWebPath ->
+                    GymCoachApp(
+                        repository = repository,
+                        watchDiagnosticsDestination = watchDiagnosticsDestination,
+                    ) { onBack, onOpenWebPath, watchDiagnosticsLabel, onOpenWatchDiagnostics ->
                         SettingsScreen(
                             onBack = onBack,
                             onOpenWebPath = onOpenWebPath,
                             appRepository = repository,
+                            watchDiagnosticsLabel = watchDiagnosticsLabel,
+                            onOpenWatchDiagnostics = onOpenWatchDiagnostics,
                         )
                     }
                 }
