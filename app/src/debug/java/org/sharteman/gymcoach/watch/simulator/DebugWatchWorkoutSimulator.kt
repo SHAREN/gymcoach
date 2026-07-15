@@ -46,6 +46,7 @@ class DebugWatchWorkoutSimulator(
     private val mutableSnapshot = MutableStateFlow<WatchSyncSnapshotDto?>(null)
     private val mutableDiagnostics = MutableStateFlow(DebugWatchWorkoutDiagnostics())
     private val pendingDeliveries = ArrayDeque<PendingDelivery>()
+    private var nextWatchRevision: Long? = null
 
     val snapshot: StateFlow<WatchSyncSnapshotDto?> = mutableSnapshot.asStateFlow()
     val diagnostics: StateFlow<DebugWatchWorkoutDiagnostics> = mutableDiagnostics.asStateFlow()
@@ -53,6 +54,7 @@ class DebugWatchWorkoutSimulator(
     override suspend fun sendSnapshot(snapshot: WatchSyncSnapshotDto) {
         val validated = codec.decodeSyncSnapshot(codec.encodeSyncSnapshot(snapshot))
         mutableSnapshot.value = validated
+        nextWatchRevision = validated.revision + 1
         refreshDiagnostics()
     }
 
@@ -62,8 +64,14 @@ class DebugWatchWorkoutSimulator(
             current.copy(
                 revision = validated.revision,
                 workoutSession = current.workoutSession.copy(revision = validated.revision),
+                runtimeState = current.runtimeState?.copy(
+                    revision = validated.revision,
+                    updatedAt = validated.timestamp,
+                    updatedBy = WatchEventSource.PHONE,
+                ),
             )
         }
+        nextWatchRevision = maxOf(nextWatchRevision ?: 1, validated.revision + 1)
         mutableDiagnostics.value = mutableDiagnostics.value.copy(
             ackCount = mutableDiagnostics.value.ackCount + 1,
             lastAckStatus = validated.status.name,
@@ -82,6 +90,12 @@ class DebugWatchWorkoutSimulator(
                     updatedAt = event.timestamp,
                     updatedBy = WatchEventSource.PHONE,
                 ),
+                runtimeState = current.runtimeState?.copy(
+                    activeExerciseId = payload.exerciseId,
+                    revision = event.revision,
+                    updatedAt = event.timestamp,
+                    updatedBy = WatchEventSource.PHONE,
+                ),
                 exerciseSessions = current.exerciseSessions.map { exercise ->
                     exercise.copy(
                         status = if (exercise.exerciseSessionId == payload.exerciseSessionId) {
@@ -93,6 +107,7 @@ class DebugWatchWorkoutSimulator(
                 },
             )
         }
+        nextWatchRevision = maxOf(nextWatchRevision ?: 1, event.revision + 1)
         refreshDiagnostics()
     }
 
@@ -114,7 +129,7 @@ class DebugWatchWorkoutSimulator(
         sendWatchEvent(
             sessionId = current.sessionId,
             type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
-            revision = current.revision + 1,
+            revision = allocateRevision(),
             payload = codec.encodeActiveExerciseChangedPayload(
                 ActiveExerciseChangedPayloadDto(
                     exerciseId = exercise.exerciseId,
@@ -138,7 +153,7 @@ class DebugWatchWorkoutSimulator(
         duplicate: Boolean = false,
     ) {
         val current = requireNotNull(mutableSnapshot.value) { "No workout snapshot is loaded." }
-        val revision = current.revision + 1
+        val revision = allocateRevision()
         val record = WatchSetRecordDto(
             setId = setId,
             sessionId = current.sessionId,
@@ -181,7 +196,7 @@ class DebugWatchWorkoutSimulator(
     ) {
         require(samples.isNotEmpty()) { "At least one heart rate sample is required." }
         val current = requireNotNull(mutableSnapshot.value) { "No workout snapshot is loaded." }
-        val revision = current.revision + 1
+        val revision = allocateRevision()
         val batch = WatchSensorBatchDto(
             protocolVersion = WatchProtocol.VERSION,
             schemaVersion = WatchProtocol.SCHEMA_VERSION,
@@ -302,6 +317,13 @@ class DebugWatchWorkoutSimulator(
                 pendingDeliveryCount = pendingDeliveries.size,
             )
         }
+    }
+
+    private fun allocateRevision(): Long {
+        val current = requireNotNull(mutableSnapshot.value) { "No workout snapshot is loaded." }
+        val revision = nextWatchRevision ?: (current.revision + 1)
+        nextWatchRevision = revision + 1
+        return revision
     }
 
     private suspend fun deliver(delivery: PendingDelivery) {

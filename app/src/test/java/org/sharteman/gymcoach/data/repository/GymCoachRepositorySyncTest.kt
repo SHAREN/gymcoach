@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -501,6 +502,77 @@ class GymCoachRepositorySyncTest {
         fixture.repository.refreshBootstrap()
 
         assertEquals(90.0, fixture.dao.getSet("set_local")?.weight ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun watchHeartRateSummaryQueuesServerUpdateAndSurvivesBootstrapRefresh() = runTest {
+        val fixture = fixture()
+        val session = LocalSessionEntity(
+            id = "session_watch_hr",
+            workoutId = "workout_1",
+            gymId = null,
+            startedAt = "2026-07-13T10:00:00Z",
+        )
+        val set = LocalSetEntity(
+            id = "set_watch_hr",
+            sessionId = session.id,
+            exerciseId = "exercise_1",
+            setNumber = 1,
+            weight = 90.0,
+            reps = 8,
+            rir = 2,
+            completedAt = "2026-07-13T10:05:00Z",
+        )
+        fixture.dao.saveSession(session)
+        fixture.dao.saveSet(set)
+
+        assertTrue(
+            fixture.repository.updateSetHeartRateSummary(
+                setId = set.id,
+                minHr = 120,
+                maxHr = 170,
+                avgHr = 150,
+                startHr = 125,
+                endHr = 165,
+                sampleCount = 20,
+            ),
+        )
+        val operation = fixture.dao.queuedOperations().single()
+        val decoded = fixture.api.json.decodeFromString<SyncOperation>(operation.payloadJson)
+        assertEquals(150, (decoded as UpsertSetOperation).set.avgHr)
+        assertEquals(170, decoded.set.maxHr)
+
+        fixture.dao.clearOutbox()
+        fixture.api.bootstrapResponse = bootstrap(
+            openSessions = listOf(
+                SessionDto(
+                    id = session.id,
+                    workoutId = session.workoutId,
+                    startedAt = session.startedAt,
+                    sets = listOf(
+                        SetDto(
+                            id = set.id,
+                            sessionId = set.sessionId,
+                            exerciseId = set.exerciseId,
+                            setNumber = set.setNumber,
+                            weight = set.weight,
+                            reps = set.reps,
+                            rir = set.rir,
+                            avgHr = 150,
+                            maxHr = 170,
+                            completedAt = set.completedAt,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+
+        val refreshed = fixture.dao.getSet(set.id)
+        assertEquals(120, refreshed?.minHr)
+        assertEquals(125, refreshed?.startHr)
+        assertEquals(165, refreshed?.endHr)
+        assertEquals(20, refreshed?.hrSampleCount)
     }
 
     @Test

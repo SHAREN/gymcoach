@@ -153,10 +153,35 @@ data class WatchSyncSnapshotDto(
     val deviceId: String,
     val revision: Long,
     val workoutSession: WatchWorkoutSessionDto,
+    val runtimeState: WatchActiveWorkoutRuntimeDto? = null,
     val exerciseSessions: List<WatchExerciseSessionDto>,
     val setRecords: List<WatchSetRecordDto>,
     val sensorSamples: List<WatchSensorSampleDto>,
     val pendingEvents: List<WatchEventEnvelopeDto>,
+)
+
+@Serializable
+data class WatchActiveWorkoutRuntimeDto(
+    val sessionId: String,
+    val status: WatchWorkoutStatus,
+    val activeExerciseId: String?,
+    val activeSetId: String?,
+    val setStartedAt: Long?,
+    val pausedAt: Long?,
+    val workoutAccumulatedPauseMs: Long,
+    val setAccumulatedPauseMs: Long,
+    val rest: WatchRestRuntimeDto?,
+    val revision: Long,
+    val updatedAt: Long,
+    val updatedBy: WatchEventSource,
+)
+
+@Serializable
+data class WatchRestRuntimeDto(
+    val setId: String,
+    val startedAt: Long,
+    val endsAt: Long,
+    val pausedRemainingMs: Long?,
 )
 
 @Serializable

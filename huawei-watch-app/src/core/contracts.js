@@ -59,6 +59,21 @@ const SYNC_SNAPSHOT_FIELDS = [
   'sensorSamples',
   'pendingEvents',
 ];
+const ACTIVE_WORKOUT_RUNTIME_FIELDS = [
+  'sessionId',
+  'status',
+  'activeExerciseId',
+  'activeSetId',
+  'setStartedAt',
+  'pausedAt',
+  'workoutAccumulatedPauseMs',
+  'setAccumulatedPauseMs',
+  'rest',
+  'revision',
+  'updatedAt',
+  'updatedBy',
+];
+const ACTIVE_REST_FIELDS = ['setId', 'startedAt', 'endsAt', 'pausedRemainingMs'];
 const WORKOUT_SESSION_FIELDS = [
   'sessionId',
   'workoutProgramId',
@@ -165,7 +180,7 @@ export function validateWatchEvent(value) {
 }
 
 export function validateSyncSnapshot(value) {
-  exactObject(value, SYNC_SNAPSHOT_FIELDS, [], 'SyncSnapshot');
+  exactObject(value, SYNC_SNAPSHOT_FIELDS, ['runtimeState'], 'SyncSnapshot');
   wireVersion(value, 'SyncSnapshot');
   uuid(value.snapshotId, 'SyncSnapshot.snapshotId');
   opaqueId(value.sessionId, 'SyncSnapshot.sessionId');
@@ -178,6 +193,9 @@ export function validateSyncSnapshot(value) {
   arrayOf(value.setRecords, validateSetRecord, 'SyncSnapshot.setRecords');
   arrayOf(value.sensorSamples, validateSensorSample, 'SyncSnapshot.sensorSamples');
   arrayOf(value.pendingEvents, validateWatchEvent, 'SyncSnapshot.pendingEvents');
+  if (value.runtimeState !== undefined) {
+    validateActiveWorkoutRuntime(value.runtimeState);
+  }
 
   if (value.workoutSession.sessionId !== value.sessionId) {
     throw new Error('SyncSnapshot workout session ID does not match the envelope.');
@@ -217,6 +235,64 @@ export function validateSyncSnapshot(value) {
   }
   if (value.workoutSession.revision !== value.revision) {
     throw new Error('SyncSnapshot workout revision must match the envelope revision.');
+  }
+  if (value.runtimeState !== undefined) {
+    if (value.runtimeState.sessionId !== value.sessionId) {
+      throw new Error('SyncSnapshot runtime session ID does not match the envelope.');
+    }
+    if (value.runtimeState.revision !== value.revision) {
+      throw new Error('SyncSnapshot runtime revision must match the envelope revision.');
+    }
+    if (value.runtimeState.status !== value.workoutSession.status) {
+      throw new Error('SyncSnapshot runtime status must match the workout status.');
+    }
+    if (value.runtimeState.activeExerciseId !== value.workoutSession.activeExerciseId) {
+      throw new Error('SyncSnapshot runtime active exercise must match the workout session.');
+    }
+    if (value.runtimeState.activeSetId !== value.workoutSession.activeSetId) {
+      throw new Error('SyncSnapshot runtime active set must match the workout session.');
+    }
+  }
+  return value;
+}
+
+export function validateActiveWorkoutRuntime(value) {
+  exactObject(value, ACTIVE_WORKOUT_RUNTIME_FIELDS, [], 'ActiveWorkoutRuntime');
+  opaqueId(value.sessionId, 'ActiveWorkoutRuntime.sessionId');
+  enumValue(value.status, WORKOUT_STATUSES, 'ActiveWorkoutRuntime.status');
+  nullableOpaqueId(value.activeExerciseId, 'ActiveWorkoutRuntime.activeExerciseId');
+  nullableOpaqueId(value.activeSetId, 'ActiveWorkoutRuntime.activeSetId');
+  nullableNonNegativeInteger(value.setStartedAt, 'ActiveWorkoutRuntime.setStartedAt');
+  nullableNonNegativeInteger(value.pausedAt, 'ActiveWorkoutRuntime.pausedAt');
+  nonNegativeInteger(
+    value.workoutAccumulatedPauseMs,
+    'ActiveWorkoutRuntime.workoutAccumulatedPauseMs',
+  );
+  nonNegativeInteger(value.setAccumulatedPauseMs, 'ActiveWorkoutRuntime.setAccumulatedPauseMs');
+  positiveInteger(value.revision, 'ActiveWorkoutRuntime.revision');
+  nonNegativeInteger(value.updatedAt, 'ActiveWorkoutRuntime.updatedAt');
+  enumValue(value.updatedBy, SOURCES, 'ActiveWorkoutRuntime.updatedBy');
+  if (value.rest !== null) {
+    exactObject(value.rest, ACTIVE_REST_FIELDS, [], 'ActiveWorkoutRuntime.rest');
+    opaqueId(value.rest.setId, 'ActiveWorkoutRuntime.rest.setId');
+    nonNegativeInteger(value.rest.startedAt, 'ActiveWorkoutRuntime.rest.startedAt');
+    nonNegativeInteger(value.rest.endsAt, 'ActiveWorkoutRuntime.rest.endsAt');
+    nullableNonNegativeInteger(
+      value.rest.pausedRemainingMs,
+      'ActiveWorkoutRuntime.rest.pausedRemainingMs',
+    );
+    if (value.rest.endsAt < value.rest.startedAt) {
+      throw new Error('ActiveWorkoutRuntime rest endsAt must not precede startedAt.');
+    }
+  }
+  if (value.status === 'PAUSED' && value.pausedAt === null) {
+    throw new Error('Paused ActiveWorkoutRuntime requires pausedAt.');
+  }
+  if (value.status !== 'PAUSED' && value.pausedAt !== null) {
+    throw new Error('Only paused ActiveWorkoutRuntime may contain pausedAt.');
+  }
+  if (value.activeSetId === null && value.setStartedAt !== null) {
+    throw new Error('ActiveWorkoutRuntime setStartedAt requires activeSetId.');
   }
   return value;
 }

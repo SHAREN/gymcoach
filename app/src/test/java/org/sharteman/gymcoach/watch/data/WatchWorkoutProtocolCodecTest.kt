@@ -122,5 +122,18 @@ class WatchWorkoutProtocolCodecTest {
         assertEquals(WatchProtocolErrorCode.FILE_TOO_LARGE, (sizeFailure as WatchProtocolException).code)
     }
 
+    @Test
+    fun `sensor batch rejects duplicate sample ids before Room insertion`() {
+        val decoded = codec.decodeSensorBatch(resource("sensor-batch.json").encodeToByteArray())
+        val duplicate = decoded.copy(
+            samples = listOf(decoded.samples.first(), decoded.samples.first()),
+            sampleCount = 2,
+        )
+
+        val failure = runCatching { codec.encodeSensorBatch(duplicate) }.exceptionOrNull()
+
+        assertEquals(WatchProtocolErrorCode.INVALID_EVENT, (failure as WatchProtocolException).code)
+    }
+
     private fun resource(name: String): String = requireNotNull(javaClass.classLoader?.getResource(name)).readText()
 }

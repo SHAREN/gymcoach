@@ -499,15 +499,21 @@ class GymCoachRepository(
         startHr: Int?,
         endHr: Int?,
         sampleCount: Int,
-    ): Boolean = dao.updateSetHeartRateSummary(
-        setId,
-        minHr,
-        maxHr,
-        avgHr,
-        startHr,
-        endHr,
-        sampleCount,
-    ) > 0
+    ): Boolean {
+        val existing = dao.getSet(setId) ?: return false
+        val updated = existing.copy(
+            minHr = minHr,
+            maxHr = maxHr,
+            avgHr = avgHr,
+            startHr = startHr,
+            endHr = endHr,
+            hrSampleCount = sampleCount,
+        )
+        if (updated == existing) return true
+        dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+        scheduleSyncNow()
+        return true
+    }
 
     suspend fun saveRestRecoverySummary(summary: RestRecoverySummaryEntity) {
         dao.saveRestRecoverySummary(summary)
@@ -823,6 +829,7 @@ class GymCoachRepository(
             }
             for (set in session.sets) {
                 if (set.id in protected.setIds) continue
+                val existing = dao.getSet(set.id)
                 dao.saveSet(
                     LocalSetEntity(
                         id = set.id,
@@ -836,6 +843,10 @@ class GymCoachRepository(
                         distanceM = set.distanceM,
                         avgHr = set.avgHr,
                         maxHr = set.maxHr,
+                        minHr = existing?.minHr,
+                        startHr = existing?.startHr,
+                        endHr = existing?.endHr,
+                        hrSampleCount = existing?.hrSampleCount,
                         notes = set.notes,
                         isWarmup = set.isWarmup,
                         isDropSet = set.isDropSet,
