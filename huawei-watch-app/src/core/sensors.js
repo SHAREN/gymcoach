@@ -1,5 +1,6 @@
 import {
   encodeSensorBatchForTransport,
+  FILE_TARGET_BYTES,
   MAX_FILE_BYTES,
   validateSensorBatch,
   validateSensorSample,
@@ -26,7 +27,8 @@ export const SensorPhase = Object.freeze({
 
 const DOCUMENTED_SENSOR_TYPES = new Set(Object.values(SensorType));
 const SENSOR_PHASES = new Set(Object.values(SensorPhase));
-const DEFAULT_BATCH_TARGET_BYTES = 3_500_000;
+const FILE_ENVELOPE_RESERVE_BYTES = 4_096;
+const DEFAULT_BATCH_TARGET_BYTES = FILE_TARGET_BYTES - FILE_ENVELOPE_RESERVE_BYTES;
 
 export class SensorCollector {
   isSupported() {

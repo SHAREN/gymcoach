@@ -586,7 +586,22 @@ export class WatchCompanion {
       return { duplicate: false, stale: true };
     }
     if (event.revision === activeWorkout.revision) {
-      await this.commitRejectedEvent(event, eventHash, 'CONCURRENT_REVISION', 'CONFLICT');
+      const localConcurrentEvent = this.repository
+        .pending()
+        .find(
+          (pending) =>
+            pending.eventId &&
+            pending.source === this.source &&
+            pending.sessionId === event.sessionId &&
+            pending.revision === event.revision,
+        );
+      await this.commitRejectedEvent(
+        event,
+        eventHash,
+        'CONCURRENT_REVISION',
+        'CONFLICT',
+        localConcurrentEvent ? canonicalSha256(localConcurrentEvent) : null,
+      );
       await this.repository.removePendingInboundEvent(event.eventId);
       return { conflict: true, duplicate: false };
     }
@@ -695,6 +710,8 @@ export class WatchCompanion {
             code: 'SNAPSHOT_PENDING_CONFLICT',
             eventId: event.eventId,
             sessionId: event.sessionId,
+            localHash: canonicalSha256(event),
+            remoteHash: snapshotHash,
             recordedAt: this.clock(),
           });
           revisionGap = true;
@@ -916,7 +933,13 @@ export class WatchCompanion {
     return ack;
   }
 
-  async commitRejectedEvent(event, eventHash, errorCode, status = 'REJECTED') {
+  async commitRejectedEvent(
+    event,
+    eventHash,
+    errorCode,
+    status = 'REJECTED',
+    localHash = null,
+  ) {
     await this.repository.commitInboundWorkoutEvent(event.eventId, null, {
       canonicalHash: eventHash,
       errorCode,
@@ -928,6 +951,7 @@ export class WatchCompanion {
       code: errorCode,
       eventId: event.eventId,
       sessionId: event.sessionId,
+      localHash,
       remoteHash: eventHash,
       recordedAt: this.clock(),
     });
