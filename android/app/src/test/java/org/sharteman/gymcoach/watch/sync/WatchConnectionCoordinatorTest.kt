@@ -168,6 +168,56 @@ class WatchConnectionCoordinatorTest {
     }
 
     @Test
+    fun `watch sync control request is routed for current workout snapshot`() = runTest {
+        val transport = FakeWatchTransport()
+        val received = mutableListOf<WatchControlMessageDto>()
+        val coordinator = coordinator(
+            transport,
+            backgroundScope,
+            syncRequestConsumer = WatchSyncRequestConsumer { received += it },
+        )
+        val request = controlMessage(
+            messageId = "watch-sync-request-1",
+            type = WatchControlMessageType.SYNC_REQUESTED,
+        )
+
+        coordinator.connect()
+        runCurrent()
+        transport.emitControlFromWatch(request, codec)
+        runCurrent()
+
+        assertEquals(listOf(request), received)
+
+        coordinator.acknowledgeSnapshotRequest(request, SESSION_ID, revision = 3)
+        val response = codec.decodeControlMessage(transport.sentMessages.single())
+        assertEquals(WatchControlMessageType.SYNC_SNAPSHOT, response.type)
+        assertEquals(request.messageId, response.replyTo)
+    }
+
+    @Test
+    fun `lifecycle replay failure does not stop later connection states`() = runTest {
+        val transport = FakeWatchTransport()
+        var callbacks = 0
+        val coordinator = coordinator(
+            transport,
+            backgroundScope,
+            lifecycleConsumer = WatchConnectionLifecycleConsumer {
+                callbacks += 1
+                if (callbacks == 1) error("replay failed")
+            },
+        )
+
+        coordinator.connect()
+        runCurrent()
+        coordinator.disconnect()
+        runCurrent()
+
+        assertEquals(2, callbacks)
+        assertEquals(WatchConnectionStatus.DISCONNECTED, coordinator.state.value.connectionStatus)
+        assertEquals(WatchProtocolErrorCode.TRANSPORT_FAILURE, coordinator.state.value.lastErrorCode)
+    }
+
+    @Test
     fun `outbound messages above 900 byte target are rejected before 1024 byte hard limit`() = runTest {
         val transport = FakeWatchTransport()
         val coordinator = coordinator(transport, backgroundScope)
@@ -206,6 +256,8 @@ class WatchConnectionCoordinatorTest {
         processedControlStore: InMemoryProcessedWatchControlMessageStore =
             InMemoryProcessedWatchControlMessageStore(),
         ackConsumer: WatchAckConsumer? = null,
+        syncRequestConsumer: WatchSyncRequestConsumer? = null,
+        lifecycleConsumer: WatchConnectionLifecycleConsumer? = null,
     ): WatchConnectionCoordinator {
         val ids = AtomicInteger(1)
         return WatchConnectionCoordinator(
@@ -215,6 +267,8 @@ class WatchConnectionCoordinatorTest {
             processedControlMessageStore = processedControlStore,
             scope = scope,
             ackConsumer = ackConsumer,
+            syncRequestConsumer = syncRequestConsumer,
+            lifecycleConsumer = lifecycleConsumer,
             codec = codec,
             nowEpochMs = nowEpochMs,
             newId = { "phone-msg-${ids.getAndIncrement()}" },

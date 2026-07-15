@@ -51,9 +51,9 @@ class WatchCompanionRuntime private constructor(
     suspend fun disconnect() = connectionCoordinator.disconnect()
 
     suspend fun forceSync() {
-        val runtime = latestRuntimeProvider() ?: return
+        if (latestRuntimeProvider() == null && persistence.replayable().isEmpty()) return
         if (state.value.connectionStatus != WatchConnectionStatus.CONNECTED) connect()
-        workoutCoordinator.replayPending(runtime.sessionId)
+        workoutCoordinator.replayPending()
     }
 
     override fun close() = connectionCoordinator.stop()
@@ -95,7 +95,8 @@ class WatchCompanionRuntime private constructor(
                 snapshotProvider = gateway::buildSnapshot,
                 nowEpochMs = nowEpochMs,
             )
-            val connection = WatchConnectionCoordinator(
+            lateinit var connection: WatchConnectionCoordinator
+            connection = WatchConnectionCoordinator(
                 phoneDeviceId = phoneDeviceId,
                 transport = transport,
                 processedEventStore = InMemoryProcessedWatchEventStore(),
@@ -104,10 +105,19 @@ class WatchCompanionRuntime private constructor(
                 eventConsumer = router,
                 ackConsumer = reconnect,
                 fileConsumer = router,
+                syncRequestConsumer = WatchSyncRequestConsumer { request ->
+                    val runtime = repository.latestActiveWorkoutRuntime() ?: return@WatchSyncRequestConsumer
+                    if (workoutCoordinator.sendSnapshotForSession(runtime.sessionId)) {
+                        connection.acknowledgeSnapshotRequest(request, runtime.sessionId, runtime.revision)
+                    }
+                },
                 lifecycleConsumer = WatchConnectionLifecycleConsumer { status ->
                     if (status == WatchConnectionStatus.CONNECTED) {
-                        repository.latestActiveWorkoutRuntime()?.let { runtime ->
+                        val runtime = repository.latestActiveWorkoutRuntime()
+                        if (runtime != null) {
                             reconnect.reconnect(runtime.sessionId, watchDeviceId, runtime.revision)
+                        } else if (persistence.replayable().isNotEmpty()) {
+                            workoutCoordinator.replayPending()
                         }
                     }
                 },

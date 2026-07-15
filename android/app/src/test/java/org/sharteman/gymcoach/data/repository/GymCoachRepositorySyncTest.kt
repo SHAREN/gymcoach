@@ -4,6 +4,8 @@ import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -81,7 +83,7 @@ class GymCoachRepositorySyncTest {
             preserveRest = true,
         )
         assertEquals(123_000L, fixture.dao.getActiveWorkoutRuntime(sessionId)?.restEndsAtEpochMs)
-        fixture.repository.updateRest(sessionId, 153_000, "MANUAL_EXTEND")
+        fixture.repository.updateRest(sessionId, 153_000, "ADD_30_SECONDS")
         fixture.repository.skipRest(sessionId, 4_000)
         fixture.repository.updateSet(set, 82.5, 9, 1)
         fixture.repository.deleteSet(set.id)
@@ -92,6 +94,7 @@ class GymCoachRepositorySyncTest {
             publisher.commands,
         )
         assertEquals(5, fixture.dao.queuedOperations().size)
+        assertEquals(listOf("ADD_30_SECONDS"), publisher.restReasons)
     }
 
     @Test
@@ -104,6 +107,64 @@ class GymCoachRepositorySyncTest {
 
         assertEquals(set.id, fixture.dao.getSet(set.id)?.id)
         assertEquals(2, fixture.dao.queuedOperations().size)
+        val conflicts = fixture.dao.getWatchConflicts(sessionId)
+        assertEquals(2, conflicts.size)
+        assertTrue(conflicts.all { it.errorCode == "PHONE_EVENT_MAPPING_FAILED" })
+    }
+
+    @Test
+    fun watchFinishUsesServerOutboxTransactionWithoutEchoPublisherCall() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId)).copy(
+            status = "FINISHED",
+            revision = 2,
+            updatedAtEpochMs = 5_000,
+            updatedBy = "WATCH",
+        )
+
+        val applied = fixture.repository.applyWatchFinishedEvent(
+            processed = WatchProcessedEventEntity(
+                eventId = "75000000-0000-0000-0000-000000000001",
+                sessionId = sessionId,
+                revision = 2,
+                processedAtEpochMs = 5_000,
+                canonicalEventHash = "a".repeat(64),
+                resultRevision = 2,
+            ),
+            runtime = runtime,
+            finishedAtEpochMs = 5_000,
+        )
+
+        assertTrue(applied)
+        assertTrue(fixture.dao.getSession(sessionId)?.finishedAt != null)
+        assertEquals(null, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertTrue(
+            fixture.dao.queuedOperations().any { entry ->
+                fixture.api.json.decodeFromString<SyncOperation>(entry.payloadJson) is FinishSessionOperation
+            },
+        )
+        assertEquals(listOf("START"), publisher.commands)
+    }
+
+    @Test
+    fun concurrentPhoneUpdateAndDeleteUseMonotonicWatchRevisionsAndDeleteWins() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+
+        listOf(
+            async { fixture.repository.updateSet(set, 82.5, 9, 1) },
+            async { fixture.repository.deleteSet(set.id) },
+        ).awaitAll()
+
+        assertTrue(fixture.dao.getSet(set.id)?.deleted == true)
+        assertEquals(listOf(3L, 4L), publisher.revisions.takeLast(2).sorted())
+        assertEquals(setOf("SET_UPDATED", "SET_DELETED"), publisher.commands.takeLast(2).toSet())
     }
 
     @Test
@@ -1165,52 +1226,59 @@ class GymCoachRepositorySyncTest {
         private val fail: Boolean = false,
     ) : WatchPhoneCommandPublisher {
         val commands = mutableListOf<String>()
+        val revisions = mutableListOf<Long>()
+        val restReasons = mutableListOf<String>()
 
-        private fun record(command: String) {
+        private fun record(command: String, revision: Long) {
             if (fail) error("watch unavailable")
             commands += command
+            revisions += revision
         }
 
-        override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) = record("START")
+        override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) =
+            record("START", revision)
         override suspend fun activeExerciseChanged(
             sessionId: String,
             exerciseId: String,
             revision: Long,
             changedAtEpochMs: Long,
-        ) = record("EXERCISE")
-        override suspend fun setCompleted(set: LocalSetEntity, revision: Long) = record("SET_COMPLETED")
-        override suspend fun setUpdated(set: LocalSetEntity, revision: Long) = record("SET_UPDATED")
+        ) = record("EXERCISE", revision)
+        override suspend fun setCompleted(set: LocalSetEntity, revision: Long) = record("SET_COMPLETED", revision)
+        override suspend fun setUpdated(set: LocalSetEntity, revision: Long) = record("SET_UPDATED", revision)
         override suspend fun setDeleted(
             sessionId: String,
             setId: String,
             revision: Long,
             baseRevision: Long,
             deletedAtEpochMs: Long,
-        ) = record("SET_DELETED")
+        ) = record("SET_DELETED", revision)
         override suspend fun restStarted(
             sessionId: String,
             setId: String,
             revision: Long,
             startedAtEpochMs: Long,
             endsAtEpochMs: Long,
-        ) = record("REST_STARTED")
+        ) = record("REST_STARTED", revision)
         override suspend fun restUpdated(
             sessionId: String,
             revision: Long,
             endsAtEpochMs: Long,
             reason: String,
             changedAtEpochMs: Long,
-        ) = record("REST_UPDATED")
+        ) {
+            restReasons += reason
+            record("REST_UPDATED", revision)
+        }
         override suspend fun restFinished(
             sessionId: String,
             revision: Long,
             startedAtEpochMs: Long,
             finishedAtEpochMs: Long,
-        ) = record("REST_FINISHED")
+        ) = record("REST_FINISHED", revision)
         override suspend fun restSkipped(sessionId: String, revision: Long, skippedAtEpochMs: Long) =
-            record("REST_SKIPPED")
+            record("REST_SKIPPED", revision)
         override suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long) =
-            record("FINISH")
+            record("FINISH", revision)
     }
 
     private class TestAccountStore : AccountStore {

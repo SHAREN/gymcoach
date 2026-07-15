@@ -5,6 +5,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -153,7 +154,7 @@ class WatchWorkoutCoordinatorTest {
     }
 
     @Test
-    fun `state request responds with snapshot and revision gap requests sync`() = runTest {
+    fun `watch opened after phone start receives snapshot acknowledgement and gap recovery`() = runTest {
         val repository = FakeWatchWorkoutRepository()
         val sink = RecordingSink()
         val gateway = gateway(repository)
@@ -178,10 +179,66 @@ class WatchWorkoutCoordinatorTest {
         )
 
         assertEquals(2, sink.snapshots.size)
-        assertEquals(WatchSyncAckStatus.REJECTED, sink.acks.single().status)
-        assertEquals("SYNC_REQUIRED", sink.acks.single().errorCode)
+        assertEquals(
+            listOf(WatchSyncAckStatus.APPLIED, WatchSyncAckStatus.REJECTED),
+            sink.acks.map { it.status },
+        )
+        assertEquals("SYNC_REQUIRED", sink.acks.last().errorCode)
         assertTrue(SESSION_ID.startsWith("mob_session_"))
         assertTrue(EXERCISE_SESSION_ONE_ID.startsWith("program_exercise_"))
+    }
+
+    @Test
+    fun `watch finish closes phone session without echo event`() = runTest {
+        val repository = FakeWatchWorkoutRepository()
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        val coordinator = coordinator(gateway, sink)
+        gateway.buildSnapshot(SESSION_ID)
+
+        coordinator.onEvent(
+            watchEvent(
+                eventId = EVENT_WORKOUT_FINISHED,
+                type = WatchEventType.WORKOUT_FINISHED,
+                revision = 2,
+                payload = buildJsonObject { put("finishedAt", 25_000L) },
+            ),
+        )
+
+        assertEquals(25_000L, repository.finishedSessionAt)
+        assertEquals(WatchSyncAckStatus.APPLIED, sink.acks.single().status)
+        assertTrue(sink.events.isEmpty())
+        assertEquals(null, repository.runtime)
+    }
+
+    @Test
+    fun `phone finish remains replayable after active runtime is deleted`() = runTest {
+        val persistence = InMemoryWatchSyncPersistence()
+        val sink = RecordingSink()
+        val coordinator = WatchWorkoutCoordinator(
+            gateway = gateway(FakeWatchWorkoutRepository()),
+            sink = sink,
+            phoneDeviceId = "phone-stage3",
+            codec = codec,
+            syncPersistence = persistence,
+        )
+        val finish = WatchEventEnvelopeDto(
+            protocolVersion = WatchProtocol.VERSION,
+            schemaVersion = WatchProtocol.SCHEMA_VERSION,
+            eventId = EVENT_PHONE_FINISH,
+            sessionId = SESSION_ID,
+            type = WatchEventType.WORKOUT_FINISHED,
+            timestamp = 30_000,
+            source = WatchEventSource.PHONE,
+            deviceId = "phone-stage3",
+            revision = 2,
+            payload = buildJsonObject { put("finishedAt", 30_000L) },
+        )
+        persistence.enqueue(finish)
+
+        coordinator.replayPending()
+
+        assertEquals(listOf(finish), sink.events)
     }
 
     @Test
@@ -753,6 +810,7 @@ class WatchWorkoutCoordinatorTest {
         val sets = linkedMapOf<String, LocalSetEntity>()
         val outboxSetIds = mutableListOf<String>()
         var runtime: ActiveWorkoutRuntimeEntity? = null
+        var finishedSessionAt: Long? = null
 
         override suspend fun bootstrap() = BootstrapResponse(
             schemaVersion = 1,
@@ -802,6 +860,17 @@ class WatchWorkoutCoordinatorTest {
         ): Boolean {
             if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
             this.runtime = runtime
+            return true
+        }
+
+        override suspend fun applyWorkoutFinishedEvent(
+            processed: WatchProcessedEventEntity,
+            runtime: ActiveWorkoutRuntimeEntity,
+            finishedAtEpochMs: Long,
+        ): Boolean {
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
+            this.runtime = null
+            finishedSessionAt = finishedAtEpochMs
             return true
         }
 
@@ -925,6 +994,8 @@ class WatchWorkoutCoordinatorTest {
         const val EVENT_REST_BATCH = "10000000-0000-0000-0000-000000000015"
         const val EVENT_REST_FINISHED = "10000000-0000-0000-0000-000000000016"
         const val EVENT_SENSOR_GAP = "10000000-0000-0000-0000-000000000017"
+        const val EVENT_WORKOUT_FINISHED = "10000000-0000-0000-0000-000000000018"
+        const val EVENT_PHONE_FINISH = "10000000-0000-0000-0000-000000000019"
         const val SENSOR_BATCH_ID = "40000000-0000-0000-0000-000000000001"
         const val REST_BATCH_ID = "40000000-0000-0000-0000-000000000002"
         const val SENSOR_GAP_BATCH_ID = "40000000-0000-0000-0000-000000000003"

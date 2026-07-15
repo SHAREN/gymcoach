@@ -77,6 +77,11 @@ interface WatchWorkoutRepository {
         processed: WatchProcessedEventEntity,
         runtime: ActiveWorkoutRuntimeEntity,
     ): Boolean
+    suspend fun applyWorkoutFinishedEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        finishedAtEpochMs: Long,
+    ): Boolean = applyRuntimeEvent(processed, runtime)
     suspend fun applySetEvent(
         processed: WatchProcessedEventEntity,
         set: LocalSetEntity,
@@ -154,6 +159,12 @@ class GymCoachWatchWorkoutRepository(
         processed: WatchProcessedEventEntity,
         runtime: ActiveWorkoutRuntimeEntity,
     ) = repository.applyWatchRuntimeEvent(processed, runtime)
+
+    override suspend fun applyWorkoutFinishedEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        finishedAtEpochMs: Long,
+    ) = repository.applyWatchFinishedEvent(processed, runtime, finishedAtEpochMs)
 
     override suspend fun applySetEvent(
         processed: WatchProcessedEventEntity,
@@ -403,7 +414,10 @@ class PersistentWatchWorkoutGateway(
                     updatedAtEpochMs = finishedAt,
                     updatedBy = WatchEventSource.WATCH.name,
                 )
-                appliedResult(repository.applyRuntimeEvent(processed, updated), updated.revision)
+                appliedResult(
+                    repository.applyWorkoutFinishedEvent(processed, updated, finishedAt),
+                    updated.revision,
+                )
             }
             WatchEventType.ACTIVE_EXERCISE_CHANGED -> {
                 val payload = codec.decodeActiveExerciseChangedPayload(event.payload)
