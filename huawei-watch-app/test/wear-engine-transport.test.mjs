@@ -236,6 +236,77 @@ test('send failure reconnects with a fresh client and replays the durable outbox
   assert.equal(replayed.includes(pendingId), true);
 });
 
+test('late failure from a replaced client cannot poison the fresh connection', async () => {
+  class ConcurrentRecoveryP2pClient extends FakeP2pClient {
+    static callbacks = [];
+
+    send(message, callback) {
+      this.sent.push(message);
+      const isFirstClient = FakeP2pClient.instances.indexOf(this) === 0;
+      if (isFirstClient && this.sent.length > 1) {
+        ConcurrentRecoveryP2pClient.callbacks.push(callback);
+        return;
+      }
+      callback.onSendResult({ code: 207 });
+    }
+  }
+  const { transport } = createHarness({
+    sdk: { Builder: FakeBuilder, Message: FakeMessage, P2pClient: ConcurrentRecoveryP2pClient },
+  });
+  let nextId = 0;
+  let now = 2_000;
+  const repository = new WatchStateRepository(createVolatileStorageBackend());
+  const companion = new WatchCompanion({
+    clock: () => ++now,
+    deviceId: 'watch-concurrent-recovery-test',
+    idGenerator: () => `watch-concurrent-recovery-${++nextId}`,
+    repository,
+    transport,
+  });
+  await companion.start();
+
+  const firstPending = companion.ping();
+  const latePending = companion.ping();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ConcurrentRecoveryP2pClient.callbacks.length, 2);
+
+  ConcurrentRecoveryP2pClient.callbacks[0].onSendResult({
+    code: 206,
+    data: 'first concurrent failure',
+  });
+  await firstPending;
+  assert.equal(companion.getState().connection, ConnectionState.ERROR);
+
+  await companion.reconnect();
+  const freshClient = FakeP2pClient.instances[1];
+  assert.equal(companion.getState().connection, ConnectionState.CONNECTED);
+
+  ConcurrentRecoveryP2pClient.callbacks[1].onSendResult({
+    code: 206,
+    data: 'late stale failure',
+  });
+  await latePending;
+  assert.equal(companion.getState().connection, ConnectionState.CONNECTED);
+  assert.equal(FakeP2pClient.instances.length, 2);
+  assert.equal(freshClient.unregistered, undefined);
+
+  await transport.disconnect();
+  const laterPendingId = await companion.ping();
+  const beforeLifecycleRetry = freshClient.sent
+    .map((message) => parseControlMessage(message.getData()))
+    .map((message) => message.messageId);
+  assert.equal(beforeLifecycleRetry.includes(laterPendingId), false);
+
+  await companion.reconnect();
+  const lifecycleClient = FakeP2pClient.instances[2];
+  const replayedIds = lifecycleClient.sent
+    .map((message) => parseControlMessage(message.getData()))
+    .map((message) => message.messageId);
+
+  assert.equal(replayedIds.includes(laterPendingId), true);
+  assert.equal(repository.pending().some((entry) => entry.messageId === laterPendingId), true);
+});
+
 test('disconnect unregisters the receiver and reports disconnected state', async () => {
   const { transport } = createHarness();
   const states = [];

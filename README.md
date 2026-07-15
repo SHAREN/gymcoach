@@ -117,7 +117,7 @@ compact Russian/English diagnostics.
 
 The current integrated local evidence is:
 
-- 80/80 Huawei watch JavaScript/core tests passed.
+- 81/81 Huawei watch JavaScript/core tests passed.
 - 15 shared schemas and 15 examples validated.
 - Production watch HAP and the separate Previewer harness both build successfully with official DevEco Studio/Hvigor.
 - The integration Previewer project renders the Russian home and workout/rest flows and supports navigation and locale switching. The accepted frozen rest-countdown limitation is tracked separately.

@@ -103,9 +103,9 @@ documented in `huawei-development-environment.md`, including DevEco Studio
 signed HAP or physical GT 4 test. The Android database is Room schema version 9.
 On this workstation:
 
-- `huawei-watch-app/npm run check`: 80 tests passed, 0 failed; bundle freshness and formatting also passed.
-- Production watch HAP: official Hvigor `assembleHap` passed; unsigned output is 766,342 bytes with SHA-256 `280162AF829419C10279690D2BCADC601ADF95ABE82D4029187FBC65ED1D53AC`.
-- Preview harness HAP: official Hvigor `assembleHap` passed; unsigned output is 162,636 bytes with SHA-256 `EC60F974D4AE4A357B05A26EF2B960013C27D13EFA44ACC2FF99BAFB7FF0F6BC`. DevEco synchronized the integration worktree project, and owner-provided current-worktree evidence covers the Russian home render, workout/rest navigation, rest controls and locale switching. The frozen rest countdown is accepted for this integration and tracked separately.
+- `huawei-watch-app/npm run check`: 81 tests passed, 0 failed; bundle freshness and formatting also passed.
+- Production watch HAP: official Hvigor `assembleHap` passed; unsigned output is 766,666 bytes with SHA-256 `B21C6CF414DECC54E58A49BD97B517770D5B90B5365AACC6098A1EEF9EE33FF6`.
+- Preview harness HAP: official Hvigor `assembleHap` passed; unsigned output is 162,636 bytes with SHA-256 `601E149CA5066F30C8B9818EE4EB3FB4241A7791928A8DE837179937F1F0D080`. DevEco synchronized the integration worktree project, and owner-provided current-worktree evidence covers the Russian home render, workout/rest navigation, rest controls and locale switching. The frozen rest countdown is accepted for this integration and tracked separately.
 - `shared-contracts/test-contracts.mjs`: 15 schemas and 15 examples passed.
 - `scripts/verify.sh` and `scripts/verify.sh --full`: 125 web test files and 1058 tests, 41 integration files and 275 tests, and 18 Playwright tests passed, followed by lint, typecheck and production build.
 - `android/gradlew.bat testDebugUnitTest`: 49 test suites and 237 tests passed, 0 failed.
