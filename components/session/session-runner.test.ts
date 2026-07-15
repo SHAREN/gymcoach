@@ -94,8 +94,8 @@ describe('session runner equipment identity helpers', () => {
     const cableARecommendation = { mode: 'exercise-reintro', weightCeiling: 20 } as never;
     const cableBRecommendation = { mode: 'normal', weightCeiling: 60 } as never;
     const recommendations = [
-      { gymEquipmentId: 'cable-a', recommendation: cableARecommendation },
-      { gymEquipmentId: 'cable-b', recommendation: cableBRecommendation },
+      { gymId: 'gym-1', gymEquipmentId: 'cable-a', recommendation: cableARecommendation },
+      { gymId: 'gym-1', gymEquipmentId: 'cable-b', recommendation: cableBRecommendation },
     ];
 
     expect(selectReturnRecommendationForEquipment(recommendations, 'cable-a')).toBe(

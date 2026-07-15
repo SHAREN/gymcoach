@@ -233,6 +233,7 @@ data class LastPerformanceDto(
     val exerciseId: String,
     val sessionId: String,
     val sessionStartedAt: String,
+    val gymId: String? = null,
     val gymEquipmentId: String? = null,
     val equipmentName: String? = null,
     val sets: List<PerformanceSetDto> = emptyList(),
@@ -284,6 +285,7 @@ data class ReturnRecommendationDto(
 
 @Serializable
 data class EquipmentReturnRecommendationDto(
+    val gymId: String? = null,
     val gymEquipmentId: String? = null,
     val recommendation: ReturnRecommendationDto,
 )

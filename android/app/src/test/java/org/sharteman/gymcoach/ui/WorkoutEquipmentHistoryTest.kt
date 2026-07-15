@@ -10,6 +10,7 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 
@@ -33,6 +34,7 @@ class WorkoutEquipmentHistoryTest {
                   "exerciseId": "pressdown",
                   "sessionId": "session-a-latest",
                   "sessionStartedAt": "2026-07-14T10:00:00.000Z",
+                  "gymId": "gym-1",
                   "gymEquipmentId": "cable-a",
                   "sets": [{"weight": 30.0, "reps": 10}],
                   "maxWeight": 30.0,
@@ -45,6 +47,7 @@ class WorkoutEquipmentHistoryTest {
                     "exerciseId": "pressdown",
                     "sessionId": "session-a-latest",
                     "sessionStartedAt": "2026-07-14T10:00:00.000Z",
+                    "gymId": "gym-1",
                     "gymEquipmentId": "cable-a",
                     "sets": [{"weight": 30.0, "reps": 10}],
                     "maxWeight": 30.0,
@@ -54,6 +57,7 @@ class WorkoutEquipmentHistoryTest {
                     "exerciseId": "pressdown",
                     "sessionId": "session-b-older",
                     "sessionStartedAt": "2026-06-20T10:00:00.000Z",
+                    "gymId": "gym-1",
                     "gymEquipmentId": "cable-b",
                     "sets": [{"weight": 60.0, "reps": 8}],
                     "maxWeight": 60.0,
@@ -75,6 +79,7 @@ class WorkoutEquipmentHistoryTest {
                 "workout-1": {
                   "program-exercise-1": [
                     {
+                      "gymId": "gym-1",
                       "gymEquipmentId": "cable-a",
                       "recommendation": {
                         "mode": "normal",
@@ -84,6 +89,7 @@ class WorkoutEquipmentHistoryTest {
                       }
                     },
                     {
+                      "gymId": "gym-1",
                       "gymEquipmentId": "cable-b",
                       "recommendation": {
                         "mode": "exercise-reintro",
@@ -102,6 +108,7 @@ class WorkoutEquipmentHistoryTest {
         val selectedPerformance = selectLastPerformanceForEquipment(
             performances = bootstrap.lastPerformancesByEquipment["pressdown"],
             fallback = bootstrap.lastPerformances["pressdown"],
+            gymId = "gym-1",
             gymEquipmentId = "cable-b",
         )
         val selectedRecommendation = selectReturnRecommendationForEquipment(
@@ -110,6 +117,7 @@ class WorkoutEquipmentHistoryTest {
             fallback = bootstrap.returnRecommendationsByWorkout["workout-1"]
                 ?.get("program-exercise-1"),
             fallbackPerformance = bootstrap.lastPerformances["pressdown"],
+            gymId = "gym-1",
             gymEquipmentId = "cable-b",
         )
 
@@ -176,6 +184,7 @@ class WorkoutEquipmentHistoryTest {
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
+            gymId = "gym-1",
             gymEquipmentId = recordedEquipmentId,
         )
         val cableBProgress = workoutExerciseSetProgress(
@@ -194,6 +203,7 @@ class WorkoutEquipmentHistoryTest {
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
+            gymId = "gym-1",
             gymEquipmentId = selectedEquipmentId,
         )
         val cableAProgress = workoutExerciseSetProgress(
@@ -209,6 +219,69 @@ class WorkoutEquipmentHistoryTest {
         assertEquals(3, cableAProgress.single().plannedRows)
         assertEquals(3, cableAProgress.sumOf { progress -> progress.plannedRows })
     }
+
+    @Test
+    fun `does not use active gym null-equipment history in an open session at another gym`() {
+        val performances = listOf(
+            nullEquipmentPerformance("gym-a", "session-a", maxWeight = 30.0),
+            nullEquipmentPerformance("gym-b", "session-b", maxWeight = 60.0),
+        )
+        val recommendations = listOf(
+            EquipmentReturnRecommendationDto(
+                gymId = "gym-a",
+                gymEquipmentId = null,
+                recommendation = ReturnRecommendationDto(
+                    mode = "normal",
+                    targetSets = 3,
+                    targetRIR = 2,
+                    suggestedWeight = 30.0,
+                ),
+            ),
+            EquipmentReturnRecommendationDto(
+                gymId = "gym-b",
+                gymEquipmentId = null,
+                recommendation = ReturnRecommendationDto(
+                    mode = "exercise-reintro",
+                    targetSets = 2,
+                    targetRIR = 3,
+                    suggestedWeight = 60.0,
+                ),
+            ),
+        )
+
+        val gymBPerformance = selectLastPerformanceForEquipment(
+            performances = performances,
+            fallback = performances.first(),
+            gymId = "gym-b",
+            gymEquipmentId = null,
+        )
+        val gymBRecommendation = selectReturnRecommendationForEquipment(
+            recommendations = recommendations,
+            fallback = recommendations.first().recommendation,
+            fallbackPerformance = performances.first(),
+            gymId = "gym-b",
+            gymEquipmentId = null,
+        )
+
+        assertEquals("session-b", gymBPerformance?.sessionId)
+        assertEquals(60.0, gymBPerformance?.maxWeight ?: 0.0, 0.001)
+        assertEquals(2, gymBRecommendation?.targetSets)
+        assertEquals(60.0, gymBRecommendation?.suggestedWeight ?: 0.0, 0.001)
+    }
+
+    private fun nullEquipmentPerformance(
+        gymId: String,
+        sessionId: String,
+        maxWeight: Double,
+    ) = LastPerformanceDto(
+        exerciseId = "pressdown",
+        sessionId = sessionId,
+        sessionStartedAt = "2026-07-01T10:00:00.000Z",
+        gymId = gymId,
+        gymEquipmentId = null,
+        maxWeight = maxWeight,
+        repsAtMaxWeight = 10,
+    )
 
     private fun equipment(id: String) = GymEquipmentDto(
         id = id,
@@ -230,6 +303,7 @@ class WorkoutEquipmentHistoryTest {
         targetSets: Int,
         mode: String,
     ) = EquipmentReturnRecommendationDto(
+        gymId = "gym-1",
         gymEquipmentId = gymEquipmentId,
         recommendation = ReturnRecommendationDto(
             mode = mode,

@@ -10,15 +10,17 @@ import {
 import type { EquipmentReturnRecommendation } from './return-to-training-history';
 
 function performance(
-  gymEquipmentId: string,
+  gymEquipmentId: string | null,
   sessionId: string,
   sessionStartedAt: string,
   maxWeight: number,
+  gymId = 'gym-1',
 ): LastPerformance {
   return {
     exerciseId: 'pressdown',
     sessionId,
     sessionStartedAt: new Date(sessionStartedAt),
+    gymId,
     gymEquipmentId,
     equipmentName: gymEquipmentId,
     sets: [
@@ -38,10 +40,12 @@ function performance(
 }
 
 function recommendation(
-  gymEquipmentId: string,
+  gymEquipmentId: string | null,
   suggestedWeight: number,
+  gymId = 'gym-1',
 ): EquipmentReturnRecommendation {
   return {
+    gymId,
     gymEquipmentId,
     recommendation: {
       mode: 'normal',
@@ -121,5 +125,32 @@ describe('mobile equipment history contract', () => {
         (item) => item.gymEquipmentId,
       ),
     ).toEqual(['cable-a', 'cable-b']);
+  });
+
+  it('does not collapse null-equipment history across gyms', () => {
+    const merged = mergeMobileEquipmentReturnRecommendations([
+      { 'program-exercise-1': [recommendation(null, 30, 'gym-a')] },
+      { 'program-exercise-1': [recommendation(null, 60, 'gym-b')] },
+    ]);
+    const contract = buildMobileEquipmentHistoryContract(
+      [
+        performance(null, 'session-a', '2026-07-14T10:00:00.000Z', 30, 'gym-a'),
+        performance(null, 'session-b', '2026-06-20T10:00:00.000Z', 60, 'gym-b'),
+      ],
+      [['workout-1', merged]],
+    );
+
+    expect(contract.lastPerformancesByEquipment.pressdown).toEqual([
+      expect.objectContaining({ gymId: 'gym-a', gymEquipmentId: null, sessionId: 'session-a' }),
+      expect.objectContaining({ gymId: 'gym-b', gymEquipmentId: null, sessionId: 'session-b' }),
+    ]);
+    expect(
+      contract.returnRecommendationsByEquipmentByWorkout['workout-1']?.['program-exercise-1']?.map(
+        (item) => ({ gymId: item.gymId, suggestedWeight: item.recommendation.suggestedWeight }),
+      ),
+    ).toEqual([
+      { gymId: 'gym-a', suggestedWeight: 30 },
+      { gymId: 'gym-b', suggestedWeight: 60 },
+    ]);
   });
 });

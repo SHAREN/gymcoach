@@ -106,15 +106,19 @@ export function mergeMobileEquipmentReturnRecommendations(
   const merged: Record<string, EquipmentReturnRecommendation[]> = {};
   for (const recommendations of recommendationsByGym) {
     for (const [programExerciseId, equipmentRecommendations] of Object.entries(recommendations)) {
-      const byEquipmentId = new Map(
-        (merged[programExerciseId] ?? []).map((item) => [item.gymEquipmentId, item]),
+      const byEquipmentIdentity = new Map(
+        (merged[programExerciseId] ?? []).map((item) => [
+          `${item.gymId ?? ''}\u0000${item.gymEquipmentId ?? ''}`,
+          item,
+        ]),
       );
       for (const item of equipmentRecommendations) {
-        if (!byEquipmentId.has(item.gymEquipmentId)) {
-          byEquipmentId.set(item.gymEquipmentId, item);
+        const identity = `${item.gymId ?? ''}\u0000${item.gymEquipmentId ?? ''}`;
+        if (!byEquipmentIdentity.has(identity)) {
+          byEquipmentIdentity.set(identity, item);
         }
       }
-      merged[programExerciseId] = [...byEquipmentId.values()];
+      merged[programExerciseId] = [...byEquipmentIdentity.values()];
     }
   }
   return merged;
@@ -284,7 +288,10 @@ export async function buildMobileBootstrap(userId: string) {
     ...new Map(
       (historyGyms.length > 0 ? historyGyms : [null])
         .flatMap((gym) => buildEquipmentPerformanceTargets(exerciseIds, gym))
-        .map((target) => [`${target.exerciseId}\u0000${target.gymEquipmentId ?? ''}`, target]),
+        .map((target) => [
+          `${target.exerciseId}\u0000${target.gymId ?? ''}\u0000${target.gymEquipmentId ?? ''}`,
+          target,
+        ]),
     ).values(),
   ];
   const now = new Date();

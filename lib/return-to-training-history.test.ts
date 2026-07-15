@@ -9,7 +9,7 @@ const cableARow = {
   isDropSet: false,
   gymEquipmentId: 'cable-a',
   completedAt: new Date('2026-05-01T10:00:00.000Z'),
-  session: { startedAt: new Date('2026-05-01T10:00:00.000Z') },
+  session: { startedAt: new Date('2026-05-01T10:00:00.000Z'), gymId: 'gym-1' },
 };
 const cableBRow = {
   ...cableARow,
@@ -17,15 +17,35 @@ const cableBRow = {
   weight: 60,
   gymEquipmentId: 'cable-b',
   completedAt: new Date('2026-07-10T10:00:00.000Z'),
-  session: { startedAt: new Date('2026-07-10T10:00:00.000Z') },
+  session: { startedAt: new Date('2026-07-10T10:00:00.000Z'), gymId: 'gym-1' },
+};
+const nullGymARow = {
+  ...cableARow,
+  sessionId: 'session-null-a',
+  weight: 30,
+  gymEquipmentId: null,
+  completedAt: new Date('2026-07-14T10:00:00.000Z'),
+  session: { startedAt: new Date('2026-07-14T10:00:00.000Z'), gymId: 'gym-a' },
+};
+const nullGymBRow = {
+  ...cableARow,
+  sessionId: 'session-null-b',
+  weight: 60,
+  gymEquipmentId: null,
+  completedAt: new Date('2026-06-20T10:00:00.000Z'),
+  session: { startedAt: new Date('2026-06-20T10:00:00.000Z'), gymId: 'gym-b' },
 };
 
 vi.mock('@/lib/db', () => ({
   db: {
     set: {
-      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-        'exerciseId' in where ? [cableBRow, cableARow] : [],
-      ),
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+        if (!('exerciseId' in where)) return [];
+        const gymId = (where.session as { gymId?: string | null } | undefined)?.gymId;
+        return [cableBRow, cableARow, nullGymARow, nullGymBRow].filter(
+          (row) => gymId === undefined || row.session.gymId === gymId,
+        );
+      }),
       findFirst: vi.fn(async () => ({ completedAt: cableBRow.completedAt })),
     },
   },
@@ -56,6 +76,7 @@ describe('equipment-specific return-to-training history', () => {
       excludeSessionId: 'current-session',
       now: new Date('2026-07-15T10:00:00.000Z'),
       gym: {
+        id: 'gym-1',
         inventoryMode: 'EQUIPMENT_FIRST',
         dumbbellWeights: [],
         plateWeights: [],
@@ -102,5 +123,44 @@ describe('equipment-specific return-to-training history', () => {
     expect(cableA).toMatchObject({ mode: 'exercise-reintro', exerciseGapDays: 75 });
     expect(cableA?.weightCeiling).not.toBe(cableB?.weightCeiling);
     expect(cableB).toMatchObject({ mode: 'normal', exerciseGapDays: 5 });
+  });
+
+  it('keeps null-equipment return history scoped to its gym', async () => {
+    const gymBRecommendations = await getReturnToTrainingRecommendationsByEquipment({
+      userId: 'user-1',
+      programExercises: [
+        {
+          id: 'pe-1',
+          exerciseId: 'pressdown',
+          targetSets: 3,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise: {
+            name: 'Cable pressdown',
+            category: 'ISOLATION',
+            equipmentType: 'CABLE',
+            usesBodyweight: false,
+            muscleGroup: 'TRICEPS',
+          },
+        },
+      ],
+      excludeSessionId: 'current-session',
+      now: new Date('2026-07-15T10:00:00.000Z'),
+      gym: {
+        id: 'gym-b',
+        inventoryMode: 'LEGACY',
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+        exerciseConfigs: [],
+        equipment: [],
+      },
+    });
+
+    expect(gymBRecommendations['pe-1']?.[0]).toMatchObject({
+      gymId: 'gym-b',
+      gymEquipmentId: null,
+      recommendation: { exerciseGapDays: 25 },
+    });
   });
 });

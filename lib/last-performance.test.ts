@@ -23,6 +23,7 @@ interface Row {
   nominalResistanceKg: number | null;
   completedAt: Date;
   startedAt: Date; // the owning session's startedAt, for the include
+  gymId: string | null;
   userId: string;
 }
 
@@ -42,8 +43,9 @@ function matchesWhere(r: Row, where: Record<string, unknown> | undefined): boole
   if ('isWarmup' in where && r.isWarmup !== where.isWarmup) return false;
   if ('gymEquipmentId' in where && r.gymEquipmentId !== where.gymEquipmentId) return false;
   if ('session' in where) {
-    const sess = where.session as { userId?: string };
+    const sess = where.session as { userId?: string; gymId?: string | null };
     if (sess?.userId && r.userId !== sess.userId) return false;
+    if ('gymId' in sess && r.gymId !== sess.gymId) return false;
   }
   return true;
 }
@@ -70,7 +72,7 @@ vi.mock('@/lib/db', () => ({
           if (!first) return null;
           return {
             ...first,
-            session: { startedAt: first.startedAt, id: first.sessionId },
+            session: { startedAt: first.startedAt, id: first.sessionId, gymId: first.gymId },
           };
         },
       ),
@@ -126,6 +128,7 @@ function row(p: Partial<Row> & { sessionId: string; exerciseId: string; setNumbe
     nominalResistanceKg: null,
     completedAt: new Date('2026-01-10T12:00:00Z'),
     startedAt: new Date('2026-01-10T12:00:00Z'),
+    gymId: 'gym-1',
     userId: USER,
     ...p,
   };
@@ -500,9 +503,9 @@ describe('getLastPerformances', () => {
     const performances = await getLastPerformancesForEquipmentTargets(
       USER,
       [
-        { exerciseId: 'pressdown', gymEquipmentId: 'cable-a' },
-        { exerciseId: 'pressdown', gymEquipmentId: 'cable-b' },
-        { exerciseId: 'pressdown', gymEquipmentId: null },
+        { exerciseId: 'pressdown', gymId: 'gym-1', gymEquipmentId: 'cable-a' },
+        { exerciseId: 'pressdown', gymId: 'gym-1', gymEquipmentId: 'cable-b' },
+        { exerciseId: 'pressdown', gymId: 'gym-1', gymEquipmentId: null },
       ],
       null,
     );
@@ -527,5 +530,46 @@ describe('getLastPerformances', () => {
     expect(performances.find((performance) => performance.gymEquipmentId == null)?.sessionId).toBe(
       'legacy-session',
     );
+  });
+
+  it('keeps null-equipment history scoped to its gym', async () => {
+    rows = [
+      row({
+        sessionId: 'gym-a-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 30,
+        reps: 12,
+        gymId: 'gym-a',
+        gymEquipmentId: null,
+        completedAt: new Date('2026-07-14T10:00:00.000Z'),
+        startedAt: new Date('2026-07-14T10:00:00.000Z'),
+      }),
+      row({
+        sessionId: 'gym-b-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 60,
+        reps: 8,
+        gymId: 'gym-b',
+        gymEquipmentId: null,
+        completedAt: new Date('2026-06-20T10:00:00.000Z'),
+        startedAt: new Date('2026-06-20T10:00:00.000Z'),
+      }),
+    ];
+
+    const performances = await getLastPerformancesForEquipmentTargets(
+      USER,
+      [
+        { exerciseId: 'pressdown', gymId: 'gym-a', gymEquipmentId: null },
+        { exerciseId: 'pressdown', gymId: 'gym-b', gymEquipmentId: null },
+      ],
+      null,
+    );
+
+    expect(performances).toEqual([
+      expect.objectContaining({ gymId: 'gym-a', sessionId: 'gym-a-session', maxWeight: 30 }),
+      expect.objectContaining({ gymId: 'gym-b', sessionId: 'gym-b-session', maxWeight: 60 }),
+    ]);
   });
 });

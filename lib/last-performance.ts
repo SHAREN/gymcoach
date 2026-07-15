@@ -5,6 +5,7 @@ export interface LastPerformance {
   // The most recent previous session for this exercise (excluding the current session).
   sessionId: string;
   sessionStartedAt: Date;
+  gymId: string | null;
   gymEquipmentId: string | null;
   equipmentName: string | null;
   sets: {
@@ -27,10 +28,12 @@ export interface LastPerformance {
 
 export interface EquipmentPerformanceTarget {
   exerciseId: string;
+  gymId: string | null;
   gymEquipmentId: string | null;
 }
 
 interface EquipmentTargetGym {
+  id: string;
   equipment?: Array<{
     id: string;
     exerciseLinks: Array<{ exerciseId: string }>;
@@ -49,10 +52,11 @@ export function buildEquipmentPerformanceTargets(
     if (linkedEquipment.length > 0) {
       return linkedEquipment.map((equipment) => ({
         exerciseId,
+        gymId: gym?.id ?? null,
         gymEquipmentId: equipment.id,
       }));
     }
-    return [{ exerciseId, gymEquipmentId: null }];
+    return [{ exerciseId, gymId: gym?.id ?? null, gymEquipmentId: null }];
   });
 }
 
@@ -93,7 +97,10 @@ export async function getLastPerformancesForEquipmentTargets(
 ): Promise<LastPerformance[]> {
   const uniqueTargets = [
     ...new Map(
-      targets.map((target) => [`${target.exerciseId}\u0000${target.gymEquipmentId ?? ''}`, target]),
+      targets.map((target) => [
+        `${target.exerciseId}\u0000${target.gymId ?? ''}\u0000${target.gymEquipmentId ?? ''}`,
+        target,
+      ]),
     ).values(),
   ];
 
@@ -105,20 +112,24 @@ export async function getLastPerformancesForEquipmentTargets(
 
 async function getLastPerformance(
   userId: string,
-  target: { exerciseId: string; gymEquipmentId?: string | null },
+  target: { exerciseId: string; gymId?: string | null; gymEquipmentId?: string | null },
   excludeSessionId: string | null,
 ): Promise<LastPerformance | null> {
   const filtersEquipment = Object.prototype.hasOwnProperty.call(target, 'gymEquipmentId');
+  const filtersGym = Object.prototype.hasOwnProperty.call(target, 'gymId');
   const lastSet = await db.set.findFirst({
     where: {
       exerciseId: target.exerciseId,
       isWarmup: false,
       ...(filtersEquipment ? { gymEquipmentId: target.gymEquipmentId ?? null } : {}),
       ...(excludeSessionId ? { sessionId: { not: excludeSessionId } } : {}),
-      session: { userId },
+      session: {
+        userId,
+        ...(filtersGym ? { gymId: target.gymId ?? null } : {}),
+      },
     },
     orderBy: { completedAt: 'desc' },
-    include: { session: { select: { startedAt: true, id: true } } },
+    include: { session: { select: { startedAt: true, id: true, gymId: true } } },
   });
   if (!lastSet) return null;
 
@@ -180,6 +191,7 @@ async function getLastPerformance(
     exerciseId: target.exerciseId,
     sessionId: lastSet.session.id,
     sessionStartedAt: lastSet.session.startedAt,
+    gymId: lastSet.session.gymId,
     gymEquipmentId: lastSet.gymEquipmentId,
     equipmentName: lastSet.equipmentNameSnapshot,
     sets,

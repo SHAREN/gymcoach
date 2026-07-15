@@ -31,6 +31,7 @@ type ProgramExerciseForReturn = Pick<
 };
 
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
+  id?: Gym['id'];
   inventoryMode?: Gym['inventoryMode'];
   exerciseConfigs: Pick<
     GymExerciseConfig,
@@ -77,7 +78,7 @@ interface ExerciseHistoryRow {
   isDropSet: boolean;
   gymEquipmentId: string | null;
   completedAt: Date;
-  session: { startedAt: Date };
+  session: { startedAt: Date; gymId: string | null };
 }
 
 interface HistoricalSetWithOrder {
@@ -89,6 +90,7 @@ interface HistoricalSetWithOrder {
 }
 
 export interface EquipmentReturnRecommendation {
+  gymId: string | null;
   gymEquipmentId: string | null;
   recommendation: ReturnRecommendation;
 }
@@ -158,25 +160,29 @@ export async function getReturnToTrainingRecommendationsByEquipment({
     programExercises,
     excludeSessionId,
     now,
+    exerciseGymId: gym?.id ?? null,
+    filterExerciseHistoryByGym: true,
   });
 
   return Object.fromEntries(
     programExercises.map((pe) => [
       pe.id,
-      equipmentTargetsFor(pe, gym).map((gymEquipmentId) => ({
-        gymEquipmentId,
+      equipmentTargetsFor(pe, gym).map((target) => ({
+        gymId: target.gymId,
+        gymEquipmentId: target.gymEquipmentId,
         recommendation: calculateReturnRecommendation({
           programExercise: pe,
           history: buildReturnHistory(
             pe,
             (historyData.exerciseRows.get(pe.exerciseId) ?? []).filter(
-              (row) => row.gymEquipmentId === gymEquipmentId,
+              (row) =>
+                row.session.gymId === target.gymId && row.gymEquipmentId === target.gymEquipmentId,
             ),
             historyData,
           ),
           now,
           bodyweight,
-          loadConstraints: loadConstraintsFor(pe, gym, gymEquipmentId),
+          loadConstraints: loadConstraintsFor(pe, gym, target.gymEquipmentId),
         }),
       })),
     ]),
@@ -188,10 +194,12 @@ async function loadReturnHistoryData({
   programExercises,
   excludeSessionId,
   now,
-}: Pick<
-  ReturnRecommendationQuery,
-  'userId' | 'programExercises' | 'excludeSessionId' | 'now'
->): Promise<ReturnHistoryData> {
+  exerciseGymId = null,
+  filterExerciseHistoryByGym = false,
+}: Pick<ReturnRecommendationQuery, 'userId' | 'programExercises' | 'excludeSessionId' | 'now'> & {
+  exerciseGymId?: string | null;
+  filterExerciseHistoryByGym?: boolean;
+}): Promise<ReturnHistoryData> {
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
   const muscleGroups = [...new Set(programExercises.map((item) => item.exercise.muscleGroup))];
   const excludedSession = excludeSessionId ? { id: { not: excludeSessionId } } : {};
@@ -208,7 +216,11 @@ async function loadReturnHistoryData({
             exerciseId,
             isWarmup: false,
             completedAt: { lt: now },
-            session: { userId, ...excludedSession },
+            session: {
+              userId,
+              ...excludedSession,
+              ...(filterExerciseHistoryByGym ? { gymId: exerciseGymId } : {}),
+            },
           },
           orderBy: { completedAt: 'desc' },
           take: 60,
@@ -221,7 +233,7 @@ async function loadReturnHistoryData({
             isDropSet: true,
             gymEquipmentId: true,
             completedAt: true,
-            session: { select: { startedAt: true } },
+            session: { select: { startedAt: true, gymId: true } },
           },
         });
         return [exerciseId, rows] as const;
@@ -372,9 +384,11 @@ function loadConstraintsFor(
 function equipmentTargetsFor(
   pe: ProgramExerciseForReturn,
   gym: GymForReturn | null,
-): Array<string | null> {
+): Array<{ gymId: string | null; gymEquipmentId: string | null }> {
   const equipmentIds = (gym?.equipment ?? [])
     .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
     .map((item) => item.id);
-  return equipmentIds.length > 0 ? equipmentIds : [null];
+  return equipmentIds.length > 0
+    ? equipmentIds.map((gymEquipmentId) => ({ gymId: gym?.id ?? null, gymEquipmentId }))
+    : [{ gymId: gym?.id ?? null, gymEquipmentId: null }];
 }
