@@ -15,6 +15,10 @@ import type {
   Workout,
   Gym,
   GymExerciseConfig,
+  GymEquipment,
+  GymEquipmentExercise,
+  GymPlateInventoryItem,
+  GymPlatePool,
 } from '@/lib/prisma-client';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
@@ -51,10 +55,16 @@ import { SessionSummary } from '@/components/session/session-summary';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { EditableSetsTable } from '@/components/session/editable-sets-table';
+import { SessionEquipmentSelector } from '@/components/session/session-equipment-selector';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
-import { resolveEquipmentType, type GymLoadConstraints } from '@/lib/gym-loads';
+import {
+  resolveExerciseInventory,
+  type EquipmentLoadProfile,
+  type GymLoadConstraints,
+  type ResolvedExerciseInventory,
+} from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import {
   DROP_SET_TRANSITION_REST_SEC,
@@ -77,7 +87,31 @@ export interface SerializedLastPerformance {
 
 type ProgramExerciseWithExercise = ProgramExercise & { exercise: Exercise };
 
-export type SessionGym = Gym & { exerciseConfigs: GymExerciseConfig[] };
+type SessionGymEquipment = Pick<
+  GymEquipment,
+  | 'id'
+  | 'gymId'
+  | 'name'
+  | 'equipmentType'
+  | 'loadType'
+  | 'weightOptions'
+  | 'selectedLoadMultiplier'
+  | 'baseLoadKg'
+  | 'platePoolId'
+  | 'loadingSides'
+> & {
+  exerciseLinks: Pick<GymEquipmentExercise, 'exerciseId'>[];
+  platePool:
+    | (Pick<GymPlatePool, 'id' | 'name' | 'compatibilityKey'> & {
+        plates: Pick<GymPlateInventoryItem, 'weightKg' | 'quantity'>[];
+      })
+    | null;
+};
+
+export type SessionGym = Gym & {
+  exerciseConfigs: GymExerciseConfig[];
+  equipment: SessionGymEquipment[];
+};
 type SessionRunnerProps = {
   session: Session & {
     workout:
@@ -129,6 +163,9 @@ export function SessionRunner({
   const router = useRouter();
   const workout = session.workout!;
   const [sessionGym, setSessionGym] = useState<SessionGym | null>(session.gym);
+  const [selectedEquipmentByExercise, setSelectedEquipmentByExercise] = useState<
+    Record<string, string | null>
+  >(() => initialEquipmentSelections(session));
   const [targetSetOverrides, setTargetSetOverrides] = useState<Record<string, number>>({});
   // Supersets (issue #146, slice 1): run the workout in presentation order -
   // members of a superset group come consecutively with A1/A2 labels. For a
@@ -304,21 +341,39 @@ export function SessionRunner({
     });
   }
 
-  function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints {
-    const equipmentType = resolveEquipmentType(pe.exercise.equipmentType, pe.exercise.name);
-    if (!sessionGym) return { equipmentType };
-
+  function inventoryFor(pe: ProgramExerciseWithExercise): ResolvedExerciseInventory {
+    if (!sessionGym) {
+      return resolveExerciseInventory({
+        inventoryMode: 'LEGACY',
+        exercise: pe.exercise,
+        linkedEquipment: [],
+      });
+    }
     const config = sessionGym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
-    return {
-      equipmentType,
-      isAvailable: config?.isAvailable ?? true,
-      dumbbellWeights: config?.dumbbellWeights.length
-        ? config.dumbbellWeights
-        : sessionGym.dumbbellWeights,
-      plateWeights: config?.plateWeights.length ? config.plateWeights : sessionGym.plateWeights,
-      barWeights: config?.barWeights.length ? config.barWeights : sessionGym.barWeights,
-      weightOptions: config?.weightOptions ?? [],
-    };
+    const linkedEquipment = sessionGym.equipment
+      .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
+      .map(toEquipmentLoadProfile);
+    return resolveExerciseInventory({
+      inventoryMode: sessionGym.inventoryMode,
+      exercise: pe.exercise,
+      linkedEquipment,
+      legacyConfig: config,
+      sharedDumbbellWeights: sessionGym.dumbbellWeights,
+      legacyPlateWeights: sessionGym.plateWeights,
+      legacyBarWeights: sessionGym.barWeights,
+    });
+  }
+
+  function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints {
+    const resolved = inventoryFor(pe);
+    const selectedEquipmentId = selectedEquipmentByExercise[pe.exerciseId];
+    if (
+      selectedEquipmentId &&
+      resolved.equipment.some((item) => item.equipmentId === selectedEquipmentId)
+    ) {
+      return { ...resolved.constraints, equipmentId: selectedEquipmentId };
+    }
+    return resolved.constraints;
   }
 
   // Prior-session sets per exercise, the PR baseline for the post-session
@@ -383,6 +438,7 @@ export function SessionRunner({
       notes: values.notes,
       isWarmup: values.isWarmup,
       isDropSet: values.isDropSet,
+      gymEquipmentId: selectedEquipmentByExercise[currentPE.exerciseId] ?? null,
     });
 
     vibrate(VIBRATION_PATTERNS.validate);
@@ -442,15 +498,29 @@ export function SessionRunner({
       // A freshly confirmed row may still be inside its POST request. Wait for
       // that request to finish so the correction becomes a PATCH instead of
       // racing the original values.
-      const current = (await db.pendingSets.get(set.localId)) ?? set;
+      let current = (await db.pendingSets.get(set.localId)) ?? set;
       if (!current.serverId && current.status === 'syncing') {
         await flushPendingSets();
+        current = (await db.pendingSets.get(set.localId)) ?? current;
       }
+
+      const selectedEquipmentId = currentPE
+        ? (selectedEquipmentByExercise[currentPE.exerciseId] ?? null)
+        : (current.gymEquipmentId ?? null);
+      const currentEquipmentId = current.gymEquipmentId ?? null;
+      const equipmentSnapshotAction =
+        current.serverId && selectedEquipmentId !== currentEquipmentId
+          ? selectedEquipmentId
+            ? 'REPLACE'
+            : 'CLEAR'
+          : undefined;
 
       await db.pendingSets.update(set.localId, {
         weight: values.weight,
         reps: values.reps,
         rir: values.rir,
+        gymEquipmentId: selectedEquipmentId,
+        equipmentSnapshotAction,
         status: 'pending',
         attempts: 0,
         lastError: null,
@@ -632,6 +702,7 @@ export function SessionRunner({
   const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
   const currentReturnRecommendation = returnRecommendations[currentPE.id];
+  const currentInventory = inventoryFor(currentPE);
   const currentRecommendation = nextPlannedSetIsDropSet(currentTarget, currentSets)
     ? null
     : recommendationFor(currentTarget, Date.now());
@@ -707,6 +778,16 @@ export function SessionRunner({
           gymName={sessionGym?.name ?? null}
           loadConstraints={loadConstraintsFor(currentPE)}
           onOpenMenu={() => setExerciseMenuOpen(true)}
+        />
+        <SessionEquipmentSelector
+          options={currentInventory.equipment}
+          selectedId={selectedEquipmentByExercise[currentPE.exerciseId] ?? null}
+          onChange={(equipmentId) =>
+            setSelectedEquipmentByExercise((current) => ({
+              ...current,
+              [currentPE.exerciseId]: equipmentId,
+            }))
+          }
         />
         <ReturnToTrainingNotice
           recommendation={currentReturnRecommendation}
@@ -841,4 +922,45 @@ export function SessionRunner({
       </div>
     </main>
   );
+}
+
+function initialEquipmentSelections(
+  session: SessionRunnerProps['session'],
+): Record<string, string | null> {
+  const selections: Record<string, string | null> = {};
+  for (const programExercise of session.workout?.exercises ?? []) {
+    const logged = [...session.sets]
+      .reverse()
+      .find((set) => set.exerciseId === programExercise.exerciseId && set.gymEquipmentId != null);
+    if (logged?.gymEquipmentId) {
+      selections[programExercise.exerciseId] = logged.gymEquipmentId;
+      continue;
+    }
+    const linked =
+      session.gym?.equipment.filter((item) =>
+        item.exerciseLinks.some((link) => link.exerciseId === programExercise.exerciseId),
+      ) ?? [];
+    if (linked.length === 1) selections[programExercise.exerciseId] = linked[0]!.id;
+  }
+  return selections;
+}
+
+function toEquipmentLoadProfile(item: SessionGymEquipment): EquipmentLoadProfile {
+  return {
+    equipmentId: item.id,
+    equipmentName: item.name,
+    equipmentType: item.equipmentType,
+    loadType: item.loadType,
+    weightOptions: item.weightOptions,
+    selectedLoadMultiplier: item.selectedLoadMultiplier,
+    baseLoadKg: item.baseLoadKg,
+    loadingSides: item.loadingSides,
+    platePoolId: item.platePoolId,
+    platePoolName: item.platePool?.name ?? null,
+    plates:
+      item.platePool?.plates.map((plate) => ({
+        weightKg: plate.weightKg,
+        quantity: plate.quantity,
+      })) ?? [],
+  };
 }

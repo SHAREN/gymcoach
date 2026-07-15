@@ -61,7 +61,35 @@ export async function PATCH(req: Request, props: Params) {
 
     const updated = await db.gym.findUnique({
       where: { id },
-      include: { exerciseConfigs: true },
+      include: {
+        exerciseConfigs: true,
+        equipment: {
+          select: {
+            id: true,
+            gymId: true,
+            name: true,
+            equipmentType: true,
+            loadType: true,
+            weightOptions: true,
+            selectedLoadMultiplier: true,
+            baseLoadKg: true,
+            platePoolId: true,
+            loadingSides: true,
+            exerciseLinks: { select: { exerciseId: true } },
+            platePool: {
+              select: {
+                id: true,
+                name: true,
+                compatibilityKey: true,
+                plates: {
+                  orderBy: { weightKg: 'asc' },
+                  select: { weightKg: true, quantity: true },
+                },
+              },
+            },
+          },
+        },
+      },
     });
     return NextResponse.json(updated);
   } catch (err) {

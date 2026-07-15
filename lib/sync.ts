@@ -58,9 +58,20 @@ async function doFlush(): Promise<FlushResult> {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
             updatesExistingSet
-              ? { weight: item.weight, reps: item.reps, rir: item.rir }
+              ? {
+                  weight: item.weight,
+                  reps: item.reps,
+                  rir: item.rir,
+                  ...(item.gymEquipmentId !== undefined
+                    ? { gymEquipmentId: item.gymEquipmentId }
+                    : {}),
+                  ...(item.equipmentSnapshotAction
+                    ? { equipmentSnapshotAction: item.equipmentSnapshotAction }
+                    : {}),
+                }
               : {
                   exerciseId: item.exerciseId,
+                  gymEquipmentId: item.gymEquipmentId ?? null,
                   setNumber: item.setNumber,
                   weight: item.weight,
                   reps: item.reps,
@@ -90,12 +101,28 @@ async function doFlush(): Promise<FlushResult> {
         continue;
       }
 
-      const saved = (await res.json()) as { id: string };
+      const saved = (await res.json()) as {
+        id: string;
+        gymEquipmentId?: string | null;
+        equipmentNameSnapshot?: string | null;
+        selectedLoadKg?: number | null;
+        selectedLoadMultiplierSnapshot?: number | null;
+        nominalResistanceKg?: number | null;
+        equipmentLoadSnapshot?: unknown;
+      };
       await db.pendingSets.update(item.localId, {
         status: 'synced',
         serverId: item.serverId ?? saved.id,
         syncedAt: Date.now(),
         lastError: null,
+        gymEquipmentId:
+          saved.gymEquipmentId !== undefined ? saved.gymEquipmentId : (item.gymEquipmentId ?? null),
+        equipmentNameSnapshot: saved.equipmentNameSnapshot ?? null,
+        selectedLoadKg: saved.selectedLoadKg ?? null,
+        selectedLoadMultiplierSnapshot: saved.selectedLoadMultiplierSnapshot ?? null,
+        nominalResistanceKg: saved.nominalResistanceKg ?? null,
+        equipmentLoadSnapshot: saved.equipmentLoadSnapshot ?? null,
+        equipmentSnapshotAction: null,
       });
       flushed += 1;
     } catch (err) {

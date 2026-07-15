@@ -14,6 +14,9 @@ export const exercises = {
   muscleGroup: 'Muscle group',
   category: 'Category',
   equipmentType: 'Equipment type',
+  physicalEquipment: 'Available on physical equipment',
+  physicalEquipmentDescription:
+    'Choose the saved machines or stations that can perform this exercise. Availability is derived per gym.',
   defaultRest: 'Default rest (seconds)',
   bodyweight: 'Bodyweight exercise',
   bodyweightDescription:
@@ -23,6 +26,7 @@ export const exercises = {
   updated: 'Exercise updated.',
   deleted: 'Exercise deleted.',
   saveError: 'Could not save the exercise.',
+  equipmentSaveError: 'The exercise was saved, but its equipment links could not be updated.',
   deleteError: 'Could not delete the exercise.',
   deleteTitle: 'Delete this exercise?',
   deleteDescription:

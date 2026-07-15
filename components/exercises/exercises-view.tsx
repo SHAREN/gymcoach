@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ExerciseFormDialog } from '@/components/exercises/exercise-form-dialog';
+import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
 import { DeleteExerciseButton } from '@/components/exercises/delete-exercise-button';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
@@ -20,9 +21,10 @@ import {
 
 interface ExercisesViewProps {
   exercises: Exercise[];
+  equipmentChoices?: ExerciseEquipmentChoice[];
 }
 
-export function ExercisesView({ exercises }: ExercisesViewProps) {
+export function ExercisesView({ exercises, equipmentChoices = [] }: ExercisesViewProps) {
   const t = useTranslations('exercises');
   const common = useTranslations('common');
   const exerciseName = useExerciseName();
@@ -103,7 +105,12 @@ export function ExercisesView({ exercises }: ExercisesViewProps) {
         </div>
       )}
 
-      <ExerciseFormDialog open={createOpen} onOpenChange={setCreateOpen} mode="create" />
+      <ExerciseFormDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        mode="create"
+        equipmentChoices={equipmentChoices}
+      />
       <ExerciseFormDialog
         open={editing !== null}
         onOpenChange={(open) => {
@@ -111,6 +118,7 @@ export function ExercisesView({ exercises }: ExercisesViewProps) {
         }}
         mode="edit"
         exercise={editing ?? undefined}
+        equipmentChoices={equipmentChoices}
       />
     </div>
   );

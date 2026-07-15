@@ -34,9 +34,29 @@ export default async function SessionRunPage(props: Props) {
         include: {
           exerciseConfigs: true,
           equipment: {
-            include: {
-              exerciseLinks: true,
-              platePool: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+            select: {
+              id: true,
+              gymId: true,
+              name: true,
+              equipmentType: true,
+              loadType: true,
+              weightOptions: true,
+              selectedLoadMultiplier: true,
+              baseLoadKg: true,
+              platePoolId: true,
+              loadingSides: true,
+              exerciseLinks: { select: { exerciseId: true } },
+              platePool: {
+                select: {
+                  id: true,
+                  name: true,
+                  compatibilityKey: true,
+                  plates: {
+                    orderBy: { weightKg: 'asc' },
+                    select: { weightKg: true, quantity: true },
+                  },
+                },
+              },
             },
           },
         },

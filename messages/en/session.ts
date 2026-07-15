@@ -29,6 +29,18 @@ export const session = {
   setUpdateError: 'Could not update the set.',
   finished: 'Session finished.',
   finishError: 'Could not finish the session.',
+  equipment: {
+    label: 'Equipment used',
+    description: 'Choose the physical machine or station before logging the set.',
+    choose: 'Choose equipment',
+    manual: 'Legacy / manual load (no equipment snapshot)',
+    loadCount: '{count, plural, one {# achievable load} other {# achievable loads}}',
+    selectorized:
+      'The picker shows displayed stack values. Nominal estimate = displayed load x {multiplier}.',
+    plateLoaded: 'Achievable loads use the shared plate pool: {pool}.',
+    unknownPool: 'unknown pool',
+    selectionRequired: 'Select one machine to use its achievable load picker and save a snapshot.',
+  },
   rest: {
     title: 'Rest',
     seconds: 's',

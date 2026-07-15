@@ -13,7 +13,7 @@ export default async function SettingsPage() {
   const t = await getTranslations('settings');
   const common = await getTranslations('common');
   const auth = await requireSession();
-  const [user, gyms, exercises, mcpTokens] = await Promise.all([
+  const [user, gyms, mcpTokens] = await Promise.all([
     db.user.findUnique({
       where: { id: auth.userId },
       select: {
@@ -31,10 +31,6 @@ export default async function SettingsPage() {
       where: { userId: auth.userId },
       orderBy: { name: 'asc' },
       include: { exerciseConfigs: true },
-    }),
-    db.exercise.findMany({
-      where: { userId: auth.userId },
-      orderBy: { name: 'asc' },
     }),
     db.mcpAccessToken.findMany({
       where: { userId: auth.userId, revokedAt: null },
@@ -82,11 +78,7 @@ export default async function SettingsPage() {
           }}
         />
 
-        <GymProfilesSection
-          initialGyms={gyms}
-          activeGymId={user?.activeGymId ?? null}
-          exercises={exercises}
-        />
+        <GymProfilesSection initialGyms={gyms} activeGymId={user?.activeGymId ?? null} />
 
         <ImportSection />
 

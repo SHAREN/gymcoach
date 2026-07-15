@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise } from '@/lib/prisma-client';
 import { ExercisesView } from './exercises-view';
@@ -9,6 +9,15 @@ import { ExercisesView } from './exercises-view';
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
+
+vi.stubGlobal(
+  'ResizeObserver',
+  class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
 
 function exercise(over: Partial<Exercise>): Exercise {
   return {
@@ -72,5 +81,56 @@ describe('ExercisesView search (issue #238)', () => {
     render(<ExercisesView exercises={[]} />);
     expect(screen.getByText('No exercises')).toBeInTheDocument();
     expect(screen.queryByLabelText('Search exercises by name')).not.toBeInTheDocument();
+  });
+
+  it('shows saved physical equipment in the exercise edit form', async () => {
+    const user = userEvent.setup({ delay: null });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(exercises[0]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, equipmentIds: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ExercisesView
+        exercises={exercises}
+        equipmentChoices={[
+          {
+            id: 'equipment-1',
+            name: 'Cable tower',
+            gymId: 'gym-1',
+            gymName: 'Olymp',
+            equipmentType: 'CABLE',
+            exerciseIds: ['e1'],
+          },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getAllByRole('button', { name: 'Edit exercise' })[0]!);
+
+    expect(screen.getByText('Available on physical equipment')).toBeInTheDocument();
+    expect(screen.getByText('Olymp')).toBeInTheDocument();
+    expect(screen.getByText('Cable tower')).toBeInTheDocument();
+    const equipmentSwitch = screen.getAllByRole('switch')[0]!;
+    expect(equipmentSwitch).toBeChecked();
+    await user.click(equipmentSwitch);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/exercises/e1/equipment', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentIds: [] }),
+    });
   });
 });

@@ -17,6 +17,9 @@ export const exercises = {
   muscleGroup: 'Группа мышц',
   category: 'Категория',
   equipmentType: 'Тип оборудования',
+  physicalEquipment: 'Доступно на физическом оборудовании',
+  physicalEquipmentDescription:
+    'Выберите сохранённые тренажёры или станции, на которых можно выполнять это упражнение. Доступность определяется отдельно для каждого зала.',
   defaultRest: 'Отдых по умолчанию (секунды)',
   bodyweight: 'Упражнение с собственным весом',
   bodyweightDescription:
@@ -26,6 +29,7 @@ export const exercises = {
   updated: 'Упражнение обновлено.',
   deleted: 'Упражнение удалено.',
   saveError: 'Не удалось сохранить упражнение.',
+  equipmentSaveError: 'Упражнение сохранено, но не удалось обновить связи с оборудованием.',
   deleteError: 'Не удалось удалить упражнение.',
   deleteTitle: 'Удалить упражнение?',
   deleteDescription:
