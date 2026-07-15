@@ -1,17 +1,28 @@
+import { canonicalSha256 } from './canonical-json.js';
+
 const STORAGE_KEY = 'gymcoach.watch.control.v1';
-const MAX_RECEIPTS = 256;
+const DOCUMENT_VERSION = 4;
+const MAX_CONFLICTS = 128;
 
 function createEmptyDocument() {
   return {
-    version: 3,
+    version: DOCUMENT_VERSION,
     state: {
       lastPongAt: null,
       lastSnapshotAt: null,
       lastError: null,
+      lastErrorCode: null,
+      lastSyncAt: null,
+      conflictCount: 0,
       currentHeartRate: null,
     },
     outbox: [],
     receipts: [],
+    receiptRecords: [],
+    conflicts: [],
+    pendingFileTransfers: [],
+    peerWatermark: null,
+    snapshotWatermark: null,
     activeWorkout: null,
     sensorSamples: [],
   };
@@ -55,58 +66,21 @@ export class WatchStateRepository {
       return this.snapshot();
     }
 
-    const parsed = JSON.parse(serialized);
-    if (parsed.version === 1) {
-      parsed.version = 2;
-      parsed.activeWorkout = null;
-    }
-    if (parsed.version === 2) {
-      parsed.version = 3;
-      parsed.sensorSamples = [];
-      parsed.state.currentHeartRate = null;
-    }
-    if (
-      parsed.version !== 3 ||
-      !Array.isArray(parsed.outbox) ||
-      !Array.isArray(parsed.receipts) ||
-      !Array.isArray(parsed.sensorSamples)
-    ) {
-      throw new Error('Unsupported watch state document.');
-    }
-    if (!Object.prototype.hasOwnProperty.call(parsed, 'activeWorkout')) {
-      parsed.activeWorkout = null;
-    }
-    if (parsed.activeWorkout) {
-      parsed.activeWorkout.timing = parsed.activeWorkout.timing || {
-        accumulatedPauseMs: 0,
-        pauseStartedAt: null,
-      };
-      parsed.activeWorkout.rest = parsed.activeWorkout.rest || null;
-      parsed.activeWorkout.lastRestSummary = parsed.activeWorkout.lastRestSummary || null;
-      if (parsed.activeWorkout.pendingSet) {
-        parsed.activeWorkout.pendingSet.accumulatedPauseMs =
-          parsed.activeWorkout.pendingSet.accumulatedPauseMs || 0;
-        if (!Number.isInteger(parsed.activeWorkout.pendingSet.pauseStartedAt)) {
-          parsed.activeWorkout.pendingSet.pauseStartedAt = null;
-        }
-      }
-    }
-
-    this.document = parsed;
+    this.document = migrateDocument(JSON.parse(serialized));
     await this.persist();
     return this.snapshot();
   }
 
   snapshot() {
     this.requireLoaded();
-    return JSON.parse(JSON.stringify(this.document));
+    return clone(this.document);
   }
 
   async enqueue(message) {
     this.requireLoaded();
     const id = envelopeId(message);
     if (!this.document.outbox.some((entry) => envelopeId(entry) === id)) {
-      this.document.outbox.push(message);
+      this.document.outbox.push(clone(message));
       await this.persist();
     }
   }
@@ -122,7 +96,7 @@ export class WatchStateRepository {
 
   pending() {
     this.requireLoaded();
-    return this.document.outbox.map((entry) => ({ ...entry }));
+    return this.document.outbox.map(clone);
   }
 
   hasReceipt(messageId) {
@@ -130,81 +104,341 @@ export class WatchStateRepository {
     return this.document.receipts.includes(messageId);
   }
 
-  async rememberReceipt(messageId) {
+  receiptRecord(messageId) {
+    this.requireLoaded();
+    const record = this.document.receiptRecords.find((entry) => entry.id === messageId);
+    return record ? clone(record) : null;
+  }
+
+  async rememberReceipt(messageId, details = {}) {
     this.requireLoaded();
     if (this.document.receipts.includes(messageId)) {
       return false;
     }
-
-    this.document.receipts.push(messageId);
-    if (this.document.receipts.length > MAX_RECEIPTS) {
-      this.document.receipts.splice(0, this.document.receipts.length - MAX_RECEIPTS);
-    }
+    addReceipt(this.document, messageId, details);
     await this.persist();
     return true;
   }
 
+  async rememberProcessedEnvelope({ canonicalHash, id, kind, recordedAt, sessionId, status }) {
+    this.requireLoaded();
+    const existing = this.receiptRecord(id);
+    if (existing) {
+      return existing;
+    }
+    addReceipt(this.document, id, {
+      canonicalHash,
+      kind,
+      recordedAt,
+      sessionId,
+      status,
+    });
+    await this.persist();
+    return null;
+  }
+
   async updateState(patch) {
     this.requireLoaded();
-    this.document.state = { ...this.document.state, ...patch };
+    this.document.state = { ...this.document.state, ...clone(patch) };
     await this.persist();
   }
 
   activeWorkout() {
     this.requireLoaded();
-    return this.document.activeWorkout === null
-      ? null
-      : JSON.parse(JSON.stringify(this.document.activeWorkout));
+    return this.document.activeWorkout === null ? null : clone(this.document.activeWorkout);
   }
 
-  async commitSnapshot(snapshotId, activeWorkout) {
+  async commitSnapshot(snapshotId, activeWorkout, details = {}) {
     this.requireLoaded();
-    addReceipt(this.document, snapshotId);
-    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    addReceipt(this.document, snapshotId, {
+      canonicalHash: details.canonicalHash ?? null,
+      kind: 'SNAPSHOT',
+      recordedAt: details.recordedAt ?? null,
+      sessionId: details.sessionId ?? activeWorkout?.session?.sessionId ?? null,
+      status: 'APPLIED',
+    });
+    this.document.activeWorkout = clone(activeWorkout);
+    if (details.watermark) {
+      this.document.snapshotWatermark = clone(details.watermark);
+    }
     await this.persist();
   }
 
-  async commitInboundWorkoutEvent(eventId, activeWorkout) {
+  async commitInboundWorkoutEvent(eventId, activeWorkout, details = {}) {
     this.requireLoaded();
-    addReceipt(this.document, eventId);
-    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    addReceipt(this.document, eventId, {
+      canonicalHash: details.canonicalHash ?? null,
+      errorCode: details.errorCode ?? null,
+      kind: 'EVENT',
+      recordedAt: details.recordedAt ?? null,
+      sessionId: details.sessionId ?? activeWorkout?.session?.sessionId ?? null,
+      status: details.status ?? 'APPLIED',
+    });
+    if (activeWorkout !== null && activeWorkout !== undefined) {
+      this.document.activeWorkout = clone(activeWorkout);
+    }
     await this.persist();
   }
 
   async commitOutboundWorkoutEvent(event, activeWorkout) {
     this.requireLoaded();
-    addReceipt(this.document, event.eventId);
-    if (!this.document.outbox.some((entry) => envelopeId(entry) === event.eventId)) {
-      this.document.outbox.push(JSON.parse(JSON.stringify(event)));
+    const existing = this.document.outbox.find((entry) => envelopeId(entry) === event.eventId);
+    if (existing && canonicalSha256(existing) !== canonicalSha256(event)) {
+      throw new Error('EVENT_ID_REUSE');
     }
-    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    if (!existing) {
+      this.document.outbox.push(clone(event));
+    }
+    this.document.activeWorkout = clone(activeWorkout);
+    await this.persist();
+  }
+
+  async commitOutboundSensorTransfers({ activeWorkout, events, transfers }) {
+    this.requireLoaded();
+    if (new Set(events.map((event) => event.eventId)).size !== events.length) {
+      throw new Error('EVENT_ID_REUSE');
+    }
+    if (new Set(transfers.map((transfer) => transfer.transferId)).size !== transfers.length) {
+      throw new Error('FILE_TRANSFER_ID_REUSE');
+    }
+    for (const event of events) {
+      const existing = this.document.outbox.find((entry) => envelopeId(entry) === event.eventId);
+      if (existing && canonicalSha256(existing) !== canonicalSha256(event)) {
+        throw new Error('EVENT_ID_REUSE');
+      }
+    }
+    for (const transfer of transfers) {
+      const existing = this.document.pendingFileTransfers.find(
+        (entry) => entry.transferId === transfer.transferId,
+      );
+      if (existing && existing.canonicalHash !== transfer.canonicalHash) {
+        throw new Error('FILE_TRANSFER_ID_REUSE');
+      }
+    }
+    for (const event of events) {
+      if (!this.document.outbox.some((entry) => envelopeId(entry) === event.eventId)) {
+        this.document.outbox.push(clone(event));
+      }
+    }
+    for (const transfer of transfers) {
+      const existing = this.document.pendingFileTransfers.find(
+        (entry) => entry.transferId === transfer.transferId,
+      );
+      if (!existing) {
+        this.document.pendingFileTransfers.push({ ...clone(transfer), direction: 'OUTBOUND' });
+      }
+    }
+    this.document.activeWorkout = clone(activeWorkout);
     await this.persist();
   }
 
   async saveActiveWorkout(activeWorkout) {
     this.requireLoaded();
-    this.document.activeWorkout = JSON.parse(JSON.stringify(activeWorkout));
+    this.document.activeWorkout = clone(activeWorkout);
     await this.persist();
   }
 
   sensorSamples() {
     this.requireLoaded();
-    return this.document.sensorSamples.map((sample) => JSON.parse(JSON.stringify(sample)));
+    return this.document.sensorSamples.map(clone);
+  }
+
+  unassignedSensorSamples() {
+    this.requireLoaded();
+    const assigned = new Set(
+      this.document.pendingFileTransfers
+        .filter((entry) => entry.direction === 'OUTBOUND')
+        .flatMap((entry) => entry.sampleIds || []),
+    );
+    return this.document.sensorSamples.filter((sample) => !assigned.has(sample.sampleId)).map(clone);
   }
 
   async appendSensorSample(sample, maxSamples = 2_048) {
     this.requireLoaded();
-    if (this.document.sensorSamples.length >= maxSamples) {
+    if (this.unassignedSensorSamples().length >= maxSamples) {
       throw new Error('Persistent sensor sample buffer is full and must be flushed.');
     }
-    this.document.sensorSamples.push(JSON.parse(JSON.stringify(sample)));
-    await this.persist();
+    const existing = this.document.sensorSamples.find((entry) => entry.sampleId === sample.sampleId);
+    if (existing && canonicalSha256(existing) !== canonicalSha256(sample)) {
+      throw new Error('SAMPLE_ID_REUSE');
+    }
+    if (!existing) {
+      this.document.sensorSamples.push(clone(sample));
+      await this.persist();
+    }
   }
 
   async clearSensorSamples() {
     this.requireLoaded();
     this.document.sensorSamples = [];
     await this.persist();
+  }
+
+  pendingFileTransfers(direction = null) {
+    this.requireLoaded();
+    return this.document.pendingFileTransfers
+      .filter((entry) => direction === null || entry.direction === direction)
+      .map(clone);
+  }
+
+  inboundTransferForEvent(eventId) {
+    this.requireLoaded();
+    const transfer = this.document.pendingFileTransfers.find(
+      (entry) => entry.direction === 'INBOUND' && entry.relatedEventId === eventId,
+    );
+    return transfer ? clone(transfer) : null;
+  }
+
+  transferRecord(transferId) {
+    this.requireLoaded();
+    const transfer = this.document.pendingFileTransfers.find(
+      (entry) => entry.transferId === transferId,
+    );
+    return transfer ? clone(transfer) : null;
+  }
+
+  async rememberInboundTransfer(envelope, canonicalHash, recordedAt) {
+    this.requireLoaded();
+    const existing = this.document.pendingFileTransfers.find(
+      (entry) => entry.transferId === envelope.transferId,
+    );
+    if (existing) {
+      return clone(existing);
+    }
+    this.document.pendingFileTransfers.push({
+      transferId: envelope.transferId,
+      relatedEventId: envelope.relatedEventId,
+      sessionId: envelope.sessionId,
+      payloadId: envelope.payloadId,
+      payloadType: envelope.payloadType,
+      sequence: envelope.sequence,
+      totalSequences: envelope.totalSequences,
+      canonicalHash,
+      envelope: clone(envelope),
+      sampleIds: [],
+      direction: 'INBOUND',
+      recordedAt,
+    });
+    addReceipt(this.document, envelope.transferId, {
+      canonicalHash,
+      kind: 'FILE',
+      recordedAt,
+      sessionId: envelope.sessionId,
+      status: 'APPLIED',
+    });
+    await this.persist();
+    return null;
+  }
+
+  async completeInboundTransferForEvent(eventId) {
+    this.requireLoaded();
+    const before = this.document.pendingFileTransfers.length;
+    this.document.pendingFileTransfers = this.document.pendingFileTransfers.filter(
+      (entry) => !(entry.direction === 'INBOUND' && entry.relatedEventId === eventId),
+    );
+    if (before !== this.document.pendingFileTransfers.length) {
+      await this.persist();
+    }
+  }
+
+  async removeFileTransfer(transferId) {
+    this.requireLoaded();
+    const before = this.document.pendingFileTransfers.length;
+    this.document.pendingFileTransfers = this.document.pendingFileTransfers.filter(
+      (entry) => entry.transferId !== transferId,
+    );
+    if (before !== this.document.pendingFileTransfers.length) {
+      await this.persist();
+    }
+  }
+
+  async applySyncAck(ack, canonicalHash) {
+    this.requireLoaded();
+    const existing = this.receiptRecord(ack.ackId);
+    if (existing) {
+      return { duplicate: true, removedEventIds: [] };
+    }
+    addReceipt(this.document, ack.ackId, {
+      canonicalHash,
+      kind: 'ACK',
+      recordedAt: ack.timestamp,
+      sessionId: ack.sessionId,
+      status: ack.status,
+    });
+
+    const successful = ack.status === 'APPLIED' || ack.status === 'DUPLICATE';
+    const eventIds = new Set(ack.eventIds);
+    let removedEventIds = [];
+    if (successful) {
+      removedEventIds = this.document.outbox
+        .filter(
+          (entry) =>
+            Object.prototype.hasOwnProperty.call(entry, 'eventId') && eventIds.has(entry.eventId),
+        )
+        .map((entry) => entry.eventId);
+      this.document.outbox = this.document.outbox.filter(
+        (entry) =>
+          !Object.prototype.hasOwnProperty.call(entry, 'eventId') || !eventIds.has(entry.eventId),
+      );
+      const acknowledgedTransfers = this.document.pendingFileTransfers.filter(
+        (entry) =>
+          entry.direction === 'OUTBOUND' &&
+          entry.relatedEventId !== null &&
+          eventIds.has(entry.relatedEventId),
+      );
+      const acknowledgedSamples = new Set(
+        acknowledgedTransfers.flatMap((entry) => entry.sampleIds || []),
+      );
+      this.document.pendingFileTransfers = this.document.pendingFileTransfers.filter(
+        (entry) =>
+          !(
+            entry.direction === 'OUTBOUND' &&
+            entry.relatedEventId !== null &&
+            eventIds.has(entry.relatedEventId)
+          ),
+      );
+      this.document.sensorSamples = this.document.sensorSamples.filter(
+        (sample) => !acknowledgedSamples.has(sample.sampleId),
+      );
+    } else {
+      addConflict(this.document, {
+        code: ack.errorCode || `ACK_${ack.status}`,
+        ackId: ack.ackId,
+        eventIds: [...ack.eventIds],
+        sessionId: ack.sessionId,
+        recordedAt: ack.timestamp,
+      });
+    }
+
+    this.document.peerWatermark = {
+      sessionId: ack.sessionId,
+      revision: ack.revision,
+      updatedAt: ack.timestamp,
+      deviceId: ack.deviceId,
+    };
+    this.document.state.lastSyncAt = ack.timestamp;
+    this.document.state.lastErrorCode = successful ? null : ack.errorCode || `ACK_${ack.status}`;
+    this.document.state.lastError = this.document.state.lastErrorCode;
+    this.document.state.conflictCount = this.document.conflicts.length;
+    await this.persist();
+    return { duplicate: false, removedEventIds };
+  }
+
+  async recordConflict(conflict) {
+    this.requireLoaded();
+    const added = addConflict(this.document, conflict);
+    this.document.state.conflictCount = this.document.conflicts.length;
+    this.document.state.lastErrorCode = conflict.code;
+    this.document.state.lastError = conflict.code;
+    if (added) {
+      await this.persist();
+    }
+    return added;
+  }
+
+  conflicts() {
+    this.requireLoaded();
+    return this.document.conflicts.map(clone);
   }
 
   async persist() {
@@ -218,6 +452,81 @@ export class WatchStateRepository {
   }
 }
 
+function migrateDocument(parsed) {
+  if (parsed.version === 1) {
+    parsed.version = 2;
+    parsed.activeWorkout = null;
+  }
+  if (parsed.version === 2) {
+    parsed.version = 3;
+    parsed.sensorSamples = [];
+    parsed.state = parsed.state || {};
+    parsed.state.currentHeartRate = null;
+  }
+  if (parsed.version === 3) {
+    parsed.version = DOCUMENT_VERSION;
+  }
+  if (
+    parsed.version !== DOCUMENT_VERSION ||
+    !Array.isArray(parsed.outbox) ||
+    !Array.isArray(parsed.receipts) ||
+    !Array.isArray(parsed.sensorSamples)
+  ) {
+    throw new Error('Unsupported watch state document.');
+  }
+  parsed.state = {
+    ...createEmptyDocument().state,
+    ...(parsed.state || {}),
+  };
+  parsed.state.lastErrorCode = sanitizeStoredError(parsed.state.lastErrorCode ?? parsed.state.lastError);
+  parsed.state.lastError = parsed.state.lastErrorCode;
+  parsed.receiptRecords = Array.isArray(parsed.receiptRecords) ? parsed.receiptRecords : [];
+  for (const id of parsed.receipts) {
+    if (!parsed.receiptRecords.some((entry) => entry.id === id)) {
+      parsed.receiptRecords.push({
+        id,
+        canonicalHash: null,
+        errorCode: null,
+        kind: 'LEGACY',
+        recordedAt: null,
+        sessionId: null,
+        status: 'APPLIED',
+      });
+    }
+  }
+  parsed.conflicts = Array.isArray(parsed.conflicts) ? parsed.conflicts : [];
+  parsed.pendingFileTransfers = Array.isArray(parsed.pendingFileTransfers)
+    ? parsed.pendingFileTransfers
+    : [];
+  parsed.peerWatermark = parsed.peerWatermark || null;
+  parsed.snapshotWatermark = parsed.snapshotWatermark || null;
+  parsed.state.conflictCount = parsed.conflicts.length;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'activeWorkout')) {
+    parsed.activeWorkout = null;
+  }
+  normalizeActiveWorkout(parsed.activeWorkout);
+  return parsed;
+}
+
+function normalizeActiveWorkout(activeWorkout) {
+  if (!activeWorkout) {
+    return;
+  }
+  activeWorkout.timing = activeWorkout.timing || {
+    accumulatedPauseMs: 0,
+    pauseStartedAt: null,
+  };
+  activeWorkout.rest = activeWorkout.rest || null;
+  activeWorkout.lastRestSummary = activeWorkout.lastRestSummary || null;
+  if (activeWorkout.pendingSet) {
+    activeWorkout.pendingSet.accumulatedPauseMs =
+      activeWorkout.pendingSet.accumulatedPauseMs || 0;
+    if (!Number.isInteger(activeWorkout.pendingSet.pauseStartedAt)) {
+      activeWorkout.pendingSet.pauseStartedAt = null;
+    }
+  }
+}
+
 function envelopeId(envelope) {
   const id = envelope?.messageId || envelope?.eventId;
   if (typeof id !== 'string' || id.length === 0) {
@@ -226,11 +535,56 @@ function envelopeId(envelope) {
   return id;
 }
 
-function addReceipt(document, id) {
+function addReceipt(document, id, details = {}) {
   if (!document.receipts.includes(id)) {
     document.receipts.push(id);
-    if (document.receipts.length > MAX_RECEIPTS) {
-      document.receipts.splice(0, document.receipts.length - MAX_RECEIPTS);
-    }
   }
+  if (!document.receiptRecords.some((entry) => entry.id === id)) {
+    document.receiptRecords.push({
+      id,
+      canonicalHash: details.canonicalHash ?? null,
+      errorCode: details.errorCode ?? null,
+      kind: details.kind ?? 'CONTROL',
+      recordedAt: details.recordedAt ?? null,
+      sessionId: details.sessionId ?? null,
+      status: details.status ?? 'APPLIED',
+    });
+  }
+}
+
+function addConflict(document, conflict) {
+  const normalized = {
+    code: sanitizeStoredError(conflict.code) || 'SYNC_CONFLICT',
+    ackId: conflict.ackId ?? null,
+    eventId: conflict.eventId ?? null,
+    eventIds: Array.isArray(conflict.eventIds) ? [...conflict.eventIds] : [],
+    sessionId: conflict.sessionId ?? null,
+    localHash: conflict.localHash ?? null,
+    remoteHash: conflict.remoteHash ?? null,
+    recordedAt: conflict.recordedAt ?? null,
+  };
+  const key = JSON.stringify(normalized);
+  if (document.conflicts.some((entry) => JSON.stringify(entry) === key)) {
+    return false;
+  }
+  document.conflicts.push(normalized);
+  if (document.conflicts.length > MAX_CONFLICTS) {
+    document.conflicts.splice(0, document.conflicts.length - MAX_CONFLICTS);
+  }
+  return true;
+}
+
+function sanitizeStoredError(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64) || null;
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }

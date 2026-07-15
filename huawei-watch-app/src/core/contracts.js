@@ -1,6 +1,8 @@
 import { MAX_MESSAGE_BYTES, SCHEMA_VERSION, PROTOCOL_VERSION, utf8ByteLength } from './messages.js';
+import { canonicalJson, canonicalSha256 } from './canonical-json.js';
 
 export const MAX_FILE_BYTES = 4_000_000;
+export const FILE_TARGET_BYTES = 3_500_000;
 
 export const WatchEventType = Object.freeze({
   WORKOUT_STARTED: 'WORKOUT_STARTED',
@@ -30,6 +32,8 @@ const SOURCES = new Set(['PHONE', 'WATCH']);
 const WORKOUT_STATUSES = new Set(['ACTIVE', 'PAUSED', 'FINISHED']);
 const EXERCISE_STATUSES = new Set(['PENDING', 'ACTIVE', 'COMPLETED', 'SKIPPED']);
 const SENSOR_PHASES = new Set(['WORKOUT', 'SET', 'REST', 'PAUSE', 'WARMUP', 'RECOVERY']);
+const ACK_STATUSES = new Set(['APPLIED', 'DUPLICATE', 'STALE', 'CONFLICT', 'REJECTED']);
+const FILE_PAYLOAD_TYPES = new Set(['SENSOR_BATCH', 'SYNC_SNAPSHOT', 'EVENT_BATCH']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const WATCH_EVENT_FIELDS = [
@@ -154,6 +158,36 @@ const REST_HEART_RATE_FIELDS = [
   'drop30Seconds',
   'drop60Seconds',
   'sampleCount',
+];
+const SYNC_ACK_FIELDS = [
+  'protocolVersion',
+  'schemaVersion',
+  'ackId',
+  'sessionId',
+  'eventIds',
+  'status',
+  'timestamp',
+  'source',
+  'deviceId',
+  'revision',
+  'errorCode',
+];
+const FILE_TRANSFER_FIELDS = [
+  'protocolVersion',
+  'schemaVersion',
+  'transferId',
+  'sessionId',
+  'relatedEventId',
+  'payloadType',
+  'payloadId',
+  'sequence',
+  'totalSequences',
+  'byteLength',
+  'sha256',
+  'createdAt',
+  'source',
+  'deviceId',
+  'payload',
 ];
 
 export class DataEnvelopeTooLargeError extends Error {
@@ -405,6 +439,97 @@ export function validateRestHeartRateSummary(value) {
   return value;
 }
 
+export function validateSyncAck(value) {
+  exactObject(value, SYNC_ACK_FIELDS, [], 'SyncAck');
+  wireVersion(value, 'SyncAck');
+  uuid(value.ackId, 'SyncAck.ackId');
+  opaqueId(value.sessionId, 'SyncAck.sessionId');
+  if (!Array.isArray(value.eventIds) || value.eventIds.length === 0) {
+    throw new Error('SyncAck.eventIds must contain at least one event ID.');
+  }
+  for (const eventId of value.eventIds) {
+    uuid(eventId, 'SyncAck.eventIds item');
+  }
+  if (new Set(value.eventIds).size !== value.eventIds.length) {
+    throw new Error('SyncAck.eventIds must be unique.');
+  }
+  enumValue(value.status, ACK_STATUSES, 'SyncAck.status');
+  nonNegativeInteger(value.timestamp, 'SyncAck.timestamp');
+  enumValue(value.source, SOURCES, 'SyncAck.source');
+  opaqueId(value.deviceId, 'SyncAck.deviceId');
+  nonNegativeInteger(value.revision, 'SyncAck.revision');
+  if (value.errorCode !== null) {
+    nonBlankString(value.errorCode, 'SyncAck.errorCode');
+    if (!/^[A-Z0-9_]{1,64}$/.test(value.errorCode)) {
+      throw new Error('SyncAck.errorCode must be a sanitized machine-readable code.');
+    }
+  }
+  if ((value.status === 'APPLIED' || value.status === 'DUPLICATE') && value.errorCode !== null) {
+    throw new Error('Successful SyncAck statuses cannot contain errorCode.');
+  }
+  return value;
+}
+
+export function validateFileTransferEnvelope(value) {
+  exactObject(value, FILE_TRANSFER_FIELDS, [], 'FileTransferEnvelope');
+  wireVersion(value, 'FileTransferEnvelope');
+  uuid(value.transferId, 'FileTransferEnvelope.transferId');
+  opaqueId(value.sessionId, 'FileTransferEnvelope.sessionId');
+  if (value.relatedEventId !== null) {
+    uuid(value.relatedEventId, 'FileTransferEnvelope.relatedEventId');
+  }
+  enumValue(value.payloadType, FILE_PAYLOAD_TYPES, 'FileTransferEnvelope.payloadType');
+  opaqueId(value.payloadId, 'FileTransferEnvelope.payloadId');
+  positiveInteger(value.sequence, 'FileTransferEnvelope.sequence');
+  positiveInteger(value.totalSequences, 'FileTransferEnvelope.totalSequences');
+  if (value.sequence > value.totalSequences) {
+    throw new Error('FileTransferEnvelope.sequence must not exceed totalSequences.');
+  }
+  positiveInteger(value.byteLength, 'FileTransferEnvelope.byteLength');
+  if (value.byteLength >= MAX_FILE_BYTES) {
+    throw new Error('FileTransferEnvelope.byteLength must be below 4,000,000 bytes.');
+  }
+  if (typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.sha256)) {
+    throw new Error('FileTransferEnvelope.sha256 must be a lowercase SHA-256 digest.');
+  }
+  nonNegativeInteger(value.createdAt, 'FileTransferEnvelope.createdAt');
+  enumValue(value.source, SOURCES, 'FileTransferEnvelope.source');
+  opaqueId(value.deviceId, 'FileTransferEnvelope.deviceId');
+  plainObject(value.payload, 'FileTransferEnvelope.payload');
+
+  const payloadJson = canonicalJson(value.payload);
+  const byteLength = utf8ByteLength(payloadJson);
+  if (value.byteLength !== byteLength) {
+    throw new Error('FileTransferEnvelope.byteLength does not match the canonical payload.');
+  }
+  if (value.sha256 !== canonicalSha256(value.payload)) {
+    throw new Error('FileTransferEnvelope.sha256 does not match the canonical payload.');
+  }
+  if (value.payloadType === 'SENSOR_BATCH') {
+    if (value.relatedEventId === null) {
+      throw new Error('SensorBatch file transfer requires relatedEventId.');
+    }
+    validateSensorBatch(value.payload);
+    if (value.payload.batchId !== value.payloadId) {
+      throw new Error('FileTransferEnvelope.payloadId must match SensorBatch.batchId.');
+    }
+    if (
+      value.payload.sessionId !== value.sessionId ||
+      value.payload.source !== value.source ||
+      value.payload.sequence !== value.sequence ||
+      value.payload.totalSequences !== value.totalSequences
+    ) {
+      throw new Error('FileTransferEnvelope fields do not match the SensorBatch payload.');
+    }
+  } else if (value.payloadType === 'SYNC_SNAPSHOT') {
+    validateSyncSnapshot(value.payload);
+    if (value.payload.snapshotId !== value.payloadId || value.payload.sessionId !== value.sessionId) {
+      throw new Error('FileTransferEnvelope fields do not match the SyncSnapshot payload.');
+    }
+  }
+  return value;
+}
+
 export function serializeWatchEvent(value) {
   return serializeValidated(value, validateWatchEvent);
 }
@@ -459,6 +584,97 @@ export function serializeRestHeartRateSummary(value) {
 
 export function parseRestHeartRateSummary(serialized) {
   return parseValidated(serialized, validateRestHeartRateSummary);
+}
+
+export function serializeSyncAck(value) {
+  const serialized = serializeValidated(value, validateSyncAck);
+  const bytes = utf8ByteLength(serialized);
+  if (bytes > MAX_MESSAGE_BYTES) {
+    throw new DataEnvelopeTooLargeError(bytes, MAX_MESSAGE_BYTES);
+  }
+  return serialized;
+}
+
+export function parseSyncAck(serialized) {
+  assertDataEnvelopeSize(serialized, 'MESSAGE');
+  return parseValidated(serialized, validateSyncAck);
+}
+
+export function createSyncAck({
+  ackId,
+  deviceId,
+  errorCode = null,
+  eventIds,
+  revision,
+  sessionId,
+  source = 'WATCH',
+  status,
+  timestamp,
+}) {
+  return validateSyncAck({
+    protocolVersion: PROTOCOL_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    ackId,
+    sessionId,
+    eventIds,
+    status,
+    timestamp,
+    source,
+    deviceId,
+    revision,
+    errorCode,
+  });
+}
+
+export function createFileTransferEnvelope({
+  createdAt,
+  deviceId,
+  payload,
+  payloadId,
+  payloadType,
+  relatedEventId = null,
+  sequence,
+  sessionId,
+  source = 'WATCH',
+  totalSequences,
+  transferId,
+}) {
+  const payloadJson = canonicalJson(payload);
+  return validateFileTransferEnvelope({
+    protocolVersion: PROTOCOL_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    transferId,
+    sessionId,
+    relatedEventId,
+    payloadType,
+    payloadId,
+    sequence,
+    totalSequences,
+    byteLength: utf8ByteLength(payloadJson),
+    sha256: canonicalSha256(payload),
+    createdAt,
+    source,
+    deviceId,
+    payload,
+  });
+}
+
+export function serializeFileTransferEnvelope(value, targetBytes = FILE_TARGET_BYTES) {
+  validateFileTransferEnvelope(value);
+  const serialized = JSON.stringify(value);
+  const bytes = utf8ByteLength(serialized);
+  if (bytes >= MAX_FILE_BYTES) {
+    throw new DataEnvelopeTooLargeError(bytes, MAX_FILE_BYTES);
+  }
+  if (bytes > targetBytes) {
+    throw new DataEnvelopeTooLargeError(bytes, targetBytes);
+  }
+  return serialized;
+}
+
+export function parseFileTransferEnvelope(serialized) {
+  assertDataEnvelopeSize(serialized, 'FILE');
+  return parseValidated(serialized, validateFileTransferEnvelope);
 }
 
 export function encodeSensorBatchForTransport(value) {

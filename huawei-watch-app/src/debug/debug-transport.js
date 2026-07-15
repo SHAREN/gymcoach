@@ -10,6 +10,7 @@ class DebugTransportEndpoint {
     this.fileHandler = async () => {};
     this.sent = [];
     this.filesSent = [];
+    this.nextFileMutator = null;
   }
 
   link(peer) {
@@ -68,11 +69,43 @@ class DebugTransportEndpoint {
     }
 
     this.filesSent.push(serialized);
-    await this.peer.fileHandler(serialized);
+    let delivered = serialized;
+    if (this.nextFileMutator) {
+      delivered = this.nextFileMutator(serialized);
+      this.nextFileMutator = null;
+    }
+    await this.peer.fileHandler(delivered);
   }
 
   async injectFile(serialized) {
     await this.fileHandler(serialized);
+  }
+
+  corruptNextFile() {
+    this.nextFileMutator = (serialized) => {
+      const envelope = JSON.parse(serialized);
+      if (Array.isArray(envelope.payload?.samples) && envelope.payload.samples.length > 0) {
+        const sample = envelope.payload.samples[0];
+        if (typeof sample.value === 'number') {
+          sample.value += 1;
+        } else if (typeof sample.quality === 'string') {
+          sample.quality = [...sample.quality].reverse().join('');
+        }
+      } else {
+        envelope.payloadId = `${envelope.payloadId}-corrupted`;
+      }
+      return JSON.stringify(envelope);
+    };
+  }
+
+  async redeliverLastFile() {
+    if (this.filesSent.length === 0) {
+      throw new Error(`${this.name} debug transport has no file to redeliver.`);
+    }
+    if (!this.peer || !this.peer.connected) {
+      throw new Error(`${this.name} debug transport peer is disconnected.`);
+    }
+    await this.peer.fileHandler(this.filesSent[this.filesSent.length - 1]);
   }
 }
 

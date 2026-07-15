@@ -1,6 +1,6 @@
 # GymCoach Huawei Watch companion
 
-This directory contains the Stage 4 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
+This directory contains the Stage 5 source project for the Huawei Watch GT 4 companion. It is intentionally separate from the existing Android project.
 
 ## Verified target
 
@@ -14,7 +14,7 @@ This directory contains the Stage 4 source project for the Huawei Watch GT 4 com
 
 The normative Stage 2 control-plane envelope is `../shared-contracts/schemas/v1/control-message.schema.json`. It is separate from workout events and uses only `PING`, `PONG`, `SYNC_REQUESTED`, and `SYNC_SNAPSHOT`.
 
-## Current Stage 4 scope
+## Current Stage 5 scope
 
 Implemented now:
 
@@ -24,6 +24,9 @@ Implemented now:
 - A debug-only in-process transport under `src/debug`.
 - A storage abstraction that can be backed by the official Lite Wearable storage API later.
 - Durable outbox and inbound-message receipt behavior at the abstraction boundary.
+- Canonical full-event SHA-256 receipt records that detect changed content under a reused `eventId`.
+- Strict `SyncAck` handling. Only `APPLIED` and `DUPLICATE` remove acknowledged events, paired files, and raw sensor samples.
+- Sanitized conflict records, peer and snapshot watermarks, last-sync state, and restart-safe pending file transfers.
 - Strict dependency-free validation and serialization for `WatchEvent`, `SyncSnapshot`, `WorkoutSession`, `ExerciseSession`, and `SetRecord`.
 - A persisted active workout projection with exercises, active exercise and set, revision, absolute `startedAt`, and completed sets.
 - Standalone snapshot application and Stage 3 workout-event reducers.
@@ -35,14 +38,17 @@ Implemented now:
 - Debug-only sensor and vibration adapters that never enter the production page entry.
 - Valid and invalid sensor sample normalization. Off-wrist and invalid heart rate is stored as `null`, never as a real zero pulse.
 - Bounded persistent sensor storage, strict `SensorBatch` validation, batch splitting, and file-only transfer below 4,000,000 bytes.
+- Strict `FileTransferEnvelope` validation with canonical payload length and SHA-256, a 3,500,000-byte target, and the hard Huawei limit.
+- Automatic offline-safe sensor batching on reconnect, lifecycle checkpoints, set/rest completion, rest skip, workout finish, and before buffer overflow.
 - Deterministic set and rest heart-rate summaries that exclude invalid samples and use the earlier sample for equal-distance 30-second or 60-second ties.
 - Absolute workout, set, pause, and rest timing that survives page sleep, application restart, and transport loss.
 - Automatic rest start after set completion, plus skip, add 15 seconds, add 30 seconds, pause, resume, and start-next-set controls.
 - Persisted one-shot warning and completion vibration cues through an adapter boundary.
 - A round-screen rest view with Russian and English labels, current pulse, countdown, summary values, and touch controls.
-- Node tests for connection, snapshots, exercise changes, sets, sensors, rest, restart recovery, deduplication, strict DTOs, and transport limits.
+- Snapshot reconciliation with optional absolute runtime state, deterministic local replay, and a new snapshot request on revision gaps.
+- Node tests for ACK outcomes, event-ID reuse, offline revisions, reconnect replay, restart recovery, sensor ownership, corrupt files, snapshots, timers, strict DTOs, and transport limits.
 
-Not implemented or not claimed in Stage 4:
+Not implemented or not claimed in Stage 5:
 
 - Official production sensor APIs or health permission calls, because the installed SDK is unavailable.
 - Production Wear Engine calls or a verified physical-device transport.
@@ -63,6 +69,7 @@ huawei-watch-app/
       index.css
   src/core/
     companion.js
+    canonical-json.js
     contracts.js
     i18n.js
     messages.js
@@ -82,6 +89,7 @@ huawei-watch-app/
     entry.test.mjs
     messages.test.mjs
     stage4.test.mjs
+    stage5.test.mjs
     workout.test.mjs
   scripts/
     check-format.mjs
@@ -123,7 +131,7 @@ npm run check
 
 No npm dependencies are installed or downloaded. Tests use the Node built-in test runner.
 
-## Implemented Stage 4 flow
+## Implemented Stage 5 flow
 
 With a future official transport adapter, the page flow is:
 
@@ -139,8 +147,11 @@ With a future official transport adapter, the page flow is:
 10. Start a rest interval automatically after a completed set and preserve it with absolute timestamps.
 11. Collect supported adapter samples in bounded buffers and persist them before summaries or lifecycle transitions.
 12. Exclude invalid and off-wrist heart-rate readings from current pulse and aggregate calculations.
-13. Split sensor samples into strict file batches and emit durable `SENSOR_BATCH_RECORDED` metadata events.
-14. Restore timers and one-shot vibration state after sleep, restart, or connection loss.
+13. Atomically queue strict sensor file envelopes and paired durable `SENSOR_BATCH_RECORDED` events before sending.
+14. Retain assigned raw samples until an `APPLIED` or `DUPLICATE` ACK survives durable processing.
+15. Replay pending files and events in deterministic revision, timestamp, and event-ID order after reconnect.
+16. Reconcile snapshots without deleting unresolved local set or delete events and restore absolute runtime timers.
+17. Restore timers and one-shot vibration state after sleep, restart, or connection loss.
 
 The production sensor and vibration adapters intentionally report unavailable until the official DevEco and Lite Wearable SDK APIs can be compiled and verified. This is a safety boundary, not a claim that Watch GT 4 exposes every candidate sensor to third-party Lite Wearable applications.
 
