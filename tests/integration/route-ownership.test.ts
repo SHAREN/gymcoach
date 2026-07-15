@@ -98,6 +98,41 @@ describe('route ownership: PATCH /api/sets/[id]', () => {
       reps: 10,
     });
   });
+
+  it('rejects an exact legacy mobile snapshot outside completed history', async () => {
+    const { a, set } = await seed();
+    await db.set.update({
+      where: { id: set.id },
+      data: {
+        gymEquipmentId: null,
+        equipmentNameSnapshot: 'Legacy cable',
+        selectedLoadKg: 60,
+        selectedLoadMultiplierSnapshot: 0.5,
+        nominalResistanceKg: 30,
+        equipmentLoadSnapshot: {
+          version: 1,
+          loadType: 'SELECTORIZED',
+          equipmentType: 'CABLE',
+          selectedLoadKg: 60,
+          selectedLoadMultiplier: 0.5,
+          nominalResistanceKg: 30,
+          baseLoadKg: 0,
+          loadingSides: 1,
+          platePool: null,
+        },
+      },
+    });
+    actAs(a.id);
+
+    const response = await patchSet(jsonReq('PATCH', { weight: 65, reps: 8, rir: 1 }), {
+      params: Promise.resolve({ id: set.id }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'The recorded equipment snapshot is unsupported or invalid.',
+    });
+  });
 });
 
 describe('route ownership: PUT /api/sessions/[id]', () => {

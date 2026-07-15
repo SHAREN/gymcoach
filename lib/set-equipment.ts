@@ -80,6 +80,14 @@ const legacyMobileEquipmentLoadSnapshotSchema = z
   })
   .strict();
 
+export function frozenSetLoadSnapshotVersion(
+  equipmentLoadSnapshot: Prisma.JsonValue | null,
+): 1 | 2 | null {
+  if (mobileFrozenEquipmentLoadSnapshotSchema.safeParse(equipmentLoadSnapshot).success) return 2;
+  if (legacyMobileEquipmentLoadSnapshotSchema.safeParse(equipmentLoadSnapshot).success) return 1;
+  return null;
+}
+
 type StoredSetEquipmentSnapshot = Pick<
   Set,
   | 'gymEquipmentId'

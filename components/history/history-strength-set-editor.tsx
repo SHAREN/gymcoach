@@ -41,6 +41,7 @@ export interface HistoricalStrengthSet {
   gymEquipmentId: string | null;
   equipmentNameSnapshot: string | null;
   frozenLoadConstraints: GymLoadConstraints | null;
+  frozenLoadSnapshotVersion: 1 | 2 | null;
 }
 
 interface DraftSet {
@@ -455,6 +456,7 @@ function constraintsForExistingSet(
   set: HistoricalStrengthSet,
 ): GymLoadConstraints | null {
   if (set.frozenLoadConstraints) return set.frozenLoadConstraints;
+  if (set.frozenLoadSnapshotVersion === 1) return null;
   if (!constraints?.equipmentOptions?.length) return constraints;
   if (
     !set.gymEquipmentId ||

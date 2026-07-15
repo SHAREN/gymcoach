@@ -25,7 +25,7 @@ import { getTrainingDisplayName } from '@/i18n/training-names';
 import { buildHistoryHref, parseMonthKey } from '@/lib/history-calendar';
 import { HistoryStrengthSetEditor } from '@/components/history/history-strength-set-editor';
 import { resolveExerciseInventory } from '@/lib/gym-loads';
-import { frozenSetLoadConstraints } from '@/lib/set-equipment';
+import { frozenSetLoadConstraints, frozenSetLoadSnapshotVersion } from '@/lib/set-equipment';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -445,6 +445,9 @@ export default async function HistorySessionPage(props: Params) {
                             equipmentNameSnapshot: set.equipmentNameSnapshot,
                             frozenLoadConstraints: frozenSetLoadConstraints(
                               set.equipmentNameSnapshot,
+                              set.equipmentLoadSnapshot,
+                            ),
+                            frozenLoadSnapshotVersion: frozenSetLoadSnapshotVersion(
                               set.equipmentLoadSnapshot,
                             ),
                           }))}

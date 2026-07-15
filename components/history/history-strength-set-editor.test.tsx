@@ -57,6 +57,7 @@ const set = {
   isDropSet: false,
   gymEquipmentId: 'cable-a',
   equipmentNameSnapshot: 'Cable A',
+  frozenLoadSnapshotVersion: 2 as const,
   frozenLoadConstraints: {
     equipmentType: 'CABLE' as const,
     isAvailable: true,
@@ -135,6 +136,54 @@ describe('HistoryStrengthSetEditor', () => {
     expect(options.queryByText('25 kg')).not.toBeInTheDocument();
   });
 
+  it('keeps a legacy frozen row manual and never falls back to current equipment loads', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <HistoryStrengthSetEditor
+        {...baseProps}
+        sets={[
+          {
+            ...set,
+            frozenLoadSnapshotVersion: 1,
+            frozenLoadConstraints: null,
+          },
+        ]}
+        loadConstraints={{
+          equipmentType: 'CABLE',
+          equipmentId: null,
+          equipmentOptions: [
+            {
+              ...equipmentOptions[0]!,
+              weightOptions: [15, 25],
+              attainableLoads: [15, 25],
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit set 1 weight in KG' }));
+    const options = within(screen.getByTestId('set-value-options'));
+    expect(options.queryByText('15 kg')).not.toBeInTheDocument();
+    expect(options.queryByText('25 kg')).not.toBeInTheDocument();
+
+    const keypad = within(screen.getByTestId('set-value-keypad'));
+    fireEvent.click(keypad.getByRole('button', { name: 'Delete last digit' }));
+    fireEvent.click(keypad.getByRole('button', { name: 'Delete last digit' }));
+    fireEvent.click(keypad.getByRole('button', { name: '3' }));
+    fireEvent.click(keypad.getByRole('button', { name: '0' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply value' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/sets/set-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weight: 30, reps: 10, rir: 2 }),
+      }),
+    );
+  });
+
   it('requires a linked machine for new rows and exposes only its achievable loads', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
@@ -146,6 +195,7 @@ describe('HistoryStrengthSetEditor', () => {
             ...set,
             gymEquipmentId: null,
             equipmentNameSnapshot: null,
+            frozenLoadSnapshotVersion: null,
             frozenLoadConstraints: null,
           },
         ]}
@@ -189,6 +239,7 @@ describe('HistoryStrengthSetEditor', () => {
             ...set,
             gymEquipmentId: null,
             equipmentNameSnapshot: null,
+            frozenLoadSnapshotVersion: null,
             frozenLoadConstraints: null,
           },
         ]}
