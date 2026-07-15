@@ -20,9 +20,17 @@
   ],
   "properties": {
     "sampleId": { "type": "string", "format": "uuid" },
-    "sessionId": { "type": "string", "format": "uuid" },
-    "exerciseSessionId": { "type": ["string", "null"], "format": "uuid" },
-    "setId": { "type": ["string", "null"], "format": "uuid" },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "exerciseSessionId": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "setId": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
     "phase": {
       "type": "string",
       "enum": ["WORKOUT", "SET", "REST", "PAUSE", "WARMUP", "RECOVERY"]

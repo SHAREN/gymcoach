@@ -2,7 +2,7 @@
   "protocolVersion": "1.0",
   "schemaVersion": 1,
   "ackId": "3ec27fc0-b4fc-4745-997f-02ae2912171e",
-  "sessionId": "7b7c6d32-5d23-4be7-b6cb-a379ad12c659",
+  "sessionId": "mob_session_7b7c6d325d234be7b6cba379ad12c659",
   "eventIds": ["450436fc-f06c-4b3a-b718-7a21d7fd9657"],
   "status": "APPLIED",
   "timestamp": 1784102581000,

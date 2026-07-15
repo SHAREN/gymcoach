@@ -48,6 +48,24 @@ const eventTypes = new Set([
 ]);
 const sources = new Set(['PHONE', 'WATCH']);
 const ackStatuses = new Set(['APPLIED', 'DUPLICATE', 'STALE', 'CONFLICT', 'REJECTED']);
+const opaqueDomainIdSchemas = [
+  ['workout-session.schema.json', 'sessionId'],
+  ['workout-session.schema.json', 'workoutProgramId'],
+  ['workout-session.schema.json', 'userId'],
+  ['exercise-session.schema.json', 'exerciseSessionId'],
+  ['exercise-session.schema.json', 'sessionId'],
+  ['exercise-session.schema.json', 'exerciseId'],
+  ['set-record.schema.json', 'setId'],
+  ['set-record.schema.json', 'sessionId'],
+  ['set-record.schema.json', 'exerciseSessionId'],
+  ['sensor-sample.schema.json', 'sessionId'],
+  ['watch-event.schema.json', 'sessionId'],
+  ['sync-ack.schema.json', 'sessionId'],
+  ['sync-snapshot.schema.json', 'sessionId'],
+  ['batch-envelope.schema.json', 'sessionId'],
+  ['conflict-record.schema.json', 'sessionId'],
+  ['conflict-record.schema.json', 'entityId'],
+];
 
 function validateWireVersion(value, label) {
   assert.equal(value.protocolVersion, '1.0', `${label}.protocolVersion must be 1.0`);
@@ -116,6 +134,15 @@ assert.deepEqual(
   ackStatuses,
   'SyncAck status enum must match the protocol',
 );
+for (const [schemaName, propertyName] of opaqueDomainIdSchemas) {
+  const property = schemas.get(schemaName).properties[propertyName];
+  assert.equal(
+    property.format,
+    undefined,
+    `${schemaName}.${propertyName} must accept existing opaque IDs`,
+  );
+  assert.equal(property.minLength, 1, `${schemaName}.${propertyName} must reject empty opaque IDs`);
+}
 for (const name of [
   'watch-event.schema.json',
   'sync-ack.schema.json',
@@ -160,6 +187,10 @@ required(
     'updatedBy',
   ],
   'WorkoutSession',
+);
+assert.ok(
+  workout.sessionId.startsWith('mob_session_'),
+  'WorkoutSession example must prove opaque prefixed Android IDs are accepted',
 );
 assert.ok(sources.has(workout.updatedBy), 'WorkoutSession.updatedBy is invalid');
 
