@@ -434,11 +434,12 @@ test('repository safely migrates the Stage 2 document to durable Stage 5 records
   );
   const repository = new WatchStateRepository(backend);
   const migrated = await repository.load();
-  assert.equal(migrated.version, 4);
+  assert.equal(migrated.version, 5);
   assert.equal(migrated.receiptRecords[0].id, 'legacy-message');
   assert.equal(migrated.receiptRecords[0].canonicalHash, null);
   assert.equal(migrated.state.lastError, 'SERVER_DETAILS_MUST_NOT_SURVIVE_VERBATIM');
   assert.deepEqual(migrated.pendingFileTransfers, []);
+  assert.deepEqual(migrated.pendingInboundEvents, []);
   assert.deepEqual(migrated.sensorSamples, []);
 });
 
@@ -467,4 +468,68 @@ test('revision gap requests a snapshot without applying the event', async () => 
     harness.repository.pending().some((entry) => entry.type === 'SYNC_REQUESTED'),
     true,
   );
+  assert.equal(harness.repository.pendingInboundEvents().length, 1);
+
+  const bridge = clone(harness.snapshot);
+  bridge.snapshotId = 'ffffffff-ffff-4fff-8fff-000000000002';
+  bridge.revision = active.revision + 1;
+  bridge.timestamp = harness.clock.advance(1_000);
+  bridge.workoutSession.revision = bridge.revision;
+  bridge.workoutSession.updatedAt = bridge.timestamp;
+  bridge.runtimeState.revision = bridge.revision;
+  bridge.runtimeState.updatedAt = bridge.timestamp;
+  await harness.watch.receiveFile(JSON.stringify(bridge));
+
+  assert.equal(harness.watch.getState().activeWorkout.revision, gap.revision);
+  assert.equal(harness.repository.pendingInboundEvents().length, 0);
+});
+
+test('snapshot pending events are applied before local reconciliation', async () => {
+  const source = idleSnapshot(await sharedJson('examples/sync-snapshot.json'));
+  const exercise = source.exerciseSessions[1];
+  const remote = createWatchEvent({
+    deviceId: 'phone-stage5-test',
+    eventId: '12121212-1212-4121-8121-000000000001',
+    payload: {
+      exerciseId: exercise.exerciseId,
+      exerciseSessionId: exercise.exerciseSessionId,
+      order: exercise.order,
+    },
+    revision: source.revision + 1,
+    sessionId: source.sessionId,
+    source: 'PHONE',
+    timestamp: source.timestamp + 1,
+    type: WatchEventType.ACTIVE_EXERCISE_CHANGED,
+  });
+  source.pendingEvents = [remote];
+  const harness = await createHarness({ snapshot: source });
+
+  assert.equal(harness.watch.getState().activeWorkout.revision, remote.revision);
+  assert.equal(harness.watch.getState().activeWorkout.activeExerciseId, exercise.exerciseId);
+  assert.equal(harness.repository.receiptRecord(remote.eventId).status, 'APPLIED');
+});
+
+test('delayed acknowledgements cannot regress the peer watermark', async () => {
+  const harness = await createHarness();
+  const first = await harness.watch.changeExercise(1);
+  const second = await harness.watch.changeExercise(-1);
+  await harness.watch.receive(serializeSyncAck(ackFor(second, {
+    ackId: '13131313-1313-4131-8131-000000000001',
+  })));
+  await harness.watch.receive(serializeSyncAck(ackFor(first, {
+    ackId: '13131313-1313-4131-8131-000000000002',
+  })));
+
+  assert.equal(harness.repository.snapshot().peerWatermark.revision, second.revision);
+});
+
+test('receipt retention stays bounded when no durable record references old ids', async () => {
+  const repository = new WatchStateRepository(createVolatileStorageBackend());
+  await repository.load();
+  for (let index = 0; index < 600; index += 1) {
+    await repository.rememberReceipt(`receipt-${index}`, { recordedAt: index });
+  }
+
+  assert.equal(repository.snapshot().receiptRecords.length, 512);
+  assert.equal(repository.snapshot().receipts.length, 512);
 });

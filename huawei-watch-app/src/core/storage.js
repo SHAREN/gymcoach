@@ -1,8 +1,9 @@
 import { canonicalSha256 } from './canonical-json.js';
 
 const STORAGE_KEY = 'gymcoach.watch.control.v1';
-const DOCUMENT_VERSION = 4;
+const DOCUMENT_VERSION = 5;
 const MAX_CONFLICTS = 128;
+const MAX_RECEIPTS = 512;
 
 function createEmptyDocument() {
   return {
@@ -21,6 +22,7 @@ function createEmptyDocument() {
     receiptRecords: [],
     conflicts: [],
     pendingFileTransfers: [],
+    pendingInboundEvents: [],
     peerWatermark: null,
     snapshotWatermark: null,
     activeWorkout: null,
@@ -135,6 +137,43 @@ export class WatchStateRepository {
     });
     await this.persist();
     return null;
+  }
+
+  pendingInboundEvents() {
+    this.requireLoaded();
+    return this.document.pendingInboundEvents.map(clone);
+  }
+
+  async rememberPendingInboundEvent(event, canonicalHash, reason, recordedAt) {
+    this.requireLoaded();
+    const existing = this.document.pendingInboundEvents.find(
+      (entry) => entry.event.eventId === event.eventId,
+    );
+    if (existing) {
+      if (existing.canonicalHash !== canonicalHash) {
+        throw new Error('EVENT_ID_REUSE');
+      }
+      return false;
+    }
+    this.document.pendingInboundEvents.push({
+      event: clone(event),
+      canonicalHash,
+      reason: sanitizeStoredError(reason) || 'SYNC_PENDING',
+      recordedAt,
+    });
+    await this.persist();
+    return true;
+  }
+
+  async removePendingInboundEvent(eventId) {
+    this.requireLoaded();
+    const before = this.document.pendingInboundEvents.length;
+    this.document.pendingInboundEvents = this.document.pendingInboundEvents.filter(
+      (entry) => entry.event.eventId !== eventId,
+    );
+    if (before !== this.document.pendingInboundEvents.length) {
+      await this.persist();
+    }
   }
 
   async updateState(patch) {
@@ -410,13 +449,21 @@ export class WatchStateRepository {
       });
     }
 
-    this.document.peerWatermark = {
-      sessionId: ack.sessionId,
-      revision: ack.revision,
-      updatedAt: ack.timestamp,
-      deviceId: ack.deviceId,
-    };
-    this.document.state.lastSyncAt = ack.timestamp;
+    const currentWatermark = this.document.peerWatermark;
+    if (
+      currentWatermark === null ||
+      currentWatermark.sessionId !== ack.sessionId ||
+      ack.revision > currentWatermark.revision ||
+      (ack.revision === currentWatermark.revision && ack.timestamp >= currentWatermark.updatedAt)
+    ) {
+      this.document.peerWatermark = {
+        sessionId: ack.sessionId,
+        revision: ack.revision,
+        updatedAt: ack.timestamp,
+        deviceId: ack.deviceId,
+      };
+    }
+    this.document.state.lastSyncAt = Math.max(this.document.state.lastSyncAt || 0, ack.timestamp);
     this.document.state.lastErrorCode = successful ? null : ack.errorCode || `ACK_${ack.status}`;
     this.document.state.lastError = this.document.state.lastErrorCode;
     this.document.state.conflictCount = this.document.conflicts.length;
@@ -464,7 +511,11 @@ function migrateDocument(parsed) {
     parsed.state.currentHeartRate = null;
   }
   if (parsed.version === 3) {
+    parsed.version = 4;
+  }
+  if (parsed.version === 4) {
     parsed.version = DOCUMENT_VERSION;
+    parsed.pendingInboundEvents = [];
   }
   if (
     parsed.version !== DOCUMENT_VERSION ||
@@ -498,6 +549,9 @@ function migrateDocument(parsed) {
   parsed.pendingFileTransfers = Array.isArray(parsed.pendingFileTransfers)
     ? parsed.pendingFileTransfers
     : [];
+  parsed.pendingInboundEvents = Array.isArray(parsed.pendingInboundEvents)
+    ? parsed.pendingInboundEvents
+    : [];
   parsed.peerWatermark = parsed.peerWatermark || null;
   parsed.snapshotWatermark = parsed.snapshotWatermark || null;
   parsed.state.conflictCount = parsed.conflicts.length;
@@ -505,6 +559,7 @@ function migrateDocument(parsed) {
     parsed.activeWorkout = null;
   }
   normalizeActiveWorkout(parsed.activeWorkout);
+  compactReceipts(parsed);
   return parsed;
 }
 
@@ -550,6 +605,48 @@ function addReceipt(document, id, details = {}) {
       status: details.status ?? 'APPLIED',
     });
   }
+  compactReceipts(document);
+}
+
+function compactReceipts(document) {
+  if (document.receiptRecords.length <= MAX_RECEIPTS) {
+    return;
+  }
+  const protectedIds = new Set();
+  for (const envelope of document.outbox) {
+    protectedIds.add(envelopeId(envelope));
+  }
+  for (const transfer of document.pendingFileTransfers) {
+    protectedIds.add(transfer.transferId);
+    if (transfer.relatedEventId) {
+      protectedIds.add(transfer.relatedEventId);
+    }
+  }
+  for (const pending of document.pendingInboundEvents || []) {
+    protectedIds.add(pending.event.eventId);
+  }
+  for (const conflict of document.conflicts) {
+    if (conflict.ackId) protectedIds.add(conflict.ackId);
+    if (conflict.eventId) protectedIds.add(conflict.eventId);
+    for (const eventId of conflict.eventIds || []) protectedIds.add(eventId);
+  }
+  if (document.snapshotWatermark?.snapshotId) {
+    protectedIds.add(document.snapshotWatermark.snapshotId);
+  }
+  const removable = document.receiptRecords
+    .filter((entry) => !protectedIds.has(entry.id))
+    .sort(
+      (left, right) =>
+        (left.recordedAt ?? Number.MIN_SAFE_INTEGER) -
+          (right.recordedAt ?? Number.MIN_SAFE_INTEGER) || left.id.localeCompare(right.id),
+    );
+  const removeCount = Math.min(
+    removable.length,
+    document.receiptRecords.length - MAX_RECEIPTS,
+  );
+  const removed = new Set(removable.slice(0, removeCount).map((entry) => entry.id));
+  document.receiptRecords = document.receiptRecords.filter((entry) => !removed.has(entry.id));
+  document.receipts = document.receipts.filter((id) => !removed.has(id));
 }
 
 function addConflict(document, conflict) {
