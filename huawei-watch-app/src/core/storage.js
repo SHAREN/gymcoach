@@ -563,8 +563,8 @@ function addConflict(document, conflict) {
     remoteHash: conflict.remoteHash ?? null,
     recordedAt: conflict.recordedAt ?? null,
   };
-  const key = JSON.stringify(normalized);
-  if (document.conflicts.some((entry) => JSON.stringify(entry) === key)) {
+  const key = conflictKey(normalized);
+  if (document.conflicts.some((entry) => conflictKey(entry) === key)) {
     return false;
   }
   document.conflicts.push(normalized);
@@ -572,6 +572,18 @@ function addConflict(document, conflict) {
     document.conflicts.splice(0, document.conflicts.length - MAX_CONFLICTS);
   }
   return true;
+}
+
+function conflictKey(conflict) {
+  return JSON.stringify({
+    code: conflict.code,
+    ackId: conflict.ackId,
+    eventId: conflict.eventId,
+    eventIds: conflict.eventIds,
+    sessionId: conflict.sessionId,
+    localHash: conflict.localHash,
+    remoteHash: conflict.remoteHash,
+  });
 }
 
 function sanitizeStoredError(value) {
