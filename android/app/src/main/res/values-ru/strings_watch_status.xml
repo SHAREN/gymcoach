@@ -9,7 +9,17 @@
     <string name="watch_status_protocol_label">Протокол</string>
     <string name="watch_status_unavailable">Недоступно</string>
     <string name="watch_status_not_configured">Не настроено</string>
+    <string name="watch_status_connected">Подключено</string>
+    <string name="watch_status_connecting">Подключение</string>
+    <string name="watch_status_disconnected">Отключено</string>
+    <string name="watch_status_queue_count">Событий в очереди: %1$d</string>
+    <string name="watch_status_peer_revision">Ревизия часов</string>
+    <string name="watch_status_last_sync">Последняя синхронизация (epoch ms)</string>
+    <string name="watch_status_conflicts">Неразрешённые конфликты</string>
+    <string name="watch_status_last_error">Последняя ошибка</string>
+    <string name="watch_status_no_error">Нет</string>
     <string name="watch_status_sync_setting">Синхронизировать тренировки с часами</string>
     <string name="watch_status_sync_setting_disabled">В этой сборке не установлен официальный адаптер Wear Engine.</string>
+    <string name="watch_status_sync_setting_available">Синхронизировать debug-транспорт с устойчивой очередью часов.</string>
     <string name="watch_status_toolchain_notice">Для подключения реальных часов установите официальные Huawei DevEco Studio, Lite Wearable SDK и Wear Engine SDK. Локальный симулятор доступен только в debug-сборке.</string>
 </resources>

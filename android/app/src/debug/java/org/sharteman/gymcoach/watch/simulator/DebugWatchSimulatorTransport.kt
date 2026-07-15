@@ -20,8 +20,11 @@ import org.sharteman.gymcoach.watch.domain.WatchIncomingMessage
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
+import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.transport.WatchTransport
 import org.sharteman.gymcoach.watch.transport.WatchTransportCapabilities
+import org.sharteman.gymcoach.watch.transport.WatchTransportFile
 
 data class DebugWatchSimulatorDiagnostics(
     val connectionStatus: WatchConnectionStatus = WatchConnectionStatus.DISCONNECTED,
@@ -41,14 +44,18 @@ class DebugWatchSimulatorTransport(
 ) : WatchTransport {
     private val mutableConnectionStatus = MutableStateFlow(WatchConnectionStatus.DISCONNECTED)
     private val mutableIncomingMessages = MutableSharedFlow<ByteArray>(extraBufferCapacity = 32)
+    private val mutableIncomingFiles = MutableSharedFlow<WatchTransportFile>(extraBufferCapacity = 32)
     private val mutableDiagnostics = MutableStateFlow(DebugWatchSimulatorDiagnostics())
     private var lastWatchMessage: ByteArray? = null
 
     override val connectionStatus: StateFlow<WatchConnectionStatus> = mutableConnectionStatus.asStateFlow()
     override val incomingMessages: Flow<ByteArray> = mutableIncomingMessages.asSharedFlow()
+    override val incomingFiles: Flow<WatchTransportFile> = mutableIncomingFiles.asSharedFlow()
     override val capabilities = WatchTransportCapabilities(supportsFileTransfer = true)
 
     val diagnostics: StateFlow<DebugWatchSimulatorDiagnostics> = mutableDiagnostics.asStateFlow()
+    val receivedPhoneEvents = mutableListOf<WatchEventEnvelopeDto>()
+    val receivedPhoneFiles = mutableListOf<WatchTransportFile>()
 
     override suspend fun connect() {
         mutableConnectionStatus.value = WatchConnectionStatus.CONNECTING
@@ -74,11 +81,28 @@ class DebugWatchSimulatorTransport(
                 incoming.message.type == WatchControlMessageType.PING
             ) {
                 sendPong(incoming.message)
+            } else if (incoming is WatchIncomingMessage.Event) {
+                synchronized(receivedPhoneEvents) { receivedPhoneEvents += incoming.event }
+                sendAck(incoming.event)
             }
         } catch (error: WatchProtocolException) {
             reject(error.code)
             throw error
         }
+    }
+
+    override suspend fun sendFile(file: WatchTransportFile) {
+        requireConnected()
+        require(file.bytes.size <= capabilities.outboundFileTargetBytes)
+        synchronized(receivedPhoneFiles) {
+            receivedPhoneFiles += file.copy(bytes = file.bytes.copyOf())
+        }
+    }
+
+    suspend fun sendFileFromWatch(file: WatchTransportFile) {
+        requireConnected()
+        require(file.bytes.size < capabilities.inboundFileMaxBytesExclusive)
+        mutableIncomingFiles.emit(file.copy(bytes = file.bytes.copyOf()))
     }
 
     suspend fun sendFromWatch(event: WatchEventEnvelopeDto, duplicate: Boolean = false) {
@@ -129,6 +153,26 @@ class DebugWatchSimulatorTransport(
                 deviceId = watchDeviceId,
                 replyTo = ping.messageId,
                 payload = buildJsonObject { put("receivedAt", respondedAt) },
+            ),
+        )
+    }
+
+    private suspend fun sendAck(event: WatchEventEnvelopeDto) {
+        emitFromWatch(
+            codec.encodeSyncAck(
+                WatchSyncAckDto(
+                    protocolVersion = WatchProtocol.VERSION,
+                    schemaVersion = WatchProtocol.SCHEMA_VERSION,
+                    ackId = newId(),
+                    sessionId = event.sessionId,
+                    eventIds = listOf(event.eventId),
+                    status = WatchSyncAckStatus.APPLIED,
+                    timestamp = nowEpochMs(),
+                    source = WatchEventSource.WATCH,
+                    deviceId = watchDeviceId,
+                    revision = event.revision,
+                    errorCode = null,
+                ),
             ),
         )
     }

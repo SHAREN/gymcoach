@@ -20,16 +20,20 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
+import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WatchStatusScreen(onBack: () -> Unit) {
+fun WatchStatusScreen(onBack: () -> Unit, dataSource: WatchStatusDataSource) {
+    val state by dataSource.state.collectAsState()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -58,11 +62,34 @@ fun WatchStatusScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     StatusRow(
                         stringResource(R.string.watch_status_connection_label),
-                        stringResource(R.string.watch_status_unavailable),
+                        when {
+                            !state.transportConfigured -> stringResource(R.string.watch_status_unavailable)
+                            state.connectionStatus == WatchConnectionStatus.CONNECTED ->
+                                stringResource(R.string.watch_status_connected)
+                            state.connectionStatus == WatchConnectionStatus.CONNECTING ->
+                                stringResource(R.string.watch_status_connecting)
+                            else -> stringResource(R.string.watch_status_disconnected)
+                        },
                     )
                     StatusRow(
                         stringResource(R.string.watch_status_sync_label),
-                        stringResource(R.string.watch_status_not_configured),
+                        stringResource(R.string.watch_status_queue_count, state.queuedEvents),
+                    )
+                    StatusRow(
+                        stringResource(R.string.watch_status_peer_revision),
+                        state.peerRevision?.toString() ?: stringResource(R.string.watch_status_not_configured),
+                    )
+                    StatusRow(
+                        stringResource(R.string.watch_status_last_sync),
+                        state.lastSyncAtEpochMs?.toString() ?: stringResource(R.string.watch_status_not_configured),
+                    )
+                    StatusRow(
+                        stringResource(R.string.watch_status_conflicts),
+                        state.conflictCount.toString(),
+                    )
+                    StatusRow(
+                        stringResource(R.string.watch_status_last_error),
+                        state.lastErrorCode ?: stringResource(R.string.watch_status_no_error),
                     )
                     StatusRow(
                         stringResource(R.string.watch_status_protocol_label),
@@ -82,12 +109,20 @@ fun WatchStatusScreen(onBack: () -> Unit) {
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                stringResource(R.string.watch_status_sync_setting_disabled),
+                                if (state.transportConfigured) {
+                                    stringResource(R.string.watch_status_sync_setting_available)
+                                } else {
+                                    stringResource(R.string.watch_status_sync_setting_disabled)
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(checked = false, onCheckedChange = null, enabled = false)
+                        Switch(
+                            checked = state.syncEnabled,
+                            onCheckedChange = dataSource::setSyncEnabled,
+                            enabled = state.transportConfigured,
+                        )
                     }
                 }
             }

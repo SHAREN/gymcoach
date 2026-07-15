@@ -7,9 +7,11 @@ import kotlinx.serialization.json.JsonObject
 object WatchProtocol {
     const val VERSION = "1.0"
     const val SCHEMA_VERSION = 1
+    const val P2P_SEND_TARGET_BYTES = 900
     const val MAX_P2P_MESSAGE_BYTES = 1_024
+    const val FILE_SEND_TARGET_BYTES = 3_500_000
     const val MAX_FILE_BYTES_EXCLUSIVE = 4_000_000
-    const val TARGET_FILE_PAYLOAD_BYTES = 3_670_016
+    const val TARGET_FILE_PAYLOAD_BYTES = FILE_SEND_TARGET_BYTES
     const val MAX_CONTROL_ID_LENGTH = 128
     const val MAX_DEVICE_ID_LENGTH = 128
 }

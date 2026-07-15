@@ -142,7 +142,13 @@ class GymCoachWatchWorkoutRepository(
         exerciseId: String,
         updatedBy: String,
         updatedAtEpochMs: Long,
-    ) = repository.updateActiveExercise(sessionId, exerciseId, updatedBy, updatedAtEpochMs)
+    ) = repository.updateActiveExercise(
+        sessionId = sessionId,
+        exerciseId = exerciseId,
+        updatedBy = updatedBy,
+        updatedAtEpochMs = updatedAtEpochMs,
+        publishToWatch = false,
+    )
 
     override suspend fun applyRuntimeEvent(
         processed: WatchProcessedEventEntity,

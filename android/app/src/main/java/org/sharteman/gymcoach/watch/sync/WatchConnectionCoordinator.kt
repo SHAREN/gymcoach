@@ -12,19 +12,26 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import org.sharteman.gymcoach.watch.data.WatchFileTransferCodec
 import org.sharteman.gymcoach.watch.data.ProcessedWatchControlMessageStore
 import org.sharteman.gymcoach.watch.data.ProcessedWatchEventStore
 import org.sharteman.gymcoach.watch.data.WatchProtocolCodec
+import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
 import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
 import org.sharteman.gymcoach.watch.domain.WatchControlMessageDto
 import org.sharteman.gymcoach.watch.domain.WatchControlMessageType
 import org.sharteman.gymcoach.watch.domain.WatchCoordinatorState
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
+import org.sharteman.gymcoach.watch.domain.WatchFilePayloadType
 import org.sharteman.gymcoach.watch.domain.WatchIncomingMessage
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
+import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
@@ -58,6 +65,8 @@ class WatchConnectionCoordinator(
     private val fileConsumer: WatchFileConsumer? = null,
     private val lifecycleConsumer: WatchConnectionLifecycleConsumer? = null,
     private val codec: WatchProtocolCodec = WatchProtocolCodec(),
+    private val workoutCodec: WatchWorkoutProtocolCodec = WatchWorkoutProtocolCodec(),
+    private val fileCodec: WatchFileTransferCodec = WatchFileTransferCodec(),
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
@@ -138,6 +147,24 @@ class WatchConnectionCoordinator(
         return messageId
     }
 
+    suspend fun requestSnapshot(sessionId: String, knownRevision: Long): String {
+        require(sessionId.isNotBlank())
+        require(knownRevision >= 0)
+        val messageId = newId()
+        sendControlMessage(
+            newPhoneControlMessage(
+                messageId = messageId,
+                type = WatchControlMessageType.SYNC_REQUESTED,
+                timestamp = nowEpochMs(),
+                payload = buildJsonObject {
+                    put("sessionId", sessionId)
+                    put("knownRevision", knownRevision)
+                },
+            ),
+        )
+        return messageId
+    }
+
     suspend fun sendControlMessage(message: WatchControlMessageDto) {
         sendEncoded { codec.encodeControlMessage(message) }
     }
@@ -146,8 +173,35 @@ class WatchConnectionCoordinator(
         sendEncoded { codec.encodeEvent(event) }
     }
 
+    suspend fun sendSnapshot(snapshot: WatchSyncSnapshotDto) {
+        val snapshotBytes = workoutCodec.encodeSyncSnapshot(snapshot)
+        val payload = Json.parseToJsonElement(snapshotBytes.decodeToString()).jsonObject
+        val envelope = fileCodec.createEnvelope(
+            transferId = snapshot.snapshotId,
+            sessionId = snapshot.sessionId,
+            relatedEventId = null,
+            payloadType = WatchFilePayloadType.SYNC_SNAPSHOT,
+            payloadId = snapshot.snapshotId,
+            sequence = 1,
+            totalSequences = 1,
+            createdAt = snapshot.timestamp,
+            source = WatchEventSource.PHONE,
+            deviceId = phoneDeviceId,
+            payload = payload,
+        )
+        sendFile(WatchTransportFile(snapshot.snapshotId, fileCodec.encode(envelope)))
+    }
+
+    suspend fun sendAck(ack: WatchSyncAckDto) {
+        sendEncoded { codec.encodeSyncAck(ack) }
+    }
+
     suspend fun sendFile(file: WatchTransportFile) {
-        if (!transport.capabilities.supportsFileTransfer || file.bytes.size >= transport.capabilities.maxFileBytesExclusive) {
+        if (
+            !transport.capabilities.supportsFileTransfer ||
+            file.bytes.size > transport.capabilities.outboundFileTargetBytes ||
+            file.bytes.size >= transport.capabilities.inboundFileMaxBytesExclusive
+        ) {
             reject(WatchProtocolErrorCode.FILE_TOO_LARGE)
             throw WatchProtocolException(WatchProtocolErrorCode.FILE_TOO_LARGE)
         }
@@ -164,7 +218,7 @@ class WatchConnectionCoordinator(
     private suspend fun sendEncoded(encode: () -> ByteArray) {
         try {
             val message = encode()
-            val transportLimit = transport.capabilities.maxMessageBytes
+            val transportLimit = transport.capabilities.outboundMessageTargetBytes
             if (message.size > transportLimit) {
                 throw WatchProtocolException(WatchProtocolErrorCode.MESSAGE_TOO_LARGE)
             }
@@ -186,7 +240,7 @@ class WatchConnectionCoordinator(
     private suspend fun handleIncomingMessage(message: ByteArray) {
         mutableState.update { it.copy(receivedMessageCount = it.receivedMessageCount + 1) }
         try {
-            if (message.size > transport.capabilities.maxMessageBytes) {
+            if (message.size > transport.capabilities.inboundMessageMaxBytes) {
                 throw WatchProtocolException(WatchProtocolErrorCode.MESSAGE_TOO_LARGE)
             }
             when (val incoming = codec.decodeIncomingMessage(message)) {

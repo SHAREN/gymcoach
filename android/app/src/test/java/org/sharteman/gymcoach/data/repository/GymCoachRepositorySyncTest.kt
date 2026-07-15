@@ -60,8 +60,52 @@ import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
 import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
+import org.sharteman.gymcoach.watch.sync.NoOpWatchPhoneCommandPublisher
+import org.sharteman.gymcoach.watch.sync.WatchPhoneCommandPublisher
 
 class GymCoachRepositorySyncTest {
+    @Test
+    fun phoneWorkoutMutationsPublishOrderedWatchCommandsWithoutTouchingServerOutbox() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        fixture.repository.updateActiveExercise(sessionId, "exercise_2", updatedAtEpochMs = 2_000)
+        val set = fixture.repository.addSet(sessionId, "exercise_2", 80.0, 8, 2, null)
+        fixture.repository.startRest(sessionId, set.id, 3_000, 123_000)
+        fixture.repository.updateActiveExercise(
+            sessionId,
+            "exercise_superset_next",
+            updatedAtEpochMs = 3_500,
+            preserveRest = true,
+        )
+        assertEquals(123_000L, fixture.dao.getActiveWorkoutRuntime(sessionId)?.restEndsAtEpochMs)
+        fixture.repository.updateRest(sessionId, 153_000, "MANUAL_EXTEND")
+        fixture.repository.skipRest(sessionId, 4_000)
+        fixture.repository.updateSet(set, 82.5, 9, 1)
+        fixture.repository.deleteSet(set.id)
+        fixture.repository.finishSession(sessionId, null, 8)
+
+        assertEquals(
+            listOf("START", "EXERCISE", "SET_COMPLETED", "REST_STARTED", "EXERCISE", "REST_UPDATED", "REST_SKIPPED", "SET_UPDATED", "SET_DELETED", "FINISH"),
+            publisher.commands,
+        )
+        assertEquals(5, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun watchPublisherFailureNeverMakesCompletedPhoneMutationFail() = runTest {
+        val fixture = fixture(RecordingWatchPublisher(fail = true))
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+
+        assertEquals(set.id, fixture.dao.getSet(set.id)?.id)
+        assertEquals(2, fixture.dao.queuedOperations().size)
+    }
+
     @Test
     fun startWorkoutPersistsActiveRuntimeWithoutASecondSessionModel() = runTest {
         val fixture = fixture()
@@ -1008,7 +1052,9 @@ class GymCoachRepositorySyncTest {
         assertEquals(null, fixture.dao.observeBlockedOperation().first())
     }
 
-    private fun fixture(): Fixture {
+    private fun fixture(
+        watchPublisher: WatchPhoneCommandPublisher = NoOpWatchPhoneCommandPublisher,
+    ): Fixture {
         val dao = InMemoryDao()
         val api = TestApi()
         val accountStore = TestAccountStore()
@@ -1019,6 +1065,7 @@ class GymCoachRepositorySyncTest {
             api = api,
             scheduleSyncNow = { syncCounter.count++ },
             schedulePeriodicSync = {},
+            watchCommandPublisher = watchPublisher,
         )
         return Fixture(dao, api, accountStore, repository, syncCounter)
     }
@@ -1113,6 +1160,58 @@ class GymCoachRepositorySyncTest {
     }
 
     private class SyncCounter(var count: Int = 0)
+
+    private class RecordingWatchPublisher(
+        private val fail: Boolean = false,
+    ) : WatchPhoneCommandPublisher {
+        val commands = mutableListOf<String>()
+
+        private fun record(command: String) {
+            if (fail) error("watch unavailable")
+            commands += command
+        }
+
+        override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) = record("START")
+        override suspend fun activeExerciseChanged(
+            sessionId: String,
+            exerciseId: String,
+            revision: Long,
+            changedAtEpochMs: Long,
+        ) = record("EXERCISE")
+        override suspend fun setCompleted(set: LocalSetEntity, revision: Long) = record("SET_COMPLETED")
+        override suspend fun setUpdated(set: LocalSetEntity, revision: Long) = record("SET_UPDATED")
+        override suspend fun setDeleted(
+            sessionId: String,
+            setId: String,
+            revision: Long,
+            baseRevision: Long,
+            deletedAtEpochMs: Long,
+        ) = record("SET_DELETED")
+        override suspend fun restStarted(
+            sessionId: String,
+            setId: String,
+            revision: Long,
+            startedAtEpochMs: Long,
+            endsAtEpochMs: Long,
+        ) = record("REST_STARTED")
+        override suspend fun restUpdated(
+            sessionId: String,
+            revision: Long,
+            endsAtEpochMs: Long,
+            reason: String,
+            changedAtEpochMs: Long,
+        ) = record("REST_UPDATED")
+        override suspend fun restFinished(
+            sessionId: String,
+            revision: Long,
+            startedAtEpochMs: Long,
+            finishedAtEpochMs: Long,
+        ) = record("REST_FINISHED")
+        override suspend fun restSkipped(sessionId: String, revision: Long, skippedAtEpochMs: Long) =
+            record("REST_SKIPPED")
+        override suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long) =
+            record("FINISH")
+    }
 
     private class TestAccountStore : AccountStore {
         override val deviceId = "device_test_0001"
@@ -1323,6 +1422,8 @@ class GymCoachRepositorySyncTest {
         override suspend fun getReplayableWatchOutboxEvents() = replayableWatchOutbox(null)
         override suspend fun getReplayableWatchOutboxEvents(sessionId: String) = replayableWatchOutbox(sessionId)
         override suspend fun countReplayableWatchOutboxEvents() = replayableWatchOutbox(null).size
+        override fun observeReplayableWatchOutboxEventCount(): Flow<Int> =
+            MutableStateFlow(replayableWatchOutbox(null).size)
         override suspend fun markWatchOutboxAttempt(eventId: String, attemptedAtEpochMs: Long) {
             watchOutbox[eventId]?.let {
                 watchOutbox[eventId] = it.copy(
@@ -1362,8 +1463,13 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun saveWatchPeer(entity: WatchPeerEntity) { watchPeers[entity.deviceId] = entity }
         override suspend fun getWatchPeer(deviceId: String) = watchPeers[deviceId]
+        override fun observeLatestWatchPeer(): Flow<WatchPeerEntity?> =
+            MutableStateFlow(watchPeers.values.maxByOrNull { it.updatedAtEpochMs })
         override suspend fun saveWatchConflict(entity: WatchConflictEntity) { watchConflicts[entity.conflictId] = entity }
         override suspend fun getWatchConflicts(sessionId: String) = watchConflicts.values.filter { it.sessionId == sessionId }
+        override fun observeUnresolvedWatchConflictCount(): Flow<Int> = MutableStateFlow(
+            watchConflicts.values.count { it.status == "UNRESOLVED" },
+        )
         override suspend fun saveWatchFileTransfer(entity: WatchFileTransferEntity) {
             watchFiles[entity.transferId to entity.sequence] = entity
         }

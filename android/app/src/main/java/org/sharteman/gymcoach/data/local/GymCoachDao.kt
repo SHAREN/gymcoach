@@ -135,6 +135,9 @@ interface GymCoachDao {
     @Query("SELECT COUNT(*) FROM watch_outbox_events WHERE status IN ('PENDING', 'SENT')")
     suspend fun countReplayableWatchOutboxEvents(): Int
 
+    @Query("SELECT COUNT(*) FROM watch_outbox_events WHERE status IN ('PENDING', 'SENT')")
+    fun observeReplayableWatchOutboxEventCount(): Flow<Int>
+
     @Query(
         "UPDATE watch_outbox_events SET status = 'SENT', attempts = attempts + 1, " +
             "lastAttemptAtEpochMs = :attemptedAtEpochMs, errorCode = NULL WHERE eventId = :eventId",
@@ -176,11 +179,17 @@ interface GymCoachDao {
     @Query("SELECT * FROM watch_peers WHERE deviceId = :deviceId")
     suspend fun getWatchPeer(deviceId: String): WatchPeerEntity?
 
+    @Query("SELECT * FROM watch_peers ORDER BY updatedAtEpochMs DESC LIMIT 1")
+    fun observeLatestWatchPeer(): Flow<WatchPeerEntity?>
+
     @Upsert
     suspend fun saveWatchConflict(entity: WatchConflictEntity)
 
     @Query("SELECT * FROM watch_conflicts WHERE sessionId = :sessionId ORDER BY detectedAtEpochMs, conflictId")
     suspend fun getWatchConflicts(sessionId: String): List<WatchConflictEntity>
+
+    @Query("SELECT COUNT(*) FROM watch_conflicts WHERE status = 'UNRESOLVED'")
+    fun observeUnresolvedWatchConflictCount(): Flow<Int>
 
     @Upsert
     suspend fun saveWatchFileTransfer(entity: WatchFileTransferEntity)

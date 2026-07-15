@@ -7,8 +7,10 @@ import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 
 data class WatchTransportCapabilities(
-    val maxMessageBytes: Int = WatchProtocol.MAX_P2P_MESSAGE_BYTES,
-    val maxFileBytesExclusive: Int = WatchProtocol.MAX_FILE_BYTES_EXCLUSIVE,
+    val outboundMessageTargetBytes: Int = WatchProtocol.P2P_SEND_TARGET_BYTES,
+    val inboundMessageMaxBytes: Int = WatchProtocol.MAX_P2P_MESSAGE_BYTES,
+    val outboundFileTargetBytes: Int = WatchProtocol.FILE_SEND_TARGET_BYTES,
+    val inboundFileMaxBytesExclusive: Int = WatchProtocol.MAX_FILE_BYTES_EXCLUSIVE,
     val supportsFileTransfer: Boolean = false,
 )
 

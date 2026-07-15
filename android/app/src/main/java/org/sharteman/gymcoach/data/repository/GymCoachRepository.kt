@@ -45,6 +45,8 @@ import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.normalizeOptionalServerUrl
 import org.sharteman.gymcoach.data.security.normalizeServerUrl
+import org.sharteman.gymcoach.watch.sync.NoOpWatchPhoneCommandPublisher
+import org.sharteman.gymcoach.watch.sync.WatchPhoneCommandPublisher
 import java.time.Duration
 import java.time.Instant
 import java.io.IOException
@@ -56,10 +58,12 @@ class GymCoachRepository(
     private val api: MobileApi,
     private val scheduleSyncNow: () -> Unit,
     private val schedulePeriodicSync: () -> Unit,
+    private val watchCommandPublisher: WatchPhoneCommandPublisher = NoOpWatchPhoneCommandPublisher,
 ) {
     private val syncMutex = Mutex()
     private val bootstrapCacheMutex = Mutex()
     private val progressRefreshMutex = Mutex()
+    private val watchCommandMutex = Mutex()
     private val endpointResolver = ServerEndpointResolver(accountStore)
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
         cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
@@ -343,7 +347,15 @@ class GymCoachRepository(
     suspend fun startWorkout(workout: WorkoutDto, gymId: String?): String {
         dao.findOpenSessionForWorkout(workout.id)?.let { existing ->
             if (dao.getActiveWorkoutRuntime(existing.id) == null) {
-                dao.saveActiveWorkoutRuntime(newActiveRuntime(existing, workout, System.currentTimeMillis()))
+                val runtime = newActiveRuntime(existing, workout, System.currentTimeMillis())
+                dao.saveActiveWorkoutRuntime(runtime)
+                publishWatchSafely {
+                    watchCommandPublisher.workoutStarted(
+                        existing.id,
+                        runtime.revision,
+                        Instant.parse(existing.startedAt).toEpochMilli(),
+                    )
+                }
             }
             return existing.id
         }
@@ -369,6 +381,9 @@ class GymCoachRepository(
             operation = outbox(operation),
             runtime = newActiveRuntime(session, workout, nowInstant.toEpochMilli()),
         )
+        publishWatchSafely {
+            watchCommandPublisher.workoutStarted(session.id, 1, nowInstant.toEpochMilli())
+        }
         scheduleSyncNow()
         return session.id
     }
@@ -412,22 +427,38 @@ class GymCoachRepository(
         exerciseId: String,
         updatedBy: String = "PHONE",
         updatedAtEpochMs: Long = System.currentTimeMillis(),
+        publishToWatch: Boolean = true,
+        preserveRest: Boolean = false,
     ): ActiveWorkoutRuntimeEntity? {
-        val current = dao.getActiveWorkoutRuntime(sessionId) ?: return null
-        if (current.activeExerciseId == exerciseId && current.updatedBy == updatedBy) return current
-        return current.copy(
-            activeExerciseId = exerciseId,
-            activeSetId = null,
-            setStartedAtEpochMs = null,
-            setAccumulatedPauseMs = 0,
-            restStartedAtEpochMs = null,
-            restEndsAtEpochMs = null,
-            restDurationSeconds = null,
-            restPausedRemainingMs = null,
-            revision = current.revision + 1,
-            updatedAtEpochMs = updatedAtEpochMs,
-            updatedBy = updatedBy,
-        ).also { dao.saveActiveWorkoutRuntime(it) }
+        return watchCommandMutex.withLock {
+            val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock null
+            if (current.activeExerciseId == exerciseId && current.updatedBy == updatedBy) return@withLock current
+            current.copy(
+                activeExerciseId = exerciseId,
+                activeSetId = if (preserveRest) current.activeSetId else null,
+                setStartedAtEpochMs = null,
+                setAccumulatedPauseMs = 0,
+                restStartedAtEpochMs = if (preserveRest) current.restStartedAtEpochMs else null,
+                restEndsAtEpochMs = if (preserveRest) current.restEndsAtEpochMs else null,
+                restDurationSeconds = if (preserveRest) current.restDurationSeconds else null,
+                restPausedRemainingMs = if (preserveRest) current.restPausedRemainingMs else null,
+                revision = current.revision + 1,
+                updatedAtEpochMs = updatedAtEpochMs,
+                updatedBy = updatedBy,
+            ).also { updated ->
+                dao.saveActiveWorkoutRuntime(updated)
+                if (publishToWatch && updatedBy == "PHONE") {
+                    publishWatchSafely {
+                        watchCommandPublisher.activeExerciseChanged(
+                            sessionId,
+                            exerciseId,
+                            updated.revision,
+                            updatedAtEpochMs,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     suspend fun applyWatchRuntimeEvent(
@@ -587,6 +618,18 @@ class GymCoachRepository(
             completedAt = now.toString(),
         )
         dao.saveSetAndOperation(set, outbox(upsertOperation(set)))
+        watchCommandMutex.withLock {
+            advancePhoneRuntime(set.sessionId, now.toEpochMilli()) { current ->
+                current.copy(
+                    activeExerciseId = set.exerciseId,
+                    activeSetId = null,
+                    setStartedAtEpochMs = null,
+                    setAccumulatedPauseMs = 0,
+                )
+            }?.let { runtime ->
+                publishWatchSafely { watchCommandPublisher.setCompleted(set, runtime.revision) }
+            }
+        }
         scheduleSyncNow()
         return set
     }
@@ -597,6 +640,12 @@ class GymCoachRepository(
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
         val updated = set.copy(weight = weight, reps = reps, rir = rir, deleted = false)
         dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+        watchCommandMutex.withLock {
+            advancePhoneRuntime(set.sessionId, System.currentTimeMillis()) { it }
+                ?.let { runtime ->
+                    publishWatchSafely { watchCommandPublisher.setUpdated(updated, runtime.revision) }
+                }
+        }
         scheduleSyncNow()
     }
 
@@ -606,12 +655,33 @@ class GymCoachRepository(
             setId = setId,
             operation = outbox(DeleteSetOperation(operationId(), set.id)),
         )
+        val deletedAt = System.currentTimeMillis()
+        watchCommandMutex.withLock {
+            val current = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
+            val updated = advancePhoneRuntime(set.sessionId, deletedAt) { runtime ->
+                if (runtime.activeSetId == set.id) {
+                    runtime.copy(activeSetId = null, setStartedAtEpochMs = null, setAccumulatedPauseMs = 0)
+                } else {
+                    runtime
+                }
+            } ?: return@withLock
+            publishWatchSafely {
+                watchCommandPublisher.setDeleted(
+                    set.sessionId,
+                    set.id,
+                    updated.revision,
+                    current.revision,
+                    deletedAt,
+                )
+            }
+        }
         scheduleSyncNow()
     }
 
     suspend fun finishSession(sessionId: String, notes: String?, sessionRpe: Int?) {
         require(sessionRpe == null || sessionRpe in 1..10) { "Session RPE must be between 1 and 10." }
         val session = dao.getSession(sessionId) ?: return
+        val watchRuntime = dao.getActiveWorkoutRuntime(sessionId)
         val finishedAt = session.finishedAt ?: Instant.now().toString()
         val updated = session.copy(
             finishedAt = finishedAt,
@@ -644,7 +714,98 @@ class GymCoachRepository(
             }
             dao.saveFinishedSessionOperationAndBootstrap(updated, outbox(operation), bootstrap)
         }
+        watchRuntime?.let { runtime ->
+            publishWatchSafely {
+                watchCommandPublisher.workoutFinished(
+                    sessionId,
+                    runtime.revision + 1,
+                    Instant.parse(finishedAt).toEpochMilli(),
+                )
+            }
+        }
         scheduleSyncNow()
+    }
+
+    suspend fun startRest(sessionId: String, setId: String, startedAtEpochMs: Long, endsAtEpochMs: Long) {
+        require(endsAtEpochMs >= startedAtEpochMs)
+        watchCommandMutex.withLock {
+            advancePhoneRuntime(sessionId, startedAtEpochMs) { current ->
+                current.copy(
+                    activeSetId = setId,
+                    restStartedAtEpochMs = startedAtEpochMs,
+                    restEndsAtEpochMs = endsAtEpochMs,
+                    restDurationSeconds = ((endsAtEpochMs - startedAtEpochMs) / 1_000L).toInt(),
+                    restPausedRemainingMs = null,
+                )
+            }?.let { runtime ->
+                publishWatchSafely {
+                    watchCommandPublisher.restStarted(
+                        sessionId,
+                        setId,
+                        runtime.revision,
+                        startedAtEpochMs,
+                        endsAtEpochMs,
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun updateRest(sessionId: String, endsAtEpochMs: Long, reason: String) {
+        require(reason.isNotBlank())
+        val changedAt = System.currentTimeMillis()
+        watchCommandMutex.withLock {
+            val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
+            require(current.restStartedAtEpochMs != null)
+            require(endsAtEpochMs >= current.restStartedAtEpochMs)
+            advancePhoneRuntime(sessionId, changedAt) { runtime ->
+                runtime.copy(
+                    restEndsAtEpochMs = endsAtEpochMs,
+                    restDurationSeconds = ((endsAtEpochMs - runtime.restStartedAtEpochMs!!) / 1_000L).toInt(),
+                )
+            }?.let { runtime ->
+                publishWatchSafely {
+                    watchCommandPublisher.restUpdated(
+                        sessionId,
+                        runtime.revision,
+                        endsAtEpochMs,
+                        reason,
+                        changedAt,
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun finishRest(sessionId: String, finishedAtEpochMs: Long = System.currentTimeMillis()) {
+        watchCommandMutex.withLock {
+            val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
+            val startedAt = current.restStartedAtEpochMs ?: return@withLock
+            advancePhoneRuntime(sessionId, finishedAtEpochMs) { clearRestRuntime(it) }
+                ?.let { runtime ->
+                    publishWatchSafely {
+                        watchCommandPublisher.restFinished(
+                            sessionId,
+                            runtime.revision,
+                            startedAt,
+                            finishedAtEpochMs,
+                        )
+                    }
+                }
+        }
+    }
+
+    suspend fun skipRest(sessionId: String, skippedAtEpochMs: Long = System.currentTimeMillis()) {
+        watchCommandMutex.withLock {
+            val current = dao.getActiveWorkoutRuntime(sessionId) ?: return@withLock
+            if (current.restStartedAtEpochMs == null) return@withLock
+            advancePhoneRuntime(sessionId, skippedAtEpochMs) { clearRestRuntime(it) }
+                ?.let { runtime ->
+                    publishWatchSafely {
+                        watchCommandPublisher.restSkipped(sessionId, runtime.revision, skippedAtEpochMs)
+                    }
+                }
+        }
     }
 
     suspend fun resetSession(sessionId: String) {
@@ -889,6 +1050,40 @@ class GymCoachRepository(
         operationId = operation.operationId,
         type = operation::class.simpleName.orEmpty(),
         payloadJson = api.json.encodeToString<SyncOperation>(operation),
+    )
+
+    private suspend fun advancePhoneRuntime(
+        sessionId: String,
+        updatedAtEpochMs: Long,
+        transform: (ActiveWorkoutRuntimeEntity) -> ActiveWorkoutRuntimeEntity,
+    ): ActiveWorkoutRuntimeEntity? {
+        val current = dao.getActiveWorkoutRuntime(sessionId) ?: return null
+        val updated = transform(current).copy(
+            revision = current.revision + 1,
+            updatedAtEpochMs = updatedAtEpochMs,
+            updatedBy = "PHONE",
+        )
+        dao.saveActiveWorkoutRuntime(updated)
+        return updated
+    }
+
+    private suspend fun publishWatchSafely(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The phone mutation and server outbox are authoritative. A watch
+            // transport or mapping failure must never make the user repeat it.
+        }
+    }
+
+    private fun clearRestRuntime(runtime: ActiveWorkoutRuntimeEntity) = runtime.copy(
+        activeSetId = null,
+        restStartedAtEpochMs = null,
+        restEndsAtEpochMs = null,
+        restDurationSeconds = null,
+        restPausedRemainingMs = null,
     )
 
     private fun newActiveRuntime(
