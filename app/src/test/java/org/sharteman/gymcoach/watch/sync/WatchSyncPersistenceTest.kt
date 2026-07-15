@@ -14,8 +14,37 @@ import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
+import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
+import org.sharteman.gymcoach.watch.domain.WatchExerciseSessionDto
+import org.sharteman.gymcoach.watch.domain.WatchExerciseStatus
+import org.sharteman.gymcoach.watch.domain.WatchWorkoutSessionDto
+import org.sharteman.gymcoach.watch.domain.WatchWorkoutStatus
 
 class WatchSyncPersistenceTest {
+    @Test
+    fun `snapshot send keeps crash marker until terminal ack reaches marker revision`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        store.saveResyncMarkerForTest(
+            WatchResyncMarkerEntity(SESSION, 2, "SET_UPDATED", 100, 100),
+        )
+        val sink = RecordingReplaySink(failSnapshots = 1)
+        val coordinator = WatchReconnectReplayCoordinator(store, sink, snapshotProvider = { snapshot() })
+
+        assertTrue(runCatching { coordinator.repairMarkers() }.isFailure)
+        assertEquals(1, store.resyncMarkers().size)
+
+        coordinator.repairMarkers()
+
+        assertEquals(1, sink.snapshots.size)
+        assertEquals(1, store.resyncMarkers().size)
+
+        store.applyAck(ack(ACK_ONE, WatchSyncAckStatus.APPLIED, listOf(EVENT_ONE), revision = 1))
+        assertEquals(1, store.resyncMarkers().size)
+
+        store.applyAck(ack(ACK_TWO, WatchSyncAckStatus.DUPLICATE, listOf(EVENT_TWO), revision = 2))
+        assertTrue(store.resyncMarkers().isEmpty())
+    }
+
     @Test
     fun `received but unprocessed inbox event is retried after process restart`() = runTest {
         val store = InMemoryWatchSyncPersistence()
@@ -205,10 +234,60 @@ class WatchSyncPersistenceTest {
         errorCode = errorCode,
     )
 
-    private class RecordingReplaySink : WatchReplaySink {
+    private fun snapshot() = WatchSyncSnapshotDto(
+        protocolVersion = WatchProtocol.VERSION,
+        schemaVersion = WatchProtocol.SCHEMA_VERSION,
+        snapshotId = "90000000-0000-0000-0000-000000000001",
+        sessionId = SESSION,
+        timestamp = 100,
+        source = WatchEventSource.PHONE,
+        deviceId = PHONE_DEVICE,
+        revision = 2,
+        workoutSession = WatchWorkoutSessionDto(
+            sessionId = SESSION,
+            workoutProgramId = "workout_stage5",
+            userId = "user_stage5",
+            status = WatchWorkoutStatus.ACTIVE,
+            startedAt = 1,
+            finishedAt = null,
+            activeExerciseId = "exercise_stage5",
+            activeSetId = null,
+            revision = 2,
+            updatedAt = 100,
+            updatedBy = WatchEventSource.PHONE,
+        ),
+        exerciseSessions = listOf(
+            WatchExerciseSessionDto(
+                exerciseSessionId = "exercise_session_stage5",
+                sessionId = SESSION,
+                exerciseId = "exercise_stage5",
+                exerciseName = "Squat",
+                order = 1,
+                status = WatchExerciseStatus.ACTIVE,
+                targetSets = 3,
+                targetReps = 8,
+                targetRir = 2,
+                restDurationSeconds = 120,
+            ),
+        ),
+        setRecords = emptyList(),
+        sensorSamples = emptyList(),
+        pendingEvents = emptyList(),
+    )
+
+    private class RecordingReplaySink(
+        private var failSnapshots: Int = 0,
+    ) : WatchReplaySink {
         val events = mutableListOf<WatchEventEnvelopeDto>()
+        val snapshots = mutableListOf<WatchSyncSnapshotDto>()
         override suspend fun sendEvent(event: WatchEventEnvelopeDto) { events += event }
-        override suspend fun sendSnapshot(snapshot: WatchSyncSnapshotDto) = Unit
+        override suspend fun sendSnapshot(snapshot: WatchSyncSnapshotDto) {
+            if (failSnapshots > 0) {
+                failSnapshots -= 1
+                error("snapshot transport failed")
+            }
+            snapshots += snapshot
+        }
         override suspend fun requestSnapshot(sessionId: String, knownRevision: Long) = Unit
     }
 

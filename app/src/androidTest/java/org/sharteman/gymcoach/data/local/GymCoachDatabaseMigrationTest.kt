@@ -252,10 +252,36 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration7To8CreatesDurableWatchRepairMarkers() {
+        helper.createDatabase(TEST_DB_V8, 7).close()
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V8,
+            8,
+            true,
+            GymCoachDatabase.MIGRATION_7_8,
+        ).use { database ->
+            database.execSQL(
+                "INSERT INTO watch_resync_markers " +
+                    "(sessionId, revision, reason, createdAtEpochMs, updatedAtEpochMs) " +
+                    "VALUES ('session_v8', 3, 'SET_UPDATED', 1000, 1000)",
+            )
+            database.query(
+                "SELECT revision, reason FROM watch_resync_markers WHERE sessionId = 'session_v8'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(3L, cursor.getLong(0))
+                assertEquals("SET_UPDATED", cursor.getString(1))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
         const val TEST_DB_V6 = "gymcoach-migration-v6-test"
         const val TEST_DB_V7 = "gymcoach-migration-v7-test"
+        const val TEST_DB_V8 = "gymcoach-migration-v8-test"
     }
 }

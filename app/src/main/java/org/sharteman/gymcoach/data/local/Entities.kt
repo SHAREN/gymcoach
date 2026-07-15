@@ -166,6 +166,18 @@ data class WatchOutboxEventEntity(
 )
 
 @Entity(
+    tableName = "watch_resync_markers",
+    indices = [Index("updatedAtEpochMs")],
+)
+data class WatchResyncMarkerEntity(
+    @PrimaryKey val sessionId: String,
+    val revision: Long,
+    val reason: String,
+    val createdAtEpochMs: Long,
+    val updatedAtEpochMs: Long,
+)
+
+@Entity(
     tableName = "watch_ack_journal",
     indices = [Index("sessionId"), Index("receivedAtEpochMs")],
 )

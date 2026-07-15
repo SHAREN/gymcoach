@@ -33,6 +33,7 @@ class WatchCompanionRuntime private constructor(
     val workoutCoordinator: WatchWorkoutCoordinator,
     val inboundEventRouter: WatchInboundEventRouter,
     val fileTransferCoordinator: WatchFileTransferCoordinator,
+    val reconnectReplayCoordinator: WatchReconnectReplayCoordinator,
     val persistence: WatchSyncPersistence,
     val workoutGateway: PersistentWatchWorkoutGateway,
     val phoneCommands: WatchPhoneCommandPublisher,
@@ -53,6 +54,7 @@ class WatchCompanionRuntime private constructor(
     suspend fun forceSync() {
         if (latestRuntimeProvider() == null && persistence.replayable().isEmpty()) return
         if (state.value.connectionStatus != WatchConnectionStatus.CONNECTED) connect()
+        reconnectReplayCoordinator.repairMarkers()
         workoutCoordinator.replayPending()
     }
 
@@ -106,9 +108,13 @@ class WatchCompanionRuntime private constructor(
                 ackConsumer = reconnect,
                 fileConsumer = router,
                 syncRequestConsumer = WatchSyncRequestConsumer { request ->
-                    val runtime = repository.latestActiveWorkoutRuntime() ?: return@WatchSyncRequestConsumer
-                    if (workoutCoordinator.sendSnapshotForSession(runtime.sessionId)) {
+                    val runtime = repository.latestActiveWorkoutRuntime()
+                    if (runtime == null) {
+                        connection.acknowledgeNoActiveWorkout(request)
+                    } else if (workoutCoordinator.sendSnapshotForSession(runtime.sessionId)) {
                         connection.acknowledgeSnapshotRequest(request, runtime.sessionId, runtime.revision)
+                    } else {
+                        connection.acknowledgeNoActiveWorkout(request)
                     }
                 },
                 lifecycleConsumer = WatchConnectionLifecycleConsumer { status ->
@@ -116,7 +122,10 @@ class WatchCompanionRuntime private constructor(
                         val runtime = repository.latestActiveWorkoutRuntime()
                         if (runtime != null) {
                             reconnect.reconnect(runtime.sessionId, watchDeviceId, runtime.revision)
+                            reconnect.repairMarkers(excludingSessionId = runtime.sessionId)
+                            workoutCoordinator.replayPendingExcept(runtime.sessionId)
                         } else if (persistence.replayable().isNotEmpty()) {
+                            reconnect.repairMarkers()
                             workoutCoordinator.replayPending()
                         }
                     }
@@ -133,13 +142,14 @@ class WatchCompanionRuntime private constructor(
                 nowEpochMs = nowEpochMs,
                 newUuid = newUuid,
             )
-            val publisher = RuntimeWatchPhoneCommandPublisher(integration, gateway)
+            val publisher = RuntimeWatchPhoneCommandPublisher(integration, gateway, workoutCoordinator)
             return WatchCompanionRuntime(
                 transport = transport,
                 connectionCoordinator = connection,
                 workoutCoordinator = workoutCoordinator,
                 inboundEventRouter = router,
                 fileTransferCoordinator = fileCoordinator,
+                reconnectReplayCoordinator = reconnect,
                 persistence = persistence,
                 workoutGateway = gateway,
                 phoneCommands = publisher,
@@ -188,6 +198,7 @@ private class CoordinatorDispatch(
 private class RuntimeWatchPhoneCommandPublisher(
     private val runtime: WatchIntegrationRuntime,
     private val gateway: PersistentWatchWorkoutGateway,
+    private val coordinator: WatchWorkoutCoordinator,
 ) : WatchPhoneCommandPublisher {
     override suspend fun workoutStarted(sessionId: String, revision: Long, startedAtEpochMs: Long) {
         runtime.startWorkout(sessionId, revision, startedAtEpochMs)
@@ -291,6 +302,19 @@ private class RuntimeWatchPhoneCommandPublisher(
 
     override suspend fun workoutFinished(sessionId: String, revision: Long, finishedAtEpochMs: Long) {
         runtime.finishWorkout(sessionId, revision, finishedAtEpochMs)
+    }
+
+    override suspend fun flush(sessionId: String) {
+        try {
+            coordinator.replayPending(sessionId)
+        } catch (error: org.sharteman.gymcoach.watch.domain.WatchProtocolException) {
+            if (
+                error.code != org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode.TRANSPORT_DISCONNECTED &&
+                error.code != org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode.TRANSPORT_FAILURE
+            ) {
+                throw error
+            }
+        }
     }
 
     private suspend fun setRecord(set: LocalSetEntity, revision: Long) =

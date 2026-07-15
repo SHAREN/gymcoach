@@ -175,6 +175,9 @@ class GymCoachDaoWatchSyncTest {
             gymId = null,
             startedAt = "2026-07-15T10:00:00Z",
         )
+        dao.saveWatchResyncMarker(
+            WatchResyncMarkerEntity(SESSION_ID, 1, "TEST", 1, 1),
+        )
         dao.saveSession(session)
         dao.saveActiveWorkoutRuntime(
             ActiveWorkoutRuntimeEntity(
@@ -206,6 +209,51 @@ class GymCoachDaoWatchSyncTest {
         assertNull(dao.getActiveWorkoutRuntime(SESSION_ID))
         assertEquals(EVENT_ID, dao.getProcessedWatchEvent(EVENT_ID)?.eventId)
         assertEquals("op_watch_finish", dao.queuedOperations().single().operationId)
+    }
+
+    @Test
+    fun phoneSetMutationAtomicallyStoresRuntimeRevisionAndRepairMarker() = runBlocking {
+        val session = LocalSessionEntity(
+            id = SESSION_ID,
+            workoutId = "workout_repair_marker",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        dao.saveSession(session)
+        val set = LocalSetEntity(
+            id = "set_repair_marker",
+            sessionId = SESSION_ID,
+            exerciseId = "exercise_repair_marker",
+            setNumber = 1,
+            weight = 100.0,
+            reps = 8,
+            rir = 2,
+            completedAt = "2026-07-15T10:01:00Z",
+        )
+        val runtime = ActiveWorkoutRuntimeEntity(
+            sessionId = SESSION_ID,
+            workoutId = session.workoutId,
+            activeExerciseId = set.exerciseId,
+            revision = 2,
+            updatedAtEpochMs = 2_000,
+        )
+        val marker = WatchResyncMarkerEntity(SESSION_ID, 2, "SET_COMPLETED", 2_000, 2_000)
+
+        dao.saveSetOperationRuntimeAndMarker(
+            set = set,
+            operation = SyncOutboxEntity(
+                operationId = "op_repair_marker",
+                type = "UpsertSetOperation",
+                payloadJson = "{}",
+            ),
+            runtime = runtime,
+            marker = marker,
+        )
+
+        assertEquals(set.id, dao.getSet(set.id)?.id)
+        assertEquals(2L, dao.getActiveWorkoutRuntime(SESSION_ID)?.revision)
+        assertEquals("op_repair_marker", dao.queuedOperations().single().operationId)
+        assertEquals(2L, dao.getWatchResyncMarker(SESSION_ID)?.revision)
     }
 
     private fun watchEvent(eventId: String, sessionId: String, revision: Long) = WatchEventEnvelopeDto(
@@ -254,6 +302,7 @@ class GymCoachDaoWatchSyncTest {
         val WATCH_TABLES = listOf(
             "watch_inbox_events",
             "watch_outbox_events",
+            "watch_resync_markers",
             "watch_ack_journal",
             "watch_peers",
             "watch_conflicts",

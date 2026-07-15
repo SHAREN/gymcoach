@@ -242,6 +242,28 @@ class WatchWorkoutCoordinatorTest {
     }
 
     @Test
+    fun `new active session reconciles before old finished session without double current replay`() = runTest {
+        val persistence = InMemoryWatchSyncPersistence()
+        val sink = RecordingSink()
+        val coordinator = WatchWorkoutCoordinator(
+            gateway = gateway(FakeWatchWorkoutRepository()),
+            sink = sink,
+            phoneDeviceId = "phone-stage3",
+            codec = codec,
+            syncPersistence = persistence,
+        )
+        val current = phoneEvent(EVENT_CURRENT_PENDING, SESSION_ID, WatchEventType.WORKOUT_STARTED, 1)
+        val oldFinish = phoneEvent(EVENT_OLD_FINISH, OLD_SESSION_ID, WatchEventType.WORKOUT_FINISHED, 4)
+        persistence.enqueue(current)
+        persistence.enqueue(oldFinish)
+
+        coordinator.replayPending(SESSION_ID)
+        coordinator.replayPendingExcept(SESSION_ID)
+
+        assertEquals(listOf(current.eventId, oldFinish.eventId), sink.events.map { it.eventId })
+    }
+
+    @Test
     fun `revision gap remains replayable after missing revision is applied`() = runTest {
         val repository = FakeWatchWorkoutRepository()
         val sink = RecordingSink()
@@ -694,6 +716,26 @@ class WatchWorkoutCoordinatorTest {
         payload = payload,
     )
 
+    private fun phoneEvent(
+        eventId: String,
+        sessionId: String,
+        type: WatchEventType,
+        revision: Long,
+    ) = WatchEventEnvelopeDto(
+        protocolVersion = WatchProtocol.VERSION,
+        schemaVersion = WatchProtocol.SCHEMA_VERSION,
+        eventId = eventId,
+        sessionId = sessionId,
+        type = type,
+        timestamp = 40_000L + revision,
+        source = WatchEventSource.PHONE,
+        deviceId = "phone-stage3",
+        revision = revision,
+        payload = buildJsonObject {
+            if (type == WatchEventType.WORKOUT_FINISHED) put("finishedAt", 40_000L + revision)
+        },
+    )
+
     private fun setRecord(
         weight: Double,
         reps: Int,
@@ -996,6 +1038,9 @@ class WatchWorkoutCoordinatorTest {
         const val EVENT_SENSOR_GAP = "10000000-0000-0000-0000-000000000017"
         const val EVENT_WORKOUT_FINISHED = "10000000-0000-0000-0000-000000000018"
         const val EVENT_PHONE_FINISH = "10000000-0000-0000-0000-000000000019"
+        const val EVENT_CURRENT_PENDING = "10000000-0000-0000-0000-000000000020"
+        const val EVENT_OLD_FINISH = "10000000-0000-0000-0000-000000000021"
+        const val OLD_SESSION_ID = "mob_session_stage3_old_finished"
         const val SENSOR_BATCH_ID = "40000000-0000-0000-0000-000000000001"
         const val REST_BATCH_ID = "40000000-0000-0000-0000-000000000002"
         const val SENSOR_GAP_BATCH_ID = "40000000-0000-0000-0000-000000000003"

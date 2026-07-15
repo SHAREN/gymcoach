@@ -18,8 +18,28 @@ import org.sharteman.gymcoach.watch.domain.WatchSetRecordDto
 import org.sharteman.gymcoach.watch.domain.WatchSyncSnapshotDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutSessionDto
 import org.sharteman.gymcoach.watch.domain.WatchWorkoutStatus
+import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 
 class WatchIntegrationRuntimeTest {
+    @Test
+    fun `durable event enqueue clears matching resync marker`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        store.saveResyncMarkerForTest(
+            WatchResyncMarkerEntity(SESSION, 1, "WORKOUT_STARTED", 1_000, 1_000),
+        )
+        val runtime = WatchIntegrationRuntime(
+            phoneDeviceId = PHONE_DEVICE,
+            persistence = store,
+            dispatch = RecordingDispatch(store),
+            snapshotProvider = { snapshot() },
+            newUuid = { EVENT_IDS.first() },
+        )
+
+        runtime.startWorkout(SESSION, 1, 1_000)
+
+        assertTrue(store.resyncMarkers().isEmpty())
+    }
+
     @Test
     fun `phone commands persist before fake watch dispatch`() = runTest {
         val store = InMemoryWatchSyncPersistence(nowEpochMs = { 9_000 })

@@ -28,12 +28,13 @@ class WatchReconnectReplayCoordinator(
         val peer = persistence.peer(watchDeviceId)
         val pending = persistence.replayable(sessionId)
         val peerRevision = peer?.lastRevision ?: 0
+        val repaired = repairMarker(sessionId)
         when {
             peerRevision > localRevision -> sink.requestSnapshot(sessionId, localRevision)
-            pending.isNotEmpty() && pending.first().revision > peerRevision + 1 -> {
+            !repaired && pending.isNotEmpty() && pending.first().revision > peerRevision + 1 -> {
                 snapshotProvider(sessionId)?.let { sink.sendSnapshot(it) }
             }
-            peerRevision < localRevision && pending.isEmpty() -> {
+            !repaired && peerRevision < localRevision && pending.isEmpty() -> {
                 snapshotProvider(sessionId)?.let { sink.sendSnapshot(it) }
             }
         }
@@ -57,6 +58,12 @@ class WatchReconnectReplayCoordinator(
         )
     }
 
+    suspend fun repairMarkers(excludingSessionId: String? = null) = mutex.withLock {
+        persistence.resyncMarkers()
+            .filterNot { it.sessionId == excludingSessionId }
+            .forEach { repairMarker(it.sessionId) }
+    }
+
     suspend fun observeRemoteRevision(sessionId: String, watchDeviceId: String, revision: Long) = mutex.withLock {
         val peer = persistence.peer(watchDeviceId)
         val known = peer?.lastRevision ?: 0
@@ -75,9 +82,17 @@ class WatchReconnectReplayCoordinator(
                 updatedAtEpochMs = nowEpochMs(),
             ),
         )
+        persistence.clearResyncMarker(sessionId, revision)
     }
 
     override suspend fun onAck(ack: WatchSyncAckDto) {
         persistence.applyAck(ack)
+    }
+
+    private suspend fun repairMarker(sessionId: String): Boolean {
+        persistence.resyncMarkers().firstOrNull { it.sessionId == sessionId } ?: return false
+        val snapshot = snapshotProvider(sessionId) ?: return false
+        sink.sendSnapshot(snapshot)
+        return true
     }
 }

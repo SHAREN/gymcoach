@@ -17,6 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WatchProcessedEventEntity::class,
         WatchInboxEventEntity::class,
         WatchOutboxEventEntity::class,
+        WatchResyncMarkerEntity::class,
         WatchAckJournalEntity::class,
         WatchPeerEntity::class,
         WatchConflictEntity::class,
@@ -28,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -50,6 +51,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_4_5,
                 MIGRATION_5_6,
                 MIGRATION_6_7,
+                MIGRATION_7_8,
             )
                 .build()
                 .also { instance = it }
@@ -419,6 +421,21 @@ abstract class GymCoachDatabase : RoomDatabase() {
                         "ON watch_file_transfers(payloadId, sequence)",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_watch_file_transfers_status ON watch_file_transfers(status)")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS watch_resync_markers (" +
+                        "sessionId TEXT NOT NULL, revision INTEGER NOT NULL, reason TEXT NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL, updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(sessionId))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_watch_resync_markers_updatedAtEpochMs " +
+                        "ON watch_resync_markers(updatedAtEpochMs)",
+                )
             }
         }
     }

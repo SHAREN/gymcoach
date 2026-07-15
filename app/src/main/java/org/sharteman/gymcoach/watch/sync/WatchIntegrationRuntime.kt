@@ -154,6 +154,7 @@ class WatchIntegrationRuntime(
             payload = payload,
         )
         check(persistence.enqueue(event, relatedTransferId)) { "Duplicate generated watch event ID" }
+        persistence.clearResyncMarker(sessionId, revision)
         tryOfflineDispatch {
             persistence.markAttempt(event.eventId)
             dispatch.sendEvent(event)
