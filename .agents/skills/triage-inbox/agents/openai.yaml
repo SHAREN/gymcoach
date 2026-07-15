@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Triage Inbox'
+  short_description: 'Prepare Beads INBOX tasks for READY'
+  default_prompt: 'Use $triage-inbox to clarify selected INBOX tasks without changing product code.'
