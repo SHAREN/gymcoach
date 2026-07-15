@@ -142,8 +142,8 @@ test('summary navigation keeps the selected exercise between result screens', as
 });
 
 test('watch entry exposes last workout, summaries, and compact diagnostics', async () => {
-  const entryUrl = new URL('../entry/src/main/js/default/pages/index/index.js', import.meta.url);
-  const hmlUrl = new URL('../entry/src/main/js/default/pages/index/index.hml', import.meta.url);
+  const entryUrl = new URL('../src/lite/watch-page.js', import.meta.url);
+  const hmlUrl = new URL('../entry/src/main/js/MainAbility/pages/index/index.hml', import.meta.url);
   const source = await readFile(entryUrl, 'utf8');
   const hml = await readFile(hmlUrl, 'utf8');
   const module = await import(entryUrl.href);

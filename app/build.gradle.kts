@@ -8,6 +8,20 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+fun String.asBuildConfigString(): String =
+    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val watchTransportMode = providers.gradleProperty("gymcoach.watch.transport")
+    .orElse("simulator")
+val huaweiWearEngineAppId = providers.gradleProperty("gymcoach.huawei.appId")
+    .orElse("")
+val huaweiWatchPackageName = providers.gradleProperty("gymcoach.huawei.watchPackage")
+    .orElse("org.sharteman.gymcoach.watch")
+val huaweiWatchFingerprint = providers.gradleProperty("gymcoach.huawei.watchFingerprint")
+    .orElse("")
+val huaweiWatchDeviceUuid = providers.gradleProperty("gymcoach.huawei.watchDeviceUuid")
+    .orElse("")
+
 android {
     namespace = "org.sharteman.gymcoach"
     compileSdk = 35
@@ -23,11 +37,20 @@ android {
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://gymcoach7.sharteman.duckdns.org\"")
         buildConfigField("String", "DEFAULT_FALLBACK_SERVER_URL", "\"http://192.168.0.119:3030\"")
+        buildConfigField("String", "HUAWEI_WEAR_ENGINE_APP_ID", huaweiWearEngineAppId.get().asBuildConfigString())
+        buildConfigField("String", "HUAWEI_WATCH_PACKAGE_NAME", huaweiWatchPackageName.get().asBuildConfigString())
+        buildConfigField("String", "HUAWEI_WATCH_FINGERPRINT", huaweiWatchFingerprint.get().asBuildConfigString())
+        buildConfigField("String", "HUAWEI_WATCH_DEVICE_UUID", huaweiWatchDeviceUuid.get().asBuildConfigString())
+        manifestPlaceholders["huaweiWearEngineAppId"] = huaweiWearEngineAppId.get()
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "WATCH_TRANSPORT_MODE", watchTransportMode.get().asBuildConfigString())
+        }
         release {
             isMinifyEnabled = false
+            buildConfigField("String", "WATCH_TRANSPORT_MODE", "huawei".asBuildConfigString())
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -86,6 +109,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.huawei.hms:wearengine:5.0.3.304")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

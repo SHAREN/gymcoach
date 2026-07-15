@@ -55,16 +55,24 @@
   width: 54px;
   height: 34px;
   border-radius: 17px;
+  background-color: #29313e;
+}
+
+.click-control {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+
+.language-button-label {
   font-size: 14px;
   color: #ffffff;
-  background-color: #29313e;
 }
 
 .app-title {
   margin-top: 2px;
   margin-bottom: 6px;
   font-size: 28px;
-  font-weight: bold;
   color: #ffffff;
 }
 
@@ -100,12 +108,11 @@
   width: 300px;
   margin-top: 2px;
   font-size: 20px;
-  font-weight: bold;
   text-align: center;
   color: #ffffff;
 }
 
-.home-card-main.small {
+.home-card-small {
   font-size: 16px;
 }
 
@@ -136,9 +143,12 @@
   width: 164px;
   height: 40px;
   border-radius: 20px;
-  font-size: 14px;
-  color: #07110b;
   background-color: #45d483;
+}
+
+.small-button-label {
+  font-size: 14px;
+  color: #ffffff;
 }
 
 .secondary {
@@ -151,18 +161,26 @@
   height: 34px;
   margin-top: 5px;
   border-radius: 17px;
-  font-size: 12px;
-  color: #aab3c2;
   background-color: #11151c;
+}
+
+.diagnostics-button-label {
+  width: 320px;
+  font-size: 12px;
+  text-align: center;
+  color: #aab3c2;
 }
 
 .back-button {
   width: 44px;
   height: 36px;
   border-radius: 18px;
+  background-color: #29313e;
+}
+
+.back-button-label {
   font-size: 25px;
   color: #ffffff;
-  background-color: #29313e;
 }
 
 .compact-title {
@@ -182,13 +200,12 @@
 .exercise-name {
   width: 320px;
   font-size: 22px;
-  font-weight: bold;
   text-align: center;
   color: #ffffff;
 }
 
 .large {
-  min-height: 44px;
+  height: 44px;
   font-size: 24px;
 }
 
@@ -229,7 +246,6 @@
 
 .target-value {
   font-size: 18px;
-  font-weight: bold;
   color: #ffffff;
 }
 
@@ -247,9 +263,12 @@
   width: 158px;
   height: 38px;
   border-radius: 19px;
+  background-color: #222936;
+}
+
+.summary-button-label {
   font-size: 12px;
   color: #ffffff;
-  background-color: #222936;
 }
 
 .wide-button {
@@ -257,10 +276,16 @@
   height: 40px;
   margin-top: 5px;
   border-radius: 20px;
-  font-size: 15px;
-  font-weight: bold;
-  color: #07110b;
   background-color: #45d483;
+}
+
+.wide-button-label {
+  font-size: 15px;
+  color: #ffffff;
+}
+
+.dark-button-label {
+  color: #07110b;
 }
 
 .danger {
@@ -297,7 +322,6 @@
 .number-value {
   width: 70px;
   font-size: 24px;
-  font-weight: bold;
   text-align: center;
   color: #ffffff;
 }
@@ -306,9 +330,12 @@
   width: 44px;
   height: 44px;
   border-radius: 22px;
+  background-color: #29313e;
+}
+
+.step-button-label {
   font-size: 24px;
   color: #ffffff;
-  background-color: #29313e;
 }
 
 .last-set-actions {
@@ -323,9 +350,12 @@
   width: 164px;
   height: 40px;
   border-radius: 20px;
+  background-color: #29313e;
+}
+
+.last-set-button-label {
   font-size: 13px;
   color: #ffffff;
-  background-color: #29313e;
 }
 
 .delete {
@@ -342,7 +372,6 @@
 .rest-countdown {
   margin-top: 4px;
   font-size: 64px;
-  font-weight: bold;
   color: #ffffff;
 }
 
@@ -380,9 +409,12 @@
   width: 108px;
   height: 42px;
   border-radius: 21px;
+  background-color: #29313e;
+}
+
+.rest-button-label {
   font-size: 13px;
   color: #ffffff;
-  background-color: #29313e;
 }
 
 .wide-half {
@@ -400,14 +432,13 @@
 }
 
 .summary-name {
-  min-height: 48px;
+  height: 48px;
   margin-top: 3px;
 }
 
 .summary-duration {
   margin-top: 14px;
   font-size: 24px;
-  font-weight: bold;
   color: #ffffff;
 }
 
@@ -437,7 +468,6 @@
 .metric-value {
   margin-top: 2px;
   font-size: 18px;
-  font-weight: bold;
   color: #ffffff;
 }
 
