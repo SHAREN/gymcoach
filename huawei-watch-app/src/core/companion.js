@@ -561,37 +561,44 @@ export class WatchCompanion {
         status,
         status === 'DUPLICATE' ? null : existing.errorCode || status,
       );
+      await this.repository.removePendingInboundEvent(event.eventId);
       return { duplicate: true };
     }
     const activeWorkout = this.requireActiveWorkout();
     if (event.sessionId !== activeWorkout.session.sessionId) {
       await this.commitRejectedEvent(event, eventHash, 'SESSION_MISMATCH');
+      await this.repository.removePendingInboundEvent(event.eventId);
       return { duplicate: false, rejected: true };
     }
     if (event.revision < activeWorkout.revision) {
       await this.commitRejectedEvent(event, eventHash, 'STALE_REVISION', 'STALE');
+      await this.repository.removePendingInboundEvent(event.eventId);
       return { duplicate: false, stale: true };
     }
     if (event.revision === activeWorkout.revision) {
       await this.commitRejectedEvent(event, eventHash, 'CONCURRENT_REVISION', 'CONFLICT');
+      await this.repository.removePendingInboundEvent(event.eventId);
       return { conflict: true, duplicate: false };
     }
     if (event.revision > activeWorkout.revision + 1) {
-      await this.commitRejectedEvent(event, eventHash, 'REVISION_GAP');
+      await this.repository.rememberPendingInboundEvent(
+        event,
+        eventHash,
+        'REVISION_GAP',
+        this.clock(),
+      );
+      await this.recordConflict({
+        code: 'REVISION_GAP',
+        eventId: event.eventId,
+        sessionId: event.sessionId,
+        remoteHash: eventHash,
+      });
       await this.requestState('revision-gap');
       return { duplicate: false, gap: true };
     }
     if (event.type === WatchEventType.SENSOR_BATCH_RECORDED) {
-      const transfer = this.repository.inboundTransferForEvent(event.eventId);
-      if (
-        !transfer ||
-        transfer.payloadId !== event.payload.batchId ||
-        transfer.sequence !== event.payload.sequence ||
-        transfer.totalSequences !== event.payload.totalSequences
-      ) {
-        await this.commitRejectedEvent(event, eventHash, 'RELATED_FILE_MISSING');
-        return { duplicate: false, rejected: true };
-      }
+      await this.commitRejectedEvent(event, eventHash, 'UNSUPPORTED_INBOUND_SENSOR_BATCH');
+      return { duplicate: false, rejected: true };
     }
     const next = applyWorkoutEvent(activeWorkout, event);
     await this.repository.commitInboundWorkoutEvent(event.eventId, next, {
@@ -601,6 +608,7 @@ export class WatchCompanion {
       status: 'APPLIED',
     });
     await this.repository.completeInboundTransferForEvent(event.eventId);
+    await this.repository.removePendingInboundEvent(event.eventId);
     this.state.activeWorkout = next;
     await this.refreshSensorCollectors();
     if (SENSOR_FLUSH_EVENT_TYPES.has(event.type)) {
@@ -641,6 +649,24 @@ export class WatchCompanion {
       return { duplicate: true };
     }
     let next = activeWorkoutFromSnapshot(snapshot);
+    const appliedRemotePending = [];
+    const remotePendingEvents = [...snapshot.pendingEvents].sort(compareWorkoutEvents);
+    let revisionGap = false;
+    for (const event of remotePendingEvents) {
+      if (event.type === WatchEventType.SENSOR_BATCH_RECORDED) {
+        revisionGap = true;
+        break;
+      }
+      if (event.revision <= next.revision) {
+        continue;
+      }
+      if (event.revision !== next.revision + 1) {
+        revisionGap = true;
+        break;
+      }
+      next = applyWorkoutEvent(next, event);
+      appliedRemotePending.push(event);
+    }
     const localPendingEvents = this.repository
       .pending()
       .filter(
@@ -650,7 +676,6 @@ export class WatchCompanion {
           envelope.sessionId === snapshot.sessionId,
       )
       .sort(compareWorkoutEvents);
-    let revisionGap = false;
     for (const event of localPendingEvents) {
       if (event.revision <= next.revision) {
         if (event.revision === next.revision) {
@@ -683,6 +708,16 @@ export class WatchCompanion {
         timestamp: snapshot.timestamp,
       },
     });
+    for (const event of appliedRemotePending) {
+      await this.repository.rememberProcessedEnvelope({
+        canonicalHash: canonicalSha256(event),
+        id: event.eventId,
+        kind: 'EVENT',
+        recordedAt: this.clock(),
+        sessionId: event.sessionId,
+        status: 'APPLIED',
+      });
+    }
     const lastSnapshotAt = this.clock();
     const lastSyncAt = this.clock();
     await this.repository.updateState({
@@ -700,6 +735,9 @@ export class WatchCompanion {
     this.state.lastErrorCode = this.state.lastError;
     this.refreshPendingCount();
     this.emit();
+    if (!revisionGap) {
+      await this.replayPendingInboundEvents();
+    }
     if (revisionGap) {
       await this.requestState('revision-gap');
     }
@@ -739,6 +777,20 @@ export class WatchCompanion {
       });
       return { conflict: true, duplicate: false };
     }
+    const maxAcknowledgedRevision = acknowledgedPending.reduce(
+      (maximum, event) => Math.max(maximum, event.revision),
+      0,
+    );
+    if (maxAcknowledgedRevision > 0 && ack.revision < maxAcknowledgedRevision) {
+      await this.recordConflict({
+        code: 'ACK_REVISION_REGRESSION',
+        ackId: ack.ackId,
+        eventIds: ack.eventIds,
+        sessionId: ack.sessionId,
+        remoteHash: ackHash,
+      });
+      return { conflict: true, duplicate: false };
+    }
     const result = await this.repository.applySyncAck(ack, ackHash);
     const document = this.repository.snapshot();
     this.state.lastSyncAt = document.state.lastSyncAt;
@@ -771,16 +823,36 @@ export class WatchCompanion {
       }
       return { duplicate: true };
     }
+    if (envelope.payloadType === 'SENSOR_BATCH') {
+      await this.recordConflict({
+        code: 'UNSUPPORTED_INBOUND_SENSOR_BATCH',
+        eventId: envelope.relatedEventId,
+        sessionId: envelope.sessionId,
+        remoteHash: transferHash,
+      });
+      return { duplicate: false, rejected: true };
+    }
     await this.repository.rememberInboundTransfer(envelope, transferHash, this.clock());
     if (envelope.payloadType === 'SYNC_SNAPSHOT') {
       const result = await this.receiveSnapshot(JSON.stringify(envelope.payload));
       await this.repository.removeFileTransfer(envelope.transferId);
       return result;
     }
-    if (envelope.payloadType === 'SENSOR_BATCH') {
-      return { duplicate: false, pendingRelatedEvent: envelope.relatedEventId };
-    }
     throw new Error('EVENT_BATCH file payloads are not implemented by the watch runtime.');
+  }
+
+  async replayPendingInboundEvents() {
+    const pending = this.repository
+      .pendingInboundEvents()
+      .map((entry) => entry.event)
+      .sort(compareWorkoutEvents);
+    for (const event of pending) {
+      const activeRevision = this.state.activeWorkout?.revision ?? 0;
+      if (event.revision > activeRevision + 1) {
+        break;
+      }
+      await this.receiveWatchEvent(JSON.stringify(event));
+    }
   }
 
   async sendRequest(type, payload) {
