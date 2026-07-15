@@ -67,6 +67,23 @@ export const setUpdateSchema = setInputSchema
 
 export type SetUpdateInput = z.infer<typeof setUpdateSchema>;
 
+// Historical strength rows use a deliberately separate contract from the
+// active-session POST route. The server derives ordering and completion time
+// from the finished session instead of accepting replay-sensitive fields from
+// the client.
+export const historicalSetInputSchema = setInputSchema
+  .pick({
+    exerciseId: true,
+    gymEquipmentId: true,
+    weight: true,
+    reps: true,
+    rir: true,
+  })
+  .extend({ reps: z.coerce.number().int().min(1).max(100) })
+  .strict();
+
+export type HistoricalSetInput = z.infer<typeof historicalSetInputSchema>;
+
 // Cross-field rule the schema alone cannot express: duration/distance are
 // accepted only on CARDIO exercises (so strength data stays clean), and a
 // cardio set requires a duration. Returns an error message or null when valid.

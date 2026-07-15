@@ -315,6 +315,9 @@ async function countsFor(userId: string) {
     exercises: await db.exercise.count({ where: { userId } }),
     programs: await db.program.count({ where: { userId } }),
     sessions: await db.session.count({ where: { userId } }),
+    sessionExerciseMemberships: await db.sessionExercise.count({
+      where: { session: { userId } },
+    }),
     sets: await db.set.count({ where: { session: { userId } } }),
     coachSessions: await db.coachSession.count({ where: { userId } }),
     goals: await db.exerciseGoal.count({ where: { userId } }),
@@ -338,7 +341,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 8 with equipment load profiles, snapshots, and earlier fields', async () => {
+  it('exports version 9 with session membership, equipment snapshots, and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -346,7 +349,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(8);
+    expect(dump.version).toBe(9);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -411,7 +414,11 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
         ],
       },
     ]);
-    expect(dump.sessions[0]).toMatchObject({ gymName: 'Basement', sessionRpe: 8 });
+    expect(dump.sessions[0]).toMatchObject({
+      gymName: 'Basement',
+      sessionRpe: 8,
+      exerciseNames: ['Bench Press', 'Running'],
+    });
 
     const sets = dump.sessions[0].sets as Array<Record<string, unknown>>;
     const strength = sets.find((s) => s.exerciseName === 'Bench Press');
@@ -496,6 +503,55 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     const activeGymB = await db.gym.findFirst({ where: { id: profileB?.activeGymId ?? '' } });
     expect(activeGymB?.name).toBe('Basement');
     expect(profileB?.email).toBe('b@test.dev');
+  });
+
+  it('round-trips an exercise membership after its final set was deleted', async () => {
+    const userA = await seedFullUser('membership-a@test.dev');
+    const [sessionA, pullupA] = await Promise.all([
+      db.session.findFirstOrThrow({ where: { userId: userA.id } }),
+      db.exercise.findFirstOrThrow({ where: { userId: userA.id, name: 'Pull-up' } }),
+    ]);
+    const temporarySet = await db.set.create({
+      data: {
+        sessionId: sessionA.id,
+        exerciseId: pullupA.id,
+        setNumber: 1,
+        weight: 0,
+        reps: 8,
+        completedAt: new Date('2026-06-01T10:30:00.000Z'),
+      },
+    });
+    await db.set.delete({ where: { id: temporarySet.id } });
+
+    actAs(userA.id);
+    const dump = await (await getBackup()).json();
+    expect(dump.sessions[0].exerciseNames).toContain('Pull-up');
+    expect(
+      dump.sessions[0].sets.some((set: { exerciseName: string }) => set.exerciseName === 'Pull-up'),
+    ).toBe(false);
+
+    const userB = await db.user.create({
+      data: { email: 'membership-b@test.dev', passwordHash: 'x' },
+    });
+    actAs(userB.id);
+    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+    expect(response.status).toBe(200);
+
+    const membership = await db.sessionExercise.findFirst({
+      where: {
+        session: { userId: userB.id },
+        exercise: { name: 'Pull-up', userId: userB.id },
+      },
+    });
+    expect(membership).not.toBeNull();
+    expect(
+      await db.set.count({
+        where: {
+          session: { userId: userB.id },
+          exercise: { name: 'Pull-up' },
+        },
+      }),
+    ).toBe(0);
   });
 
   it('still restores a version 1 backup (fields and models added in v2 absent)', async () => {
