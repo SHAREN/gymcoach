@@ -54,6 +54,10 @@ fun interface WatchConnectionLifecycleConsumer {
     suspend fun onConnectionChanged(status: WatchConnectionStatus)
 }
 
+fun interface WatchSyncRequestConsumer {
+    suspend fun onSyncRequested(message: WatchControlMessageDto)
+}
+
 class WatchConnectionCoordinator(
     private val phoneDeviceId: String,
     private val transport: WatchTransport,
@@ -64,6 +68,7 @@ class WatchConnectionCoordinator(
     private val ackConsumer: WatchAckConsumer? = null,
     private val fileConsumer: WatchFileConsumer? = null,
     private val lifecycleConsumer: WatchConnectionLifecycleConsumer? = null,
+    private val syncRequestConsumer: WatchSyncRequestConsumer? = null,
     private val codec: WatchProtocolCodec = WatchProtocolCodec(),
     private val workoutCodec: WatchWorkoutProtocolCodec = WatchWorkoutProtocolCodec(),
     private val fileCodec: WatchFileTransferCodec = WatchFileTransferCodec(),
@@ -89,7 +94,13 @@ class WatchConnectionCoordinator(
                         pendingPingSentAt = if (status == WatchConnectionStatus.DISCONNECTED) null else current.pendingPingSentAt,
                     )
                 }
-                lifecycleConsumer?.onConnectionChanged(status)
+                try {
+                    lifecycleConsumer?.onConnectionChanged(status)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    reject(WatchProtocolErrorCode.TRANSPORT_FAILURE)
+                }
             }
         }
         jobs += scope.launch {
@@ -163,6 +174,24 @@ class WatchConnectionCoordinator(
             ),
         )
         return messageId
+    }
+
+    suspend fun acknowledgeSnapshotRequest(
+        request: WatchControlMessageDto,
+        sessionId: String,
+        revision: Long,
+    ) {
+        sendControlMessage(
+            newPhoneControlMessage(
+                type = WatchControlMessageType.SYNC_SNAPSHOT,
+                timestamp = nowEpochMs(),
+                replyTo = request.messageId,
+                payload = buildJsonObject {
+                    put("sessionId", sessionId)
+                    put("revision", revision)
+                },
+            ),
+        )
     }
 
     suspend fun sendControlMessage(message: WatchControlMessageDto) {
@@ -276,9 +305,8 @@ class WatchConnectionCoordinator(
         when (message.type) {
             WatchControlMessageType.PING -> handlePing(message)
             WatchControlMessageType.PONG -> handlePong(message)
-            WatchControlMessageType.SYNC_REQUESTED,
-            WatchControlMessageType.SYNC_SNAPSHOT,
-            -> Unit
+            WatchControlMessageType.SYNC_REQUESTED -> syncRequestConsumer?.onSyncRequested(message)
+            WatchControlMessageType.SYNC_SNAPSHOT -> Unit
         }
     }
 

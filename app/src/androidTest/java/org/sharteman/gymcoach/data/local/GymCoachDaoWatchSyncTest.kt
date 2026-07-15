@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -163,6 +165,47 @@ class GymCoachDaoWatchSyncTest {
         assertEquals(OUTBOX_EVENT_ID, dao.getWatchOutboxEvent(OUTBOX_EVENT_ID)?.eventId)
         assertEquals("ACK_SESSION_MISMATCH", dao.getWatchConflicts(SESSION_ID).single().errorCode)
         assertEquals(1L, dao.getWatchPeer(DEVICE_ID)?.lastRevision)
+    }
+
+    @Test
+    fun watchFinishAtomicallyClosesSessionQueuesServerFinishAndRemovesActiveRuntime() = runBlocking {
+        val session = LocalSessionEntity(
+            id = SESSION_ID,
+            workoutId = "workout_watch_finish",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        dao.saveSession(session)
+        dao.saveActiveWorkoutRuntime(
+            ActiveWorkoutRuntimeEntity(
+                sessionId = SESSION_ID,
+                workoutId = session.workoutId,
+                revision = 1,
+                updatedAtEpochMs = 1_000,
+            ),
+        )
+        val processed = WatchProcessedEventEntity(
+            eventId = EVENT_ID,
+            sessionId = SESSION_ID,
+            revision = 2,
+            processedAtEpochMs = 2_000,
+            canonicalEventHash = HASH,
+            resultRevision = 2,
+        )
+        val finished = session.copy(finishedAt = "2026-07-15T11:00:00Z")
+        val operation = SyncOutboxEntity(
+            operationId = "op_watch_finish",
+            type = "FinishSessionOperation",
+            payloadJson = "{}",
+        )
+
+        assertTrue(dao.applyWatchFinishedEvent(processed, finished, operation))
+
+        assertEquals(finished.finishedAt, dao.getSession(SESSION_ID)?.finishedAt)
+        assertTrue(dao.getOpenSessions().isEmpty())
+        assertNull(dao.getActiveWorkoutRuntime(SESSION_ID))
+        assertEquals(EVENT_ID, dao.getProcessedWatchEvent(EVENT_ID)?.eventId)
+        assertEquals("op_watch_finish", dao.queuedOperations().single().operationId)
     }
 
     private fun watchEvent(eventId: String, sessionId: String, revision: Long) = WatchEventEnvelopeDto(

@@ -18,6 +18,7 @@ import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
+import org.sharteman.gymcoach.data.local.WatchConflictEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
@@ -466,6 +467,30 @@ class GymCoachRepository(
         runtime: ActiveWorkoutRuntimeEntity,
     ): Boolean = dao.applyWatchRuntimeEvent(processed, runtime)
 
+    suspend fun applyWatchFinishedEvent(
+        processed: WatchProcessedEventEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        finishedAtEpochMs: Long,
+    ): Boolean {
+        val session = dao.getSession(runtime.sessionId) ?: return false
+        val finishedAt = Instant.ofEpochMilli(finishedAtEpochMs).toString()
+        val updated = session.copy(finishedAt = finishedAt)
+        val operation = FinishSessionOperation(
+            operationId = operationId(),
+            sessionId = session.id,
+            finishedAt = finishedAt,
+            notes = session.notes,
+            sessionRpe = session.sessionRpe,
+        )
+        val applied = dao.applyWatchFinishedEvent(
+            processed = processed,
+            session = updated,
+            operation = outbox(operation),
+        )
+        if (applied) scheduleSyncNow()
+        return applied
+    }
+
     suspend fun applyWatchSetEvent(
         processed: WatchProcessedEventEntity,
         set: LocalSetEntity,
@@ -638,25 +663,31 @@ class GymCoachRepository(
         require(weight.isFinite() && weight in 0.0..500.0) { "Weight must be between 0 and 500." }
         require(reps in 1..100) { "Repetitions must be between 1 and 100." }
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
-        val updated = set.copy(weight = weight, reps = reps, rir = rir, deleted = false)
-        dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+        var saved = false
         watchCommandMutex.withLock {
-            advancePhoneRuntime(set.sessionId, System.currentTimeMillis()) { it }
+            val current = dao.getSet(set.id) ?: return@withLock
+            if (current.deleted) return@withLock
+            val updated = current.copy(weight = weight, reps = reps, rir = rir, deleted = false)
+            dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
+            advancePhoneRuntime(updated.sessionId, System.currentTimeMillis()) { it }
                 ?.let { runtime ->
                     publishWatchSafely { watchCommandPublisher.setUpdated(updated, runtime.revision) }
                 }
+            saved = true
         }
-        scheduleSyncNow()
+        if (saved) scheduleSyncNow()
     }
 
     suspend fun deleteSet(setId: String) {
-        val set = dao.getSet(setId) ?: return
-        dao.deleteSetAndOperation(
-            setId = setId,
-            operation = outbox(DeleteSetOperation(operationId(), set.id)),
-        )
-        val deletedAt = System.currentTimeMillis()
+        var deleted = false
         watchCommandMutex.withLock {
+            val set = dao.getSet(setId)?.takeUnless { it.deleted } ?: return@withLock
+            dao.deleteSetAndOperation(
+                setId = setId,
+                operation = outbox(DeleteSetOperation(operationId(), set.id)),
+            )
+            deleted = true
+            val deletedAt = System.currentTimeMillis()
             val current = dao.getActiveWorkoutRuntime(set.sessionId) ?: return@withLock
             val updated = advancePhoneRuntime(set.sessionId, deletedAt) { runtime ->
                 if (runtime.activeSetId == set.id) {
@@ -675,7 +706,7 @@ class GymCoachRepository(
                 )
             }
         }
-        scheduleSyncNow()
+        if (deleted) scheduleSyncNow()
     }
 
     suspend fun finishSession(sessionId: String, notes: String?, sessionRpe: Int?) {
@@ -1073,8 +1104,26 @@ class GymCoachRepository(
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            // The phone mutation and server outbox are authoritative. A watch
-            // transport or mapping failure must never make the user repeat it.
+            val runtime = dao.getLatestActiveWorkoutRuntime()
+            val conflictId = UUID.randomUUID().toString()
+            runCatching {
+                dao.saveWatchConflict(
+                    WatchConflictEntity(
+                        conflictId = conflictId,
+                        sessionId = runtime?.sessionId ?: "phone_watch_command",
+                        eventId = conflictId,
+                        entityType = "PHONE_COMMAND",
+                        entityId = conflictId,
+                        localRevision = runtime?.revision ?: 0,
+                        remoteRevision = 0,
+                        localEventJson = "",
+                        remoteEventJson = "",
+                        status = "UNRESOLVED",
+                        errorCode = "PHONE_EVENT_MAPPING_FAILED",
+                        detectedAtEpochMs = System.currentTimeMillis(),
+                    ),
+                )
+            }
         }
     }
 

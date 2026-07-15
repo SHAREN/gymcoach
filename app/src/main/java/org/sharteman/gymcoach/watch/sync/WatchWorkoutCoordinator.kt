@@ -57,13 +57,23 @@ class WatchWorkoutCoordinator(
             WatchInboxRegistration.NEW -> Unit
         }
         if (event.type == WatchEventType.SYNC_REQUESTED) {
-            gateway.buildSnapshot(event.sessionId)?.let { sink.sendSnapshot(it) }
+            val sent = sendSnapshotForSession(event.sessionId)
+            val result = org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult(
+                status = if (sent) {
+                    org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.APPLIED
+                } else {
+                    org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.REJECTED
+                },
+                revision = event.revision,
+                errorCode = if (sent) null else "SESSION_NOT_FOUND",
+            )
             syncPersistence.finishIncoming(
                 event.eventId,
-                org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.APPLIED,
-                event.revision,
-                null,
+                result.status,
+                result.revision,
+                result.errorCode,
             )
+            sendAck(event, result)
             return
         }
         val result = gateway.applyWatchEvent(event)
@@ -145,6 +155,12 @@ class WatchWorkoutCoordinator(
                 payload = codec.encodeActiveExerciseChangedPayload(change.payload),
             ),
         )
+        return true
+    }
+
+    suspend fun sendSnapshotForSession(sessionId: String): Boolean {
+        val snapshot = gateway.buildSnapshot(sessionId) ?: return false
+        sink.sendSnapshot(snapshot)
         return true
     }
 

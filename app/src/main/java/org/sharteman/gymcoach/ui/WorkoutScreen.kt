@@ -450,7 +450,7 @@ fun WorkoutScreen(
                         onAdd30 = {
                             val updatedEnd = restEndsAt + 30_000
                             restEndsAt = updatedEnd
-                            scope.launch { repository.updateRest(sessionId, updatedEnd, "MANUAL_EXTEND") }
+                            scope.launch { repository.updateRest(sessionId, updatedEnd, "ADD_30_SECONDS") }
                         },
                         onSkip = {
                             restEndsAt = 0

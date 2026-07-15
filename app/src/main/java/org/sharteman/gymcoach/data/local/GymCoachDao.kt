@@ -480,6 +480,19 @@ interface GymCoachDao {
     }
 
     @Transaction
+    suspend fun applyWatchFinishedEvent(
+        processed: WatchProcessedEventEntity,
+        session: LocalSessionEntity,
+        operation: SyncOutboxEntity,
+    ): Boolean {
+        if (insertProcessedWatchEvent(processed) == -1L) return false
+        saveSession(session)
+        enqueue(operation)
+        deleteActiveWorkoutRuntime(session.id)
+        return true
+    }
+
+    @Transaction
     suspend fun applyWatchSetEvent(
         processed: WatchProcessedEventEntity,
         set: LocalSetEntity,
