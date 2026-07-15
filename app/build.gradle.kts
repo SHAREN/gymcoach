@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Exec
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,8 +16,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -83,4 +85,26 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+val repositoryRoot = rootProject.projectDir.parentFile
+val debugApk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")
+val publishDebugApk = tasks.register<Exec>("publishDebugApk") {
+    group = "distribution"
+    description = "Publishes the latest debug APK for the GymCoach web download endpoint."
+    dependsOn("packageDebug")
+    workingDir(repositoryRoot)
+    environment(
+        "ANDROID_RELEASE_DIR",
+        repositoryRoot.resolve("data/android-release").absolutePath,
+    )
+    commandLine(
+        "node",
+        repositoryRoot.resolve("scripts/publish-android-apk.mjs").absolutePath,
+        debugApk.get().asFile.absolutePath,
+    )
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    dependsOn(publishDebugApk)
 }

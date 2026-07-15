@@ -25,6 +25,12 @@
     <string name="resume">Продолжить</string>
     <string name="logout">Выйти</string>
     <string name="weight">Вес</string>
+    <string name="displayed_load">Вес на шкале</string>
+    <string name="select_equipment">Оборудование</string>
+    <string name="equipment_selection_required">Выберите тренажёр для этого подхода.</string>
+    <string name="exercise_equipment_unavailable">Упражнение недоступно на сохранённом оборудовании этого зала.</string>
+    <string name="nominal_resistance_estimate">Оценочное номинальное сопротивление: %1$s кг</string>
+    <string name="nominal_short">Номинально: %1$s кг</string>
     <string name="reps">Повторы</string>
     <string name="rir">RIR</string>
     <string name="notes">Заметки</string>

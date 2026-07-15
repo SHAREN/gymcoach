@@ -8,6 +8,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
@@ -16,6 +20,7 @@ import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
+import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
@@ -180,6 +185,7 @@ class GymCoachRepository(
         reps: Int,
         rir: Int?,
         notes: String?,
+        equipment: GymEquipmentDto? = null,
         isWarmup: Boolean = false,
         isDropSet: Boolean = false,
     ): LocalSetEntity {
@@ -194,10 +200,21 @@ class GymCoachRepository(
         val recoverySec = previous?.let {
             Duration.between(Instant.parse(it.completedAt), now).seconds.coerceIn(0, 86_400).toInt()
         }
+        val nominalResistance = equipment
+            ?.takeIf { it.loadType == "SELECTORIZED" }
+            ?.let { roundLoad(weight * it.selectedLoadMultiplier) }
         val set = LocalSetEntity(
             id = entityId("set"),
             sessionId = sessionId,
             exerciseId = exerciseId,
+            gymEquipmentId = equipment?.id,
+            equipmentNameSnapshot = equipment?.name,
+            selectedLoadKg = equipment?.let { roundLoad(weight) },
+            selectedLoadMultiplierSnapshot = equipment?.let { roundLoad(it.selectedLoadMultiplier) },
+            nominalResistanceKg = nominalResistance,
+            equipmentLoadSnapshotJson = equipment?.let {
+                equipmentSnapshotJson(it, roundLoad(weight), nominalResistance)
+            },
             setNumber = (exerciseSets.maxOfOrNull { it.setNumber } ?: 0) + 1,
             weight = weight,
             reps = reps,
@@ -217,7 +234,32 @@ class GymCoachRepository(
         require(weight.isFinite() && weight in 0.0..500.0) { "Weight must be between 0 and 500." }
         require(reps in 1..100) { "Repetitions must be between 1 and 100." }
         require(rir == null || rir in 0..5) { "RIR must be between 0 and 5." }
-        val updated = set.copy(weight = weight, reps = reps, rir = rir, deleted = false)
+        val selectedLoad = set.selectedLoadKg?.let { roundLoad(weight) }
+        val nominalResistance = if (
+            selectedLoad != null &&
+            set.selectedLoadMultiplierSnapshot != null &&
+            (
+                snapshotLoadType(set.equipmentLoadSnapshotJson) == "SELECTORIZED" ||
+                    set.nominalResistanceKg != null
+                )
+        ) {
+            roundLoad(selectedLoad * set.selectedLoadMultiplierSnapshot)
+        } else {
+            set.nominalResistanceKg
+        }
+        val updated = set.copy(
+            weight = weight,
+            reps = reps,
+            rir = rir,
+            selectedLoadKg = selectedLoad,
+            nominalResistanceKg = nominalResistance,
+            equipmentLoadSnapshotJson = updateEquipmentSnapshotJson(
+                set.equipmentLoadSnapshotJson,
+                selectedLoad,
+                nominalResistance,
+            ),
+            deleted = false,
+        )
         dao.saveSetAndOperation(updated, outbox(upsertOperation(updated)))
         scheduleSyncNow()
     }
@@ -388,6 +430,12 @@ class GymCoachRepository(
                         id = set.id,
                         sessionId = set.sessionId,
                         exerciseId = set.exerciseId,
+                        gymEquipmentId = set.gymEquipmentId,
+                        equipmentNameSnapshot = set.equipmentNameSnapshot,
+                        selectedLoadKg = set.selectedLoadKg,
+                        selectedLoadMultiplierSnapshot = set.selectedLoadMultiplierSnapshot,
+                        nominalResistanceKg = set.nominalResistanceKg,
+                        equipmentLoadSnapshotJson = set.equipmentLoadSnapshot?.toString(),
                         setNumber = set.setNumber,
                         weight = set.weight,
                         reps = set.reps,
@@ -413,6 +461,7 @@ class GymCoachRepository(
             id = set.id,
             sessionId = set.sessionId,
             exerciseId = set.exerciseId,
+            gymEquipmentId = set.gymEquipmentId,
             setNumber = set.setNumber,
             weight = set.weight,
             reps = set.reps,
@@ -437,6 +486,58 @@ class GymCoachRepository(
 
     private fun entityId(type: String) = "mob_${type}_${UUID.randomUUID().toString().replace("-", "")}"
     private fun operationId() = "op_${UUID.randomUUID().toString().replace("-", "")}"
+
+    private fun equipmentSnapshotJson(
+        equipment: GymEquipmentDto,
+        selectedLoadKg: Double,
+        nominalResistanceKg: Double?,
+    ): String = buildJsonObject {
+        put("version", 1)
+        put("loadType", equipment.loadType)
+        put("equipmentType", equipment.equipmentType)
+        put("selectedLoadKg", selectedLoadKg)
+        put("selectedLoadMultiplier", roundLoad(equipment.selectedLoadMultiplier))
+        if (nominalResistanceKg == null) put("nominalResistanceKg", JsonNull)
+        else put("nominalResistanceKg", nominalResistanceKg)
+        put("baseLoadKg", equipment.baseLoadKg)
+        put("loadingSides", equipment.loadingSides)
+        val pool = equipment.platePool
+        if (pool == null) {
+            put("platePool", JsonNull)
+        } else {
+            put(
+                "platePool",
+                buildJsonObject {
+                    put("id", pool.id)
+                    put("name", pool.name)
+                    put("compatibilityKey", pool.compatibilityKey)
+                },
+            )
+        }
+    }.toString()
+
+    private fun snapshotLoadType(snapshotJson: String?): String? = runCatching {
+        snapshotJson?.let { api.json.parseToJsonElement(it).jsonObject["loadType"]?.toString()?.trim('"') }
+    }.getOrNull()
+
+    private fun updateEquipmentSnapshotJson(
+        snapshotJson: String?,
+        selectedLoadKg: Double?,
+        nominalResistanceKg: Double?,
+    ): String? {
+        if (snapshotJson == null || selectedLoadKg == null) return snapshotJson
+        return runCatching {
+            val current = api.json.parseToJsonElement(snapshotJson).jsonObject
+            buildJsonObject {
+                current.forEach { (key, value) -> put(key, value) }
+                put("selectedLoadKg", selectedLoadKg)
+                if (nominalResistanceKg == null) put("nominalResistanceKg", JsonNull)
+                else put("nominalResistanceKg", nominalResistanceKg)
+            }.toString()
+        }.getOrDefault(snapshotJson)
+    }
+
+    private fun roundLoad(value: Double): Double = kotlin.math.round(value * 100) / 100
 }
 
 internal data class PendingMutationTargets(

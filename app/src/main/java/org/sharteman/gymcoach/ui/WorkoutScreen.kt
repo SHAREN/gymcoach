@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,8 +64,12 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
-import org.sharteman.gymcoach.training.constraintsFor
+import org.sharteman.gymcoach.training.constrainGymWeight
+import org.sharteman.gymcoach.training.isAchievableLoad
+import org.sharteman.gymcoach.training.nominalResistanceKg
 import org.sharteman.gymcoach.training.recommendNextSet
+import org.sharteman.gymcoach.training.resolveExerciseInventory
+import org.sharteman.gymcoach.training.selectedEquipment
 import java.time.Duration
 import java.time.Instant
 import java.util.Locale
@@ -114,7 +119,16 @@ fun WorkoutScreen(
         targetRIR = returnRecommendation?.targetRIR ?: current.targetRIR,
     )
     val currentSets = allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
-    val lastWorking = currentSets.lastOrNull { !it.isWarmup && !it.isDropSet }
+    val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
+    var selectedEquipmentId by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
+    val inventory = resolveExerciseInventory(target, gym, selectedEquipmentId)
+    val selectedProfile = selectedEquipment(inventory)
+    val selectedEquipmentDto = gym?.equipment
+        ?.firstOrNull { it.id == selectedProfile?.equipmentId }
+    val comparableSets = selectedProfile?.let { profile ->
+        currentSets.filter { it.gymEquipmentId == profile.equipmentId }
+    } ?: currentSets
+    val lastWorking = comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
     val recoverySec = lastWorking?.let {
         Duration.between(Instant.parse(it.completedAt), Instant.now()).seconds.coerceIn(0, 86_400).toInt()
     }
@@ -131,15 +145,17 @@ fun WorkoutScreen(
     val readinessBlocksIncrease = bootstrap?.readiness?.let { readiness ->
         readiness.readiness <= 2 || (readiness.soreness?.get(current.exercise.muscleGroup) ?: 0) >= 4
     } ?: false
-    val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
+    val lastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
+    val historyMatchesSelectedEquipment =
+        lastPerformance?.gymEquipmentId == selectedProfile?.equipmentId
     val recommendation = recommendNextSet(
         programExercise = target,
-        completedSets = currentSets,
+        completedSets = comparableSets,
         recoverySec = recoverySec,
         sameMuscleSuperset = sameMuscleSuperset,
         allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
-        maxWeight = returnRecommendation?.weightCeiling,
-        constraints = constraintsFor(target, gym),
+        maxWeight = returnRecommendation?.weightCeiling?.takeIf { historyMatchesSelectedEquipment },
+        constraints = inventory.constraints,
     )
 
     var weightText by rememberSaveable(current.id) { mutableStateOf("") }
@@ -147,11 +163,13 @@ fun WorkoutScreen(
     var rirText by rememberSaveable(current.id) { mutableStateOf(target.targetRIR.toString()) }
     var notesText by rememberSaveable(current.id) { mutableStateOf("") }
 
-    LaunchedEffect(current.id, currentSets.size, recommendation) {
-        val lastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
-        val initialWeight = recommendation?.weight
-            ?: returnRecommendation?.suggestedWeight
-            ?: lastPerformance?.maxWeight
+    LaunchedEffect(current.id, comparableSets.size, recommendation, selectedProfile?.equipmentId) {
+        val candidateWeight = recommendation?.weight
+            ?: returnRecommendation?.suggestedWeight?.takeIf { historyMatchesSelectedEquipment }
+            ?: lastPerformance?.maxWeight?.takeIf { historyMatchesSelectedEquipment }
+        val initialWeight = candidateWeight?.let {
+            constrainGymWeight(it, it, inventory.constraints)
+        }
         if (initialWeight != null) weightText = formatWeight(initialWeight)
         repsText = (recommendation?.reps ?: target.targetRepsMin).toString()
         rirText = (recommendation?.rir ?: target.targetRIR).toString()
@@ -210,6 +228,50 @@ fun WorkoutScreen(
                     )
                 }
             }
+            if (!inventory.isAvailable) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.exercise_equipment_unavailable),
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                }
+            }
+            if (inventory.equipment.isNotEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.select_equipment),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(inventory.equipment, key = { it.equipmentId }) { equipment ->
+                                FilterChip(
+                                    selected = equipment.equipmentId == selectedProfile?.equipmentId,
+                                    onClick = { selectedEquipmentId = equipment.equipmentId },
+                                    label = { Text(equipment.equipmentName) },
+                                )
+                            }
+                        }
+                        if (inventory.requiresEquipmentSelection && selectedProfile == null) {
+                            Text(
+                                stringResource(R.string.equipment_selection_required),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
             if (recommendation != null) {
                 item {
                     Card(
@@ -240,11 +302,28 @@ fun WorkoutScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    if (inventory.weightOptions.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(inventory.weightOptions, key = { it }) { load ->
+                                FilterChip(
+                                    selected = weightText.replace(',', '.').toDoubleOrNull() == load,
+                                    onClick = { weightText = formatWeight(load) },
+                                    label = { Text("${formatWeight(load)} kg") },
+                                )
+                            }
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         NumericField(
                             value = weightText,
                             onValueChange = { weightText = it },
-                            label = stringResource(R.string.weight),
+                            label = stringResource(
+                                if (selectedProfile?.loadType == "SELECTORIZED") {
+                                    R.string.displayed_load
+                                } else {
+                                    R.string.weight
+                                },
+                            ),
                             decimal = true,
                             modifier = Modifier.weight(1.25f),
                         )
@@ -259,6 +338,20 @@ fun WorkoutScreen(
                             onValueChange = { rirText = it },
                             label = stringResource(R.string.rir),
                             modifier = Modifier.weight(0.8f),
+                        )
+                    }
+                    val enteredWeight = weightText.replace(',', '.').toDoubleOrNull()
+                    val nominalResistance = enteredWeight?.let {
+                        nominalResistanceKg(selectedProfile, it)
+                    }
+                    if (nominalResistance != null) {
+                        Text(
+                            stringResource(
+                                R.string.nominal_resistance_estimate,
+                                formatWeight(nominalResistance),
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     OutlinedTextField(
@@ -280,6 +373,7 @@ fun WorkoutScreen(
                                     reps = reps,
                                     rir = rir,
                                     notes = notesText,
+                                    equipment = selectedEquipmentDto,
                                 )
                                 notesText = ""
                                 restEndsAt = System.currentTimeMillis() + target.restSec * 1000L
@@ -292,7 +386,12 @@ fun WorkoutScreen(
                                 }
                             }
                         },
-                        enabled = isValidSetInput(weightText, repsText, rirText),
+                        enabled = isValidSetInput(weightText, repsText, rirText) &&
+                            inventory.isAvailable &&
+                            (!inventory.requiresEquipmentSelection || selectedProfile != null) &&
+                            enteredWeight?.let {
+                                isAchievableLoad(inventory.constraints, it)
+                            } == true,
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) {
                         Text(stringResource(R.string.confirm_set))
@@ -326,6 +425,10 @@ fun WorkoutScreen(
     editSet?.let { set ->
         EditSetDialog(
             set = set,
+            allowedWeights = inventory.equipment
+                .firstOrNull { it.equipmentId == set.gymEquipmentId }
+                ?.attainableLoads
+                .orEmpty(),
             onDismiss = { editSet = null },
             onSave = { weight, reps, rir ->
                 scope.launch { repository.updateSet(set, weight, reps, rir) }
@@ -397,7 +500,23 @@ private fun SetRow(set: LocalSetEntity, onEdit: () -> Unit, onDelete: () -> Unit
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(stringResource(R.string.set_row, set.setNumber), modifier = Modifier.width(88.dp))
-        Text("${formatWeight(set.weight)} kg", modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("${formatWeight(set.selectedLoadKg ?: set.weight)} kg")
+            set.equipmentNameSnapshot?.let { name ->
+                Text(
+                    name,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            set.nominalResistanceKg?.let { nominal ->
+                Text(
+                    stringResource(R.string.nominal_short, formatWeight(nominal)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Text("${set.reps}", modifier = Modifier.width(42.dp))
         Text("RIR ${set.rir ?: "-"}", modifier = Modifier.width(64.dp))
         IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, contentDescription = null) }
@@ -428,6 +547,7 @@ private fun NumericField(
 @Composable
 private fun EditSetDialog(
     set: LocalSetEntity,
+    allowedWeights: List<Double>,
     onDismiss: () -> Unit,
     onSave: (Double, Int, Int?) -> Unit,
 ) {
@@ -438,10 +558,23 @@ private fun EditSetDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.edit)) },
         text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumericField(weight, { weight = it }, stringResource(R.string.weight), Modifier.weight(1f), true)
-                NumericField(reps, { reps = it }, stringResource(R.string.reps), Modifier.weight(1f))
-                NumericField(rir, { rir = it }, stringResource(R.string.rir), Modifier.weight(1f))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (allowedWeights.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(allowedWeights, key = { it }) { load ->
+                            FilterChip(
+                                selected = weight.replace(',', '.').toDoubleOrNull() == load,
+                                onClick = { weight = formatWeight(load) },
+                                label = { Text("${formatWeight(load)} kg") },
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NumericField(weight, { weight = it }, stringResource(R.string.weight), Modifier.weight(1f), true)
+                    NumericField(reps, { reps = it }, stringResource(R.string.reps), Modifier.weight(1f))
+                    NumericField(rir, { rir = it }, stringResource(R.string.rir), Modifier.weight(1f))
+                }
             }
         },
         confirmButton = {
@@ -452,7 +585,8 @@ private fun EditSetDialog(
                     val parsedRir = if (rir.isBlank()) null else rir.toIntOrNull() ?: return@TextButton
                     onSave(parsedWeight, parsedReps, parsedRir)
                 },
-                enabled = isValidSetInput(weight, reps, rir),
+                enabled = isValidSetInput(weight, reps, rir) &&
+                    (allowedWeights.isEmpty() || weight.replace(',', '.').toDoubleOrNull() in allowedWeights),
             ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
