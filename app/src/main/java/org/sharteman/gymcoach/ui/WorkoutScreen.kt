@@ -236,6 +236,7 @@ fun WorkoutScreen(
             recommendations = equipmentReturnRecommendations[exercise.id],
             fallback = legacyReturnRecommendations[exercise.id],
             fallbackPerformance = bootstrap?.lastPerformances?.get(exercise.exerciseId),
+            gymId = session?.gymId,
             gymEquipmentId = equipmentIdsByExercise[exercise.id],
         )
         recommendation?.let { exercise.id to it }
@@ -247,6 +248,7 @@ fun WorkoutScreen(
     val lastPerformance = selectLastPerformanceForEquipment(
         performances = bootstrap?.lastPerformancesByEquipment?.get(current.exerciseId),
         fallback = legacyLastPerformance,
+        gymId = session?.gymId,
         gymEquipmentId = currentEquipmentId,
     )
     val returnRecommendation = effectiveReturnRecommendations[current.id]

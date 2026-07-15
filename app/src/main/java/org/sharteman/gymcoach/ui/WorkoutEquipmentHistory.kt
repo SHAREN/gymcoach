@@ -9,30 +9,44 @@ import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.training.resolveExerciseInventory
 import org.sharteman.gymcoach.training.selectedEquipment
 
-internal fun sameEquipmentIdentity(first: String?, second: String?): Boolean = first == second
+internal fun sameEquipmentIdentity(
+    firstGymId: String?,
+    firstEquipmentId: String?,
+    secondGymId: String?,
+    secondEquipmentId: String?,
+): Boolean = firstGymId == secondGymId && firstEquipmentId == secondEquipmentId
 
 internal fun selectLastPerformanceForEquipment(
     performances: List<LastPerformanceDto>?,
     fallback: LastPerformanceDto?,
+    gymId: String?,
     gymEquipmentId: String?,
 ): LastPerformanceDto? = performances
     ?.firstOrNull { performance ->
-        sameEquipmentIdentity(performance.gymEquipmentId, gymEquipmentId)
+        sameEquipmentIdentity(performance.gymId, performance.gymEquipmentId, gymId, gymEquipmentId)
     }
     ?: fallback?.takeIf { performance ->
-        sameEquipmentIdentity(performance.gymEquipmentId, gymEquipmentId)
+        sameEquipmentIdentity(performance.gymId, performance.gymEquipmentId, gymId, gymEquipmentId)
     }
 
 internal fun selectReturnRecommendationForEquipment(
     recommendations: List<EquipmentReturnRecommendationDto>?,
     fallback: ReturnRecommendationDto?,
     fallbackPerformance: LastPerformanceDto?,
+    gymId: String?,
     gymEquipmentId: String?,
 ): ReturnRecommendationDto? = recommendations
-    ?.firstOrNull { item -> sameEquipmentIdentity(item.gymEquipmentId, gymEquipmentId) }
+    ?.firstOrNull { item ->
+        sameEquipmentIdentity(item.gymId, item.gymEquipmentId, gymId, gymEquipmentId)
+    }
     ?.recommendation
     ?: fallback?.takeIf {
-        sameEquipmentIdentity(fallbackPerformance?.gymEquipmentId, gymEquipmentId)
+        sameEquipmentIdentity(
+            fallbackPerformance?.gymId,
+            fallbackPerformance?.gymEquipmentId,
+            gymId,
+            gymEquipmentId,
+        )
     }
 
 internal fun resolveWorkoutEquipmentId(
