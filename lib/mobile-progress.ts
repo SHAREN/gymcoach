@@ -279,6 +279,7 @@ export function buildMobileWeeklyVolume(
 export async function buildMobileProgress(
   userId: string,
   now: Date = new Date(),
+  includeExerciseId?: string,
 ): Promise<MobileProgressSnapshot> {
   const since = new Date(now);
   since.setUTCHours(0, 0, 0, 0);
@@ -310,13 +311,25 @@ export async function buildMobileProgress(
       where: {
         userId,
         category: { not: 'CARDIO' },
-        sets: {
-          some: {
-            isWarmup: false,
-            completedAt: { gte: since },
-            session: { userId },
+        OR: [
+          {
+            sets: {
+              some: {
+                isWarmup: false,
+                completedAt: { gte: since },
+                session: { userId },
+              },
+            },
           },
-        },
+          ...(includeExerciseId
+            ? [
+                {
+                  id: includeExerciseId,
+                  sets: { some: { isWarmup: false, session: { userId } } },
+                },
+              ]
+            : []),
+        ],
       },
       orderBy: { name: 'asc' },
       select: {

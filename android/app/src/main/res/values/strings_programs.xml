@@ -34,6 +34,7 @@
     <string name="program_superset_group">Superset group</string>
     <string name="program_targets_summary">%1$d sets x %2$d-%3$d, RIR %4$d, rest %5$ds</string>
     <string name="exercise_catalog_title">Exercise catalog</string>
+    <string name="back_to_exercise_catalog">Back to exercise catalog</string>
     <string name="exercise_catalog_search">Search exercises</string>
     <string name="exercise_catalog_empty">No exercises match the filters.</string>
     <string name="exercise_trained_days">Training days: %1$d</string>

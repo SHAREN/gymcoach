@@ -18,6 +18,8 @@ import org.sharteman.gymcoach.data.local.SyncOutboxEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
+import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySetDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
@@ -51,6 +53,8 @@ class GymCoachRepository(
     private val schedulePeriodicSync: () -> Unit,
 ) {
     private val syncMutex = Mutex()
+    private val bootstrapCacheMutex = Mutex()
+    private val progressRefreshMutex = Mutex()
     private val endpointResolver = ServerEndpointResolver(accountStore)
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
         cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
@@ -237,7 +241,10 @@ class GymCoachRepository(
                 }
                 entry.operationId.takeIf { related }
             }
-            dao.discardSessionChanges(sessionId, relatedOperationIds)
+            bootstrapCacheMutex.withLock {
+                val bootstrap = cachedBootstrapWithoutHistorySession(sessionId)
+                dao.discardSessionChanges(sessionId, relatedOperationIds, bootstrap)
+            }
         } else {
             dao.removeOperations(listOf(blocked.operationId))
         }
@@ -251,17 +258,18 @@ class GymCoachRepository(
         return persistBootstrap(response)
     }
 
-    suspend fun refreshProgress(): MobileProgressSnapshot {
-        val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
-        val response = endpointResolver.execute { baseUrl -> api.progress(baseUrl, token) }
-        dao.saveProgress(
-            ProgressCacheEntity(
-                payloadJson = api.json.encodeToString(response),
-                updatedAtEpochMs = System.currentTimeMillis(),
-            ),
-        )
-        return response
-    }
+    suspend fun refreshProgress(exerciseId: String? = null): MobileProgressSnapshot =
+        progressRefreshMutex.withLock {
+            val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
+            val response = endpointResolver.execute { baseUrl -> api.progress(baseUrl, token, exerciseId) }
+            dao.saveProgress(
+                ProgressCacheEntity(
+                    payloadJson = api.json.encodeToString(response),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+            response
+        }
 
     suspend fun saveReadiness(readiness: Int, sleepQuality: Int, note: String?) {
         require(readiness in 1..5) { "Readiness must be between 1 and 5." }
@@ -281,23 +289,40 @@ class GymCoachRepository(
         runCatching { refreshBootstrap() }
     }
 
-    private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse {
-        val pendingTargetUpdates = dao.queuedOperations().mapNotNull { entry ->
-            runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
-                .getOrNull() as? UpdateTargetSetsOperation
+    private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse =
+        bootstrapCacheMutex.withLock {
+            val queuedOperations = dao.queuedOperations()
+            val pendingTargetUpdates = queuedOperations.mapNotNull { entry ->
+                runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
+                    .getOrNull() as? UpdateTargetSetsOperation
+            }
+            val targets = pendingMutationTargets(queuedOperations, api.json)
+            val pendingFinishedSessions = if (targets.complete) {
+                targets.sessionIds.mapNotNull { sessionId ->
+                    dao.getSession(sessionId)
+                        ?.takeIf { it.finishedAt != null }
+                        ?.let { session -> session to dao.getAllSets(session.id) }
+                }
+            } else {
+                emptyList()
+            }
+            val historyMerged = mergeLocalExerciseHistory(
+                bootstrap = response,
+                sessions = pendingFinishedSessions,
+                deletedSessionIds = targets.deletedSessionIds,
+            )
+            val effective = pendingTargetUpdates.fold(historyMerged) { current, operation ->
+                updateProgramExerciseTargetSets(current, operation.programExerciseId, operation.targetSets)
+            }
+            dao.saveBootstrap(
+                BootstrapCacheEntity(
+                    payloadJson = api.json.encodeToString(effective),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+            importOpenSessions(effective)
+            effective
         }
-        val effective = pendingTargetUpdates.fold(response) { current, operation ->
-            updateProgramExerciseTargetSets(current, operation.programExerciseId, operation.targetSets)
-        }
-        dao.saveBootstrap(
-            BootstrapCacheEntity(
-                payloadJson = api.json.encodeToString(effective),
-                updatedAtEpochMs = System.currentTimeMillis(),
-            ),
-        )
-        importOpenSessions(effective)
-        return effective
-    }
 
     suspend fun createWebSessionCookies(): List<String> {
         return prepareWebSession().cookies
@@ -435,7 +460,25 @@ class GymCoachRepository(
             notes = updated.notes,
             sessionRpe = sessionRpe,
         )
-        dao.saveSessionAndOperation(updated, outbox(operation))
+        bootstrapCacheMutex.withLock {
+            val bootstrap = dao.getBootstrap()?.let { cached ->
+                runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
+                    .getOrNull()
+                    ?.let { current ->
+                        mergeLocalExerciseHistory(
+                            bootstrap = current,
+                            sessions = listOf(updated to dao.getAllSets(sessionId)),
+                        )
+                    }
+                    ?.let { merged ->
+                        cached.copy(
+                            payloadJson = api.json.encodeToString(merged),
+                            updatedAtEpochMs = System.currentTimeMillis(),
+                        )
+                    }
+            }
+            dao.saveFinishedSessionOperationAndBootstrap(updated, outbox(operation), bootstrap)
+        }
         scheduleSyncNow()
     }
 
@@ -464,9 +507,31 @@ class GymCoachRepository(
             entry.operationId.takeIf { related }
         }
         val operation = DeleteSessionOperation(operationId(), sessionId)
-        dao.resetSessionAndOperation(sessionId, priorOperationIds, outbox(operation))
+        bootstrapCacheMutex.withLock {
+            val bootstrap = cachedBootstrapWithoutHistorySession(sessionId)
+            dao.resetSessionAndOperation(sessionId, priorOperationIds, outbox(operation), bootstrap)
+        }
         scheduleSyncNow()
     }
+
+    private suspend fun cachedBootstrapWithoutHistorySession(sessionId: String): BootstrapCacheEntity? =
+        dao.getBootstrap()?.let { cached ->
+            runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
+                .getOrNull()
+                ?.let { current ->
+                    mergeLocalExerciseHistory(
+                        bootstrap = current,
+                        sessions = emptyList(),
+                        deletedSessionIds = setOf(sessionId),
+                    )
+                }
+                ?.let { merged ->
+                    cached.copy(
+                        payloadJson = api.json.encodeToString(merged),
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                    )
+                }
+        }
 
     suspend fun syncPending(): Boolean = syncMutex.withLock {
         val token = accountStore.getAccessToken() ?: return true
@@ -758,6 +823,54 @@ private class LoginEndpointStore(
     }
 
     override fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) = Unit
+}
+
+internal fun mergeLocalExerciseHistory(
+    bootstrap: BootstrapResponse,
+    sessions: List<Pair<LocalSessionEntity, List<LocalSetEntity>>>,
+    deletedSessionIds: Set<String> = emptySet(),
+): BootstrapResponse {
+    val localByExercise = mutableMapOf<String, MutableList<ExerciseHistorySessionDto>>()
+    for ((session, sets) in sessions) {
+        if (session.finishedAt == null || session.id in deletedSessionIds) continue
+        sets.asSequence()
+            .filterNot { it.deleted || it.isWarmup }
+            .groupBy { it.exerciseId }
+            .forEach { (exerciseId, exerciseSets) ->
+                localByExercise.getOrPut(exerciseId, ::mutableListOf) += ExerciseHistorySessionDto(
+                    sessionId = session.id,
+                    startedAt = session.startedAt,
+                    localOnly = true,
+                    sets = exerciseSets.sortedWith(compareBy<LocalSetEntity> { it.setNumber }.thenBy { it.completedAt })
+                        .map { set ->
+                            ExerciseHistorySetDto(
+                                setNumber = set.setNumber,
+                                weight = set.weight,
+                                reps = set.reps,
+                                rir = set.rir,
+                                isDropSet = set.isDropSet,
+                                durationSec = set.durationSec,
+                                distanceM = set.distanceM,
+                                avgHr = set.avgHr,
+                                maxHr = set.maxHr,
+                            )
+                        },
+                )
+            }
+    }
+
+    val exerciseIds = bootstrap.exerciseHistoryByExerciseId.keys + localByExercise.keys
+    val merged = exerciseIds.associateWith { exerciseId ->
+        val localSessions = localByExercise[exerciseId].orEmpty()
+        val localSessionIds = localSessions.mapTo(mutableSetOf()) { it.sessionId }
+        (localSessions + bootstrap.exerciseHistoryByExerciseId[exerciseId].orEmpty().filterNot { history ->
+            history.sessionId in localSessionIds || history.sessionId in deletedSessionIds
+        })
+            .sortedByDescending { it.startedAt }
+            .take(12)
+    }.filterValues { it.isNotEmpty() }
+
+    return bootstrap.copy(exerciseHistoryByExerciseId = merged)
 }
 
 class LoginInitializationException(cause: Throwable) : IOException(

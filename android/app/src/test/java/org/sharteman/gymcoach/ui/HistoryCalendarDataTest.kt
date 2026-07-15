@@ -36,6 +36,17 @@ class HistoryCalendarDataTest {
         )
     }
 
+    @Test
+    fun `history month follows the device timezone across UTC month boundary`() {
+        assertEquals(
+            "2026-08-01",
+            nativeHistoryDateKey(
+                "2026-07-31T22:30:00.000Z",
+                ZoneId.of("Asia/Yekaterinburg"),
+            ),
+        )
+    }
+
     private fun session(id: String, startedAt: String) = MobileHistorySessionDto(
         id = id,
         startedAt = startedAt,

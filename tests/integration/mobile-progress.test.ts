@@ -301,6 +301,46 @@ describe('GET /api/mobile/progress', () => {
       'Bench Press',
       'Pull-up',
     ]);
+
+    const selectedOldResponse = await progress(
+      new Request(`http://test.local/api/mobile/progress?exerciseId=${oldOnly.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(selectedOldResponse.status).toBe(200);
+    const selectedOldBody = await selectedOldResponse.json();
+    expect(
+      selectedOldBody.exercises.map((exercise: { name: string }) => exercise.name),
+    ).toEqual(['Bench Press', 'Old Only Lift', 'Pull-up']);
+    expect(
+      selectedOldBody.exercises.find(
+        (exercise: { id: string }) => exercise.id === oldOnly.id,
+      ).points,
+    ).toEqual([
+      expect.objectContaining({
+        sessionStartedAt: oldStartedAt.toISOString(),
+        maxWeight: 100,
+      }),
+    ]);
+
+    const foreignSelectedResponse = await progress(
+      new Request(`http://test.local/api/mobile/progress?exerciseId=${strangerBench.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(foreignSelectedResponse.status).toBe(200);
+    expect(
+      (await foreignSelectedResponse.json()).exercises.map(
+        (exercise: { name: string }) => exercise.name,
+      ),
+    ).toEqual(['Bench Press', 'Pull-up']);
+
+    const invalidSelectedResponse = await progress(
+      new Request('http://test.local/api/mobile/progress?exerciseId=%20%20', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(invalidSelectedResponse.status).toBe(400);
     expect(body.exercises[0]).toMatchObject({
       id: bench.id,
       name: 'Bench Press',

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
@@ -31,7 +29,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,9 +61,12 @@ import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.media.ExerciseMediaCatalog
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
+import org.sharteman.gymcoach.data.model.MobileProgressPointDto
 import org.sharteman.gymcoach.data.programs.ExerciseInput
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
+import org.sharteman.gymcoach.ui.ExerciseDetailsDialog
 import org.sharteman.gymcoach.ui.localization.equipmentTypeDisplayName
 import org.sharteman.gymcoach.ui.localization.exerciseCategoryDisplayName
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
@@ -85,9 +85,27 @@ fun ExerciseCatalogScreen(
     baseUrl: String,
     token: String,
     onBack: () -> Unit,
+    historyByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
+    progressPointsByExerciseId: Map<String, List<MobileProgressPointDto>> = emptyMap(),
+    unit: String = "KG",
+    bodyweightKg: Double? = null,
+    canFetchProgress: Boolean = true,
+    onOpenProgress: ((String) -> Unit)? = null,
+    onOpenHistory: ((String, String) -> Unit)? = null,
 ) {
     val repository = remember(baseUrl, token) { ProgramsCatalogRepository.remote(baseUrl, token) }
-    ExerciseCatalogScreen(repository, baseUrl, onBack)
+    ExerciseCatalogScreen(
+        dataSource = repository,
+        serverUrl = baseUrl,
+        onBack = onBack,
+        historyByExerciseId = historyByExerciseId,
+        progressPointsByExerciseId = progressPointsByExerciseId,
+        unit = unit,
+        bodyweightKg = bodyweightKg,
+        canFetchProgress = canFetchProgress,
+        onOpenProgress = onOpenProgress,
+        onOpenHistory = onOpenHistory,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -96,6 +114,13 @@ fun ExerciseCatalogScreen(
     dataSource: ProgramsCatalogDataSource,
     serverUrl: String,
     onBack: () -> Unit,
+    historyByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
+    progressPointsByExerciseId: Map<String, List<MobileProgressPointDto>> = emptyMap(),
+    unit: String = "KG",
+    bodyweightKg: Double? = null,
+    canFetchProgress: Boolean = true,
+    onOpenProgress: ((String) -> Unit)? = null,
+    onOpenHistory: ((String, String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var exercises by remember { mutableStateOf<List<ExerciseDto>>(emptyList()) }
@@ -220,12 +245,34 @@ fun ExerciseCatalogScreen(
         )
     }
     detail?.let { exercise ->
-        ExerciseCatalogDetailDialog(
+        ExerciseDetailsDialog(
             exercise = exercise,
+            history = historyByExerciseId[exercise.id].orEmpty(),
+            fallbackPerformance = null,
+            progressPoints = progressPointsByExerciseId[exercise.id].orEmpty(),
+            unit = unit,
+            bodyweightKg = bodyweightKg,
             serverUrl = serverUrl,
             onDismiss = { detail = null },
+            onOpenProgress = if (
+                onOpenProgress != null &&
+                (canFetchProgress || progressPointsByExerciseId.containsKey(exercise.id))
+            ) {
+                { exerciseId ->
+                    detail = null
+                    onOpenProgress(exerciseId)
+                }
+            } else null,
+            onOpenHistory = onOpenHistory?.let { openHistory ->
+                { sessionId, startedAt ->
+                    detail = null
+                    openHistory(sessionId, startedAt)
+                }
+            },
             onEdit = { detail = null; editor = exercise },
             onDelete = { detail = null; deleting = exercise },
+            backLabelRes = R.string.back_to_exercise_catalog,
+            showCloseAction = false,
         )
     }
     deleting?.let { exercise ->
@@ -314,92 +361,6 @@ private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen
 }
 
 @Composable
-private fun ExerciseCatalogDetailDialog(
-    exercise: ExerciseDto,
-    serverUrl: String,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val context = LocalContext.current
-    val media = remember(exercise.name) {
-        runCatching { ExerciseMediaCatalog.load(context).resolve(exercise.name) }.getOrNull()
-    }
-    Dialog(onDismissRequest = onDismiss) {
-        Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-            LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            exerciseDisplayName(exercise.name),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close)) }
-                    }
-                }
-                if (media != null) {
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            repeat(2) { frame ->
-                                AsyncImage(
-                                    model = media.frameUrl(serverUrl, frame),
-                                    contentDescription = exerciseDisplayName(exercise.name),
-                                    modifier = Modifier.weight(1f).aspectRatio(1f),
-                                    contentScale = ContentScale.Fit,
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    DetailRow(
-                        stringResource(R.string.exercise_muscle_group),
-                        muscleGroupDisplayName(exercise.muscleGroup),
-                    )
-                    DetailRow(
-                        stringResource(R.string.exercise_category),
-                        exerciseCategoryDisplayName(exercise.category),
-                    )
-                    DetailRow(
-                        stringResource(R.string.exercise_equipment_type),
-                        equipmentTypeDisplayName(exercise.equipmentType),
-                    )
-                    DetailRow(stringResource(R.string.exercise_default_rest), exercise.defaultRestSec.toString())
-                    exercise.notes?.takeIf { it.isNotBlank() }?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onEdit) {
-                            Icon(Icons.Outlined.Edit, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.edit))
-                        }
-                        OutlinedButton(onClick = onDelete) {
-                            Icon(Icons.Outlined.Delete, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.delete))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DetailRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
 private fun ExerciseEditorDialog(
     exercise: ExerciseDto?,
     onDismiss: () -> Unit,
@@ -416,7 +377,10 @@ private fun ExerciseEditorDialog(
     val valid = name.isNotBlank() && restValue in 15..600
 
     Dialog(onDismissRequest = onDismiss) {
-        Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().testTag("exercise-editor"),
+        ) {
             LazyColumn(
                 contentPadding = PaddingValues(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -428,7 +392,14 @@ private fun ExerciseEditorDialog(
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                item { OutlinedTextField(name, { name = it.take(120) }, label = { Text(stringResource(R.string.exercise_name)) }, modifier = Modifier.fillMaxWidth()) }
+                item {
+                    OutlinedTextField(
+                        name,
+                        { name = it.take(120) },
+                        label = { Text(stringResource(R.string.exercise_name)) },
+                        modifier = Modifier.fillMaxWidth().testTag("exercise-editor-name"),
+                    )
+                }
                 item {
                     EnumPicker(
                         stringResource(R.string.exercise_muscle_group),

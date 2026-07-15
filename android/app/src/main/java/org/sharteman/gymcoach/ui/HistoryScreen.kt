@@ -67,6 +67,7 @@ import org.sharteman.gymcoach.data.model.MobileHistorySessionDto
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
 import org.sharteman.gymcoach.data.repository.HistoryProgressDataSource
+import org.sharteman.gymcoach.data.repository.HistoryOfflineCacheMissException
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.training.toDisplayWeight
@@ -117,7 +118,14 @@ fun HistoryScreen(
                 showingCache = false
             }
             .onFailure { throwable ->
-                error = throwable.message ?: context.getString(R.string.history_load_error)
+                error = if (
+                    cached == null &&
+                    throwable is HistoryOfflineCacheMissException
+                ) {
+                    context.getString(R.string.history_offline_unavailable)
+                } else {
+                    throwable.message ?: context.getString(R.string.history_load_error)
+                }
             }
         loading = false
     }
@@ -535,6 +543,9 @@ private fun HistorySessionDetail(
 
 @Composable
 private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String) {
+    val context = historyLocaleContext(LocalContext.current)
+    val kilometerUnit = context.getString(R.string.history_kilometer_unit)
+    val meterUnit = context.getString(R.string.history_meter_unit)
     Card(
         shape = RoundedCornerShape(9.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
@@ -565,8 +576,8 @@ private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String
                 if (exercise.category == "CARDIO") {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         HistoryCell(set.setNumber.toString(), 0.5f)
-                        HistoryCell(formatDurationSeconds(set.durationSec), 1f)
-                        HistoryCell(formatDistanceMeters(set.distanceM), 1f)
+                        HistoryCell(formatHistoryDuration(set.durationSec), 1f)
+                        HistoryCell(formatHistoryDistance(set.distanceM, kilometerUnit, meterUnit), 1f)
                         HistoryCell(set.avgHr?.let { "$it" } ?: "-", 0.8f)
                         HistoryCell(set.maxHr?.let { "$it" } ?: "-", 0.8f)
                     }
@@ -687,19 +698,17 @@ private fun formatHistoryDateTime(value: String): String = runCatching {
         .format(DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", Locale.getDefault()))
 }.getOrElse { value }
 
-private fun formatDurationSeconds(value: Int?): String {
-    val seconds = value ?: return "-"
-    return "%d:%02d".format(seconds / 60, seconds % 60)
+@Composable
+private fun formatCardioSummary(value: MobileHistoryCardioDto): String {
+    val context = historyLocaleContext(LocalContext.current)
+    val distance = formatHistoryDistance(
+        value.distanceM,
+        context.getString(R.string.history_kilometer_unit),
+        context.getString(R.string.history_meter_unit),
+    )
+    return listOfNotNull(
+        formatHistoryDuration(value.durationSec),
+        distance.takeUnless { it == "-" },
+        value.avgHr?.let { context.getString(R.string.history_heart_rate_value, it) },
+    ).joinToString(" · ")
 }
-
-private fun formatDistanceMeters(value: Double?): String = when {
-    value == null || value <= 0 -> "-"
-    value >= 1000 -> String.format(Locale.getDefault(), "%.2f km", value / 1000.0)
-    else -> "${value.toInt()} m"
-}
-
-private fun formatCardioSummary(value: MobileHistoryCardioDto): String = listOfNotNull(
-    formatDurationSeconds(value.durationSec),
-    formatDistanceMeters(value.distanceM).takeUnless { it == "-" },
-    value.avgHr?.let { "$it bpm" },
-).joinToString(" · ")

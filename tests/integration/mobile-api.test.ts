@@ -217,7 +217,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
       activeProgram: { name: 'Offline block' },
       exerciseHistoryByExerciseId: {},
@@ -229,7 +229,7 @@ describe('Android mobile API', () => {
     });
   });
 
-  it('returns up to 12 recent completed strength sessions per exercise', async () => {
+  it('returns up to 12 recent completed sessions per exercise', async () => {
     const seeded = await seedUser('mobile-history@test.dev');
     const cardio = await db.exercise.create({
       data: {
@@ -284,6 +284,9 @@ describe('Android mobile API', () => {
                 weight: 0,
                 reps: 1,
                 durationSec: 1_800,
+                distanceM: 5_000,
+                avgHr: 142,
+                maxHr: 166,
                 completedAt: new Date(startedAt.getTime() + 240_000),
               },
             ],
@@ -333,11 +336,48 @@ describe('Android mobile API', () => {
       sessionId: 'mobile_history_session_13',
       startedAt: '2026-01-14T10:00:00.000Z',
       sets: [
-        { setNumber: 2, weight: 88, reps: 8, rir: 2, isDropSet: false },
-        { setNumber: 3, weight: 93, reps: 6, rir: 1, isDropSet: true },
+        {
+          setNumber: 2,
+          weight: 88,
+          reps: 8,
+          rir: 2,
+          isDropSet: false,
+          durationSec: null,
+          distanceM: null,
+          avgHr: null,
+          maxHr: null,
+        },
+        {
+          setNumber: 3,
+          weight: 93,
+          reps: 6,
+          rir: 1,
+          isDropSet: true,
+          durationSec: null,
+          distanceM: null,
+          avgHr: null,
+          maxHr: null,
+        },
       ],
     });
-    expect(body.exerciseHistoryByExerciseId[cardio.id]).toBeUndefined();
+    expect(body.exerciseHistoryByExerciseId[cardio.id]).toHaveLength(12);
+    expect(body.exerciseHistoryByExerciseId[cardio.id][0]).toEqual({
+      sessionId: 'mobile_history_session_13',
+      startedAt: '2026-01-14T10:00:00.000Z',
+      sets: [
+        {
+          setNumber: 1,
+          weight: 0,
+          reps: 1,
+          rir: null,
+          isDropSet: false,
+          durationSec: 1_800,
+          distanceM: 5_000,
+          avgHr: 142,
+          maxHr: 166,
+        },
+      ],
+    });
     expect(
       history.some((session: { sessionId: string }) => session.sessionId.includes('open')),
     ).toBe(false);

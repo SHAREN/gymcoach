@@ -191,6 +191,7 @@ data class ExerciseHistorySessionDto(
     val sessionId: String,
     val startedAt: String,
     val sets: List<ExerciseHistorySetDto> = emptyList(),
+    val localOnly: Boolean = false,
 )
 
 @Serializable
@@ -200,6 +201,10 @@ data class ExerciseHistorySetDto(
     val reps: Int,
     val rir: Int? = null,
     val isDropSet: Boolean = false,
+    val durationSec: Int? = null,
+    val distanceM: Double? = null,
+    val avgHr: Int? = null,
+    val maxHr: Int? = null,
 )
 
 @Serializable

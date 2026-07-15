@@ -112,7 +112,7 @@ fun GymCoachApp(
         if (online) {
             scope.launch {
                 progressRefreshing = true
-                runCatching { repository.refreshProgress() }
+                runCatching { repository.refreshProgress(exerciseId) }
                     .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
                 progressRefreshing = false
             }
@@ -238,10 +238,30 @@ fun GymCoachApp(
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
+                    LaunchedEffect(online) {
+                        if (online) {
+                            runCatching { repository.refreshBootstrap() }
+                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                        }
+                    }
                     ExerciseCatalogScreen(
                         baseUrl = repository.serverUrl,
                         token = accessToken,
                         onBack = { navController.popBackStack() },
+                        historyByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty(),
+                        progressPointsByExerciseId = progress?.exercises
+                            ?.associate { it.id to it.points }
+                            .orEmpty(),
+                        unit = bootstrap?.profile?.unit ?: progress?.unit ?: "KG",
+                        bodyweightKg = bootstrap?.profile?.bodyweight,
+                        canFetchProgress = online,
+                        onOpenProgress = { exerciseId -> openProgress(exerciseId) },
+                        onOpenHistory = { historySessionId, startedAt ->
+                            val month = nativeHistoryDateKey(startedAt).take(7)
+                            navController.navigate(
+                                "history?sessionId=${Uri.encode(historySessionId)}&month=${Uri.encode(month)}",
+                            )
+                        },
                     )
                 }
             }
@@ -285,7 +305,9 @@ fun GymCoachApp(
                         if (online && !progressRefreshing) {
                             scope.launch {
                                 progressRefreshing = true
-                                runCatching { repository.refreshProgress() }
+                                runCatching {
+                                    repository.refreshProgress(entry.arguments?.getString("exerciseId"))
+                                }
                                     .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
                                 progressRefreshing = false
                             }
@@ -330,7 +352,7 @@ fun GymCoachApp(
                     },
                     onOpenProgress = { exerciseId -> openProgress(exerciseId) },
                     onOpenHistory = { historySessionId, startedAt ->
-                        val month = startedAt.take(7)
+                        val month = nativeHistoryDateKey(startedAt).take(7)
                         navController.navigate(
                             "history?sessionId=${Uri.encode(historySessionId)}&month=${Uri.encode(month)}",
                         )

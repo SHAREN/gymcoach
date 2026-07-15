@@ -4,7 +4,7 @@ import { getLastPerformances } from '@/lib/last-performance';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 2;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 3;
 export const MOBILE_CALCULATION_VERSION = '2026-07-13';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
@@ -17,6 +17,10 @@ interface MobileExerciseHistoryRow {
   reps: number;
   rir: number | null;
   isDropSet: boolean;
+  durationSec: number | null;
+  distanceM: number | null;
+  avgHr: number | null;
+  maxHr: number | null;
 }
 
 interface MobileExerciseHistorySession {
@@ -28,6 +32,10 @@ interface MobileExerciseHistorySession {
     reps: number;
     rir: number | null;
     isDropSet: boolean;
+    durationSec: number | null;
+    distanceM: number | null;
+    avgHr: number | null;
+    maxHr: number | null;
   }>;
 }
 
@@ -41,12 +49,9 @@ export async function buildMobileBootstrap(userId: string) {
         FROM "Set" AS logged_set
         INNER JOIN "Session" AS training_session
           ON training_session.id = logged_set."sessionId"
-        INNER JOIN "Exercise" AS exercise
-          ON exercise.id = logged_set."exerciseId"
         WHERE training_session."userId" = ${userId}
           AND training_session."finishedAt" IS NOT NULL
           AND logged_set."isWarmup" = false
-          AND exercise.category <> 'CARDIO'
       ),
       ranked_exercise_sessions AS (
         SELECT
@@ -67,7 +72,11 @@ export async function buildMobileBootstrap(userId: string) {
         logged_set.weight,
         logged_set.reps,
         logged_set.rir,
-        logged_set."isDropSet" AS "isDropSet"
+        logged_set."isDropSet" AS "isDropSet",
+        logged_set."durationSec" AS "durationSec",
+        logged_set."distanceM" AS "distanceM",
+        logged_set."avgHr" AS "avgHr",
+        logged_set."maxHr" AS "maxHr"
       FROM ranked_exercise_sessions AS ranked
       INNER JOIN "Set" AS logged_set
         ON logged_set."sessionId" = ranked."sessionId"
@@ -206,6 +215,10 @@ export async function buildMobileBootstrap(userId: string) {
       reps: row.reps,
       rir: row.rir,
       isDropSet: row.isDropSet,
+      durationSec: row.durationSec,
+      distanceM: row.distanceM,
+      avgHr: row.avgHr,
+      maxHr: row.maxHr,
     });
   }
 

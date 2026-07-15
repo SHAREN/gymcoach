@@ -66,3 +66,6 @@ docs/media/raw/
 # Locally published Android release artifacts
 /data/android-release/*.apk
 /data/android-release/latest.json
+
+# Kotlin compiler runtime state
+/android/.kotlin/
