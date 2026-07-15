@@ -88,11 +88,94 @@ class WatchSyncPersistenceTest {
         assertEquals("UNRESOLVED", conflict.status)
     }
 
-    private fun event(eventId: String, revision: Long, timestamp: Long) = WatchEventEnvelopeDto(
+    @Test
+    fun `ack for another session cannot remove queued event`() = runTest {
+        val store = InMemoryWatchSyncPersistence(newUuid = { CONFLICT_ID })
+        store.enqueue(event(EVENT_ONE, revision = 2, timestamp = 100))
+
+        assertTrue(
+            store.applyAck(
+                ack(
+                    ACK_ONE,
+                    WatchSyncAckStatus.APPLIED,
+                    listOf(EVENT_ONE),
+                    revision = 2,
+                    sessionId = SESSION_TWO,
+                ),
+            ),
+        )
+
+        assertEquals(listOf(EVENT_ONE), store.replayable(SESSION).map { it.eventId })
+        assertEquals("ACK_SESSION_MISMATCH", store.conflicts(SESSION).single().errorCode)
+        assertEquals(null, store.peer(WATCH_DEVICE))
+    }
+
+    @Test
+    fun `ack revision regression keeps event and peer watermark is monotonic`() = runTest {
+        val store = InMemoryWatchSyncPersistence(newUuid = { CONFLICT_ID })
+        store.enqueue(event(EVENT_ONE, revision = 5, timestamp = 100))
+        store.applyAck(ack(ACK_ONE, WatchSyncAckStatus.APPLIED, listOf(EVENT_ONE), revision = 5))
+        assertEquals(5L, store.peer(WATCH_DEVICE)?.lastRevision)
+
+        store.enqueue(event(EVENT_TWO, revision = 6, timestamp = 200))
+        store.applyAck(ack(ACK_TWO, WatchSyncAckStatus.APPLIED, listOf(EVENT_TWO), revision = 4))
+
+        assertEquals(listOf(EVENT_TWO), store.replayable(SESSION).map { it.eventId })
+        assertEquals(5L, store.peer(WATCH_DEVICE)?.lastRevision)
+        assertEquals("ACK_REVISION_REGRESSION", store.conflicts(SESSION).single().errorCode)
+    }
+
+    @Test
+    fun `sync required ack keeps higher revision event replayable`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        store.enqueue(event(EVENT_ONE, revision = 3, timestamp = 100))
+
+        store.applyAck(
+            ack(
+                ACK_ONE,
+                WatchSyncAckStatus.REJECTED,
+                listOf(EVENT_ONE),
+                revision = 1,
+                errorCode = "SYNC_REQUIRED",
+            ),
+        )
+
+        assertEquals(listOf(EVENT_ONE), store.replayable(SESSION).map { it.eventId })
+        assertTrue(store.conflicts(SESSION).isEmpty())
+        assertEquals(1L, store.peer(WATCH_DEVICE)?.lastRevision)
+    }
+
+    @Test
+    fun `late ack from previous session cannot replace current peer session`() = runTest {
+        val store = InMemoryWatchSyncPersistence()
+        store.enqueue(event(EVENT_ONE, revision = 5, timestamp = 100))
+        store.applyAck(ack(ACK_ONE, WatchSyncAckStatus.APPLIED, listOf(EVENT_ONE), revision = 5))
+
+        store.enqueue(event(EVENT_TWO, revision = 2, timestamp = 200, sessionId = SESSION_TWO))
+        store.applyAck(
+            ack(
+                ACK_TWO,
+                WatchSyncAckStatus.APPLIED,
+                listOf(EVENT_TWO),
+                revision = 2,
+                sessionId = SESSION_TWO,
+            ),
+        )
+
+        assertEquals(SESSION, store.peer(WATCH_DEVICE)?.sessionId)
+        assertEquals(5L, store.peer(WATCH_DEVICE)?.lastRevision)
+    }
+
+    private fun event(
+        eventId: String,
+        revision: Long,
+        timestamp: Long,
+        sessionId: String = SESSION,
+    ) = WatchEventEnvelopeDto(
         protocolVersion = WatchProtocol.VERSION,
         schemaVersion = WatchProtocol.SCHEMA_VERSION,
         eventId = eventId,
-        sessionId = SESSION,
+        sessionId = sessionId,
         type = WatchEventType.ACTIVE_EXERCISE_CHANGED,
         timestamp = timestamp,
         source = WatchEventSource.PHONE,
@@ -107,11 +190,12 @@ class WatchSyncPersistenceTest {
         eventIds: List<String>,
         revision: Long,
         errorCode: String? = null,
+        sessionId: String = SESSION,
     ) = WatchSyncAckDto(
         protocolVersion = WatchProtocol.VERSION,
         schemaVersion = WatchProtocol.SCHEMA_VERSION,
         ackId = ackId,
-        sessionId = SESSION,
+        sessionId = sessionId,
         eventIds = eventIds,
         status = status,
         timestamp = 2_000,
@@ -130,12 +214,14 @@ class WatchSyncPersistenceTest {
 
     private companion object {
         const val SESSION = "mob_session_stage5"
+        const val SESSION_TWO = "mob_session_stage5_other"
         const val PHONE_DEVICE = "phone-stage5"
         const val WATCH_DEVICE = "watch-stage5"
         const val EVENT_ONE = "10000000-0000-0000-0000-000000000001"
         const val EVENT_TWO = "10000000-0000-0000-0000-000000000002"
         const val EVENT_THREE = "10000000-0000-0000-0000-000000000003"
         const val ACK_ONE = "20000000-0000-0000-0000-000000000001"
+        const val ACK_TWO = "20000000-0000-0000-0000-000000000002"
         const val CONFLICT_ID = "30000000-0000-0000-0000-000000000001"
     }
 }

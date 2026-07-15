@@ -1348,9 +1348,18 @@ class GymCoachRepositorySyncTest {
                 )
             }
         }
+        override suspend fun deleteWatchOutboxEvents(eventIds: List<String>) {
+            eventIds.forEach(watchOutbox::remove)
+        }
         override suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long =
             if (watchAcks.putIfAbsent(entity.ackId, entity) == null) watchAcks.size.toLong() else -1L
         override suspend fun getWatchAckJournal(ackId: String) = watchAcks[ackId]
+        override suspend fun pruneWatchAckJournal(keepLatest: Int) {
+            watchAcks.values
+                .sortedWith(compareByDescending<WatchAckJournalEntity> { it.receivedAtEpochMs }.thenByDescending { it.ackId })
+                .drop(keepLatest)
+                .forEach { watchAcks.remove(it.ackId) }
+        }
         override suspend fun saveWatchPeer(entity: WatchPeerEntity) { watchPeers[entity.deviceId] = entity }
         override suspend fun getWatchPeer(deviceId: String) = watchPeers[deviceId]
         override suspend fun saveWatchConflict(entity: WatchConflictEntity) { watchConflicts[entity.conflictId] = entity }
@@ -1479,6 +1488,12 @@ class GymCoachRepositorySyncTest {
         override suspend fun clearProcessedWatchEvents() {
             processedWatchEvents.clear()
         }
+        override suspend fun clearWatchInboxEvents() { watchInbox.clear() }
+        override suspend fun clearWatchOutboxEvents() { watchOutbox.clear() }
+        override suspend fun clearWatchAckJournal() { watchAcks.clear() }
+        override suspend fun clearWatchConflicts() { watchConflicts.clear() }
+        override suspend fun clearWatchFileTransfers() { watchFiles.clear() }
+        override suspend fun clearWatchPeers() { watchPeers.clear() }
 
         suspend fun cachedTargetSets(): Int? = getBootstrap()?.let { cached ->
             val decoded = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(cached.payloadJson)

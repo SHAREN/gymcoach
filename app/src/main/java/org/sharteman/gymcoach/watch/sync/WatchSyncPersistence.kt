@@ -32,6 +32,7 @@ data class WatchInboxRecordResult(
 
 interface WatchSyncPersistence {
     suspend fun recordIncoming(event: WatchEventEnvelopeDto): WatchInboxRecordResult
+    suspend fun incoming(eventId: String): WatchInboxEventEntity?
     suspend fun finishIncoming(
         eventId: String,
         status: WatchSyncAckStatus,
@@ -56,8 +57,6 @@ class RoomWatchSyncPersistence(
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     private val newUuid: () -> String = { UUID.randomUUID().toString() },
 ) : WatchSyncPersistence {
-    private val json = Json { explicitNulls = true; encodeDefaults = true }
-
     override suspend fun recordIncoming(event: WatchEventEnvelopeDto): WatchInboxRecordResult {
         val canonical = CanonicalJson.event(event)
         val entity = WatchInboxEventEntity(
@@ -80,6 +79,8 @@ class RoomWatchSyncPersistence(
             existing = existing,
         )
     }
+
+    override suspend fun incoming(eventId: String) = dao.getWatchInboxEvent(eventId)
 
     override suspend fun finishIncoming(
         eventId: String,
@@ -123,10 +124,61 @@ class RoomWatchSyncPersistence(
     override suspend fun applyAck(ack: WatchSyncAckDto): Boolean {
         val acknowledgedAt = nowEpochMs()
         val outboxEvents = ack.eventIds.mapNotNull { dao.getWatchOutboxEvent(it) }
-        val outboxStatus = when (ack.status) {
-            WatchSyncAckStatus.APPLIED, WatchSyncAckStatus.DUPLICATE -> "ACKNOWLEDGED"
-            WatchSyncAckStatus.CONFLICT -> "CONFLICT"
-            WatchSyncAckStatus.STALE, WatchSyncAckStatus.REJECTED -> "FAILED"
+        val mismatchedEvents = outboxEvents.filter { it.sessionId != ack.sessionId }
+        val validatesAppliedRevision = ack.status == WatchSyncAckStatus.APPLIED ||
+            ack.status == WatchSyncAckStatus.DUPLICATE
+        val regressedEvents = outboxEvents.filter { validatesAppliedRevision && ack.revision < it.revision }
+        val invalidEvents = (mismatchedEvents + regressedEvents).distinctBy { it.eventId }
+        if (invalidEvents.isNotEmpty()) {
+            val validationError = if (mismatchedEvents.isNotEmpty()) {
+                ACK_SESSION_MISMATCH
+            } else {
+                ACK_REVISION_REGRESSION
+            }
+            val remoteAckJson = Json.encodeToString(ack)
+            return dao.applyWatchAcknowledgement(
+                journal = ack.toJournal(
+                    receivedAtEpochMs = acknowledgedAt,
+                    status = WatchSyncAckStatus.REJECTED.name,
+                    errorCode = validationError,
+                ),
+                eventIds = emptyList(),
+                deleteAcknowledgedEvents = false,
+                outboxStatus = "CONFLICT",
+                ackStatus = WatchSyncAckStatus.REJECTED.name,
+                errorCode = validationError,
+                acknowledgedAtEpochMs = acknowledgedAt,
+                conflicts = invalidEvents.map { event ->
+                    WatchConflictEntity(
+                        conflictId = newUuid(),
+                        sessionId = event.sessionId,
+                        eventId = event.eventId,
+                        entityType = event.eventType,
+                        entityId = event.eventId,
+                        localRevision = event.revision,
+                        remoteRevision = ack.revision,
+                        localEventJson = event.envelopeJson,
+                        remoteEventJson = remoteAckJson,
+                        status = "UNRESOLVED",
+                        errorCode = validationError,
+                        detectedAtEpochMs = acknowledgedAt,
+                    )
+                },
+                peer = null,
+            )
+        }
+        val successful = ack.status == WatchSyncAckStatus.APPLIED ||
+            ack.status == WatchSyncAckStatus.DUPLICATE
+        val replayableSyncGap = ack.status == WatchSyncAckStatus.REJECTED &&
+            ack.errorCode == "SYNC_REQUIRED"
+        val outboxStatus = if (replayableSyncGap) {
+            "PENDING"
+        } else {
+            when (ack.status) {
+                WatchSyncAckStatus.APPLIED, WatchSyncAckStatus.DUPLICATE -> "ACKNOWLEDGED"
+                WatchSyncAckStatus.CONFLICT -> "CONFLICT"
+                WatchSyncAckStatus.STALE, WatchSyncAckStatus.REJECTED -> "FAILED"
+            }
         }
         val conflicts = if (ack.status == WatchSyncAckStatus.CONFLICT) {
             outboxEvents.map { event ->
@@ -149,42 +201,28 @@ class RoomWatchSyncPersistence(
             emptyList()
         }
         val inserted = dao.applyWatchAcknowledgement(
-            journal = WatchAckJournalEntity(
-                ackId = ack.ackId,
-                sessionId = ack.sessionId,
-                eventIdsJson = json.encodeToString(ack.eventIds),
-                status = ack.status.name,
-                revision = ack.revision,
-                errorCode = ack.errorCode,
-                source = ack.source.name,
-                deviceId = ack.deviceId,
-                receivedAtEpochMs = acknowledgedAt,
-            ),
+            journal = ack.toJournal(acknowledgedAt),
             eventIds = outboxEvents.map { it.eventId },
+            deleteAcknowledgedEvents = successful,
             outboxStatus = outboxStatus,
             ackStatus = ack.status.name,
             errorCode = ack.errorCode,
             acknowledgedAtEpochMs = acknowledgedAt,
             conflicts = conflicts,
+            peer = outboxEvents.takeIf { it.isNotEmpty() }?.let {
+                WatchPeerEntity(
+                    deviceId = ack.deviceId,
+                    sessionId = ack.sessionId,
+                    protocolVersion = WatchProtocol.VERSION,
+                    schemaVersion = WatchProtocol.SCHEMA_VERSION,
+                    lastRevision = ack.revision,
+                    lastSyncAtEpochMs = acknowledgedAt,
+                    lastError = ack.errorCode,
+                    updatedAtEpochMs = acknowledgedAt,
+                )
+            },
         )
-        if (!inserted) return false
-        val existingPeer = dao.getWatchPeer(ack.deviceId)
-        dao.saveWatchPeer(
-            (existingPeer ?: WatchPeerEntity(
-                deviceId = ack.deviceId,
-                sessionId = ack.sessionId,
-                protocolVersion = WatchProtocol.VERSION,
-                schemaVersion = WatchProtocol.SCHEMA_VERSION,
-                updatedAtEpochMs = nowEpochMs(),
-            )).copy(
-                sessionId = ack.sessionId,
-                lastRevision = maxOf(existingPeer?.lastRevision ?: 0, ack.revision),
-                lastSyncAtEpochMs = nowEpochMs(),
-                lastError = ack.errorCode,
-                updatedAtEpochMs = nowEpochMs(),
-            ),
-        )
-        return true
+        return inserted
     }
 
     override suspend fun peer(deviceId: String) = dao.getWatchPeer(deviceId)
@@ -234,6 +272,8 @@ class InMemoryWatchSyncPersistence(
         WatchInboxRecordResult(WatchInboxRegistration.NEW)
     }
 
+    override suspend fun incoming(eventId: String) = mutex.withLock { inbox[eventId] }
+
     override suspend fun finishIncoming(eventId: String, status: WatchSyncAckStatus, revision: Long, errorCode: String?) {
         mutex.withLock {
             inbox[eventId]?.let {
@@ -272,12 +312,42 @@ class InMemoryWatchSyncPersistence(
 
     override suspend fun applyAck(ack: WatchSyncAckDto) = mutex.withLock {
         if (!acks.add(ack.ackId)) return@withLock false
+        val acknowledgedEvents = ack.eventIds.mapNotNull(outbox::get)
+        val mismatchedEvents = acknowledgedEvents.filter { it.sessionId != ack.sessionId }
+        val validatesAppliedRevision = ack.status == WatchSyncAckStatus.APPLIED ||
+            ack.status == WatchSyncAckStatus.DUPLICATE
+        val regressedEvents = acknowledgedEvents.filter { validatesAppliedRevision && ack.revision < it.revision }
+        val invalidEvents = (mismatchedEvents + regressedEvents).distinctBy { it.eventId }
+        if (invalidEvents.isNotEmpty()) {
+            val validationError = if (mismatchedEvents.isNotEmpty()) {
+                ACK_SESSION_MISMATCH
+            } else {
+                ACK_REVISION_REGRESSION
+            }
+            val remoteAckJson = Json.encodeToString(ack)
+            invalidEvents.forEach { event ->
+                conflictRecords += WatchConflictEntity(
+                    newUuid(), event.sessionId, event.eventId, event.eventType, event.eventId,
+                    event.revision, ack.revision, event.envelopeJson, remoteAckJson,
+                    "UNRESOLVED", validationError, nowEpochMs(),
+                )
+            }
+            return@withLock true
+        }
         ack.eventIds.forEach { eventId ->
             val event = outbox[eventId] ?: return@forEach
-            val status = when (ack.status) {
-                WatchSyncAckStatus.APPLIED, WatchSyncAckStatus.DUPLICATE -> "ACKNOWLEDGED"
-                WatchSyncAckStatus.CONFLICT -> "CONFLICT"
-                else -> "FAILED"
+            if (ack.status == WatchSyncAckStatus.APPLIED || ack.status == WatchSyncAckStatus.DUPLICATE) {
+                outbox.remove(eventId)
+                return@forEach
+            }
+            val status = if (ack.status == WatchSyncAckStatus.REJECTED && ack.errorCode == "SYNC_REQUIRED") {
+                "PENDING"
+            } else {
+                when (ack.status) {
+                    WatchSyncAckStatus.APPLIED, WatchSyncAckStatus.DUPLICATE -> error("Handled above")
+                    WatchSyncAckStatus.CONFLICT -> "CONFLICT"
+                    else -> "FAILED"
+                }
             }
             outbox[eventId] = event.copy(
                 status = status, ackStatus = ack.status.name, errorCode = ack.errorCode,
@@ -290,15 +360,25 @@ class InMemoryWatchSyncPersistence(
                 )
             }
         }
-        val peer = peers[ack.deviceId]
-        peers[ack.deviceId] = (peer ?: WatchPeerEntity(
-            ack.deviceId, ack.sessionId, WatchProtocol.VERSION, WatchProtocol.SCHEMA_VERSION,
-            updatedAtEpochMs = nowEpochMs(),
-        )).copy(
-            sessionId = ack.sessionId,
-            lastRevision = maxOf(peer?.lastRevision ?: 0, ack.revision),
-            lastSyncAtEpochMs = nowEpochMs(), lastError = ack.errorCode, updatedAtEpochMs = nowEpochMs(),
-        )
+        if (acknowledgedEvents.isNotEmpty()) {
+            val peer = peers[ack.deviceId]
+            peers[ack.deviceId] = if (peer?.sessionId == ack.sessionId) {
+                peer.copy(
+                    lastRevision = maxOf(peer.lastRevision, ack.revision),
+                    lastSyncAtEpochMs = maxOf(peer.lastSyncAtEpochMs ?: 0, nowEpochMs()),
+                    lastError = ack.errorCode,
+                    updatedAtEpochMs = maxOf(peer.updatedAtEpochMs, nowEpochMs()),
+                )
+            } else if (peer == null) {
+                WatchPeerEntity(
+                    ack.deviceId, ack.sessionId, WatchProtocol.VERSION, WatchProtocol.SCHEMA_VERSION,
+                    lastRevision = ack.revision, lastSyncAtEpochMs = nowEpochMs(),
+                    lastError = ack.errorCode, updatedAtEpochMs = nowEpochMs(),
+                )
+            } else {
+                peer
+            }
+        }
         true
     }
 
@@ -318,6 +398,25 @@ class InMemoryWatchSyncPersistence(
         files.values.filter { it.transferId == transferId }.sortedBy { it.sequence }
     }
 }
+
+private fun WatchSyncAckDto.toJournal(
+    receivedAtEpochMs: Long,
+    status: String = this.status.name,
+    errorCode: String? = this.errorCode,
+) = WatchAckJournalEntity(
+    ackId = ackId,
+    sessionId = sessionId,
+    eventIdsJson = Json.encodeToString(eventIds),
+    status = status,
+    revision = revision,
+    errorCode = errorCode,
+    source = source.name,
+    deviceId = deviceId,
+    receivedAtEpochMs = receivedAtEpochMs,
+)
+
+private const val ACK_SESSION_MISMATCH = "ACK_SESSION_MISMATCH"
+private const val ACK_REVISION_REGRESSION = "ACK_REVISION_REGRESSION"
 
 private fun WatchFileTransferEnvelopeDto.toEntity(
     direction: String,

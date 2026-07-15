@@ -154,11 +154,21 @@ interface GymCoachDao {
         acknowledgedAtEpochMs: Long,
     )
 
+    @Query("DELETE FROM watch_outbox_events WHERE eventId IN (:eventIds)")
+    suspend fun deleteWatchOutboxEvents(eventIds: List<String>)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWatchAckJournal(entity: WatchAckJournalEntity): Long
 
     @Query("SELECT * FROM watch_ack_journal WHERE ackId = :ackId")
     suspend fun getWatchAckJournal(ackId: String): WatchAckJournalEntity?
+
+    @Query(
+        "DELETE FROM watch_ack_journal WHERE ackId NOT IN (" +
+            "SELECT ackId FROM watch_ack_journal ORDER BY receivedAtEpochMs DESC, ackId DESC LIMIT :keepLatest" +
+            ")",
+    )
+    suspend fun pruneWatchAckJournal(keepLatest: Int)
 
     @Upsert
     suspend fun saveWatchPeer(entity: WatchPeerEntity)
@@ -191,23 +201,49 @@ interface GymCoachDao {
     suspend fun applyWatchAcknowledgement(
         journal: WatchAckJournalEntity,
         eventIds: List<String>,
+        deleteAcknowledgedEvents: Boolean,
         outboxStatus: String,
         ackStatus: String,
         errorCode: String?,
         acknowledgedAtEpochMs: Long,
         conflicts: List<WatchConflictEntity>,
+        peer: WatchPeerEntity?,
     ): Boolean {
         if (insertWatchAckJournal(journal) == -1L) return false
-        eventIds.forEach { eventId ->
-            updateWatchOutboxAcknowledgement(
-                eventId = eventId,
-                status = outboxStatus,
-                ackStatus = ackStatus,
-                errorCode = errorCode,
-                acknowledgedAtEpochMs = acknowledgedAtEpochMs,
-            )
+        if (deleteAcknowledgedEvents) {
+            if (eventIds.isNotEmpty()) deleteWatchOutboxEvents(eventIds)
+        } else {
+            eventIds.forEach { eventId ->
+                updateWatchOutboxAcknowledgement(
+                    eventId = eventId,
+                    status = outboxStatus,
+                    ackStatus = ackStatus,
+                    errorCode = errorCode,
+                    acknowledgedAtEpochMs = acknowledgedAtEpochMs,
+                )
+            }
         }
         conflicts.forEach { saveWatchConflict(it) }
+        peer?.let { candidate ->
+            val existing = getWatchPeer(candidate.deviceId)
+            saveWatchPeer(
+                if (existing != null && existing.sessionId == candidate.sessionId) {
+                    candidate.copy(
+                        lastRevision = maxOf(existing.lastRevision, candidate.lastRevision),
+                        lastSyncAtEpochMs = maxOf(
+                            existing.lastSyncAtEpochMs ?: 0,
+                            candidate.lastSyncAtEpochMs ?: 0,
+                        ).takeIf { it > 0 },
+                        updatedAtEpochMs = maxOf(existing.updatedAtEpochMs, candidate.updatedAtEpochMs),
+                    )
+                } else if (existing == null) {
+                    candidate
+                } else {
+                    existing
+                },
+            )
+        }
+        pruneWatchAckJournal(500)
         return true
     }
 
@@ -331,9 +367,33 @@ interface GymCoachDao {
     @Query("DELETE FROM watch_processed_events")
     suspend fun clearProcessedWatchEvents()
 
+    @Query("DELETE FROM watch_inbox_events")
+    suspend fun clearWatchInboxEvents()
+
+    @Query("DELETE FROM watch_outbox_events")
+    suspend fun clearWatchOutboxEvents()
+
+    @Query("DELETE FROM watch_ack_journal")
+    suspend fun clearWatchAckJournal()
+
+    @Query("DELETE FROM watch_conflicts")
+    suspend fun clearWatchConflicts()
+
+    @Query("DELETE FROM watch_file_transfers")
+    suspend fun clearWatchFileTransfers()
+
+    @Query("DELETE FROM watch_peers")
+    suspend fun clearWatchPeers()
+
     @Transaction
     suspend fun clearAccountData() {
         clearOutbox()
+        clearWatchFileTransfers()
+        clearWatchConflicts()
+        clearWatchAckJournal()
+        clearWatchOutboxEvents()
+        clearWatchInboxEvents()
+        clearWatchPeers()
         clearActiveWorkoutRuntime()
         clearProcessedWatchEvents()
         clearSessions()

@@ -67,7 +67,9 @@ class WatchWorkoutCoordinator(
             return
         }
         val result = gateway.applyWatchEvent(event)
-        syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
+        if (!result.isReplayableRevisionGap()) {
+            syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
+        }
         sendAck(event, result)
         if (result.errorCode == "SYNC_REQUIRED") {
             gateway.buildSnapshot(event.sessionId)?.let { sink.sendSnapshot(it) }
@@ -100,7 +102,9 @@ class WatchWorkoutCoordinator(
             WatchInboxRegistration.NEW -> Unit
         }
         val result = gateway.applySensorBatch(event, batch)
-        syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
+        if (!result.isReplayableRevisionGap()) {
+            syncPersistence.finishIncoming(event.eventId, result.status, result.revision, result.errorCode)
+        }
         sendAck(event, result)
     }
 
@@ -162,3 +166,7 @@ class WatchWorkoutCoordinator(
         sink.sendEvent(event)
     }
 }
+
+private fun org.sharteman.gymcoach.watch.data.WatchWorkoutApplyResult.isReplayableRevisionGap() =
+    status == org.sharteman.gymcoach.watch.domain.WatchSyncAckStatus.REJECTED &&
+        errorCode == "SYNC_REQUIRED"
