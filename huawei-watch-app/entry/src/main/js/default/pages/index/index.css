@@ -1,0 +1,108 @@
+.watch-page {
+  width: 466px;
+  height: 466px;
+  padding: 36px 54px 30px;
+  flex-direction: column;
+  align-items: center;
+  background-color: #080b10;
+  color: #f7f9fc;
+}
+
+.status-ring {
+  width: 74px;
+  height: 74px;
+  border-radius: 37px;
+  justify-content: center;
+  align-items: center;
+  border-width: 4px;
+  border-color: #5d6878;
+  background-color: #151a22;
+}
+
+.status-connected {
+  border-color: #45d483;
+}
+
+.status-connecting {
+  border-color: #f3b94f;
+}
+
+.status-error {
+  border-color: #ff626f;
+}
+
+.status-label {
+  font-size: 13px;
+  text-align: center;
+  color: #f7f9fc;
+}
+
+.app-title {
+  margin-top: 12px;
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.screen-title {
+  margin-top: 2px;
+  margin-bottom: 14px;
+  font-size: 18px;
+  color: #aab3c2;
+}
+
+.metric-row {
+  width: 330px;
+  height: 38px;
+  padding-left: 14px;
+  padding-right: 14px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 12px;
+  background-color: #151a22;
+  margin-bottom: 7px;
+}
+
+.metric-label {
+  font-size: 16px;
+  color: #aab3c2;
+}
+
+.metric-value {
+  font-size: 16px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.last-result {
+  width: 330px;
+  height: 34px;
+  margin-top: 3px;
+  font-size: 14px;
+  text-align: center;
+  color: #aab3c2;
+}
+
+.action-row {
+  width: 330px;
+  height: 58px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-button {
+  width: 156px;
+  height: 52px;
+  border-radius: 26px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #07110b;
+  background-color: #45d483;
+}
+
+.secondary {
+  color: #f7f9fc;
+  background-color: #29313e;
+}

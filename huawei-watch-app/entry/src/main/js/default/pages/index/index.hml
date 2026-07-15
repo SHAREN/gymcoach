@@ -1,0 +1,30 @@
+<div class="watch-page">
+  <div class="status-ring status-{{ connectionTone }}">
+    <text class="status-label">{{ connectionLabel }}</text>
+  </div>
+
+  <text class="app-title">GymCoach</text>
+  <text class="screen-title">Phone connection</text>
+
+  <div class="metric-row">
+    <text class="metric-label">Sync</text>
+    <text class="metric-value">{{ syncLabel }}</text>
+  </div>
+
+  <div class="metric-row">
+    <text class="metric-label">Protocol</text>
+    <text class="metric-value">{{ protocolVersion }}</text>
+  </div>
+
+  <div class="metric-row">
+    <text class="metric-label">Pending</text>
+    <text class="metric-value">{{ pendingCount }}</text>
+  </div>
+
+  <text class="last-result">{{ lastResult }}</text>
+
+  <div class="action-row">
+    <button class="action-button" onclick="sendPing">Ping</button>
+    <button class="action-button secondary" onclick="requestState">Sync</button>
+  </div>
+</div>
