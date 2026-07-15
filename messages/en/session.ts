@@ -33,7 +33,6 @@ export const session = {
     label: 'Equipment used',
     description: 'Choose the physical machine or station before logging the set.',
     choose: 'Choose equipment',
-    manual: 'Legacy / manual load (no equipment snapshot)',
     loadCount: '{count, plural, one {# achievable load} other {# achievable loads}}',
     selectorized:
       'The picker shows displayed stack values. Nominal estimate = displayed load x {multiplier}.',
@@ -194,6 +193,13 @@ export const session = {
       increase: 'Increase total sets',
       undoLast: 'Undo last set',
       saveError: 'Could not update the set count.',
+      equipmentTitle: 'Equipment for set {number}',
+      equipmentNone: 'No equipment snapshot',
+      equipmentDescription:
+        'Changing equipment is an explicit historical correction. Normal weight, rep, and RIR edits keep the saved snapshot.',
+      equipmentSelect: 'Choose replacement equipment',
+      equipmentReplace: 'Replace equipment snapshot',
+      equipmentClear: 'Clear legacy equipment snapshot',
     },
     metrics: {
       open: 'Choose calculated columns',

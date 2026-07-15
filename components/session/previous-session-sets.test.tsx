@@ -10,7 +10,17 @@ describe('PreviousSessionSets', () => {
         performance={{
           sessionId: 'history-session',
           sessionStartedAt: '2026-07-01T10:00:00.000Z',
-          sets: [{ weight: 80, reps: 8, rir: 2 }],
+          gymEquipmentId: null,
+          equipmentName: null,
+          sets: [
+            {
+              weight: 80,
+              reps: 8,
+              rir: 2,
+              gymEquipmentId: null,
+              nominalResistanceKg: null,
+            },
+          ],
           maxWeight: 80,
           repsAtMaxWeight: 8,
           cardio: null,

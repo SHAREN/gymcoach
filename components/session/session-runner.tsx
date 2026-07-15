@@ -66,6 +66,7 @@ import {
   type ResolvedExerciseInventory,
 } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
+import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-history';
 import {
   DROP_SET_TRANSITION_REST_SEC,
   isPlannedExerciseComplete,
@@ -76,7 +77,16 @@ import {
 export interface SerializedLastPerformance {
   sessionId?: string;
   sessionStartedAt: string;
-  sets: { weight: number; reps: number; rir: number | null; isDropSet?: boolean }[];
+  gymEquipmentId: string | null;
+  equipmentName: string | null;
+  sets: {
+    weight: number;
+    reps: number;
+    rir: number | null;
+    isDropSet?: boolean;
+    gymEquipmentId: string | null;
+    nominalResistanceKg: number | null;
+  }[];
   maxWeight: number;
   repsAtMaxWeight: number;
   // Cardio totals for the last session (issue #176): null for strength
@@ -123,8 +133,8 @@ type SessionRunnerProps = {
     sets: PrismaSet[];
     gym: SessionGym | null;
   };
-  lastPerformances: Record<string, SerializedLastPerformance>;
-  returnRecommendations: Record<string, ReturnRecommendation>;
+  lastPerformances: Record<string, SerializedLastPerformance[]>;
+  returnRecommendations: Record<string, EquipmentReturnRecommendation[]>;
   // Latest in-window readiness check-in (or null). Drives whether the load
   // suggestion is held/reduced and the matching explainer in the UI.
   readiness: ReadinessSignal | null;
@@ -146,6 +156,91 @@ type Mode =
       navigatedImmediately: boolean;
     }
   | { kind: 'summary' };
+
+export function sameEquipmentIdentity(
+  first: string | null | undefined,
+  second: string | null | undefined,
+): boolean {
+  return (first ?? null) === (second ?? null);
+}
+
+export function filterSetsForEquipment(
+  sets: PendingSet[],
+  gymEquipmentId: string | null,
+): PendingSet[] {
+  return sets.filter((set) => sameEquipmentIdentity(set.gymEquipmentId, gymEquipmentId));
+}
+
+export function selectLastPerformanceForEquipment(
+  performances: SerializedLastPerformance[] | undefined,
+  gymEquipmentId: string | null,
+): SerializedLastPerformance | undefined {
+  return performances?.find((performance) =>
+    sameEquipmentIdentity(performance.gymEquipmentId, gymEquipmentId),
+  );
+}
+
+export function selectReturnRecommendationForEquipment(
+  recommendations: EquipmentReturnRecommendation[] | undefined,
+  gymEquipmentId: string | null,
+): ReturnRecommendation | undefined {
+  return recommendations?.find((item) => sameEquipmentIdentity(item.gymEquipmentId, gymEquipmentId))
+    ?.recommendation;
+}
+
+export function resolveSelectedEquipmentId(
+  inventory: ResolvedExerciseInventory,
+  requestedId: string | null | undefined,
+): string | null {
+  if (
+    requestedId &&
+    inventory.equipment.some((equipment) => equipment.equipmentId === requestedId)
+  ) {
+    return requestedId;
+  }
+  if (inventory.source === 'equipment' && inventory.equipment.length === 1) {
+    return inventory.equipment[0]!.equipmentId;
+  }
+  return null;
+}
+
+export function requiresEquipmentSelection(
+  inventory: ResolvedExerciseInventory,
+  requestedId: string | null | undefined,
+): boolean {
+  return (
+    inventory.source === 'equipment' && resolveSelectedEquipmentId(inventory, requestedId) == null
+  );
+}
+
+export function buildSetValueCorrectionPatch(values: {
+  weight: number;
+  reps: number;
+  rir: number | null;
+}): Pick<PendingSet, 'weight' | 'reps' | 'rir' | 'status' | 'attempts' | 'lastError'> {
+  return {
+    ...values,
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+  };
+}
+
+export function buildSetEquipmentChangePatch(
+  set: PendingSet,
+  gymEquipmentId: string | null,
+): Pick<
+  PendingSet,
+  'gymEquipmentId' | 'equipmentSnapshotAction' | 'status' | 'attempts' | 'lastError'
+> {
+  return {
+    gymEquipmentId,
+    equipmentSnapshotAction: set.serverId ? (gymEquipmentId ? 'REPLACE' : 'CLEAR') : null,
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+  };
+}
 
 export function SessionRunner({
   session,
@@ -175,7 +270,20 @@ export function SessionRunner({
   const effectiveProgramExercises = useMemo<ProgramExerciseWithExercise[]>(
     () =>
       programExercises.map((pe) => {
-        const recommendation = returnRecommendations[pe.id];
+        const inventory = resolveSessionExerciseInventory(sessionGym, pe);
+        const selectedEquipmentId = resolveSelectedEquipmentId(
+          inventory,
+          selectedEquipmentByExercise[pe.exerciseId],
+        );
+        const recommendation = requiresEquipmentSelection(
+          inventory,
+          selectedEquipmentByExercise[pe.exerciseId],
+        )
+          ? undefined
+          : selectReturnRecommendationForEquipment(
+              returnRecommendations[pe.id],
+              selectedEquipmentId,
+            );
         const override = targetSetOverrides[pe.id];
         const effective =
           !recommendation || recommendation.mode === 'normal'
@@ -188,7 +296,13 @@ export function SessionRunner({
               };
         return override == null ? effective : { ...effective, targetSets: override };
       }),
-    [programExercises, returnRecommendations, targetSetOverrides],
+    [
+      programExercises,
+      returnRecommendations,
+      selectedEquipmentByExercise,
+      sessionGym,
+      targetSetOverrides,
+    ],
   );
   const effectiveProgramExerciseById = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
@@ -298,7 +412,15 @@ export function SessionRunner({
     pe: ProgramExerciseWithExercise,
     atMs: number,
   ): IntraSetRecommendation | null {
-    const completedSets = setsByExercise.get(pe.exerciseId) ?? [];
+    const inventory = inventoryFor(pe);
+    const selectedEquipmentId = selectedEquipmentIdFor(pe, inventory);
+    if (requiresEquipmentSelection(inventory, selectedEquipmentByExercise[pe.exerciseId])) {
+      return null;
+    }
+    const completedSets = filterSetsForEquipment(
+      setsByExercise.get(pe.exerciseId) ?? [],
+      selectedEquipmentId,
+    );
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
     if (!lastWorkingSet) return null;
 
@@ -336,55 +458,68 @@ export function SessionRunner({
       recoverySec: Math.max(0, (atMs - lastWorkingSet.createdAt) / 1000),
       sameMuscleSuperset,
       allowLoadIncrease,
-      maxWeight: returnRecommendations[pe.id]?.weightCeiling ?? null,
+      maxWeight: returnRecommendationFor(pe)?.weightCeiling ?? null,
       loadConstraints: loadConstraintsFor(pe),
     });
   }
 
   function inventoryFor(pe: ProgramExerciseWithExercise): ResolvedExerciseInventory {
-    if (!sessionGym) {
-      return resolveExerciseInventory({
-        inventoryMode: 'LEGACY',
-        exercise: pe.exercise,
-        linkedEquipment: [],
-      });
-    }
-    const config = sessionGym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
-    const linkedEquipment = sessionGym.equipment
-      .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
-      .map(toEquipmentLoadProfile);
-    return resolveExerciseInventory({
-      inventoryMode: sessionGym.inventoryMode,
-      exercise: pe.exercise,
-      linkedEquipment,
-      legacyConfig: config,
-      sharedDumbbellWeights: sessionGym.dumbbellWeights,
-      legacyPlateWeights: sessionGym.plateWeights,
-      legacyBarWeights: sessionGym.barWeights,
-    });
+    return resolveSessionExerciseInventory(sessionGym, pe);
   }
 
   function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints {
     const resolved = inventoryFor(pe);
-    const selectedEquipmentId = selectedEquipmentByExercise[pe.exerciseId];
-    if (
-      selectedEquipmentId &&
-      resolved.equipment.some((item) => item.equipmentId === selectedEquipmentId)
-    ) {
+    const selectedEquipmentId = selectedEquipmentIdFor(pe, resolved);
+    if (resolved.source === 'equipment') {
       return { ...resolved.constraints, equipmentId: selectedEquipmentId };
     }
     return resolved.constraints;
+  }
+
+  function selectedEquipmentIdFor(
+    pe: ProgramExerciseWithExercise,
+    inventory = inventoryFor(pe),
+  ): string | null {
+    return resolveSelectedEquipmentId(inventory, selectedEquipmentByExercise[pe.exerciseId]);
+  }
+
+  function returnRecommendationFor(
+    pe: ProgramExerciseWithExercise,
+  ): ReturnRecommendation | undefined {
+    const inventory = inventoryFor(pe);
+    if (requiresEquipmentSelection(inventory, selectedEquipmentByExercise[pe.exerciseId])) {
+      return undefined;
+    }
+    return selectReturnRecommendationForEquipment(
+      returnRecommendations[pe.id],
+      selectedEquipmentIdFor(pe, inventory),
+    );
   }
 
   // Prior-session sets per exercise, the PR baseline for the post-session
   // summary (same source as the in-session badge: getLastPerformances).
   const priorSetsByExercise = useMemo(() => {
     const out: Record<string, { weight: number; reps: number }[]> = {};
-    for (const [exerciseId, perf] of Object.entries(lastPerformances)) {
-      out[exerciseId] = perf.sets.map((s) => ({ weight: s.weight, reps: s.reps }));
+    for (const pe of effectiveProgramExercises) {
+      const inventory = inventoryFor(pe);
+      const selectedEquipmentId = selectedEquipmentIdFor(pe, inventory);
+      const performance = requiresEquipmentSelection(
+        inventory,
+        selectedEquipmentByExercise[pe.exerciseId],
+      )
+        ? undefined
+        : selectLastPerformanceForEquipment(lastPerformances[pe.exerciseId], selectedEquipmentId);
+      if (performance) {
+        out[pe.exerciseId] = performance.sets.map((set) => ({
+          weight: set.weight,
+          reps: set.reps,
+        }));
+      }
     }
     return out;
-  }, [lastPerformances]);
+    // inventoryFor and selectedEquipmentIdFor use only these state values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProgramExercises, lastPerformances, selectedEquipmentByExercise, sessionGym]);
 
   const completedExerciseCount = useMemo(() => {
     let count = 0;
@@ -420,6 +555,12 @@ export function SessionRunner({
     notes: string | null;
   }) {
     if (!currentPE || !currentTarget) return;
+    const inventory = inventoryFor(currentPE);
+    const selectedEquipmentId = selectedEquipmentIdFor(currentPE, inventory);
+    if (requiresEquipmentSelection(inventory, selectedEquipmentByExercise[currentPE.exerciseId])) {
+      toast.error(t('equipment.selectionRequired'));
+      return;
+    }
     const existing = setsByExercise.get(currentPE.exerciseId) ?? [];
     const setNumber = (existing.at(-1)?.setNumber ?? 0) + 1;
 
@@ -438,7 +579,7 @@ export function SessionRunner({
       notes: values.notes,
       isWarmup: values.isWarmup,
       isDropSet: values.isDropSet,
-      gymEquipmentId: selectedEquipmentByExercise[currentPE.exerciseId] ?? null,
+      gymEquipmentId: selectedEquipmentId,
     });
 
     vibrate(VIBRATION_PATTERNS.validate);
@@ -504,30 +645,47 @@ export function SessionRunner({
         current = (await db.pendingSets.get(set.localId)) ?? current;
       }
 
-      const selectedEquipmentId = currentPE
-        ? (selectedEquipmentByExercise[currentPE.exerciseId] ?? null)
-        : (current.gymEquipmentId ?? null);
-      const currentEquipmentId = current.gymEquipmentId ?? null;
-      const equipmentSnapshotAction =
-        current.serverId && selectedEquipmentId !== currentEquipmentId
-          ? selectedEquipmentId
-            ? 'REPLACE'
-            : 'CLEAR'
-          : undefined;
-
-      await db.pendingSets.update(set.localId, {
-        weight: values.weight,
-        reps: values.reps,
-        rir: values.rir,
-        gymEquipmentId: selectedEquipmentId,
-        equipmentSnapshotAction,
-        status: 'pending',
-        attempts: 0,
-        lastError: null,
-      });
+      await db.pendingSets.update(set.localId, buildSetValueCorrectionPatch(values));
 
       // The queue chooses POST for a new local row and PATCH once serverId is
       // present. Offline edits remain pending and sync on reconnect.
+      void flushPendingSets();
+      toast.success(t('setUpdated'));
+    } catch (error) {
+      toast.error(t('setUpdateError'));
+      throw error;
+    }
+  }
+
+  async function handleChangeSetEquipment(
+    set: PendingSet,
+    gymEquipmentId: string | null,
+  ): Promise<void> {
+    const pe = effectiveProgramExercises.find((item) => item.exerciseId === set.exerciseId);
+    if (!pe) throw new Error('Program exercise missing.');
+    const inventory = inventoryFor(pe);
+    if (inventory.source === 'equipment') {
+      if (
+        !gymEquipmentId ||
+        !inventory.equipment.some((equipment) => equipment.equipmentId === gymEquipmentId)
+      ) {
+        toast.error(t('setUpdateError'));
+        throw new Error('A linked equipment selection is required.');
+      }
+    }
+
+    const db = getDB();
+    try {
+      let current = (await db.pendingSets.get(set.localId)) ?? set;
+      if (!current.serverId && current.status === 'syncing') {
+        await flushPendingSets();
+        current = (await db.pendingSets.get(set.localId)) ?? current;
+      }
+
+      await db.pendingSets.update(
+        set.localId,
+        buildSetEquipmentChangePatch(current, gymEquipmentId),
+      );
       void flushPendingSets();
       toast.success(t('setUpdated'));
     } catch (error) {
@@ -699,10 +857,23 @@ export function SessionRunner({
     );
   }
 
-  const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
-  const currentReturnRecommendation = returnRecommendations[currentPE.id];
+  const currentReturnRecommendation = returnRecommendationFor(currentPE);
   const currentInventory = inventoryFor(currentPE);
+  const currentSelectedEquipmentId = selectedEquipmentIdFor(currentPE, currentInventory);
+  const currentEquipmentSelectionRequired = requiresEquipmentSelection(
+    currentInventory,
+    selectedEquipmentByExercise[currentPE.exerciseId],
+  );
+  const currentHistorySets = currentEquipmentSelectionRequired
+    ? []
+    : filterSetsForEquipment(currentSets, currentSelectedEquipmentId);
+  const lastPerf = currentEquipmentSelectionRequired
+    ? undefined
+    : selectLastPerformanceForEquipment(
+        lastPerformances[currentPE.exerciseId],
+        currentSelectedEquipmentId,
+      );
   const currentRecommendation = nextPlannedSetIsDropSet(currentTarget, currentSets)
     ? null
     : recommendationFor(currentTarget, Date.now());
@@ -781,7 +952,7 @@ export function SessionRunner({
         />
         <SessionEquipmentSelector
           options={currentInventory.equipment}
-          selectedId={selectedEquipmentByExercise[currentPE.exerciseId] ?? null}
+          selectedId={currentSelectedEquipmentId}
           onChange={(equipmentId) =>
             setSelectedEquipmentByExercise((current) => ({
               ...current,
@@ -824,6 +995,7 @@ export function SessionRunner({
                 unit={unit}
                 recommendation={currentRecommendation}
                 loadConstraints={loadConstraintsFor(currentTarget)}
+                submissionDisabled={currentEquipmentSelectionRequired}
                 onSubmit={handleValidate}
               />
             ) : (
@@ -844,6 +1016,7 @@ export function SessionRunner({
             <EditableSetsTable
               programExercise={currentTarget}
               sets={currentSets}
+              historySets={currentHistorySets}
               lastPerformance={lastPerf}
               readiness={effectiveReadiness}
               deloadActive={deloadActive}
@@ -851,11 +1024,13 @@ export function SessionRunner({
               recommendation={currentRecommendation}
               returnRecommendation={currentReturnRecommendation}
               loadConstraints={loadConstraintsFor(currentTarget)}
+              equipmentSelectionRequired={currentEquipmentSelectionRequired}
               gym={sessionGym}
               onGymUpdated={setSessionGym}
               disabled={!hydrated || mode.kind !== 'input'}
               onSubmit={handleValidate}
               onUpdateSet={handleUpdateSet}
+              onChangeSetEquipment={handleChangeSetEquipment}
               onDeleteSet={handleDeleteSet}
               onTargetSetsChange={handleTargetSetsChange}
             />
@@ -929,20 +1104,51 @@ function initialEquipmentSelections(
 ): Record<string, string | null> {
   const selections: Record<string, string | null> = {};
   for (const programExercise of session.workout?.exercises ?? []) {
-    const logged = [...session.sets]
-      .reverse()
-      .find((set) => set.exerciseId === programExercise.exerciseId && set.gymEquipmentId != null);
-    if (logged?.gymEquipmentId) {
-      selections[programExercise.exerciseId] = logged.gymEquipmentId;
-      continue;
-    }
     const linked =
       session.gym?.equipment.filter((item) =>
         item.exerciseLinks.some((link) => link.exerciseId === programExercise.exerciseId),
       ) ?? [];
+    const logged = [...session.sets]
+      .reverse()
+      .find(
+        (set) =>
+          set.exerciseId === programExercise.exerciseId &&
+          set.gymEquipmentId != null &&
+          linked.some((equipment) => equipment.id === set.gymEquipmentId),
+      );
+    if (logged?.gymEquipmentId) {
+      selections[programExercise.exerciseId] = logged.gymEquipmentId;
+      continue;
+    }
     if (linked.length === 1) selections[programExercise.exerciseId] = linked[0]!.id;
   }
   return selections;
+}
+
+function resolveSessionExerciseInventory(
+  sessionGym: SessionGym | null,
+  pe: ProgramExerciseWithExercise,
+): ResolvedExerciseInventory {
+  if (!sessionGym) {
+    return resolveExerciseInventory({
+      inventoryMode: 'LEGACY',
+      exercise: pe.exercise,
+      linkedEquipment: [],
+    });
+  }
+  const config = sessionGym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
+  const linkedEquipment = sessionGym.equipment
+    .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
+    .map(toEquipmentLoadProfile);
+  return resolveExerciseInventory({
+    inventoryMode: sessionGym.inventoryMode,
+    exercise: pe.exercise,
+    linkedEquipment,
+    legacyConfig: config,
+    sharedDumbbellWeights: sessionGym.dumbbellWeights,
+    legacyPlateWeights: sessionGym.plateWeights,
+    legacyBarWeights: sessionGym.barWeights,
+  });
 }
 
 function toEquipmentLoadProfile(item: SessionGymEquipment): EquipmentLoadProfile {

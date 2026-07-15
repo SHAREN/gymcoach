@@ -130,6 +130,38 @@ describe('equipment-first REST domain', () => {
     const session = await db.session.create({
       data: { userId: user.id, gymId: gym.id },
     });
+    const missingEquipmentResponse = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
+        exerciseId: pushdown.id,
+        gymEquipmentId: null,
+        setNumber: 1,
+        weight: 50,
+        reps: 12,
+        rir: 2,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(missingEquipmentResponse.status).toBe(400);
+    await expect(missingEquipmentResponse.json()).resolves.toMatchObject({
+      error: 'Select linked equipment before saving this set.',
+    });
+
+    const benchStationForInvalidLink = await db.gymEquipment.findFirstOrThrow({
+      where: { gymId: gym.id, name: 'Bench station' },
+    });
+    const unlinkedEquipmentResponse = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
+        exerciseId: pushdown.id,
+        gymEquipmentId: benchStationForInvalidLink.id,
+        setNumber: 1,
+        weight: 50,
+        reps: 12,
+        rir: 2,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(unlinkedEquipmentResponse.status).toBe(400);
+
     const setResponse = await createSet(
       jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
         exerciseId: pushdown.id,
@@ -151,6 +183,22 @@ describe('equipment-first REST domain', () => {
       nominalResistanceKg: 25,
       equipmentLoadSnapshot: expect.objectContaining({ loadType: 'SELECTORIZED' }),
     });
+
+    const clearEquipmentResponse = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdSet.id}`,
+        {
+          weight: 50,
+          reps: 12,
+          rir: 2,
+          gymEquipmentId: null,
+          equipmentSnapshotAction: 'CLEAR',
+        },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdSet.id }) },
+    );
+    expect(clearEquipmentResponse.status).toBe(400);
 
     await db.gymEquipment.update({
       where: { id: cable.id },
@@ -278,5 +326,40 @@ describe('equipment-first REST domain', () => {
     expect(await response.json()).toEqual({
       error: 'One or more exercise IDs do not belong to the trainee.',
     });
+  });
+
+  it('allows null equipment for a genuine legacy gym path', async () => {
+    const user = await db.user.create({
+      data: { email: 'legacy-null-equipment@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Legacy cable exercise',
+        muscleGroup: 'TRICEPS',
+        category: 'ISOLATION',
+        equipmentType: 'CABLE',
+      },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: 'Legacy gym', inventoryMode: 'LEGACY' },
+    });
+    const session = await db.session.create({ data: { userId: user.id, gymId: gym.id } });
+    mockUserId.mockResolvedValue(user.id);
+
+    const response = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, {
+        exerciseId: exercise.id,
+        gymEquipmentId: null,
+        setNumber: 1,
+        weight: 40,
+        reps: 12,
+        rir: 2,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ gymEquipmentId: null, weight: 40 });
   });
 });

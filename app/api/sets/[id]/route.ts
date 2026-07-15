@@ -4,6 +4,7 @@ import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib
 import { setUpdateSchema } from '@/lib/schemas/set';
 import { rederiveGoalAchievement } from '@/lib/set-goal-sync';
 import { resolveSetEquipmentUpdate } from '@/lib/set-equipment';
+import { assertWebSetEquipmentMayBeNull } from '@/lib/web-set-equipment-policy';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -24,6 +25,13 @@ export async function PATCH(req: Request, props: Params) {
     }
 
     const data = await parseJsonBody(req, setUpdateSchema);
+    if (data.equipmentSnapshotAction === 'CLEAR') {
+      await assertWebSetEquipmentMayBeNull(db, {
+        userId,
+        sessionGymId: set.session.gymId,
+        exerciseId: set.exerciseId,
+      });
+    }
     const equipmentSnapshot = await resolveSetEquipmentUpdate(db, {
       userId,
       sessionGymId: set.session.gymId,

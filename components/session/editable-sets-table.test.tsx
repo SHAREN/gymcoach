@@ -67,6 +67,39 @@ const recommendation: IntraSetRecommendation = {
   confidence: 'medium',
 };
 
+const equipmentConstraints = {
+  equipmentType: 'CABLE',
+  equipmentId: 'cable-b',
+  equipmentOptions: [
+    {
+      equipmentId: 'cable-a',
+      equipmentName: 'Cable A',
+      equipmentType: 'CABLE',
+      loadType: 'SELECTORIZED',
+      weightOptions: [40, 45],
+      selectedLoadMultiplier: 0.5,
+      baseLoadKg: 0,
+      loadingSides: 1,
+      platePoolId: null,
+      attainableLoads: [40, 45],
+      inventoryPrecision: 'NOT_APPLICABLE',
+    },
+    {
+      equipmentId: 'cable-b',
+      equipmentName: 'Cable B',
+      equipmentType: 'CABLE',
+      loadType: 'SELECTORIZED',
+      weightOptions: [60, 70],
+      selectedLoadMultiplier: 1,
+      baseLoadKg: 0,
+      loadingSides: 1,
+      platePoolId: null,
+      attainableLoads: [60, 70],
+      inventoryPrecision: 'NOT_APPLICABLE',
+    },
+  ],
+} as const;
+
 describe('EditableSetsTable', () => {
   it('uses compact responsive columns without horizontal scrolling', () => {
     render(
@@ -425,10 +458,30 @@ describe('EditableSetsTable', () => {
         lastPerformance={{
           sessionId: 'previous-session',
           sessionStartedAt: '2026-07-01T10:00:00.000Z',
+          gymEquipmentId: null,
+          equipmentName: null,
           sets: [
-            { weight: 27.25, reps: 12, rir: 2 },
-            { weight: 27.25, reps: 10, rir: 1 },
-            { weight: 25, reps: 9, rir: 0 },
+            {
+              weight: 27.25,
+              reps: 12,
+              rir: 2,
+              gymEquipmentId: null,
+              nominalResistanceKg: null,
+            },
+            {
+              weight: 27.25,
+              reps: 10,
+              rir: 1,
+              gymEquipmentId: null,
+              nominalResistanceKg: null,
+            },
+            {
+              weight: 25,
+              reps: 9,
+              rir: 0,
+              gymEquipmentId: null,
+              nominalResistanceKg: null,
+            },
           ],
           maxWeight: 27.25,
           repsAtMaxWeight: 12,
@@ -455,7 +508,17 @@ describe('EditableSetsTable', () => {
         lastPerformance={{
           sessionId: 'stale-session',
           sessionStartedAt: '2026-05-01T10:00:00.000Z',
-          sets: [{ weight: 19, reps: 10, rir: 1 }],
+          gymEquipmentId: null,
+          equipmentName: null,
+          sets: [
+            {
+              weight: 19,
+              reps: 10,
+              rir: 1,
+              gymEquipmentId: null,
+              nominalResistanceKg: null,
+            },
+          ],
           maxWeight: 19,
           repsAtMaxWeight: 10,
           cardio: null,
@@ -555,5 +618,107 @@ describe('EditableSetsTable', () => {
         }),
       ),
     );
+  });
+
+  it('blocks active set confirmation until linked equipment is selected', () => {
+    const onSubmit = vi.fn();
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        historySets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        loadConstraints={{ ...equipmentConstraints, equipmentId: null } as never}
+        equipmentSelectionRequired
+        onSubmit={onSubmit}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Confirm set 1' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm set 1' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('set-value-options')).not.toBeInTheDocument();
+  });
+
+  it('uses the completed row equipment loads instead of the active machine loads', () => {
+    const cableASet = {
+      ...completedSet,
+      gymEquipmentId: 'cable-a',
+      equipmentNameSnapshot: 'Cable A',
+    };
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[cableASet]}
+        historySets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        loadConstraints={equipmentConstraints as never}
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1 weight in KG' }));
+    const options = within(screen.getByTestId('set-value-options'));
+    expect(options.getByText('40 kg')).toBeInTheDocument();
+    expect(options.getByText('45 kg')).toBeInTheDocument();
+    expect(options.queryByText('60 kg')).not.toBeInTheDocument();
+    expect(options.queryByText('70 kg')).not.toBeInTheDocument();
+  });
+
+  it('changes equipment only through explicit per-set replace or legacy clear actions', async () => {
+    const onChangeSetEquipment = vi.fn().mockResolvedValue(undefined);
+    const cableASet = {
+      ...completedSet,
+      gymEquipmentId: 'cable-a',
+      equipmentNameSnapshot: 'Cable A',
+    };
+    const view = render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[cableASet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        loadConstraints={equipmentConstraints as never}
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+        onChangeSetEquipment={onChangeSetEquipment}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 1' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Choose replacement equipment' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Cable B' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace equipment snapshot' }));
+    await waitFor(() => expect(onChangeSetEquipment).toHaveBeenCalledWith(cableASet, 'cable-b'));
+    expect(screen.queryByRole('button', { name: 'Clear legacy equipment snapshot' })).toBeNull();
+
+    view.rerender(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[cableASet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+        onChangeSetEquipment={onChangeSetEquipment}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear legacy equipment snapshot' }));
+    await waitFor(() => expect(onChangeSetEquipment).toHaveBeenCalledWith(cableASet, null));
   });
 });

@@ -12,8 +12,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-const MANUAL_VALUE = '__manual__';
-
 export function SessionEquipmentSelector({
   options,
   selectedId,
@@ -21,7 +19,7 @@ export function SessionEquipmentSelector({
 }: {
   options: ResolvedEquipmentLoadProfile[];
   selectedId: string | null;
-  onChange: (equipmentId: string | null) => void;
+  onChange: (equipmentId: string) => void;
 }) {
   const t = useTranslations('session.equipment');
   if (options.length === 0) return null;
@@ -40,15 +38,11 @@ export function SessionEquipmentSelector({
           </Badge>
         )}
       </div>
-      <Select
-        value={selectedId ?? MANUAL_VALUE}
-        onValueChange={(value) => onChange(value === MANUAL_VALUE ? null : value)}
-      >
+      <Select value={selectedId ?? undefined} onValueChange={onChange}>
         <SelectTrigger id="session-equipment" aria-label={t('label')}>
           <SelectValue placeholder={t('choose')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={MANUAL_VALUE}>{t('manual')}</SelectItem>
           {options.map((item) => (
             <SelectItem key={item.equipmentId} value={item.equipmentId}>
               {item.equipmentName}

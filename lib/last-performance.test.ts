@@ -16,7 +16,11 @@ interface Row {
   durationSec: number | null;
   distanceM: number | null;
   avgHr: number | null;
+  isDropSet: boolean;
   isWarmup: boolean;
+  gymEquipmentId: string | null;
+  equipmentNameSnapshot: string | null;
+  nominalResistanceKg: number | null;
   completedAt: Date;
   startedAt: Date; // the owning session's startedAt, for the include
   userId: string;
@@ -36,6 +40,7 @@ function matchesWhere(r: Row, where: Record<string, unknown> | undefined): boole
     }
   }
   if ('isWarmup' in where && r.isWarmup !== where.isWarmup) return false;
+  if ('gymEquipmentId' in where && r.gymEquipmentId !== where.gymEquipmentId) return false;
   if ('session' in where) {
     const sess = where.session as { userId?: string };
     if (sess?.userId && r.userId !== sess.userId) return false;
@@ -73,20 +78,35 @@ vi.mock('@/lib/db', () => ({
         return rows
           .filter((r) => matchesWhere(r, where))
           .sort((a, b) => a.setNumber - b.setNumber)
-          .map(({ weight, reps, rir, durationSec, distanceM, avgHr }) => ({
-            weight,
-            reps,
-            rir,
-            durationSec,
-            distanceM,
-            avgHr,
-          }));
+          .map(
+            ({
+              weight,
+              reps,
+              rir,
+              durationSec,
+              distanceM,
+              avgHr,
+              isDropSet,
+              gymEquipmentId,
+              nominalResistanceKg,
+            }) => ({
+              weight,
+              reps,
+              rir,
+              durationSec,
+              distanceM,
+              avgHr,
+              isDropSet,
+              gymEquipmentId,
+              nominalResistanceKg,
+            }),
+          );
       }),
     },
   },
 }));
 
-import { getLastPerformances } from './last-performance';
+import { getLastPerformances, getLastPerformancesForEquipmentTargets } from './last-performance';
 
 const USER = 'user-1';
 
@@ -99,7 +119,11 @@ function row(p: Partial<Row> & { sessionId: string; exerciseId: string; setNumbe
     durationSec: null,
     distanceM: null,
     avgHr: null,
+    isDropSet: false,
     isWarmup: false,
+    gymEquipmentId: null,
+    equipmentNameSnapshot: null,
+    nominalResistanceKg: null,
     completedAt: new Date('2026-01-10T12:00:00Z'),
     startedAt: new Date('2026-01-10T12:00:00Z'),
     userId: USER,
@@ -176,9 +200,30 @@ describe('getLastPerformances', () => {
     expect(perf!.maxWeight).toBe(100);
     expect(perf!.repsAtMaxWeight).toBe(6); // higher rep count at the max load
     expect(perf!.sets).toEqual([
-      { weight: 90, reps: 8, rir: 2 },
-      { weight: 100, reps: 5, rir: 1 },
-      { weight: 100, reps: 6, rir: 0 },
+      {
+        weight: 90,
+        reps: 8,
+        rir: 2,
+        isDropSet: false,
+        gymEquipmentId: null,
+        nominalResistanceKg: null,
+      },
+      {
+        weight: 100,
+        reps: 5,
+        rir: 1,
+        isDropSet: false,
+        gymEquipmentId: null,
+        nominalResistanceKg: null,
+      },
+      {
+        weight: 100,
+        reps: 6,
+        rir: 0,
+        isDropSet: false,
+        gymEquipmentId: null,
+        nominalResistanceKg: null,
+      },
     ]);
     expect(perf!.cardio).toBeNull(); // strength -> no cardio totals
   });
@@ -381,8 +426,22 @@ describe('getLastPerformances', () => {
     ];
     const perf = (await getLastPerformances(USER, ['pullup'], null)).get('pullup');
     expect(perf!.sets).toEqual([
-      { weight: 0, reps: 10, rir: null },
-      { weight: 10, reps: 8, rir: null },
+      {
+        weight: 0,
+        reps: 10,
+        rir: null,
+        isDropSet: false,
+        gymEquipmentId: null,
+        nominalResistanceKg: null,
+      },
+      {
+        weight: 10,
+        reps: 8,
+        rir: null,
+        isDropSet: false,
+        gymEquipmentId: null,
+        nominalResistanceKg: null,
+      },
     ]);
     expect(perf!.maxWeight).toBe(10);
     expect(perf!.repsAtMaxWeight).toBe(8);
@@ -397,5 +456,76 @@ describe('getLastPerformances', () => {
     expect(map.get('bench')!.maxWeight).toBe(100);
     expect(map.get('squat')!.maxWeight).toBe(140);
     expect(map.has('deadlift')).toBe(false); // no history -> absent
+  });
+
+  it('finds the latest performance independently for each equipment identity', async () => {
+    const at = (day: number) => new Date(`2026-01-${String(day).padStart(2, '0')}T12:00:00Z`);
+    rows = [
+      row({
+        sessionId: 'cable-a-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 40,
+        reps: 12,
+        gymEquipmentId: 'cable-a',
+        equipmentNameSnapshot: 'Cable A',
+        nominalResistanceKg: 20,
+        completedAt: at(5),
+        startedAt: at(5),
+      }),
+      row({
+        sessionId: 'cable-b-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 60,
+        reps: 10,
+        gymEquipmentId: 'cable-b',
+        equipmentNameSnapshot: 'Cable B',
+        nominalResistanceKg: 60,
+        completedAt: at(9),
+        startedAt: at(9),
+      }),
+      row({
+        sessionId: 'legacy-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 30,
+        reps: 15,
+        gymEquipmentId: null,
+        completedAt: at(7),
+        startedAt: at(7),
+      }),
+    ];
+
+    const performances = await getLastPerformancesForEquipmentTargets(
+      USER,
+      [
+        { exerciseId: 'pressdown', gymEquipmentId: 'cable-a' },
+        { exerciseId: 'pressdown', gymEquipmentId: 'cable-b' },
+        { exerciseId: 'pressdown', gymEquipmentId: null },
+      ],
+      null,
+    );
+
+    expect(performances).toHaveLength(3);
+    expect(
+      performances.find((performance) => performance.gymEquipmentId === 'cable-a'),
+    ).toMatchObject({
+      sessionId: 'cable-a-session',
+      equipmentName: 'Cable A',
+      sets: [
+        expect.objectContaining({
+          weight: 40,
+          gymEquipmentId: 'cable-a',
+          nominalResistanceKg: 20,
+        }),
+      ],
+    });
+    expect(
+      performances.find((performance) => performance.gymEquipmentId === 'cable-b')?.sessionId,
+    ).toBe('cable-b-session');
+    expect(performances.find((performance) => performance.gymEquipmentId == null)?.sessionId).toBe(
+      'legacy-session',
+    );
   });
 });

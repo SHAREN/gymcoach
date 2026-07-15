@@ -38,6 +38,7 @@ interface Props {
   unit: WeightUnit;
   recommendation?: IntraSetRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
+  submissionDisabled?: boolean;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -78,6 +79,7 @@ export function SetInput({
   unit,
   recommendation = null,
   loadConstraints = null,
+  submissionDisabled = false,
   onSubmit,
 }: Props) {
   const t = useTranslations('session.input');
@@ -242,7 +244,7 @@ export function SetInput({
   const cardioInvalid = isCardio && (durationSec === null || distanceInvalid);
 
   async function handleValidate() {
-    if (cardioInvalid) return;
+    if (cardioInvalid || submissionDisabled) return;
     setSubmitting(true);
     try {
       await onSubmit(
@@ -564,7 +566,7 @@ export function SetInput({
         <Button
           type="button"
           onClick={handleValidate}
-          disabled={submitting || cardioInvalid}
+          disabled={submitting || cardioInvalid || submissionDisabled}
           className="h-20 w-full text-lg font-semibold"
         >
           <Check className="size-6" />

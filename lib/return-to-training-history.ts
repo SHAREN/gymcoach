@@ -88,6 +88,18 @@ interface HistoricalSetWithOrder {
   isDropSet: boolean;
 }
 
+export interface EquipmentReturnRecommendation {
+  gymEquipmentId: string | null;
+  recommendation: ReturnRecommendation;
+}
+
+interface ReturnHistoryData {
+  exerciseRows: Map<string, ExerciseHistoryRow[]>;
+  latestByMuscle: Map<MuscleGroup, Date | null>;
+  recentSetsByMuscle: Map<MuscleGroup, number>;
+  baselineSetsByMuscle: Map<MuscleGroup, number>;
+}
+
 // Builds session-only return recommendations. Nothing is persisted to the
 // program: the active runner applies these targets while this session is open.
 export async function getReturnToTrainingRecommendations({
@@ -100,6 +112,86 @@ export async function getReturnToTrainingRecommendations({
 }: ReturnRecommendationQuery): Promise<Record<string, ReturnRecommendation>> {
   if (programExercises.length === 0) return {};
 
+  const historyData = await loadReturnHistoryData({
+    userId,
+    programExercises,
+    excludeSessionId,
+    now,
+  });
+
+  return Object.fromEntries(
+    programExercises.map((pe) => {
+      const rows = historyData.exerciseRows.get(pe.exerciseId) ?? [];
+      const latestEquipmentId = rows[0]?.gymEquipmentId ?? null;
+      const matchingRows = rows.filter((row) => row.gymEquipmentId === latestEquipmentId);
+      return [
+        pe.id,
+        calculateReturnRecommendation({
+          programExercise: pe,
+          history: buildReturnHistory(pe, matchingRows, historyData),
+          now,
+          bodyweight,
+          loadConstraints: loadConstraintsFor(pe, gym),
+        }),
+      ];
+    }),
+  );
+}
+
+// The web runner can switch between multiple physical machines for one
+// exercise, so it needs a separate return recommendation for every exact
+// equipment identity. A newer Cable B history must not supply Cable A targets
+// or its weight ceiling. Null history is retained only for legacy/no-equipment
+// paths.
+export async function getReturnToTrainingRecommendationsByEquipment({
+  userId,
+  programExercises,
+  excludeSessionId,
+  now,
+  bodyweight = null,
+  gym = null,
+}: ReturnRecommendationQuery): Promise<Record<string, EquipmentReturnRecommendation[]>> {
+  if (programExercises.length === 0) return {};
+
+  const historyData = await loadReturnHistoryData({
+    userId,
+    programExercises,
+    excludeSessionId,
+    now,
+  });
+
+  return Object.fromEntries(
+    programExercises.map((pe) => [
+      pe.id,
+      equipmentTargetsFor(pe, gym).map((gymEquipmentId) => ({
+        gymEquipmentId,
+        recommendation: calculateReturnRecommendation({
+          programExercise: pe,
+          history: buildReturnHistory(
+            pe,
+            (historyData.exerciseRows.get(pe.exerciseId) ?? []).filter(
+              (row) => row.gymEquipmentId === gymEquipmentId,
+            ),
+            historyData,
+          ),
+          now,
+          bodyweight,
+          loadConstraints: loadConstraintsFor(pe, gym, gymEquipmentId),
+        }),
+      })),
+    ]),
+  );
+}
+
+async function loadReturnHistoryData({
+  userId,
+  programExercises,
+  excludeSessionId,
+  now,
+}: Pick<
+  ReturnRecommendationQuery,
+  'userId' | 'programExercises' | 'excludeSessionId' | 'now'
+>): Promise<ReturnHistoryData> {
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
   const muscleGroups = [...new Set(programExercises.map((item) => item.exercise.muscleGroup))];
   const excludedSession = excludeSessionId ? { id: { not: excludeSessionId } } : {};
@@ -132,11 +224,7 @@ export async function getReturnToTrainingRecommendations({
             session: { select: { startedAt: true } },
           },
         });
-        const latestEquipmentId = rows[0]?.gymEquipmentId ?? null;
-        return [
-          exerciseId,
-          rows.filter((row) => row.gymEquipmentId === latestEquipmentId),
-        ] as const;
+        return [exerciseId, rows] as const;
       }),
     ),
     Promise.all(
@@ -173,7 +261,6 @@ export async function getReturnToTrainingRecommendations({
     }),
   ]);
 
-  const historiesByExercise = new Map<string, ReturnTrainingHistory>();
   const latestByMuscle = new Map<MuscleGroup, Date | null>(muscleLatestEntries);
   const recentSetsByMuscle = new Map<MuscleGroup, number>();
   const baselineSetsByMuscle = new Map<MuscleGroup, number>();
@@ -184,33 +271,28 @@ export async function getReturnToTrainingRecommendations({
     target.set(group, (target.get(group) ?? 0) + 1);
   }
 
-  const exerciseRows = new Map<string, ExerciseHistoryRow[]>(exerciseEntries);
-  for (const pe of programExercises) {
-    if (historiesByExercise.has(pe.exerciseId)) continue;
-    const rows = exerciseRows.get(pe.exerciseId) ?? [];
-    const baselineSets = baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
-    historiesByExercise.set(pe.exerciseId, {
-      exerciseLastPerformedAt: rows[0]?.completedAt ?? null,
-      muscleLastPerformedAt: latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
-      recentMuscleSets: recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
-      baselineMuscleSetsPer28Days:
-        baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
-      exerciseSessions: groupHistoricalSessions(rows),
-    });
-  }
+  return {
+    exerciseRows: new Map<string, ExerciseHistoryRow[]>(exerciseEntries),
+    latestByMuscle,
+    recentSetsByMuscle,
+    baselineSetsByMuscle,
+  };
+}
 
-  return Object.fromEntries(
-    programExercises.map((pe) => [
-      pe.id,
-      calculateReturnRecommendation({
-        programExercise: pe,
-        history: historiesByExercise.get(pe.exerciseId)!,
-        now,
-        bodyweight,
-        loadConstraints: loadConstraintsFor(pe, gym),
-      }),
-    ]),
-  );
+function buildReturnHistory(
+  pe: ProgramExerciseForReturn,
+  rows: ExerciseHistoryRow[],
+  data: ReturnHistoryData,
+): ReturnTrainingHistory {
+  const baselineSets = data.baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
+  return {
+    exerciseLastPerformedAt: rows[0]?.completedAt ?? null,
+    muscleLastPerformedAt: data.latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
+    recentMuscleSets: data.recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
+    baselineMuscleSetsPer28Days:
+      baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
+    exerciseSessions: groupHistoricalSessions(rows),
+  };
 }
 
 function groupHistoricalSessions(rows: ExerciseHistoryRow[]): ReturnHistorySession[] {
@@ -250,6 +332,7 @@ function groupHistoricalSessions(rows: ExerciseHistoryRow[]): ReturnHistorySessi
 function loadConstraintsFor(
   pe: ProgramExerciseForReturn,
   gym: GymForReturn | null,
+  gymEquipmentId?: string | null,
 ): GymLoadConstraints | null {
   if (!gym) return null;
   const config = gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
@@ -268,7 +351,7 @@ function loadConstraintsFor(
       platePoolName: item.platePool?.name ?? null,
       plates: item.platePool?.plates ?? [],
     }));
-  return resolveExerciseInventory({
+  const inventory = resolveExerciseInventory({
     inventoryMode: gym.inventoryMode ?? 'LEGACY',
     exercise: {
       id: pe.exerciseId,
@@ -280,5 +363,18 @@ function loadConstraintsFor(
     sharedDumbbellWeights: gym.dumbbellWeights,
     legacyPlateWeights: gym.plateWeights,
     legacyBarWeights: gym.barWeights,
-  }).constraints;
+  });
+  return gymEquipmentId && inventory.source === 'equipment'
+    ? { ...inventory.constraints, equipmentId: gymEquipmentId }
+    : inventory.constraints;
+}
+
+function equipmentTargetsFor(
+  pe: ProgramExerciseForReturn,
+  gym: GymForReturn | null,
+): Array<string | null> {
+  const equipmentIds = (gym?.equipment ?? [])
+    .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
+    .map((item) => item.id);
+  return equipmentIds.length > 0 ? equipmentIds : [null];
 }

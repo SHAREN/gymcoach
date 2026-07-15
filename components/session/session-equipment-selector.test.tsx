@@ -36,7 +36,7 @@ const options = [
 ] as const;
 
 describe('SessionEquipmentSelector', () => {
-  it('explains the selected machine multiplier and exposes alternatives', () => {
+  it('explains the selected machine multiplier and exposes only linked alternatives', () => {
     render(
       <SessionEquipmentSelector
         options={options as never}
@@ -48,8 +48,16 @@ describe('SessionEquipmentSelector', () => {
     expect(screen.getByText(/displayed load x 0.5/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('combobox', { name: 'Equipment used' }));
     expect(screen.getByRole('option', { name: 'Cable B' })).toBeInTheDocument();
-    expect(
-      screen.getByRole('option', { name: 'Legacy / manual load (no equipment snapshot)' }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/legacy \/ manual load/i)).not.toBeInTheDocument();
+  });
+
+  it('requires choosing one of the linked machines when no selection exists', () => {
+    render(
+      <SessionEquipmentSelector options={options as never} selectedId={null} onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/select one machine/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Equipment used' }));
+    expect(screen.getAllByRole('option')).toHaveLength(2);
   });
 });

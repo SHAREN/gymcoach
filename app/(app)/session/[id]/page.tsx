@@ -1,8 +1,12 @@
 import { notFound, redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
-import { getLastPerformances, type LastPerformance } from '@/lib/last-performance';
-import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
+import {
+  getLastPerformancesForEquipmentTargets,
+  type EquipmentPerformanceTarget,
+  type LastPerformance,
+} from '@/lib/last-performance';
+import { getReturnToTrainingRecommendationsByEquipment } from '@/lib/return-to-training-history';
 import { READINESS_RECENCY_HOURS, type ReadinessSignal } from '@/lib/progression';
 import { isDeloadActive } from '@/lib/deload';
 import { SessionRunner, type SerializedLastPerformance } from '@/components/session/session-runner';
@@ -73,8 +77,9 @@ export default async function SessionRunPage(props: Props) {
   if (!session.workout) notFound();
 
   const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
+  const performanceTargets = buildPerformanceTargets(session, exerciseIds);
   const [lastPerformances, user, latestCheckin, catalog] = await Promise.all([
-    getLastPerformances(auth.userId, exerciseIds, session.id),
+    getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
     db.user.findUnique({
       where: { id: auth.userId },
       select: { unit: true, deloadUntil: true, bodyweight: true },
@@ -89,12 +94,14 @@ export default async function SessionRunPage(props: Props) {
     }),
   ]);
 
-  const lastPerfRecord: Record<string, SerializedLastPerformance> = {};
-  for (const [k, v] of lastPerformances) {
-    lastPerfRecord[k] = serializePerf(v);
+  const lastPerfRecord: Record<string, SerializedLastPerformance[]> = {};
+  for (const performance of lastPerformances) {
+    const exercisePerformances = lastPerfRecord[performance.exerciseId] ?? [];
+    exercisePerformances.push(serializePerf(performance));
+    lastPerfRecord[performance.exerciseId] = exercisePerformances;
   }
 
-  const returnRecommendations = await getReturnToTrainingRecommendations({
+  const returnRecommendations = await getReturnToTrainingRecommendationsByEquipment({
     userId: auth.userId,
     programExercises: session.workout.exercises,
     excludeSessionId: session.id,
@@ -159,9 +166,34 @@ function serializePerf(p: LastPerformance): SerializedLastPerformance {
   return {
     sessionId: p.sessionId,
     sessionStartedAt: p.sessionStartedAt.toISOString(),
+    gymEquipmentId: p.gymEquipmentId,
+    equipmentName: p.equipmentName,
     sets: p.sets,
     maxWeight: p.maxWeight,
     repsAtMaxWeight: p.repsAtMaxWeight,
     cardio: p.cardio,
   };
+}
+
+function buildPerformanceTargets(
+  session: {
+    gym: {
+      equipment: { id: string; exerciseLinks: { exerciseId: string }[] }[];
+    } | null;
+  },
+  exerciseIds: string[],
+): EquipmentPerformanceTarget[] {
+  return exerciseIds.flatMap<EquipmentPerformanceTarget>((exerciseId) => {
+    const linkedEquipment =
+      session.gym?.equipment.filter((equipment) =>
+        equipment.exerciseLinks.some((link) => link.exerciseId === exerciseId),
+      ) ?? [];
+    if (linkedEquipment.length > 0) {
+      return linkedEquipment.map((equipment) => ({
+        exerciseId,
+        gymEquipmentId: equipment.id,
+      }));
+    }
+    return [{ exerciseId, gymEquipmentId: null }];
+  });
 }
