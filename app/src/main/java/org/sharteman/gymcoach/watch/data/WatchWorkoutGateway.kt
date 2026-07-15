@@ -18,6 +18,7 @@ import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
+import org.sharteman.gymcoach.data.repository.WatchSetEventApplyResult
 import org.sharteman.gymcoach.watch.domain.ActiveExerciseChangedPayloadDto
 import org.sharteman.gymcoach.watch.domain.RestFinishedPayloadDto
 import org.sharteman.gymcoach.watch.domain.RestHeartRateSummaryDto
@@ -87,7 +88,7 @@ interface WatchWorkoutRepository {
         processed: WatchProcessedEventEntity,
         set: LocalSetEntity,
         runtime: ActiveWorkoutRuntimeEntity,
-    ): Boolean
+    ): WatchSetEventApplyResult
     suspend fun applyDeleteSetEvent(
         processed: WatchProcessedEventEntity,
         setId: String,
@@ -649,7 +650,15 @@ class PersistentWatchWorkoutGateway(
                 updatedBy = WatchEventSource.WATCH.name,
             )
         }
-        val result = appliedResult(repository.applySetEvent(processed, set, updated), updated.revision)
+        val applyResult = repository.applySetEvent(processed, set, updated)
+        if (applyResult.errorCode != null) {
+            return WatchWorkoutApplyResult(
+                status = WatchSyncAckStatus.REJECTED,
+                revision = current.revision,
+                errorCode = applyResult.errorCode,
+            )
+        }
+        val result = appliedResult(applyResult.applied, updated.revision)
         if (result.status == WatchSyncAckStatus.APPLIED) refreshSetHeartRateSummary(record.setId)
         return result
     }

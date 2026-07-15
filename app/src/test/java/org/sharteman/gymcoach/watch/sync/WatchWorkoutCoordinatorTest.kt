@@ -26,6 +26,7 @@ import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.watch.data.PersistentWatchWorkoutGateway
 import org.sharteman.gymcoach.watch.data.WatchWorkoutProtocolCodec
 import org.sharteman.gymcoach.watch.data.WatchWorkoutRepository
+import org.sharteman.gymcoach.data.repository.WatchSetEventApplyResult
 import org.sharteman.gymcoach.watch.domain.ActiveExerciseChangedPayloadDto
 import org.sharteman.gymcoach.watch.domain.RestFinishedPayloadDto
 import org.sharteman.gymcoach.watch.domain.RestHeartRateSummaryDto
@@ -151,6 +152,34 @@ class WatchWorkoutCoordinatorTest {
 
         val restartedSnapshot = gateway(repository).buildSnapshot(SESSION_ID)
         assertEquals(record, restartedSnapshot?.setRecords?.single())
+    }
+
+    @Test
+    fun `equipment selection rejection keeps current revision and event replayable`() = runTest {
+        val repository = FakeWatchWorkoutRepository().apply {
+            setApplyErrorCode = "EQUIPMENT_SELECTION_REQUIRED"
+        }
+        val sink = RecordingSink()
+        val gateway = gateway(repository)
+        gateway.buildSnapshot(SESSION_ID)
+        val coordinator = coordinator(gateway, sink)
+        val event = watchEvent(
+            eventId = EVENT_SET,
+            type = WatchEventType.SET_COMPLETED,
+            revision = 2,
+            payload = codec.encodeSetRecordPayload(setRecord(102.5, 7, 2, 2)),
+        )
+
+        coordinator.onEvent(event)
+        coordinator.onEvent(event)
+
+        assertEquals(WatchSyncAckStatus.REJECTED, sink.acks[sink.acks.lastIndex - 1].status)
+        assertEquals(1L, sink.acks[sink.acks.lastIndex - 1].revision)
+        assertEquals("EQUIPMENT_SELECTION_REQUIRED", sink.acks[sink.acks.lastIndex - 1].errorCode)
+        assertEquals(WatchSyncAckStatus.REJECTED, sink.acks.last().status)
+        assertEquals(1L, repository.runtime?.revision)
+        assertTrue(repository.sets.isEmpty())
+        assertTrue(repository.outboxSetIds.isEmpty())
     }
 
     @Test
@@ -853,6 +882,7 @@ class WatchWorkoutCoordinatorTest {
         val restRecoverySummaries = linkedMapOf<String, RestRecoverySummaryEntity>()
         val sets = linkedMapOf<String, LocalSetEntity>()
         val outboxSetIds = mutableListOf<String>()
+        var setApplyErrorCode: String? = null
         var runtime: ActiveWorkoutRuntimeEntity? = null
         var finishedSessionAt: Long? = null
 
@@ -922,12 +952,15 @@ class WatchWorkoutCoordinatorTest {
             processed: WatchProcessedEventEntity,
             set: LocalSetEntity,
             runtime: ActiveWorkoutRuntimeEntity,
-        ): Boolean {
-            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) return false
+        ): WatchSetEventApplyResult {
+            setApplyErrorCode?.let { return WatchSetEventApplyResult(applied = false, errorCode = it) }
+            if (processedEvents.putIfAbsent(processed.eventId, processed) != null) {
+                return WatchSetEventApplyResult(applied = false)
+            }
             sets[set.id] = set
             outboxSetIds += set.id
             this.runtime = runtime
-            return true
+            return WatchSetEventApplyResult(applied = true)
         }
 
         override suspend fun applyDeleteSetEvent(
