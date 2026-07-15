@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -68,13 +69,10 @@ import org.sharteman.gymcoach.data.model.ReadinessDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.repository.SyncIssue
 import org.sharteman.gymcoach.data.repository.SyncIssueKind
-import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.time.format.TextStyle
-import java.util.Locale
 
 private data class HomeDestination(
     val title: String,
@@ -110,10 +108,14 @@ fun HomeScreen(
     currentVersion: String,
     onDownloadUpdate: () -> Unit,
     onLogout: () -> Unit,
+    onEditWorkout: ((programId: String, workoutId: String) -> Unit)? = null,
+    onOpenProgram: ((programId: String) -> Unit)? = null,
+    serverUrl: String? = null,
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showReadinessDialog by remember { mutableStateOf(false) }
+    var selectedWorkout by remember { mutableStateOf<WorkoutDto?>(null) }
     val gyms = bootstrap?.gyms.orEmpty()
     val gymIds = gyms.map { it.id }
     var selectedGymId by rememberSaveable(bootstrap?.profile?.activeGymId, gymIds) {
@@ -274,7 +276,8 @@ fun HomeScreen(
                     items(workouts, key = { it.id }) { workout ->
                         WorkoutRow(
                             workout = workout,
-                            onClick = { onStartWorkout(workout, selectedGymId) },
+                            onOpen = { selectedWorkout = workout },
+                            onStart = { onStartWorkout(workout, selectedGymId) },
                         )
                     }
                 }
@@ -336,6 +339,26 @@ fun HomeScreen(
             previous = bootstrap?.readiness,
             onSave = onSaveReadiness,
             onDismiss = { showReadinessDialog = false },
+        )
+    }
+    selectedWorkout?.let { workout ->
+        WorkoutDayDetailsDialog(
+            programName = bootstrap?.activeProgram?.name.orEmpty(),
+            workout = workout,
+            serverUrl = serverUrl,
+            onStart = {
+                selectedWorkout = null
+                onStartWorkout(workout, selectedGymId)
+            },
+            onEditDay = {
+                selectedWorkout = null
+                onEditWorkout?.invoke(workout.programId, workout.id) ?: onPrograms()
+            },
+            onOpenProgram = {
+                selectedWorkout = null
+                onOpenProgram?.invoke(workout.programId) ?: onPrograms()
+            },
+            onDismiss = { selectedWorkout = null },
         )
     }
 }
@@ -533,8 +556,15 @@ private fun EmptyProgramCard(onPrograms: () -> Unit) {
 }
 
 @Composable
-private fun WorkoutRow(workout: WorkoutDto, onClick: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun WorkoutRow(
+    workout: WorkoutDto,
+    onOpen: () -> Unit,
+    onStart: () -> Unit,
+) {
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().testTag("home-workout-${workout.id}"),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -550,16 +580,20 @@ private fun WorkoutRow(workout: WorkoutDto, onClick: () -> Unit) {
                                 workout.exercises.size,
                             ),
                         )
-                        workout.dayOfWeek?.takeIf { it in 1..7 }?.let {
+                        workoutDayName(workout.dayOfWeek)?.let {
                             append(" · ")
-                            append(DayOfWeek.of(it).getDisplayName(TextStyle.FULL, Locale.getDefault()))
+                            append(it)
                         }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(onClick = onClick, enabled = workout.exercises.isNotEmpty()) {
+            Button(
+                onClick = onStart,
+                enabled = workout.exercises.isNotEmpty(),
+                modifier = Modifier.testTag("home-workout-start-${workout.id}"),
+            ) {
                 Text(stringResource(R.string.start))
             }
         }

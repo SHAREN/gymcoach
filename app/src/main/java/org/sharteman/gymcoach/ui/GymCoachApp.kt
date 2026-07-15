@@ -150,6 +150,15 @@ fun GymCoachApp(
                             navController.navigate("session/$sessionId")
                         }
                     },
+                    onEditWorkout = { programId, workoutId ->
+                        navController.navigate(
+                            "programs/${Uri.encode(programId)}/workouts/${Uri.encode(workoutId)}/edit",
+                        )
+                    },
+                    onOpenProgram = { programId ->
+                        navController.navigate("programs/${Uri.encode(programId)}")
+                    },
+                    serverUrl = repository.serverUrl,
                     onSync = {
                         scope.launch {
                             syncing = true
@@ -231,6 +240,54 @@ fun GymCoachApp(
                         token = accessToken,
                         onBack = { navController.popBackStack() },
                         onOpenWebPath = { path -> openWebPath(path) },
+                        initialProgram = bootstrap?.activeProgram,
+                        onChanged = {
+                            if (online) scope.launch { runCatching { repository.refreshBootstrap() } }
+                        },
+                    )
+                }
+            }
+            composable(
+                route = "programs/{programId}",
+                arguments = listOf(navArgument("programId") { type = NavType.StringType }),
+            ) { entry ->
+                if (accessToken == null) {
+                    LaunchedEffect(Unit) { loggedIn = false }
+                } else {
+                    ProgramsScreen(
+                        baseUrl = repository.serverUrl,
+                        token = accessToken,
+                        onBack = { navController.popBackStack() },
+                        onOpenWebPath = { path -> openWebPath(path) },
+                        initialProgramId = entry.arguments?.getString("programId"),
+                        initialProgram = bootstrap?.activeProgram,
+                        onChanged = {
+                            if (online) scope.launch { runCatching { repository.refreshBootstrap() } }
+                        },
+                    )
+                }
+            }
+            composable(
+                route = "programs/{programId}/workouts/{workoutId}/edit",
+                arguments = listOf(
+                    navArgument("programId") { type = NavType.StringType },
+                    navArgument("workoutId") { type = NavType.StringType },
+                ),
+            ) { entry ->
+                if (accessToken == null) {
+                    LaunchedEffect(Unit) { loggedIn = false }
+                } else {
+                    ProgramsScreen(
+                        baseUrl = repository.serverUrl,
+                        token = accessToken,
+                        onBack = { navController.popBackStack() },
+                        onOpenWebPath = { path -> openWebPath(path) },
+                        initialProgramId = entry.arguments?.getString("programId"),
+                        initialWorkoutId = entry.arguments?.getString("workoutId"),
+                        initialProgram = bootstrap?.activeProgram,
+                        onChanged = {
+                            if (online) scope.launch { runCatching { repository.refreshBootstrap() } }
+                        },
                     )
                 }
             }

@@ -19,7 +19,9 @@
     <string name="program_workout_edit">Изменить тренировочный день</string>
     <string name="program_workout_delete">Удалить тренировочный день</string>
     <string name="program_workout_name">Название тренировочного дня</string>
-    <string name="program_day_of_week">День недели (1-7, необязательно)</string>
+    <string name="program_day_of_week">День недели</string>
+    <string name="program_day_of_week_value">День: %1$s</string>
+    <string name="program_day_not_set">Без привязки к дню</string>
     <string name="program_exercise_add">Добавить упражнение</string>
     <string name="program_exercise_edit">Изменить параметры упражнения</string>
     <string name="program_exercise_delete">Убрать из программы</string>
@@ -64,4 +66,14 @@
     <string name="invalid_number">Введите корректное число.</string>
     <string name="program_templates_web">Шаблоны</string>
     <string name="program_generate_web">Создать с ИИ</string>
+    <string name="workout_day_view">Открыть</string>
+    <string name="workout_day_program">Программа: %1$s</string>
+    <string name="workout_day_sets_count">Запланировано подходов: %1$d</string>
+    <string name="workout_day_exercises">Упражнения</string>
+    <string name="workout_day_no_exercises">В этот тренировочный день ещё не добавлены упражнения.</string>
+    <string name="workout_day_open_program">Открыть всю программу</string>
+    <string name="workout_day_start">Начать тренировку</string>
+    <string name="workout_day_drop_sets">Дроп-сеты: %1$d</string>
+    <string name="workout_day_superset">Суперсет %1$s</string>
+    <string name="workout_day_tempo">Темп: %1$s</string>
 </resources>
