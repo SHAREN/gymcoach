@@ -12,6 +12,8 @@ This directory contains the Stage 2 source project for the Huawei Watch GT 4 com
 - UI target: round 466 x 466 display.
 - Transport limits: at most 1,024 UTF-8 bytes per direct message and less than 4,000,000 bytes per file.
 
+The normative Stage 2 control-plane envelope is `../shared-contracts/schemas/v1/control-message.schema.json`. It is separate from workout events and uses only `PING`, `PONG`, `SYNC_REQUESTED`, and `SYNC_SNAPSHOT`.
+
 ## Current Stage 2 scope
 
 Implemented now:
@@ -64,7 +66,7 @@ DevEco Studio, the Lite Wearable SDK, Previewer, and DevEco Assistant are not in
 
 This repository therefore does not invent or hand-author DevEco-version-specific build metadata, generated module files, signing configuration, or Wear Engine imports. After the official SDK is installed:
 
-1. Create an official Lite Wearable JavaScript project with compile SDK 10 in DevEco Studio.
+1. Use the official DevEco Studio wizard to create a Lite Wearable JavaScript project with compile SDK 10.
 2. Compare its generated project and module metadata with this directory.
 3. Keep the source files in `entry/src/main/js/default` and `src/core`.
 4. Add the official generated page route and module metadata without guessing field names.

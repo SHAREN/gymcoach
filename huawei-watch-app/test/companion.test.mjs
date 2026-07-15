@@ -38,6 +38,7 @@ async function createHarness() {
     deviceId: 'phone-test',
     idGenerator: sequence('phone'),
     repository: new WatchStateRepository(createVolatileStorageBackend()),
+    source: 'PHONE',
     transport: transports.phone,
   });
 
