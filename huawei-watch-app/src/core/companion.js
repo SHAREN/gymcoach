@@ -17,12 +17,14 @@ export class WatchCompanion {
     deviceId,
     idGenerator = defaultIdGenerator,
     repository,
+    source = 'WATCH',
     transport,
   }) {
     this.clock = clock;
     this.deviceId = deviceId;
     this.idGenerator = idGenerator;
     this.repository = repository;
+    this.source = source;
     this.transport = assertTransport(transport);
     this.listeners = new Set();
     this.started = false;
@@ -190,6 +192,7 @@ export class WatchCompanion {
       messageId: this.idGenerator(),
       payload,
       replyTo,
+      source: this.source,
       timestamp: this.clock(),
       type,
     });
