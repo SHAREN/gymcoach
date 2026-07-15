@@ -57,10 +57,18 @@ function renderPage() {
     showRest: screen === 'rest',
     hasWorkout,
     noWorkout: !hasWorkout,
-    showStartSet: hasWorkout && activeWorkout.activeSetId === null,
-    showCompleteSet: hasWorkout && activeWorkout.pendingSet !== null,
+    showStartSet:
+      hasWorkout && activeWorkout.session.status !== 'PAUSED' && activeWorkout.activeSetId === null,
+    showCompleteSet:
+      hasWorkout && activeWorkout.session.status !== 'PAUSED' && activeWorkout.pendingSet !== null,
     showRemoteActiveSet:
       hasWorkout && activeWorkout.activeSetId !== null && activeWorkout.pendingSet === null,
+    showExerciseNavigation:
+      hasWorkout &&
+      activeWorkout.session.status !== 'PAUSED' &&
+      activeWorkout.pendingSet === null &&
+      activeWorkout.rest === null,
+    showPauseButton: hasWorkout,
     showLastSetActions: completed > 0,
     connectionTone: latestState.connection,
     connectionLabel: connectionLabels[latestState.connection] || text.offline,
@@ -108,7 +116,8 @@ function renderPage() {
     targetSummary: exercise
       ? `${exercise.targetReps} ${text.reps.toLowerCase()} · RIR ${exercise.targetRir}`
       : '-',
-    elapsed: formatElapsed(activeWorkout?.startedAt),
+    elapsed: formatElapsed(timer.workoutElapsedMs),
+    setElapsed: formatElapsed(timer.setElapsedMs),
     restCountdown: formatCountdown(timer.rest.remainingSeconds),
     restMinimum: formatHeartRate(restSummary?.min),
     restAverage: formatHeartRate(restSummary?.average),
@@ -132,11 +141,11 @@ function syncDraft(activeWorkout, exercise) {
   draftRir = previous?.rir ?? exercise.targetRir;
 }
 
-function formatElapsed(startedAt) {
-  if (!Number.isInteger(startedAt)) {
+function formatElapsed(elapsedMs) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
     return '00:00';
   }
-  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const seconds = Math.floor(elapsedMs / 1000);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remaining = seconds % 60;
@@ -172,12 +181,13 @@ function scheduleTimer(page) {
     clearTimeout(timerHandle);
     timerHandle = null;
   }
-  const rest = latestState.activeWorkout?.rest;
-  if (!pageVisible || !rest) {
+  const activeWorkout = latestState.activeWorkout;
+  if (!pageVisible || !activeWorkout || activeWorkout.session.status === 'FINISHED') {
     return;
   }
-  const remaining = companion.timerState(Date.now()).rest.remainingMs;
-  const delay = Math.max(50, Math.min(1_000, remaining || 50));
+  const rest = activeWorkout.rest;
+  const remaining = rest ? companion.timerState(Date.now()).rest.remainingMs : 1_000;
+  const delay = rest ? Math.max(50, Math.min(1_000, remaining || 50)) : 1_000;
   timerHandle = setTimeout(async () => {
     timerHandle = null;
     await companion.checkRestTimer(Date.now());

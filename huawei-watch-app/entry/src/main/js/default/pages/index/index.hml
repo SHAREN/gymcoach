@@ -37,18 +37,20 @@
 
     <text class="exercise-name large">{{ exerciseName }}</text>
     <text class="set-progress">{{ setLabel }} {{ setProgress }}</text>
+    <text if="{{ showCompleteSet }}" class="card-detail">{{ durationLabel }}: {{ setElapsed }}</text>
     <text class="heart-rate-line">{{ currentHrLabel }}: {{ currentHeartRate }}</text>
     <div class="target-card">
       <text class="target-label">{{ targetLabel }}</text>
       <text class="target-value">{{ targetSummary }}</text>
     </div>
 
-    <div class="exercise-nav">
+    <div if="{{ showExerciseNavigation }}" class="exercise-nav">
       <button class="nav-button" onclick="previousExercise">‹ {{ previousLabel }}</button>
       <button class="nav-button" onclick="nextExercise">{{ nextLabel }} ›</button>
     </div>
 
     <button class="wide-button secondary" onclick="openSetEntry">{{ editSetLabel }}</button>
+    <button if="{{ showPauseButton }}" class="wide-button secondary" onclick="togglePause">{{ pauseResumeLabel }}</button>
     <button if="{{ showStartSet }}" class="wide-button" onclick="startSet">{{ startSetLabel }}</button>
     <button if="{{ showCompleteSet }}" class="wide-button danger" onclick="completeSet">{{ completeSetLabel }}</button>
     <text if="{{ showRemoteActiveSet }}" class="warning-text">{{ activeSetOnPhoneLabel }}</text>
@@ -62,6 +64,7 @@
     </div>
 
     <text class="exercise-name">{{ exerciseName }}</text>
+    <text if="{{ showCompleteSet }}" class="card-detail">{{ durationLabel }}: {{ setElapsed }}</text>
 
     <div class="number-row">
       <text class="number-label">{{ weightLabel }}</text>

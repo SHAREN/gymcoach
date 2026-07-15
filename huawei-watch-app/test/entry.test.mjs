@@ -19,6 +19,9 @@ test('watch page entry resolves and does not import the debug transport', async 
   assert.equal(typeof module.default.toggleLanguage, 'function');
   assert.equal(typeof module.default.correctLastSet, 'function');
   assert.equal(typeof module.default.deleteLastSet, 'function');
+  assert.equal(source.includes('formatElapsed(timer.workoutElapsedMs)'), true);
+  assert.equal(source.includes('setElapsed: formatElapsed(timer.setElapsedMs)'), true);
+  assert.equal(source.includes("activeWorkout.session.status === 'FINISHED'"), true);
 });
 
 test('HML exposes workout, set, and rest controls without unsupported crown APIs', async () => {
@@ -37,7 +40,10 @@ test('HML exposes workout, set, and rest controls without unsupported crown APIs
   assert.equal(hml.includes('onclick="add15Seconds"'), true);
   assert.equal(hml.includes('onclick="add30Seconds"'), true);
   assert.equal(hml.includes('onclick="togglePause"'), true);
+  assert.equal(hml.includes('showExerciseNavigation'), true);
+  assert.equal(hml.includes('showPauseButton'), true);
   assert.equal(hml.includes('onclick="startNextSet"'), true);
+  assert.equal(hml.includes('{{ setElapsed }}'), true);
   assert.equal(`${hml}\n${source}`.toLowerCase().includes('crown'), false);
   assert.equal(`${hml}\n${source}`.toLowerCase().includes('rotary'), false);
 });
