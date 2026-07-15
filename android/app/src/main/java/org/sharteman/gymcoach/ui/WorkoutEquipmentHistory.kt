@@ -33,6 +33,7 @@ internal fun selectReturnRecommendationForEquipment(
     recommendations: List<EquipmentReturnRecommendationDto>?,
     fallback: ReturnRecommendationDto?,
     fallbackPerformance: LastPerformanceDto?,
+    fallbackGymId: String?,
     gymId: String?,
     gymEquipmentId: String?,
 ): ReturnRecommendationDto? = recommendations
@@ -41,11 +42,13 @@ internal fun selectReturnRecommendationForEquipment(
     }
     ?.recommendation
     ?: fallback?.takeIf {
-        sameEquipmentIdentity(
-            fallbackPerformance?.gymId,
-            fallbackPerformance?.gymEquipmentId,
-            gymId,
-            gymEquipmentId,
+        fallbackGymId == gymId && (
+            fallbackPerformance == null || sameEquipmentIdentity(
+                fallbackPerformance.gymId,
+                fallbackPerformance.gymEquipmentId,
+                gymId,
+                gymEquipmentId,
+            )
         )
     }
 

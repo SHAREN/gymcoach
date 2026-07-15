@@ -80,7 +80,7 @@ export function mobileWorkoutGymIds(
   activeGymId: string | null,
   openSessions: Array<{ workoutId: string | null; gymId: string | null }>,
   workoutId: string,
-): string[] {
+): Array<string | null> {
   return mobileHistoryGymIds(
     activeGymId,
     openSessions.filter((session) => session.workoutId === workoutId),
@@ -90,14 +90,8 @@ export function mobileWorkoutGymIds(
 export function mobileHistoryGymIds(
   activeGymId: string | null,
   openSessions: Array<{ gymId: string | null }>,
-): string[] {
-  return [
-    ...new Set(
-      [activeGymId, ...openSessions.map((session) => session.gymId)].filter(
-        (gymId): gymId is string => gymId != null,
-      ),
-    ),
-  ];
+): Array<string | null> {
+  return [...new Set([activeGymId, ...openSessions.map((session) => session.gymId)])];
 }
 
 export function mergeMobileEquipmentReturnRecommendations(
@@ -281,9 +275,11 @@ export async function buildMobileBootstrap(userId: string) {
   const programExercises = workouts.flatMap((workout) => workout.exercises);
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
   const historyGymIds = mobileHistoryGymIds(user.activeGymId, openSessions);
-  const historyGyms = historyGymIds
-    .map((gymId) => gymsById.get(gymId))
-    .filter((gym) => gym != null);
+  const historyGyms = historyGymIds.flatMap((gymId) => {
+    if (gymId == null) return [null];
+    const gym = gymsById.get(gymId);
+    return gym ? [gym] : [];
+  });
   const performanceTargets = [
     ...new Map(
       (historyGyms.length > 0 ? historyGyms : [null])
@@ -318,9 +314,15 @@ export async function buildMobileBootstrap(userId: string) {
     workouts.length > 0
       ? Promise.all(
           workouts.map(async (workout) => {
-            const workoutGyms = mobileWorkoutGymIds(user.activeGymId, openSessions, workout.id)
-              .map((gymId) => gymsById.get(gymId))
-              .filter((gym) => gym != null);
+            const workoutGyms = mobileWorkoutGymIds(
+              user.activeGymId,
+              openSessions,
+              workout.id,
+            ).flatMap((gymId) => {
+              if (gymId == null) return [null];
+              const gym = gymsById.get(gymId);
+              return gym ? [gym] : [];
+            });
             const recommendationsByGym = await Promise.all(
               (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) =>
                 getReturnToTrainingRecommendationsByEquipment({

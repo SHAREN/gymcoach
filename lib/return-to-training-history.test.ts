@@ -35,6 +35,14 @@ const nullGymBRow = {
   completedAt: new Date('2026-06-20T10:00:00.000Z'),
   session: { startedAt: new Date('2026-06-20T10:00:00.000Z'), gymId: 'gym-b' },
 };
+const nullNoGymRow = {
+  ...cableARow,
+  sessionId: 'session-no-gym',
+  weight: 70,
+  gymEquipmentId: null,
+  completedAt: new Date('2026-06-10T10:00:00.000Z'),
+  session: { startedAt: new Date('2026-06-10T10:00:00.000Z'), gymId: null },
+};
 
 vi.mock('@/lib/db', () => ({
   db: {
@@ -42,7 +50,7 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
         if (!('exerciseId' in where)) return [];
         const gymId = (where.session as { gymId?: string | null } | undefined)?.gymId;
-        return [cableBRow, cableARow, nullGymARow, nullGymBRow].filter(
+        return [cableBRow, cableARow, nullGymARow, nullGymBRow, nullNoGymRow].filter(
           (row) => gymId === undefined || row.session.gymId === gymId,
         );
       }),
@@ -161,6 +169,37 @@ describe('equipment-specific return-to-training history', () => {
       gymId: 'gym-b',
       gymEquipmentId: null,
       recommendation: { exerciseGapDays: 25 },
+    });
+  });
+
+  it('uses only no-gym return history for a no-gym session', async () => {
+    const recommendations = await getReturnToTrainingRecommendationsByEquipment({
+      userId: 'user-1',
+      programExercises: [
+        {
+          id: 'pe-1',
+          exerciseId: 'pressdown',
+          targetSets: 3,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise: {
+            name: 'Cable pressdown',
+            category: 'ISOLATION',
+            equipmentType: 'CABLE',
+            usesBodyweight: false,
+            muscleGroup: 'TRICEPS',
+          },
+        },
+      ],
+      excludeSessionId: 'current-session',
+      now: new Date('2026-07-15T10:00:00.000Z'),
+      gym: null,
+    });
+
+    expect(recommendations['pe-1']?.[0]).toMatchObject({
+      gymId: null,
+      gymEquipmentId: null,
+      recommendation: { exerciseGapDays: 35 },
     });
   });
 });

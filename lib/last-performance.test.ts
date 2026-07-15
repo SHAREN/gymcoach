@@ -572,4 +572,41 @@ describe('getLastPerformances', () => {
       expect.objectContaining({ gymId: 'gym-b', sessionId: 'gym-b-session', maxWeight: 60 }),
     ]);
   });
+
+  it('treats no-gym null equipment as distinct from the active gym', async () => {
+    rows = [
+      row({
+        sessionId: 'active-gym-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 30,
+        reps: 12,
+        gymId: 'gym-a',
+        gymEquipmentId: null,
+        completedAt: new Date('2026-07-14T10:00:00.000Z'),
+        startedAt: new Date('2026-07-14T10:00:00.000Z'),
+      }),
+      row({
+        sessionId: 'no-gym-session',
+        exerciseId: 'pressdown',
+        setNumber: 1,
+        weight: 60,
+        reps: 8,
+        gymId: null,
+        gymEquipmentId: null,
+        completedAt: new Date('2026-06-20T10:00:00.000Z'),
+        startedAt: new Date('2026-06-20T10:00:00.000Z'),
+      }),
+    ];
+
+    const performances = await getLastPerformancesForEquipmentTargets(
+      USER,
+      [{ exerciseId: 'pressdown', gymId: null, gymEquipmentId: null }],
+      null,
+    );
+
+    expect(performances).toEqual([
+      expect.objectContaining({ gymId: null, sessionId: 'no-gym-session', maxWeight: 60 }),
+    ]);
+  });
 });

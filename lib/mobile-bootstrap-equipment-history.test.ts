@@ -14,7 +14,7 @@ function performance(
   sessionId: string,
   sessionStartedAt: string,
   maxWeight: number,
-  gymId = 'gym-1',
+  gymId: string | null = 'gym-1',
 ): LastPerformance {
   return {
     exerciseId: 'pressdown',
@@ -42,7 +42,7 @@ function performance(
 function recommendation(
   gymEquipmentId: string | null,
   suggestedWeight: number,
-  gymId = 'gym-1',
+  gymId: string | null = 'gym-1',
 ): EquipmentReturnRecommendation {
   return {
     gymId,
@@ -152,5 +152,38 @@ describe('mobile equipment history contract', () => {
       { gymId: 'gym-a', suggestedWeight: 30 },
       { gymId: 'gym-b', suggestedWeight: 60 },
     ]);
+  });
+
+  it('keeps an open no-gym session as a first-class scope beside the active gym', () => {
+    const gymIds = mobileWorkoutGymIds(
+      'gym-a',
+      [{ workoutId: 'workout-1', gymId: null }],
+      'workout-1',
+    );
+    const historyGymIds = mobileHistoryGymIds('gym-a', [{ gymId: null }]);
+    const merged = mergeMobileEquipmentReturnRecommendations([
+      { 'program-exercise-1': [recommendation(null, 30, 'gym-a')] },
+      { 'program-exercise-1': [recommendation(null, 60, null)] },
+    ]);
+    const contract = buildMobileEquipmentHistoryContract(
+      [
+        performance(null, 'session-a', '2026-07-14T10:00:00.000Z', 30, 'gym-a'),
+        performance(null, 'session-no-gym', '2026-06-20T10:00:00.000Z', 60, null),
+      ],
+      [['workout-1', merged]],
+    );
+
+    expect(gymIds).toEqual(['gym-a', null]);
+    expect(historyGymIds).toEqual(['gym-a', null]);
+    expect(
+      contract.lastPerformancesByEquipment.pressdown?.find(
+        (item) => item.gymId == null && item.gymEquipmentId == null,
+      )?.sessionId,
+    ).toBe('session-no-gym');
+    expect(
+      contract.returnRecommendationsByEquipmentByWorkout['workout-1']?.['program-exercise-1']?.find(
+        (item) => item.gymId == null && item.gymEquipmentId == null,
+      )?.recommendation.suggestedWeight,
+    ).toBe(60);
   });
 });
