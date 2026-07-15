@@ -4,7 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.buildJsonObject
+import org.sharteman.gymcoach.watch.domain.WatchControlMessageDto
+import org.sharteman.gymcoach.watch.domain.WatchControlMessageType
+import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
+import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchProtocolErrorCode
 import org.sharteman.gymcoach.watch.domain.WatchProtocolException
 
@@ -44,6 +49,30 @@ class WatchProtocolCodecTest {
         assertEquals("stage2-ping-001", decoded.messageId)
         assertEquals(decoded, roundTripped)
     }
+
+    @Test
+    fun `control id limits count Unicode code points`() {
+        val accepted = controlMessage("😀".repeat(128))
+        val rejected = controlMessage("😀".repeat(129))
+
+        assertEquals(accepted, codec.decodeControlMessage(codec.encodeControlMessage(accepted)))
+        val failure = runCatching { codec.encodeControlMessage(rejected) }.exceptionOrNull()
+
+        assertTrue(failure is WatchProtocolException)
+        assertEquals(WatchProtocolErrorCode.INVALID_EVENT, (failure as WatchProtocolException).code)
+    }
+
+    private fun controlMessage(messageId: String) = WatchControlMessageDto(
+        protocolVersion = WatchProtocol.VERSION,
+        schemaVersion = WatchProtocol.SCHEMA_VERSION,
+        messageId = messageId,
+        type = WatchControlMessageType.PING,
+        timestamp = 1_000L,
+        source = WatchEventSource.WATCH,
+        deviceId = "watch-test",
+        replyTo = null,
+        payload = buildJsonObject {},
+    )
 
     private companion object {
         const val VALID_EVENT =
