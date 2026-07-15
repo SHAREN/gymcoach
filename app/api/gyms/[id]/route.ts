@@ -28,12 +28,17 @@ export async function PUT(req: Request, props: Params) {
         where: { id },
         data: {
           name: input.name,
+          ...(input.inventoryMode ? { inventoryMode: input.inventoryMode } : {}),
           dumbbellWeights: input.dumbbellWeights,
           plateWeights: input.plateWeights,
           barWeights: input.barWeights,
           exerciseConfigs: { createMany: { data: exerciseConfigs } },
         },
-        include: { exerciseConfigs: true },
+        include: {
+          exerciseConfigs: true,
+          platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+          equipment: { include: { exerciseLinks: true, platePool: { include: { plates: true } } } },
+        },
       });
     });
     return NextResponse.json(updated);

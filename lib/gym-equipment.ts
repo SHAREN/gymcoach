@@ -1,24 +1,19 @@
 import { Buffer } from 'node:buffer';
+import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
 import { getExerciseMedia } from '@/lib/exercise-media';
-import type { EquipmentType } from '@/lib/prisma-client';
+import { resolveExerciseInventory, type EquipmentLoadProfile } from '@/lib/gym-loads';
+import type { GymEquipmentInput, GymPlatePoolInput } from '@/lib/schemas/gym-equipment';
 
 export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[number];
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
-interface UpsertGymEquipmentInput {
-  equipmentId?: string;
-  name: string;
-  equipmentType: EquipmentType;
-  description?: string | null;
-  manufacturer?: string | null;
-  modelName?: string | null;
-  quantity?: number;
-  weightOptions?: number[];
-  exerciseIds?: string[];
+type UpsertGymEquipmentInput = GymEquipmentInput & {
+  // Accepted temporarily for old MCP clients. Equipment links now resolve
+  // availability directly, so no GymExerciseConfig copy is written.
   markExercisesAvailable?: boolean;
-}
+};
 
 interface SetGymEquipmentImageInput {
   clear?: boolean;
@@ -36,7 +31,20 @@ const equipmentSelection = {
   manufacturer: true,
   modelName: true,
   quantity: true,
+  loadType: true,
   weightOptions: true,
+  selectedLoadMultiplier: true,
+  baseLoadKg: true,
+  platePoolId: true,
+  loadingSides: true,
+  platePool: {
+    select: {
+      id: true,
+      name: true,
+      compatibilityKey: true,
+      plates: { orderBy: { weightKg: 'asc' as const } },
+    },
+  },
   imageUrl: true,
   imageMimeType: true,
   createdAt: true,
@@ -86,6 +94,10 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
       where: { id: gym.id },
       include: {
         equipment: { orderBy: { name: 'asc' }, select: equipmentSelection },
+        platePools: {
+          orderBy: { name: 'asc' },
+          include: { plates: { orderBy: { weightKg: 'asc' } } },
+        },
         exerciseConfigs: {
           orderBy: { exercise: { name: 'asc' } },
           include: {
@@ -131,15 +143,43 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
     }
   }
 
+  const equipmentByExercise = new Map<string, EquipmentLoadProfile[]>();
+  for (const item of details.equipment) {
+    const profile: EquipmentLoadProfile = {
+      equipmentId: item.id,
+      equipmentName: item.name,
+      equipmentType: item.equipmentType,
+      loadType: item.loadType,
+      weightOptions: item.weightOptions,
+      selectedLoadMultiplier: item.selectedLoadMultiplier,
+      baseLoadKg: item.baseLoadKg,
+      loadingSides: item.loadingSides,
+      platePoolId: item.platePoolId,
+      platePoolName: item.platePool?.name ?? null,
+      plates:
+        item.platePool?.plates.map((plate) => ({
+          weightKg: plate.weightKg,
+          quantity: plate.quantity,
+        })) ?? [],
+    };
+    for (const link of item.exerciseLinks) {
+      const profiles = equipmentByExercise.get(link.exerciseId) ?? [];
+      profiles.push(profile);
+      equipmentByExercise.set(link.exerciseId, profiles);
+    }
+  }
+
   return {
     gym: {
       id: details.id,
       name: details.name,
+      inventoryMode: details.inventoryMode,
       sharedFreeWeights: {
         dumbbellWeightsKg: details.dumbbellWeights,
         plateWeightsKg: details.plateWeights,
         barWeightsKg: details.barWeights,
       },
+      platePools: details.platePools,
       equipment: details.equipment.map((item) => ({
         ...item,
         image: equipmentImage(item, baseUrl),
@@ -148,10 +188,23 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
       exerciseCoverage: exercises.map((exercise) => {
         const config = configByExercise.get(exercise.id);
         const media = getExerciseMedia(exercise.name);
+        const resolved = resolveExerciseInventory({
+          inventoryMode: details.inventoryMode,
+          exercise,
+          linkedEquipment: equipmentByExercise.get(exercise.id) ?? [],
+          legacyConfig: config,
+          sharedDumbbellWeights: details.dumbbellWeights,
+          legacyPlateWeights: details.plateWeights,
+          legacyBarWeights: details.barWeights,
+        });
         return {
           ...exercise,
           configured: config != null,
-          isAvailable: config?.isAvailable ?? true,
+          isAvailable: resolved.isAvailable,
+          availabilitySource: resolved.source,
+          requiresEquipmentSelection: resolved.requiresEquipmentSelection,
+          attainableLoadsKg: resolved.weightOptions,
+          equipmentOptions: resolved.equipment,
           weightOptionsKg: config?.weightOptions ?? [],
           dumbbellWeightsKg: config?.dumbbellWeights ?? [],
           plateWeightsKg: config?.plateWeights ?? [],
@@ -222,7 +275,12 @@ export async function upsertOwnedGymEquipment(
         select: {
           id: true,
           equipmentType: true,
+          loadType: true,
           weightOptions: true,
+          selectedLoadMultiplier: true,
+          baseLoadKg: true,
+          platePoolId: true,
+          loadingSides: true,
           exerciseLinks: { select: { exerciseId: true } },
         },
       })
@@ -231,11 +289,16 @@ export async function upsertOwnedGymEquipment(
         select: {
           id: true,
           equipmentType: true,
+          loadType: true,
           weightOptions: true,
+          selectedLoadMultiplier: true,
+          baseLoadKg: true,
+          platePoolId: true,
+          loadingSides: true,
           exerciseLinks: { select: { exerciseId: true } },
         },
       });
-  if (input.equipmentId && !current) throw new Error('Gym equipment not found.');
+  if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
 
   const exerciseIds =
     requestedExerciseIds ?? current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
@@ -246,13 +309,30 @@ export async function upsertOwnedGymEquipment(
       })
     : [];
   if (exercises.length !== exerciseIds.length) {
-    throw new Error('One or more exercise IDs do not belong to the trainee.');
+    throw new ApiError(400, 'One or more exercise IDs do not belong to the trainee.');
   }
-
-  const equipmentTypeChanged = current?.equipmentType !== input.equipmentType;
-  const shouldSyncExerciseConfigs =
-    requestedExerciseIds !== undefined || input.weightOptions !== undefined || equipmentTypeChanged;
-  const effectiveWeightOptions = input.weightOptions ?? current?.weightOptions ?? [];
+  const inferredLoadType =
+    input.loadType ??
+    current?.loadType ??
+    (input.platePoolId
+      ? 'PLATE_LOADED'
+      : input.weightOptions?.length && ['MACHINE', 'CABLE'].includes(input.equipmentType)
+        ? 'SELECTORIZED'
+        : input.weightOptions?.length && input.equipmentType === 'DUMBBELL'
+          ? 'FIXED'
+          : 'NONE');
+  const effectivePlatePoolId =
+    input.platePoolId === undefined ? (current?.platePoolId ?? null) : input.platePoolId;
+  if (effectivePlatePoolId) {
+    const pool = await db.gymPlatePool.findFirst({
+      where: { id: effectivePlatePoolId, gymId: gym.id },
+      select: { id: true },
+    });
+    if (!pool) throw new ApiError(400, 'Gym plate pool not found.');
+  }
+  if (inferredLoadType === 'PLATE_LOADED' && !effectivePlatePoolId) {
+    throw new ApiError(400, 'Plate-loaded equipment requires a compatible gym plate pool.');
+  }
 
   const equipment = await db.$transaction(async (tx) => {
     const item = current
@@ -265,7 +345,12 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity,
+            loadType: input.loadType,
             weightOptions: input.weightOptions,
+            selectedLoadMultiplier: input.selectedLoadMultiplier,
+            baseLoadKg: input.baseLoadKg,
+            platePoolId: input.platePoolId,
+            loadingSides: input.loadingSides,
           },
         })
       : await tx.gymEquipment.create({
@@ -277,7 +362,12 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity ?? 1,
+            loadType: inferredLoadType,
             weightOptions: input.weightOptions ?? [],
+            selectedLoadMultiplier: input.selectedLoadMultiplier ?? 1,
+            baseLoadKg: input.baseLoadKg ?? 0,
+            platePoolId: effectivePlatePoolId,
+            loadingSides: input.loadingSides ?? 2,
           },
         });
 
@@ -289,28 +379,6 @@ export async function upsertOwnedGymEquipment(
             equipmentId: item.id,
             exerciseId,
           })),
-        });
-      }
-    }
-    if (input.markExercisesAvailable !== false && shouldSyncExerciseConfigs) {
-      const useItemWeights = ['MACHINE', 'CABLE', 'OTHER'].includes(input.equipmentType);
-      for (const exercise of exercises) {
-        await tx.gymExerciseConfig.upsert({
-          where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
-          update: {
-            isAvailable: true,
-            ...(useItemWeights
-              ? { weightOptions: effectiveWeightOptions }
-              : equipmentTypeChanged
-                ? { weightOptions: [] }
-                : {}),
-          },
-          create: {
-            gymId: gym.id,
-            exerciseId: exercise.id,
-            isAvailable: true,
-            weightOptions: useItemWeights ? effectiveWeightOptions : [],
-          },
         });
       }
     }
@@ -336,6 +404,88 @@ export async function upsertOwnedGymEquipment(
     }));
   return { equipment: saved, mismatchedExercises };
 }
+
+export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
+  const equipment = await db.gymEquipment.findFirst({
+    where: { id: equipmentId, gym: { userId } },
+    select: { id: true },
+  });
+  if (!equipment) throw new ApiError(404, 'Gym equipment not found.');
+  await db.gymEquipment.delete({ where: { id: equipment.id } });
+  return { ok: true };
+}
+
+export async function upsertOwnedGymPlatePool(
+  userId: string,
+  gymId: string | undefined,
+  input: GymPlatePoolInput,
+) {
+  const gym = await resolveOwnedGym(userId, gymId);
+  const current = input.poolId
+    ? await db.gymPlatePool.findFirst({
+        where: { id: input.poolId, gymId: gym.id },
+        select: { id: true },
+      })
+    : await db.gymPlatePool.findFirst({
+        where: {
+          gymId: gym.id,
+          OR: [
+            { name: { equals: input.name, mode: 'insensitive' } },
+            { compatibilityKey: input.compatibilityKey },
+          ],
+        },
+        select: { id: true },
+      });
+  if (input.poolId && !current) throw new ApiError(404, 'Gym plate pool not found.');
+
+  const pool = await db.$transaction(async (tx) => {
+    const saved = current
+      ? await tx.gymPlatePool.update({
+          where: { id: current.id },
+          data: { name: input.name, compatibilityKey: input.compatibilityKey },
+        })
+      : await tx.gymPlatePool.create({
+          data: {
+            gymId: gym.id,
+            name: input.name,
+            compatibilityKey: input.compatibilityKey,
+          },
+        });
+    await tx.gymPlateInventoryItem.deleteMany({ where: { poolId: saved.id } });
+    if (input.plates.length > 0) {
+      await tx.gymPlateInventoryItem.createMany({
+        data: input.plates.map((plate) => ({
+          poolId: saved.id,
+          weightKg: plate.weightKg,
+          quantity: plate.quantity,
+        })),
+      });
+    }
+    return saved;
+  });
+
+  return db.gymPlatePool.findUniqueOrThrow({
+    where: { id: pool.id },
+    include: {
+      plates: { orderBy: { weightKg: 'asc' } },
+      equipment: { orderBy: { name: 'asc' }, select: { id: true, name: true } },
+    },
+  });
+}
+
+export async function deleteOwnedGymPlatePool(userId: string, poolId: string) {
+  const pool = await db.gymPlatePool.findFirst({
+    where: { id: poolId, gym: { userId } },
+    select: { id: true, _count: { select: { equipment: true } } },
+  });
+  if (!pool) throw new ApiError(404, 'Gym plate pool not found.');
+  if (pool._count.equipment > 0) {
+    throw new ApiError(409, 'Detach plate-loaded equipment before deleting this plate pool.');
+  }
+  await db.gymPlatePool.delete({ where: { id: pool.id } });
+  return { ok: true };
+}
+
 export async function getOwnedGymEquipmentImage(userId: string, equipmentId: string) {
   const equipment = await db.gymEquipment.findFirst({
     where: { id: equipmentId, gym: { userId } },
@@ -460,12 +610,14 @@ async function resolveOwnedGym(userId: string, gymId?: string) {
         select: { activeGymId: true },
       })
     )?.activeGymId;
-  if (!resolvedId) throw new Error('No active gym. Provide gymId or activate a gym first.');
+  if (!resolvedId) {
+    throw new ApiError(400, 'No active gym. Provide gymId or activate a gym first.');
+  }
   const gym = await db.gym.findFirst({
     where: { id: resolvedId, userId },
     select: { id: true, name: true },
   });
-  if (!gym) throw new Error('Gym not found.');
+  if (!gym) throw new ApiError(404, 'Gym not found.');
   return gym;
 }
 

@@ -195,6 +195,18 @@ enum EquipmentType {
   OTHER
 }
 
+enum GymInventoryMode {
+  LEGACY
+  EQUIPMENT_FIRST
+}
+
+enum EquipmentLoadType {
+  NONE
+  FIXED
+  SELECTORIZED
+  PLATE_LOADED
+}
+
 enum MuscleGroup {
   CHEST
   BACK_WIDTH
@@ -324,6 +336,9 @@ model Gym {
   userId          String
   user            User                @relation("GymOwner", fields: [userId], references: [id], onDelete: Cascade)
   name            String
+  // Existing gyms stay in LEGACY mode after migration. Newly created gyms use
+  // equipment links and normalized inventory as the primary source of truth.
+  inventoryMode   GymInventoryMode    @default(EQUIPMENT_FIRST)
   // All inventory values are stored in kg, matching Set.weight.
   dumbbellWeights Float[]             @default([])
   plateWeights    Float[]             @default([])
@@ -334,6 +349,7 @@ model Gym {
   sessions        Session[]
   exerciseConfigs GymExerciseConfig[]
   equipment       GymEquipment[]
+  platePools      GymPlatePool[]
 
   @@unique([userId, name])
   @@index([userId, updatedAt])
@@ -369,8 +385,20 @@ model GymEquipment {
   manufacturer  String?
   modelName     String?
   quantity      Int                    @default(1)
-  // Machine stack, selectable resistance, or other item-specific loads in kg.
+  loadType      EquipmentLoadType      @default(NONE)
+  // Displayed stack positions or fixed item loads in kg. These values remain
+  // the primary logged fact for selectorized equipment.
   weightOptions Float[]                @default([])
+  // Nominal resistance = selected/displayed load * this per-machine value.
+  // It is an estimate, not a cross-machine equivalence rule.
+  selectedLoadMultiplier Float         @default(1)
+  // Empty bar, carriage, sled, or other starting load for plate-loaded items.
+  baseLoadKg    Float                  @default(0)
+  platePoolId   String?
+  platePool     GymPlatePool?          @relation(fields: [platePoolId], references: [id], onDelete: SetNull)
+  // Number of equally loaded sleeves/sides. Two models normal barbell, Smith,
+  // and common leg-press loading while still allowing single-sleeve machines.
+  loadingSides  Int                    @default(2)
   // An external HTTPS image may be stored without fetching it server-side.
   imageUrl      String?
   // Uploaded images are stored in Postgres so Docker rebuilds do not lose them.
@@ -379,9 +407,43 @@ model GymEquipment {
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   exerciseLinks GymEquipmentExercise[]
+  performedSets Set[]
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
+  @@index([platePoolId])
+}
+
+// Plates are universal within a gym through named compatibility pools. A Smith
+// machine, barbell, and leg press can reuse the same pool; incompatible sleeve
+// standards use different pools.
+model GymPlatePool {
+  id               String                  @id @default(cuid())
+  gymId            String
+  gym              Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name             String
+  compatibilityKey String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  plates           GymPlateInventoryItem[]
+  equipment        GymEquipment[]
+
+  @@unique([gymId, name])
+  @@unique([gymId, compatibilityKey])
+  @@index([gymId, updatedAt])
+}
+
+model GymPlateInventoryItem {
+  id       String       @id @default(cuid())
+  poolId   String
+  pool     GymPlatePool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  weightKg Float
+  // Null means that the legacy inventory recorded the denomination but not
+  // the physical count. The application must preserve that uncertainty.
+  quantity Int?
+
+  @@unique([poolId, weightKg])
+  @@index([poolId])
 }
 
 // A physical station can support several exercises, and the same exercise can
@@ -402,6 +464,17 @@ model Set {
   session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   exerciseId  String
   exercise    Exercise @relation(fields: [exerciseId], references: [id])
+  gymEquipmentId String?
+  gymEquipment   GymEquipment? @relation(fields: [gymEquipmentId], references: [id], onDelete: SetNull)
+  equipmentNameSnapshot String?
+  // The displayed stack value or entered external load. Set.weight remains the
+  // canonical historical load for existing calculations and imports.
+  selectedLoadKg Float?
+  selectedLoadMultiplierSnapshot Float?
+  // Nominal estimate only. It must not be used to equate different machines.
+  nominalResistanceKg Float?
+  // Versioned configuration snapshot for future load-profile evolution.
+  equipmentLoadSnapshot Json?
   setNumber   Int
   weight      Float
   reps        Int
@@ -433,6 +506,7 @@ model Set {
   completedAt DateTime @default(now())
 
   @@index([exerciseId, completedAt])
+  @@index([gymEquipmentId, completedAt])
 }
 
 // Per-exercise target goal (issue #90): a concrete "weight x reps" the user

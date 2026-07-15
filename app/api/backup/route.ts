@@ -3,12 +3,15 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   ExerciseCategory,
+  EquipmentLoadType,
   EquipmentType,
+  GymInventoryMode,
   MessageRole,
   MuscleGroup,
   Sex,
   TrainingGoal,
   WeightUnit,
+  Prisma,
 } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
@@ -54,7 +57,7 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 7;
+const VERSION = 8;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -143,8 +146,13 @@ export async function GET(req: Request) {
           equipment: {
             orderBy: { name: 'asc' },
             include: {
+              platePool: true,
               exerciseLinks: { include: { exercise: { select: { name: true } } } },
             },
+          },
+          platePools: {
+            orderBy: { name: 'asc' },
+            include: { plates: { orderBy: { weightKg: 'asc' } } },
           },
           exerciseConfigs: { include: { exercise: { select: { name: true } } } },
         },
@@ -180,9 +188,18 @@ export async function GET(req: Request) {
       })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
+        inventoryMode: gym.inventoryMode,
         dumbbellWeights: gym.dumbbellWeights,
         plateWeights: gym.plateWeights,
         barWeights: gym.barWeights,
+        platePools: gym.platePools.map((pool) => ({
+          name: pool.name,
+          compatibilityKey: pool.compatibilityKey,
+          plates: pool.plates.map((plate) => ({
+            weightKg: plate.weightKg,
+            quantity: plate.quantity,
+          })),
+        })),
         equipment: gym.equipment.map((item) => ({
           name: item.name,
           equipmentType: item.equipmentType,
@@ -190,7 +207,12 @@ export async function GET(req: Request) {
           manufacturer: item.manufacturer,
           modelName: item.modelName,
           quantity: item.quantity,
+          loadType: item.loadType,
           weightOptions: item.weightOptions,
+          selectedLoadMultiplier: item.selectedLoadMultiplier,
+          baseLoadKg: item.baseLoadKg,
+          platePoolCompatibilityKey: item.platePool?.compatibilityKey ?? null,
+          loadingSides: item.loadingSides,
           imageUrl: item.imageUrl,
           imageMimeType: item.imageMimeType,
           imageBase64: item.imageData ? Buffer.from(item.imageData).toString('base64') : null,
@@ -257,6 +279,11 @@ export async function GET(req: Request) {
           isWarmup: set.isWarmup,
           isDropSet: set.isDropSet,
           recoverySec: set.recoverySec,
+          equipmentName: set.equipmentNameSnapshot,
+          selectedLoadKg: set.selectedLoadKg,
+          selectedLoadMultiplier: set.selectedLoadMultiplierSnapshot,
+          nominalResistanceKg: set.nominalResistanceKg,
+          equipmentLoadSnapshot: set.equipmentLoadSnapshot,
           completedAt: set.completedAt.toISOString(),
         })),
       })),
@@ -434,6 +461,11 @@ const importSchema = z.object({
               isWarmup: z.boolean(),
               isDropSet: z.boolean(),
               recoverySec: z.number().int().min(0).max(86_400).nullable().optional(),
+              equipmentName: z.string().max(120).nullable().optional(),
+              selectedLoadKg: z.number().min(0).max(5000).nullable().optional(),
+              selectedLoadMultiplier: z.number().positive().max(20).nullable().optional(),
+              nominalResistanceKg: z.number().min(0).max(100_000).nullable().optional(),
+              equipmentLoadSnapshot: z.record(z.string(), z.unknown()).nullable().optional(),
               completedAt: dateString,
             }),
           )
@@ -472,9 +504,32 @@ const importSchema = z.object({
     .array(
       z.object({
         name: z.string().trim().min(1).max(80),
+        inventoryMode: z.nativeEnum(GymInventoryMode).optional(),
         dumbbellWeights: z.array(z.number().min(0.1).max(5000)).max(200),
         plateWeights: z.array(z.number().min(0.1).max(5000)).max(200),
         barWeights: z.array(z.number().min(0.1).max(5000)).max(200),
+        platePools: z
+          .array(
+            z.object({
+              name: z.string().trim().min(1).max(120),
+              compatibilityKey: z
+                .string()
+                .trim()
+                .min(1)
+                .max(80)
+                .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+              plates: z
+                .array(
+                  z.object({
+                    weightKg: z.number().min(0.1).max(500),
+                    quantity: z.number().int().min(0).max(1000).nullable(),
+                  }),
+                )
+                .max(200),
+            }),
+          )
+          .max(100)
+          .optional(),
         equipment: z
           .array(
             z.object({
@@ -484,7 +539,12 @@ const importSchema = z.object({
               manufacturer: z.string().max(120).nullable().optional(),
               modelName: z.string().max(120).nullable().optional(),
               quantity: z.number().int().min(1).max(100),
+              loadType: z.nativeEnum(EquipmentLoadType).optional(),
               weightOptions: z.array(z.number().min(0.1).max(5000)).max(200),
+              selectedLoadMultiplier: z.number().positive().max(20).optional(),
+              baseLoadKg: z.number().min(0).max(5000).optional(),
+              platePoolCompatibilityKey: z.string().max(80).nullable().optional(),
+              loadingSides: z.number().int().min(1).max(8).optional(),
               imageUrl: z
                 .string()
                 .url()
@@ -648,6 +708,7 @@ export async function POST(req: Request) {
         // 4. Saved gyms are recreated after exercises so per-exercise
         // availability can be linked by exercise name.
         const gymIdByName = new Map<string, string>();
+        const equipmentIdByGymAndName = new Map<string, string>();
         for (const gym of payload.gyms ?? []) {
           const configs = gym.exerciseConfigs.flatMap((config) => {
             const exerciseId = exerciseIdByName.get(config.exerciseName);
@@ -668,12 +729,50 @@ export async function POST(req: Request) {
             data: {
               userId,
               name: gym.name,
+              inventoryMode: gym.inventoryMode ?? 'LEGACY',
               dumbbellWeights: gym.dumbbellWeights,
               plateWeights: gym.plateWeights,
               barWeights: gym.barWeights,
               exerciseConfigs: { createMany: { data: configs } },
             },
           });
+          const platePools =
+            gym.platePools ??
+            (gym.plateWeights.length > 0
+              ? [
+                  {
+                    name: 'Legacy shared plates',
+                    compatibilityKey: 'legacy-default',
+                    plates: [...new Set(gym.plateWeights)].map((weightKg) => ({
+                      weightKg,
+                      quantity: null,
+                    })),
+                  },
+                ]
+              : []);
+          const poolIdByCompatibilityKey = new Map<string, string>();
+          for (const pool of platePools) {
+            const savedPool = await tx.gymPlatePool.create({
+              data: {
+                gymId: created.id,
+                name: pool.name,
+                compatibilityKey: pool.compatibilityKey,
+                plates: {
+                  createMany: {
+                    data: [
+                      ...new Map(
+                        pool.plates.map((plate) => [
+                          plate.weightKg,
+                          { weightKg: plate.weightKg, quantity: plate.quantity },
+                        ]),
+                      ).values(),
+                    ],
+                  },
+                },
+              },
+            });
+            poolIdByCompatibilityKey.set(pool.compatibilityKey, savedPool.id);
+          }
           for (const item of gym.equipment ?? []) {
             const decoded = item.imageBase64
               ? decodeGymEquipmentImage(item.imageBase64, item.imageMimeType ?? undefined)
@@ -687,12 +786,25 @@ export async function POST(req: Request) {
                 manufacturer: item.manufacturer ?? null,
                 modelName: item.modelName ?? null,
                 quantity: item.quantity,
+                loadType:
+                  item.loadType ??
+                  (['MACHINE', 'CABLE'].includes(item.equipmentType) &&
+                  item.weightOptions.length > 0
+                    ? 'SELECTORIZED'
+                    : 'NONE'),
                 weightOptions: item.weightOptions,
+                selectedLoadMultiplier: item.selectedLoadMultiplier ?? 1,
+                baseLoadKg: item.baseLoadKg ?? 0,
+                platePoolId: item.platePoolCompatibilityKey
+                  ? (poolIdByCompatibilityKey.get(item.platePoolCompatibilityKey) ?? null)
+                  : null,
+                loadingSides: item.loadingSides ?? 2,
                 imageUrl: decoded ? null : (item.imageUrl ?? null),
                 imageData: decoded?.bytes,
                 imageMimeType: decoded?.mimeType ?? null,
               },
             });
+            equipmentIdByGymAndName.set(`${gym.name}\u0000${item.name}`, equipment.id);
             const exerciseIds = [
               ...new Set(
                 item.exerciseNames.flatMap((name) => {
@@ -811,6 +923,19 @@ export async function POST(req: Request) {
                 isWarmup: set.isWarmup,
                 isDropSet: set.isDropSet,
                 recoverySec: set.recoverySec ?? null,
+                gymEquipmentId:
+                  s.gymName && set.equipmentName
+                    ? (equipmentIdByGymAndName.get(`${s.gymName}\u0000${set.equipmentName}`) ??
+                      null)
+                    : null,
+                equipmentNameSnapshot: set.equipmentName ?? null,
+                selectedLoadKg: set.selectedLoadKg ?? null,
+                selectedLoadMultiplierSnapshot: set.selectedLoadMultiplier ?? null,
+                nominalResistanceKg: set.nominalResistanceKg ?? null,
+                equipmentLoadSnapshot:
+                  set.equipmentLoadSnapshot == null
+                    ? Prisma.JsonNull
+                    : (set.equipmentLoadSnapshot as Prisma.InputJsonValue),
                 completedAt: new Date(set.completedAt),
               },
             ];

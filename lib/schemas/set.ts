@@ -13,6 +13,7 @@ import { databaseIdSchema } from '@/lib/schemas/database-id';
 export const setInputSchema = z.object({
   id: databaseIdSchema.optional(),
   exerciseId: z.string().min(1),
+  gymEquipmentId: z.string().cuid().nullable().optional(),
   setNumber: z.coerce.number().int().min(1).max(50),
   weight: z.coerce.number().min(0).max(500),
   reps: z.coerce.number().int().min(0).max(100),
@@ -59,6 +60,7 @@ export const setUpdateSchema = setInputSchema.pick({
   weight: true,
   reps: true,
   rir: true,
+  gymEquipmentId: true,
 });
 
 export type SetUpdateInput = z.infer<typeof setUpdateSchema>;

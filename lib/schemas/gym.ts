@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GymInventoryMode } from '@/lib/prisma-client';
 
 export const gymWeightListSchema = z
   .array(z.coerce.number().min(0.1).max(5000))
@@ -18,6 +19,7 @@ export const gymExerciseConfigSchema = z.object({
 
 export const gymCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  inventoryMode: z.nativeEnum(GymInventoryMode).default('EQUIPMENT_FIRST'),
   dumbbellWeights: gymWeightListSchema.default([]),
   plateWeights: gymWeightListSchema.default([]),
   barWeights: gymWeightListSchema.default([]),
@@ -25,7 +27,9 @@ export const gymCreateSchema = z.object({
   makeActive: z.boolean().default(false),
 });
 
-export const gymUpdateSchema = gymCreateSchema.omit({ makeActive: true });
+export const gymUpdateSchema = gymCreateSchema
+  .omit({ makeActive: true, inventoryMode: true })
+  .extend({ inventoryMode: z.nativeEnum(GymInventoryMode).optional() });
 
 export const gymWeightUpdateSchema = z.object({
   exerciseId: z.string().min(1),

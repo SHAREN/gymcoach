@@ -106,6 +106,21 @@ describe('GymCoach MCP gym inventory', () => {
       10, 15.5, 19,
     ]);
 
+    const platePool = await client.callTool({
+      name: 'upsert_gym_plate_pool',
+      arguments: {
+        confirmed: true,
+        gymId: gym.id,
+        name: 'Olympic plates',
+        compatibilityKey: 'olympic_50mm',
+        plates: [
+          { weightKg: 20, quantity: 4 },
+          { weightKg: 5, quantity: null },
+        ],
+      },
+    });
+    expect(platePool.isError).not.toBe(true);
+
     const upserted = await client.callTool({
       name: 'upsert_gym_equipment',
       arguments: {
@@ -117,7 +132,9 @@ describe('GymCoach MCP gym inventory', () => {
         manufacturer: 'GymCo',
         modelName: 'Press 2000',
         quantity: 1,
+        loadType: 'SELECTORIZED',
         weightOptions: [10, 20, 30, 40],
+        selectedLoadMultiplier: 0.5,
         exerciseIds: [exercise.id],
       },
     });
@@ -129,11 +146,14 @@ describe('GymCoach MCP gym inventory', () => {
     expect(savedEquipment.exerciseLinks).toEqual([
       expect.objectContaining({ exerciseId: exercise.id }),
     ]);
+    expect(savedEquipment).toMatchObject({
+      loadType: 'SELECTORIZED',
+      selectedLoadMultiplier: 0.5,
+      weightOptions: [10, 20, 30, 40],
+    });
     expect(
-      await db.gymExerciseConfig.findUniqueOrThrow({
-        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
-      }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [10, 20, 30, 40] });
+      await db.gymExerciseConfig.count({ where: { gymId: gym.id, exerciseId: exercise.id } }),
+    ).toBe(0);
 
     const updatedStack = await client.callTool({
       name: 'upsert_gym_equipment',
@@ -148,10 +168,12 @@ describe('GymCoach MCP gym inventory', () => {
     });
     expect(updatedStack.isError).not.toBe(true);
     expect(
-      await db.gymExerciseConfig.findUniqueOrThrow({
-        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
-      }),
-    ).toMatchObject({ isAvailable: true, weightOptions: [15, 25, 35, 45] });
+      await db.gymEquipment.findUniqueOrThrow({ where: { id: savedEquipment.id } }),
+    ).toMatchObject({
+      loadType: 'SELECTORIZED',
+      selectedLoadMultiplier: 0.5,
+      weightOptions: [15, 25, 35, 45],
+    });
     expect(await db.gymEquipmentExercise.count({ where: { equipmentId: savedEquipment.id } })).toBe(
       1,
     );
@@ -194,6 +216,12 @@ describe('GymCoach MCP gym inventory', () => {
           image: { kind: string; mimeType: string } | null;
           exerciseLinks: Array<{ id: string }>;
         }>;
+        platePools: Array<{ compatibilityKey: string; plates: Array<{ quantity: number | null }> }>;
+        exerciseCoverage: Array<{
+          id: string;
+          availabilitySource: string;
+          attainableLoadsKg: number[];
+        }>;
       };
     };
     expect(inventoryData.gym.equipment).toEqual([
@@ -202,6 +230,19 @@ describe('GymCoach MCP gym inventory', () => {
         description: 'Plate-loaded converging chest press with an adjustable seat.',
         image: expect.objectContaining({ kind: 'uploaded', mimeType: 'image/png' }),
         exerciseLinks: [expect.objectContaining({ id: exercise.id })],
+      }),
+    ]);
+    expect(inventoryData.gym.platePools).toEqual([
+      expect.objectContaining({
+        compatibilityKey: 'olympic_50mm',
+        plates: expect.arrayContaining([expect.objectContaining({ quantity: null })]),
+      }),
+    ]);
+    expect(inventoryData.gym.exerciseCoverage).toEqual([
+      expect.objectContaining({
+        id: exercise.id,
+        availabilitySource: 'equipment',
+        attainableLoadsKg: [15, 25, 35, 45],
       }),
     ]);
 

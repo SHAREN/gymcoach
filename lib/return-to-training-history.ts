@@ -6,7 +6,11 @@ import type {
   ProgramExercise,
 } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
-import { resolveEquipmentType, type GymLoadConstraints } from '@/lib/gym-loads';
+import {
+  resolveExerciseInventory,
+  type EquipmentLoadProfile,
+  type GymLoadConstraints,
+} from '@/lib/gym-loads';
 import {
   BASELINE_MUSCLE_VOLUME_DAYS,
   calculateReturnRecommendation,
@@ -27,6 +31,7 @@ type ProgramExerciseForReturn = Pick<
 };
 
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
+  inventoryMode?: Gym['inventoryMode'];
   exerciseConfigs: Pick<
     GymExerciseConfig,
     | 'exerciseId'
@@ -36,6 +41,22 @@ type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'>
     | 'plateWeights'
     | 'barWeights'
   >[];
+  equipment?: Array<{
+    id: string;
+    name: string;
+    equipmentType: Exercise['equipmentType'];
+    loadType: EquipmentLoadProfile['loadType'];
+    weightOptions: number[];
+    selectedLoadMultiplier: number;
+    baseLoadKg: number;
+    loadingSides: number;
+    platePoolId: string | null;
+    platePool: {
+      name: string;
+      plates: Array<{ weightKg: number; quantity: number | null }>;
+    } | null;
+    exerciseLinks: Array<{ exerciseId: string }>;
+  }>;
 };
 
 interface ReturnRecommendationQuery {
@@ -54,6 +75,7 @@ interface ExerciseHistoryRow {
   reps: number;
   rir: number | null;
   isDropSet: boolean;
+  gymEquipmentId: string | null;
   completedAt: Date;
   session: { startedAt: Date };
 }
@@ -105,11 +127,16 @@ export async function getReturnToTrainingRecommendations({
             reps: true,
             rir: true,
             isDropSet: true,
+            gymEquipmentId: true,
             completedAt: true,
             session: { select: { startedAt: true } },
           },
         });
-        return [exerciseId, rows] as const;
+        const latestEquipmentId = rows[0]?.gymEquipmentId ?? null;
+        return [
+          exerciseId,
+          rows.filter((row) => row.gymEquipmentId === latestEquipmentId),
+        ] as const;
       }),
     ),
     Promise.all(
@@ -226,12 +253,32 @@ function loadConstraintsFor(
 ): GymLoadConstraints | null {
   if (!gym) return null;
   const config = gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
-  return {
-    equipmentType: resolveEquipmentType(pe.exercise.equipmentType, pe.exercise.name),
-    isAvailable: config?.isAvailable ?? true,
-    dumbbellWeights: config?.dumbbellWeights.length ? config.dumbbellWeights : gym.dumbbellWeights,
-    plateWeights: config?.plateWeights.length ? config.plateWeights : gym.plateWeights,
-    barWeights: config?.barWeights.length ? config.barWeights : gym.barWeights,
-    weightOptions: config?.weightOptions ?? [],
-  };
+  const linkedEquipment: EquipmentLoadProfile[] = (gym.equipment ?? [])
+    .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
+    .map((item) => ({
+      equipmentId: item.id,
+      equipmentName: item.name,
+      equipmentType: item.equipmentType,
+      loadType: item.loadType,
+      weightOptions: item.weightOptions,
+      selectedLoadMultiplier: item.selectedLoadMultiplier,
+      baseLoadKg: item.baseLoadKg,
+      loadingSides: item.loadingSides,
+      platePoolId: item.platePoolId,
+      platePoolName: item.platePool?.name ?? null,
+      plates: item.platePool?.plates ?? [],
+    }));
+  return resolveExerciseInventory({
+    inventoryMode: gym.inventoryMode ?? 'LEGACY',
+    exercise: {
+      id: pe.exerciseId,
+      name: pe.exercise.name,
+      equipmentType: pe.exercise.equipmentType,
+    },
+    linkedEquipment,
+    legacyConfig: config,
+    sharedDumbbellWeights: gym.dumbbellWeights,
+    legacyPlateWeights: gym.plateWeights,
+    legacyBarWeights: gym.barWeights,
+  }).constraints;
 }

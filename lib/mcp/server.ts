@@ -16,14 +16,22 @@ import {
   setOwnedGymEquipmentImage,
   updateOwnedGymFreeWeights,
   upsertOwnedGymEquipment,
+  upsertOwnedGymPlatePool,
 } from '@/lib/gym-equipment';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
+import {
+  gymEquipmentInputSchema,
+  gymPlateInventoryItemSchema,
+  gymPlatePoolInputSchema,
+  plateCompatibilityKeySchema,
+} from '@/lib/schemas/gym-equipment';
 import {
   PROGRAM_DESIGN_METHODOLOGY,
   PROGRAM_DESIGN_METHODOLOGY_VERSION,
 } from '@/lib/program-design-methodology';
 import {
   EquipmentType,
+  EquipmentLoadType,
   ExerciseCategory,
   MuscleGroup,
   SetAutoregulationMode,
@@ -54,12 +62,13 @@ export const GYM_INVENTORY_INSTRUCTIONS = `Gym inventory workflow:
 
 1. Call list_gyms and select the requested gym. Call get_gym_inventory before interpreting new observations.
 2. Treat physical equipment as separate from exercises. One machine may support several exercise IDs, and several machines may support the same exercise.
-3. Compare narrated items and photos against sharedFreeWeights and equipment. Match by function, manufacturer/model when certain, and distinctive description. Do not rely on name similarity alone.
+3. Compare narrated items and photos against sharedFreeWeights, platePools and equipment. Match by function, manufacturer/model when certain, and distinctive description. Do not rely on name similarity alone.
 4. Ask focused questions for unreadable plates, pin stacks, brands, models, quantities or ambiguous machines. Mark uncertainty explicitly instead of inventing values.
-5. Present one batched change summary. After explicit confirmation, use update_gym_free_weights for dumbbells, plates and bars, and upsert_gym_equipment for physical machines, stations and accessories.
-6. Link known exercise IDs when the item supports them. GymCoach will mark those exercises available and apply item weight options to machine/cable configurations.
-7. Use set_gym_equipment_image only for an image the trainee supplied or approved. Prefer an uploaded JPEG/PNG/WebP as base64 for durable storage; an external image must use HTTPS. Never upload an unrelated or uncertain image.
-8. Use get_gym_equipment_image when an existing uploaded image must be inspected. Re-read get_gym_inventory after writes and report exactly what changed, what remains uncertain and which items still lack images or exercise links.`;
+5. Present one batched change summary. After explicit confirmation, use update_gym_free_weights for legacy dumbbells/bars, upsert_gym_plate_pool for universal compatible plate inventory, and upsert_gym_equipment for physical machines, stations and accessories.
+6. Link known exercise IDs when the item supports them. Linked equipment is the primary availability/load source. Do not copy a machine's displayed stack positions into per-exercise configuration.
+7. For each selectorized/cable machine, record its own selectedLoadMultiplier. A displayed stack value multiplied by this number is only a nominal estimate and never proves equivalence to another machine.
+8. Use set_gym_equipment_image only for an image the trainee supplied or approved. Prefer an uploaded JPEG/PNG/WebP as base64 for durable storage; an external image must use HTTPS. Never upload an unrelated or uncertain image.
+9. Use get_gym_equipment_image when an existing uploaded image must be inspected. Re-read get_gym_inventory after writes and report exactly what changed, what remains uncertain and which items still lack images or exercise links.`;
 
 interface ServerOptions {
   principal: McpPrincipal;
@@ -328,7 +337,7 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     {
       title: 'Update gym free-weight inventory',
       description:
-        'Updates any supplied dumbbell, plate or bar lists in kg after the trainee confirms the inventory change. Omitted lists remain unchanged.',
+        'Updates legacy shared dumbbell, plate or bar lists in kg. Use upsert_gym_plate_pool for new compatible plate inventory with quantities.',
       inputSchema: {
         confirmed: explicitConfirmation,
         gymId: gymIdSchema.optional(),
@@ -351,11 +360,40 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'upsert_gym_plate_pool',
+    {
+      title: 'Add or update a universal gym plate pool',
+      description:
+        'Creates or replaces one gym-wide compatible plate pool. Quantity is null when the denomination is known but its physical count is not.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema.optional(),
+        poolId: z.string().trim().min(8).max(200).optional(),
+        name: z.string().trim().min(1).max(120),
+        compatibilityKey: plateCompatibilityKeySchema,
+        plates: z.array(gymPlateInventoryItemSchema).max(200),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ gymId, confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      const parsed = gymPlatePoolInputSchema.parse(input);
+      const pool = await upsertOwnedGymPlatePool(principal.userId, gymId, parsed);
+      return result({ ok: true, pool });
+    },
+  );
+
+  server.registerTool(
     'upsert_gym_equipment',
     {
       title: 'Add or update physical gym equipment',
       description:
-        'Creates or updates a physical machine, station or accessory in a gym. Link exercise IDs to make those exercises available and apply machine/cable weight options.',
+        'Creates or updates a physical equipment instance. Exercise links determine availability; the load profile determines attainable displayed loads.',
       inputSchema: {
         confirmed: explicitConfirmation,
         gymId: gymIdSchema.optional(),
@@ -366,7 +404,12 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         manufacturer: z.string().trim().max(120).nullable().optional(),
         modelName: z.string().trim().max(120).nullable().optional(),
         quantity: z.number().int().min(1).max(100).optional(),
+        loadType: z.nativeEnum(EquipmentLoadType).optional(),
         weightOptions: gymWeightListSchema.optional(),
+        selectedLoadMultiplier: z.number().positive().max(20).optional(),
+        baseLoadKg: z.number().min(0).max(5000).optional(),
+        platePoolId: databaseIdSchema.nullable().optional(),
+        loadingSides: z.number().int().min(1).max(8).optional(),
         exerciseIds: z.array(databaseIdSchema).max(100).optional(),
         markExercisesAvailable: z.boolean().optional(),
       },
@@ -379,7 +422,8 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     },
     async ({ gymId, confirmed: _confirmed, ...input }) => {
       requireWrite(principal);
-      const saved = await upsertOwnedGymEquipment(principal.userId, gymId, input);
+      const parsed = gymEquipmentInputSchema.parse(input);
+      const saved = await upsertOwnedGymEquipment(principal.userId, gymId, parsed);
       return result({ ok: true, ...saved });
     },
   );
@@ -451,7 +495,15 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
                     manufacturer: true,
                     modelName: true,
                     quantity: true,
+                    loadType: true,
                     weightOptions: true,
+                    selectedLoadMultiplier: true,
+                    baseLoadKg: true,
+                    platePoolId: true,
+                    loadingSides: true,
+                    platePool: {
+                      include: { plates: { orderBy: { weightKg: 'asc' } } },
+                    },
                     imageUrl: true,
                     imageMimeType: true,
                     exerciseLinks: {
@@ -470,6 +522,10 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
                       select: { id: true, name: true, equipmentType: true },
                     },
                   },
+                },
+                platePools: {
+                  orderBy: { name: 'asc' },
+                  include: { plates: { orderBy: { weightKg: 'asc' } } },
                 },
               },
             },
@@ -1059,6 +1115,7 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
 // Exported for schema documentation and future OAuth scopes.
 export const MCP_ENUMS = {
   equipmentTypes: Object.values(EquipmentType),
+  equipmentLoadTypes: Object.values(EquipmentLoadType),
   exerciseCategories: Object.values(ExerciseCategory),
   muscleGroups: Object.values(MuscleGroup),
 };

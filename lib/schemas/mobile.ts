@@ -29,6 +29,7 @@ const mobileSetSchema = z.object({
   id: opaqueId,
   sessionId: opaqueId,
   exerciseId: opaqueId,
+  gymEquipmentId: opaqueId.nullable().optional(),
   setNumber: z.number().int().min(1).max(50),
   weight: z.number().min(0).max(500),
   reps: z.number().int().min(0).max(100),

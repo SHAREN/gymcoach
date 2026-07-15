@@ -3,7 +3,10 @@ import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
   constructibleBarbellWeights,
+  constructiblePlateLoadedWeights,
   gymWeightOptions,
+  resolveEquipmentLoadProfile,
+  resolveExerciseInventory,
   resolveEquipmentType,
 } from '@/lib/gym-loads';
 
@@ -78,5 +81,99 @@ describe('saved gym load constraints', () => {
 
   it('falls back to the calculated load when no inventory is configured', () => {
     expect(constrainGymWeight(17.5, 20, { equipmentType: 'DUMBBELL' })).toBe(17.5);
+  });
+
+  it('keeps selectorized displayed loads primary while preserving the machine multiplier', () => {
+    const profile = resolveEquipmentLoadProfile({
+      equipmentId: 'cable-a',
+      equipmentName: 'Upper pulley',
+      equipmentType: 'CABLE',
+      loadType: 'SELECTORIZED',
+      weightOptions: [40, 45, 50],
+      selectedLoadMultiplier: 0.5,
+      baseLoadKg: 0,
+      loadingSides: 1,
+      platePoolId: null,
+    });
+    expect(profile.attainableLoads).toEqual([40, 45, 50]);
+    expect(profile.selectedLoadMultiplier).toBe(0.5);
+  });
+
+  it('respects known universal plate quantities and symmetric loading', () => {
+    const result = constructiblePlateLoadedWeights(
+      20,
+      2,
+      [
+        { weightKg: 20, quantity: 2 },
+        { weightKg: 5, quantity: 4 },
+      ],
+      100,
+    );
+    expect(result.inventoryPrecision).toBe('KNOWN');
+    expect(result.attainableLoads).toContain(20);
+    expect(result.attainableLoads).toContain(30);
+    expect(result.attainableLoads).toContain(70);
+    expect(result.attainableLoads).not.toContain(110);
+  });
+
+  it('preserves unknown legacy plate quantities instead of inventing a count', () => {
+    const result = constructiblePlateLoadedWeights(20, 2, [{ weightKg: 20, quantity: null }], 100);
+    expect(result.inventoryPrecision).toBe('UNKNOWN_QUANTITIES');
+    expect(result.attainableLoads.slice(0, 3)).toEqual([20, 60, 100]);
+  });
+
+  it('uses linked equipment before a conflicting legacy exercise configuration', () => {
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'triceps', name: 'Cable pushdown', equipmentType: 'CABLE' },
+      linkedEquipment: [
+        {
+          equipmentId: 'cable-a',
+          equipmentName: 'Cable A',
+          equipmentType: 'CABLE',
+          loadType: 'SELECTORIZED',
+          weightOptions: [5, 10, 15],
+          selectedLoadMultiplier: 0.5,
+          baseLoadKg: 0,
+          loadingSides: 1,
+          platePoolId: null,
+        },
+      ],
+      legacyConfig: {
+        isAvailable: false,
+        weightOptions: [40, 45, 50],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
+    });
+    expect(resolved.source).toBe('equipment');
+    expect(resolved.isAvailable).toBe(true);
+    expect(resolved.weightOptions).toEqual([5, 10, 15]);
+  });
+
+  it('requires a concrete choice instead of merging two machine load scales', () => {
+    const base = {
+      equipmentType: 'MACHINE' as const,
+      loadType: 'SELECTORIZED' as const,
+      selectedLoadMultiplier: 1,
+      baseLoadKg: 0,
+      loadingSides: 1,
+      platePoolId: null,
+    };
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'row', name: 'Machine row', equipmentType: 'MACHINE' },
+      linkedEquipment: [
+        { ...base, equipmentId: 'row-a', equipmentName: 'Row A', weightOptions: [10, 20] },
+        { ...base, equipmentId: 'row-b', equipmentName: 'Row B', weightOptions: [15, 25] },
+      ],
+    });
+    expect(resolved.requiresEquipmentSelection).toBe(true);
+    expect(resolved.weightOptions).toEqual([]);
+    expect(gymWeightOptions(resolved.constraints, 20)).toEqual([]);
+    expect(gymWeightOptions({ ...resolved.constraints, equipmentId: 'row-b' }, 20)).toEqual([
+      15, 25,
+    ]);
   });
 });

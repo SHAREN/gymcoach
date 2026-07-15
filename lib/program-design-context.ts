@@ -11,6 +11,11 @@ import type {
   TrainingExperience,
 } from '@/lib/schemas/program-design';
 import type { Prisma } from '@/lib/prisma-client';
+import {
+  resolveExerciseInventory,
+  type EquipmentLoadProfile,
+  type ResolvedEquipmentLoadProfile,
+} from '@/lib/gym-loads';
 
 const sourceProgramInclude = {
   workouts: {
@@ -30,16 +35,12 @@ const activeGymInclude = {
   },
   equipment: {
     orderBy: { name: 'asc' as const },
-    select: {
-      id: true,
-      name: true,
-      equipmentType: true,
-      description: true,
-      quantity: true,
-      weightOptions: true,
-      exerciseLinks: { select: { exerciseId: true } },
+    include: {
+      exerciseLinks: true,
+      platePool: { include: { plates: { orderBy: { weightKg: 'asc' as const } } } },
     },
   },
+  platePools: { include: { plates: { orderBy: { weightKg: 'asc' as const } } } },
 } satisfies Prisma.GymInclude;
 
 type SourceProgramRow = Prisma.ProgramGetPayload<{ include: typeof sourceProgramInclude }>;
@@ -229,18 +230,10 @@ interface SourceProgram {
 interface ActiveGymSummary {
   id: string;
   name: string;
+  inventoryMode: string;
   dumbbellWeights: number[];
   plateWeights: number[];
   barWeights: number[];
-  equipment: Array<{
-    id: string;
-    name: string;
-    equipmentType: string;
-    description: string | null;
-    quantity: number;
-    weightOptions: number[];
-    exerciseIds: string[];
-  }>;
   exerciseConfigs: Array<{
     exerciseId: string;
     exerciseName: string;
@@ -249,6 +242,26 @@ interface ActiveGymSummary {
     dumbbellWeights: number[];
     plateWeights: number[];
     barWeights: number[];
+  }>;
+  platePools: Array<{
+    id: string;
+    name: string;
+    compatibilityKey: string;
+    plates: Array<{ weightKg: number; quantity: number | null }>;
+  }>;
+  equipment: Array<{
+    id: string;
+    name: string;
+    equipmentType: string;
+    description: string | null;
+    quantity: number;
+    loadType: string;
+    weightOptions: number[];
+    selectedLoadMultiplier: number;
+    baseLoadKg: number;
+    loadingSides: number;
+    exerciseIds: string[];
+    platePoolId: string | null;
   }>;
 }
 
@@ -262,6 +275,9 @@ interface AvailableExercise {
   defaultRestSec: number;
   notes: string | null;
   isAvailableInActiveGym: boolean | null;
+  availabilitySource: string | null;
+  requiresEquipmentSelection: boolean;
+  equipmentOptions: ResolvedEquipmentLoadProfile[];
   weightOptions: number[];
   dumbbellWeights: number[];
   plateWeights: number[];
@@ -329,12 +345,26 @@ export async function buildProgramDesignContext({
   }
 
   const source = sourceRow ? mapSourceProgram(sourceRow) : null;
-  const gym = userContext?.activeGym ? mapGym(userContext.activeGym) : null;
+  const activeGym = userContext?.activeGym ?? null;
+  const gym = activeGym ? mapGym(activeGym) : null;
   const configByExercise = new Map(
     gym?.exerciseConfigs.map((config) => [config.exerciseId, config]) ?? [],
   );
   const availableExercises = exercises.map((exercise) => {
     const config = configByExercise.get(exercise.id);
+    const resolved = activeGym
+      ? resolveExerciseInventory({
+          inventoryMode: activeGym.inventoryMode,
+          exercise,
+          linkedEquipment: activeGym.equipment
+            .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === exercise.id))
+            .map(toEquipmentLoadProfile),
+          legacyConfig: config,
+          sharedDumbbellWeights: activeGym.dumbbellWeights,
+          legacyPlateWeights: activeGym.plateWeights,
+          legacyBarWeights: activeGym.barWeights,
+        })
+      : null;
     return {
       id: exercise.id,
       name: exercise.name,
@@ -344,8 +374,11 @@ export async function buildProgramDesignContext({
       usesBodyweight: exercise.usesBodyweight,
       defaultRestSec: exercise.defaultRestSec,
       notes: exercise.notes,
-      isAvailableInActiveGym: gym ? (config?.isAvailable ?? true) : null,
-      weightOptions: config?.weightOptions ?? [],
+      isAvailableInActiveGym: resolved?.isAvailable ?? null,
+      availabilitySource: resolved?.source ?? null,
+      requiresEquipmentSelection: resolved?.requiresEquipmentSelection ?? false,
+      equipmentOptions: resolved?.equipment ?? [],
+      weightOptions: resolved?.weightOptions ?? config?.weightOptions ?? [],
       dumbbellWeights: config?.dumbbellWeights.length
         ? config.dumbbellWeights
         : (gym?.dumbbellWeights ?? []),
@@ -526,18 +559,10 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
   return {
     id: gym.id,
     name: gym.name,
+    inventoryMode: gym.inventoryMode,
     dumbbellWeights: gym.dumbbellWeights,
     plateWeights: gym.plateWeights,
     barWeights: gym.barWeights,
-    equipment: gym.equipment.map((item) => ({
-      id: item.id,
-      name: item.name,
-      equipmentType: item.equipmentType,
-      description: item.description,
-      quantity: item.quantity,
-      weightOptions: item.weightOptions,
-      exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
-    })),
     exerciseConfigs: gym.exerciseConfigs.map((config) => ({
       exerciseId: config.exerciseId,
       exerciseName: config.exercise.name,
@@ -547,6 +572,45 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
       plateWeights: config.plateWeights,
       barWeights: config.barWeights,
     })),
+    platePools: gym.platePools.map((pool) => ({
+      id: pool.id,
+      name: pool.name,
+      compatibilityKey: pool.compatibilityKey,
+      plates: pool.plates.map((plate) => ({
+        weightKg: plate.weightKg,
+        quantity: plate.quantity,
+      })),
+    })),
+    equipment: gym.equipment.map((item) => ({
+      id: item.id,
+      name: item.name,
+      equipmentType: item.equipmentType,
+      description: item.description,
+      quantity: item.quantity,
+      loadType: item.loadType,
+      weightOptions: item.weightOptions,
+      selectedLoadMultiplier: item.selectedLoadMultiplier,
+      baseLoadKg: item.baseLoadKg,
+      loadingSides: item.loadingSides,
+      exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
+      platePoolId: item.platePoolId,
+    })),
+  };
+}
+
+function toEquipmentLoadProfile(item: ActiveGymRow['equipment'][number]): EquipmentLoadProfile {
+  return {
+    equipmentId: item.id,
+    equipmentName: item.name,
+    equipmentType: item.equipmentType,
+    loadType: item.loadType,
+    weightOptions: item.weightOptions,
+    selectedLoadMultiplier: item.selectedLoadMultiplier,
+    baseLoadKg: item.baseLoadKg,
+    loadingSides: item.loadingSides,
+    platePoolId: item.platePoolId,
+    platePoolName: item.platePool?.name ?? null,
+    plates: item.platePool?.plates ?? [],
   };
 }
 

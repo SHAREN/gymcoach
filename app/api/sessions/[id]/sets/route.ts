@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { stampGoalIfAchieved } from '@/lib/set-goal-sync';
+import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -38,8 +39,7 @@ export async function POST(req: Request, props: Params) {
       throw new ApiError(400, categoryError);
     }
     const isCardio = exercise.category === 'CARDIO';
-
-    const createData = {
+    const requestedData = {
       ...(data.id ? { id: data.id } : {}),
       sessionId: params.id,
       exerciseId: data.exerciseId,
@@ -57,15 +57,27 @@ export async function POST(req: Request, props: Params) {
       isWarmup: data.isWarmup ?? false,
       isDropSet: data.isDropSet ?? false,
       recoverySec: data.recoverySec ?? null,
+      gymEquipmentId: isCardio ? null : (data.gymEquipmentId ?? null),
     };
 
     if (data.id) {
       const existing = await db.set.findUnique({ where: { id: data.id } });
       if (existing) {
-        assertIdempotentSet(existing, createData, params.id);
+        assertIdempotentSet(existing, requestedData, params.id);
         return NextResponse.json(existing);
       }
     }
+
+    const equipmentSnapshot = isCardio
+      ? null
+      : await resolveSetEquipmentSnapshot(db, {
+          userId,
+          sessionGymId: session.gymId,
+          exerciseId: data.exerciseId,
+          gymEquipmentId: data.gymEquipmentId,
+          selectedLoadKg: data.weight,
+        });
+    const createData = { ...requestedData, ...(equipmentSnapshot ?? {}) };
 
     let created;
     try {
@@ -80,7 +92,7 @@ export async function POST(req: Request, props: Params) {
       ) {
         const existing = await db.set.findUnique({ where: { id: data.id } });
         if (existing) {
-          assertIdempotentSet(existing, createData, params.id);
+          assertIdempotentSet(existing, requestedData, params.id);
           return NextResponse.json(existing);
         }
       }
@@ -118,6 +130,7 @@ function assertIdempotentSet(
     isWarmup: boolean;
     isDropSet: boolean;
     recoverySec: number | null;
+    gymEquipmentId: string | null;
   },
   expected: Omit<typeof existing, never> & { id?: string },
   sessionId: string,
@@ -136,7 +149,8 @@ function assertIdempotentSet(
     existing.notes === expected.notes &&
     existing.isWarmup === expected.isWarmup &&
     existing.isDropSet === expected.isDropSet &&
-    existing.recoverySec === expected.recoverySec;
+    existing.recoverySec === expected.recoverySec &&
+    existing.gymEquipmentId === expected.gymEquipmentId;
 
   if (!matches) {
     throw new ApiError(409, 'Set ID was already used with different data.');

@@ -5,7 +5,16 @@ export interface LastPerformance {
   // The most recent previous session for this exercise (excluding the current session).
   sessionId: string;
   sessionStartedAt: Date;
-  sets: { weight: number; reps: number; rir: number | null; isDropSet: boolean }[];
+  gymEquipmentId: string | null;
+  equipmentName: string | null;
+  sets: {
+    weight: number;
+    reps: number;
+    rir: number | null;
+    isDropSet: boolean;
+    gymEquipmentId: string | null;
+    nominalResistanceKg: number | null;
+  }[];
   // Best load of the session (handy for a quick display).
   maxWeight: number;
   // Reps at that max load (the highest rep count reached at maxWeight).
@@ -50,6 +59,7 @@ export async function getLastPerformances(
           sessionId: lastSet.sessionId,
           exerciseId,
           isWarmup: false,
+          gymEquipmentId: lastSet.gymEquipmentId,
         },
         orderBy: { setNumber: 'asc' },
         select: {
@@ -60,15 +70,21 @@ export async function getLastPerformances(
           distanceM: true,
           avgHr: true,
           isDropSet: true,
+          gymEquipmentId: true,
+          nominalResistanceKg: true,
         },
       });
 
-      const sets = rows.map(({ weight, reps, rir, isDropSet }) => ({
-        weight,
-        reps,
-        rir,
-        isDropSet,
-      }));
+      const sets = rows.map(
+        ({ weight, reps, rir, isDropSet, gymEquipmentId, nominalResistanceKg }) => ({
+          weight,
+          reps,
+          rir,
+          isDropSet,
+          gymEquipmentId,
+          nominalResistanceKg,
+        }),
+      );
 
       const maxWeight = Math.max(...sets.map((s) => s.weight));
       const repsAtMaxWeight = Math.max(
@@ -96,6 +112,8 @@ export async function getLastPerformances(
         exerciseId,
         sessionId: lastSet.session.id,
         sessionStartedAt: lastSet.session.startedAt,
+        gymEquipmentId: lastSet.gymEquipmentId,
+        equipmentName: lastSet.equipmentNameSnapshot,
         sets,
         maxWeight,
         repsAtMaxWeight,

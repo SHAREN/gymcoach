@@ -1,4 +1,29 @@
-import type { EquipmentType } from '@/lib/prisma-client';
+import type { EquipmentLoadType, EquipmentType, GymInventoryMode } from '@/lib/prisma-client';
+
+export interface PlateInventoryItem {
+  weightKg: number;
+  // Null preserves a legacy denomination whose physical quantity is unknown.
+  quantity: number | null;
+}
+
+export interface EquipmentLoadProfile {
+  equipmentId: string;
+  equipmentName: string;
+  equipmentType: EquipmentType;
+  loadType: EquipmentLoadType;
+  weightOptions: number[];
+  selectedLoadMultiplier: number;
+  baseLoadKg: number;
+  loadingSides: number;
+  platePoolId: string | null;
+  platePoolName?: string | null;
+  plates?: PlateInventoryItem[];
+}
+
+export interface ResolvedEquipmentLoadProfile extends EquipmentLoadProfile {
+  attainableLoads: number[];
+  inventoryPrecision: 'KNOWN' | 'UNKNOWN_QUANTITIES' | 'NOT_APPLICABLE';
+}
 
 export interface GymLoadConstraints {
   equipmentType: EquipmentType;
@@ -7,6 +32,35 @@ export interface GymLoadConstraints {
   plateWeights?: number[];
   barWeights?: number[];
   weightOptions?: number[];
+  // Equipment-first callers provide one profile per physical instance. A
+  // selected equipmentId prevents loads from different machines being merged.
+  equipmentId?: string | null;
+  equipmentOptions?: ResolvedEquipmentLoadProfile[];
+}
+
+export interface ResolveExerciseInventoryInput {
+  inventoryMode: GymInventoryMode;
+  exercise: { id: string; name: string; equipmentType: EquipmentType };
+  linkedEquipment: EquipmentLoadProfile[];
+  legacyConfig?: {
+    isAvailable: boolean;
+    weightOptions: number[];
+    dumbbellWeights: number[];
+    plateWeights: number[];
+    barWeights: number[];
+  } | null;
+  sharedDumbbellWeights?: number[];
+  legacyPlateWeights?: number[];
+  legacyBarWeights?: number[];
+}
+
+export interface ResolvedExerciseInventory {
+  isAvailable: boolean;
+  source: 'equipment' | 'shared-dumbbells' | 'legacy-config' | 'legacy-gym' | 'implicit' | 'none';
+  equipment: ResolvedEquipmentLoadProfile[];
+  requiresEquipmentSelection: boolean;
+  weightOptions: number[];
+  constraints: GymLoadConstraints;
 }
 
 export function resolveEquipmentType(
@@ -28,6 +82,16 @@ export function gymWeightOptions(
   referenceWeight: number,
 ): number[] {
   if (!constraints || constraints.isAvailable === false) return [];
+
+  if (constraints.equipmentOptions?.length) {
+    const selected = constraints.equipmentId
+      ? constraints.equipmentOptions.find((item) => item.equipmentId === constraints.equipmentId)
+      : constraints.equipmentOptions.length === 1
+        ? constraints.equipmentOptions[0]
+        : null;
+    // Never union multiple physical machines into one progression scale.
+    return selected?.attainableLoads ?? [];
+  }
 
   switch (constraints.equipmentType) {
     case 'DUMBBELL':
@@ -55,6 +119,12 @@ export function constrainGymWeight(
 ): number {
   if (!constraints || constraints.isAvailable === false || targetWeight <= 0) {
     return round(targetWeight);
+  }
+
+  if (constraints.equipmentOptions?.length) {
+    const normalized = gymWeightOptions(constraints, Math.max(targetWeight, referenceWeight));
+    if (normalized.length === 0) return round(targetWeight);
+    return selectDirectionalWeight(normalized, targetWeight, referenceWeight);
   }
 
   let options: number[] = [];
@@ -131,6 +201,192 @@ export function constructibleBarbellWeights(
   }
 
   return [...totals].sort((a, b) => a - b);
+}
+
+export function resolveEquipmentLoadProfile(
+  profile: EquipmentLoadProfile,
+  targetCeiling = 500,
+): ResolvedEquipmentLoadProfile {
+  if (profile.loadType === 'FIXED' || profile.loadType === 'SELECTORIZED') {
+    return {
+      ...profile,
+      attainableLoads: uniquePositive(profile.weightOptions),
+      inventoryPrecision: 'NOT_APPLICABLE',
+    };
+  }
+  if (profile.loadType === 'PLATE_LOADED') {
+    const resolved = constructiblePlateLoadedWeights(
+      profile.baseLoadKg,
+      profile.loadingSides,
+      profile.plates ?? [],
+      targetCeiling,
+    );
+    return { ...profile, ...resolved };
+  }
+  return { ...profile, attainableLoads: [], inventoryPrecision: 'NOT_APPLICABLE' };
+}
+
+export function constructiblePlateLoadedWeights(
+  baseLoadKg: number,
+  loadingSides: number,
+  plates: PlateInventoryItem[],
+  targetCeiling: number,
+): Pick<ResolvedEquipmentLoadProfile, 'attainableLoads' | 'inventoryPrecision'> {
+  const base = round(Math.max(0, baseLoadKg));
+  const sides = Number.isInteger(loadingSides) && loadingSides > 0 ? loadingSides : 2;
+  const normalized = [
+    ...new Map(
+      plates
+        .filter((item) => Number.isFinite(item.weightKg) && item.weightKg > 0)
+        .map((item) => [
+          round(item.weightKg),
+          { weightKg: round(item.weightKg), quantity: item.quantity },
+        ]),
+    ).values(),
+  ].sort((a, b) => a.weightKg - b.weightKg);
+  if (normalized.length === 0) {
+    return { attainableLoads: base > 0 ? [base] : [], inventoryPrecision: 'KNOWN' };
+  }
+
+  const hasUnknownQuantity = normalized.some((item) => item.quantity == null);
+  const maxPlate = normalized.at(-1)?.weightKg ?? 0;
+  const maxTotal = Math.min(5000, Math.max(base, targetCeiling + maxPlate * sides * 4 + 50));
+  const maxAddedUnits = Math.max(0, toUnits(maxTotal - base));
+  const reachable = new Uint8Array(maxAddedUnits + 1);
+  reachable[0] = 1;
+
+  for (const item of normalized) {
+    const increment = toUnits(item.weightKg * sides);
+    if (increment <= 0) continue;
+    if (item.quantity == null) {
+      // Legacy inventory recorded that the denomination exists but omitted its
+      // count. Preserve that uncertainty and the previous usable behavior.
+      for (let current = 0; current + increment <= maxAddedUnits; current += 1) {
+        if (reachable[current]) reachable[current + increment] = 1;
+      }
+      continue;
+    }
+    const usableGroups = Math.floor(Math.max(0, item.quantity) / sides);
+    for (let copy = 0; copy < usableGroups; copy += 1) {
+      for (let current = maxAddedUnits - increment; current >= 0; current -= 1) {
+        if (reachable[current]) reachable[current + increment] = 1;
+      }
+    }
+  }
+
+  const attainableLoads: number[] = [];
+  for (let added = 0; added <= maxAddedUnits; added += 1) {
+    if (reachable[added]) attainableLoads.push(round(base + added / 100));
+  }
+  return {
+    attainableLoads,
+    inventoryPrecision: hasUnknownQuantity ? 'UNKNOWN_QUANTITIES' : 'KNOWN',
+  };
+}
+
+export function resolveExerciseInventory({
+  inventoryMode,
+  exercise,
+  linkedEquipment,
+  legacyConfig = null,
+  sharedDumbbellWeights = [],
+  legacyPlateWeights = [],
+  legacyBarWeights = [],
+}: ResolveExerciseInventoryInput): ResolvedExerciseInventory {
+  const equipment = linkedEquipment.map((item) => resolveEquipmentLoadProfile(item));
+  if (equipment.length > 0) {
+    const requiresEquipmentSelection = equipment.length > 1;
+    const weightOptions = requiresEquipmentSelection ? [] : equipment[0]!.attainableLoads;
+    return {
+      isAvailable: true,
+      source: 'equipment',
+      equipment,
+      requiresEquipmentSelection,
+      weightOptions,
+      constraints: {
+        equipmentType: resolveEquipmentType(exercise.equipmentType, exercise.name),
+        isAvailable: true,
+        equipmentOptions: equipment,
+        equipmentId: requiresEquipmentSelection ? null : equipment[0]!.equipmentId,
+      },
+    };
+  }
+
+  const equipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name);
+  if (equipmentType === 'DUMBBELL' && sharedDumbbellWeights.length > 0) {
+    const weights = uniquePositive(sharedDumbbellWeights);
+    return {
+      isAvailable: true,
+      source: 'shared-dumbbells',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: weights,
+      constraints: { equipmentType, isAvailable: true, dumbbellWeights: weights },
+    };
+  }
+
+  if (legacyConfig) {
+    const constraints: GymLoadConstraints = {
+      equipmentType,
+      isAvailable: legacyConfig.isAvailable,
+      weightOptions: legacyConfig.weightOptions,
+      dumbbellWeights: legacyConfig.dumbbellWeights.length
+        ? legacyConfig.dumbbellWeights
+        : sharedDumbbellWeights,
+      plateWeights: legacyConfig.plateWeights.length
+        ? legacyConfig.plateWeights
+        : legacyPlateWeights,
+      barWeights: legacyConfig.barWeights.length ? legacyConfig.barWeights : legacyBarWeights,
+    };
+    return {
+      isAvailable: legacyConfig.isAvailable,
+      source: 'legacy-config',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: gymWeightOptions(constraints, 200),
+      constraints,
+    };
+  }
+
+  if (equipmentType === 'BODYWEIGHT' || equipmentType === 'CARDIO') {
+    const constraints = { equipmentType, isAvailable: true } satisfies GymLoadConstraints;
+    return {
+      isAvailable: true,
+      source: 'implicit',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: [],
+      constraints,
+    };
+  }
+
+  if (inventoryMode === 'LEGACY') {
+    const constraints: GymLoadConstraints = {
+      equipmentType,
+      isAvailable: true,
+      dumbbellWeights: sharedDumbbellWeights,
+      plateWeights: legacyPlateWeights,
+      barWeights: legacyBarWeights,
+    };
+    return {
+      isAvailable: true,
+      source: 'legacy-gym',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: gymWeightOptions(constraints, 200),
+      constraints,
+    };
+  }
+
+  const constraints = { equipmentType, isAvailable: false } satisfies GymLoadConstraints;
+  return {
+    isAvailable: false,
+    source: 'none',
+    equipment: [],
+    requiresEquipmentSelection: false,
+    weightOptions: [],
+    constraints,
+  };
 }
 
 function selectDirectionalWeight(options: number[], target: number, reference: number): number {
