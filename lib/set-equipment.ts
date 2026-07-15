@@ -1,6 +1,8 @@
 import { ApiError } from '@/lib/api';
 import { Prisma, type Set } from '@/lib/prisma-client';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
+import { resolveEquipmentLoadProfile } from '@/lib/gym-loads';
+import { mobileFrozenEquipmentLoadSnapshotSchema } from '@/lib/schemas/mobile';
 
 type EquipmentReader = Pick<
   Prisma.TransactionClient,
@@ -190,6 +192,26 @@ export function preserveSetEquipmentSnapshot(
   if (!hasSnapshot) return emptySetEquipmentSnapshot();
 
   const selected = round(selectedLoadKg);
+  const frozenLoadSnapshot = requireSupportedFrozenLoadSnapshot(existing);
+  const resolved = resolveEquipmentLoadProfile({
+    equipmentId: frozenLoadSnapshot.gymEquipmentId,
+    equipmentName: existing.equipmentNameSnapshot ?? frozenLoadSnapshot.gymEquipmentId,
+    equipmentType: frozenLoadSnapshot.equipmentType,
+    loadType: frozenLoadSnapshot.loadType,
+    weightOptions: frozenLoadSnapshot.weightOptions,
+    selectedLoadMultiplier: frozenLoadSnapshot.selectedLoadMultiplier,
+    baseLoadKg: frozenLoadSnapshot.baseLoadKg,
+    loadingSides: frozenLoadSnapshot.loadingSides,
+    platePoolId: frozenLoadSnapshot.platePool?.id ?? null,
+    platePoolName: frozenLoadSnapshot.platePool?.name ?? null,
+    plates: frozenLoadSnapshot.platePool?.plates ?? [],
+  });
+  if (
+    frozenLoadSnapshot.loadType !== 'NONE' &&
+    !resolved.attainableLoads.includes(selected)
+  ) {
+    throw new ApiError(400, 'Selected weight is not attainable with the recorded equipment snapshot.');
+  }
   const selectorized =
     snapshotLoadType(existing.equipmentLoadSnapshot) === 'SELECTORIZED' ||
     existing.nominalResistanceKg != null;
@@ -209,6 +231,20 @@ export function preserveSetEquipmentSnapshot(
       nominalResistanceKg,
     ),
   };
+}
+
+function requireSupportedFrozenLoadSnapshot(existing: StoredSetEquipmentSnapshot) {
+  const parsed = mobileFrozenEquipmentLoadSnapshotSchema.safeParse(existing.equipmentLoadSnapshot);
+  if (!parsed.success) {
+    throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
+  }
+  if (
+    existing.gymEquipmentId != null &&
+    existing.gymEquipmentId !== parsed.data.gymEquipmentId
+  ) {
+    throw new ApiError(400, 'The recorded equipment snapshot does not match the set equipment.');
+  }
+  return parsed.data;
 }
 
 export function emptySetEquipmentSnapshot(): SetEquipmentSnapshot {

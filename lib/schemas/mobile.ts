@@ -27,7 +27,7 @@ const snapshotText = (maximum: number) =>
     .max(maximum)
     .refine((value) => value === value.trim(), 'Snapshot text must not have outer whitespace.');
 
-const mobileFrozenEquipmentLoadSnapshotSchema = z
+export const mobileFrozenEquipmentLoadSnapshotSchema = z
   .object({
     version: z.literal(2),
     revisionId: opaqueId,

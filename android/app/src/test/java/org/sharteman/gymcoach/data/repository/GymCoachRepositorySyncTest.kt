@@ -1210,6 +1210,22 @@ class GymCoachRepositorySyncTest {
         assertEquals("EQUIPMENT_SELECTION_REQUIRED", conflict.errorCode)
         assertEquals(currentRuntime.revision, conflict.localRevision)
         assertEquals(attemptedRuntime.revision, conflict.remoteRevision)
+
+        fixture.api.bootstrapResponse = response.copy(
+            gyms = response.gyms.map { it.copy(equipment = listOf(first)) },
+        )
+        fixture.repository.refreshBootstrap()
+        val replay = fixture.repository.applyWatchSetEvent(processed, incoming, attemptedRuntime)
+
+        assertTrue(replay.applied)
+        assertEquals(null, replay.errorCode)
+        assertEquals(first.id, fixture.dao.getSet(incoming.id)?.gymEquipmentId)
+        assertEquals(attemptedRuntime, fixture.dao.getActiveWorkoutRuntime(sessionId))
+        assertEquals(processed, fixture.dao.getProcessedWatchEvent(processed.eventId))
+        val resolved = fixture.dao.getWatchConflicts(sessionId).single()
+        assertEquals("RESOLVED", resolved.status)
+        assertEquals("REPLAY_APPLIED", resolved.resolution)
+        assertEquals(processed.processedAtEpochMs, resolved.resolvedAtEpochMs)
     }
 
     @Test
@@ -2756,6 +2772,21 @@ class GymCoachRepositorySyncTest {
             MutableStateFlow(watchPeers.values.maxByOrNull { it.updatedAtEpochMs })
         override suspend fun saveWatchConflict(entity: WatchConflictEntity) { watchConflicts[entity.conflictId] = entity }
         override suspend fun getWatchConflicts(sessionId: String) = watchConflicts.values.filter { it.sessionId == sessionId }
+        override suspend fun resolveWatchConflictsForEvent(
+            eventId: String,
+            resolution: String,
+            resolvedAtEpochMs: Long,
+        ) {
+            watchConflicts.entries.forEach { (id, conflict) ->
+                if (conflict.eventId == eventId && conflict.status == "UNRESOLVED") {
+                    watchConflicts[id] = conflict.copy(
+                        status = "RESOLVED",
+                        resolution = resolution,
+                        resolvedAtEpochMs = resolvedAtEpochMs,
+                    )
+                }
+            }
+        }
         override fun observeUnresolvedWatchConflictCount(): Flow<Int> = MutableStateFlow(
             watchConflicts.values.count { it.status == "UNRESOLVED" },
         )

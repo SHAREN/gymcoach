@@ -203,7 +203,8 @@ describe('equipment-first REST domain', () => {
       { params: Promise.resolve({ id: session.id }) },
     );
     expect(plateSetResponse.status).toBe(201);
-    await expect(plateSetResponse.json()).resolves.toMatchObject({
+    const createdPlateSet = await plateSetResponse.json();
+    expect(createdPlateSet).toMatchObject({
       equipmentLoadSnapshot: {
         version: 2,
         revisionId: expect.any(String),
@@ -227,6 +228,28 @@ describe('equipment-first REST domain', () => {
         },
       },
     });
+    const allowedPlateEdit = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdPlateSet.id}`,
+        { weight: 80, reps: 8, rir: 2 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdPlateSet.id }) },
+    );
+    expect(allowedPlateEdit.status).toBe(200);
+    await expect(allowedPlateEdit.json()).resolves.toMatchObject({
+      selectedLoadKg: 80,
+      equipmentLoadSnapshot: expect.objectContaining({ selectedLoadKg: 80 }),
+    });
+    const impossiblePlateEdit = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdPlateSet.id}`,
+        { weight: 77, reps: 8, rir: 2 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdPlateSet.id }) },
+    );
+    expect(impossiblePlateEdit.status).toBe(400);
 
     const clearEquipmentResponse = await updateSet(
       jsonRequest(
@@ -254,10 +277,19 @@ describe('equipment-first REST domain', () => {
         loadingSides: 3,
       },
     });
-    const editedResponse = await updateSet(
+    const impossibleChangedEquipmentResponse = await updateSet(
       jsonRequest(
         `http://test.local/api/sets/${createdSet.id}`,
         { weight: 60, reps: 10, rir: 1 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdSet.id }) },
+    );
+    expect(impossibleChangedEquipmentResponse.status).toBe(400);
+    const editedResponse = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdSet.id}`,
+        { weight: 45, reps: 10, rir: 1 },
         'PATCH',
       ),
       { params: Promise.resolve({ id: createdSet.id }) },
@@ -266,24 +298,33 @@ describe('equipment-first REST domain', () => {
     expect(await editedResponse.json()).toMatchObject({
       gymEquipmentId: cable.id,
       equipmentNameSnapshot: 'Upper cable',
-      selectedLoadKg: 60,
+      selectedLoadKg: 45,
       selectedLoadMultiplierSnapshot: 0.5,
-      nominalResistanceKg: 30,
+      nominalResistanceKg: 22.5,
       equipmentLoadSnapshot: expect.objectContaining({
         loadType: 'SELECTORIZED',
         selectedLoadMultiplier: 0.5,
         baseLoadKg: 0,
         loadingSides: 1,
-        selectedLoadKg: 60,
-        nominalResistanceKg: 30,
+        selectedLoadKg: 45,
+        nominalResistanceKg: 22.5,
       }),
     });
 
     await db.gymEquipment.delete({ where: { id: cable.id } });
-    const afterDeleteResponse = await updateSet(
+    const impossibleAfterDeleteResponse = await updateSet(
       jsonRequest(
         `http://test.local/api/sets/${createdSet.id}`,
         { weight: 70, reps: 8, rir: 2 },
+        'PATCH',
+      ),
+      { params: Promise.resolve({ id: createdSet.id }) },
+    );
+    expect(impossibleAfterDeleteResponse.status).toBe(400);
+    const afterDeleteResponse = await updateSet(
+      jsonRequest(
+        `http://test.local/api/sets/${createdSet.id}`,
+        { weight: 40, reps: 8, rir: 2 },
         'PATCH',
       ),
       { params: Promise.resolve({ id: createdSet.id }) },
@@ -292,15 +333,36 @@ describe('equipment-first REST domain', () => {
     expect(await afterDeleteResponse.json()).toMatchObject({
       gymEquipmentId: null,
       equipmentNameSnapshot: 'Upper cable',
-      selectedLoadKg: 70,
+      selectedLoadKg: 40,
       selectedLoadMultiplierSnapshot: 0.5,
-      nominalResistanceKg: 35,
+      nominalResistanceKg: 20,
       equipmentLoadSnapshot: expect.objectContaining({
         loadType: 'SELECTORIZED',
-        selectedLoadKg: 70,
-        nominalResistanceKg: 35,
+        selectedLoadKg: 40,
+        nominalResistanceKg: 20,
       }),
     });
+    const supportedSnapshot = (
+      await db.set.findUniqueOrThrow({ where: { id: createdSet.id } })
+    ).equipmentLoadSnapshot;
+    if (!supportedSnapshot || typeof supportedSnapshot !== 'object' || Array.isArray(supportedSnapshot)) {
+      throw new Error('Expected a frozen v2 equipment snapshot.');
+    }
+    for (const version of [1, 99]) {
+      await db.set.update({
+        where: { id: createdSet.id },
+        data: { equipmentLoadSnapshot: { ...supportedSnapshot, version } },
+      });
+      const unsupportedSnapshotResponse = await updateSet(
+        jsonRequest(
+          `http://test.local/api/sets/${createdSet.id}`,
+          { weight: 45, reps: 8, rir: 2 },
+          'PATCH',
+        ),
+        { params: Promise.resolve({ id: createdSet.id }) },
+      );
+      expect(unsupportedSnapshotResponse.status).toBe(400);
+    }
 
     const benchStation = await db.gymEquipment.findFirstOrThrow({
       where: { gymId: gym.id, name: 'Bench station' },
