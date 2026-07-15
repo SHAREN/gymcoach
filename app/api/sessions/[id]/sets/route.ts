@@ -58,7 +58,7 @@ export async function POST(req: Request, props: Params) {
       isWarmup: data.isWarmup ?? false,
       isDropSet: data.isDropSet ?? false,
       recoverySec: data.recoverySec ?? null,
-      gymEquipmentId: isCardio ? null : (data.gymEquipmentId ?? null),
+      gymEquipmentId: data.gymEquipmentId ?? null,
     };
 
     if (data.id) {

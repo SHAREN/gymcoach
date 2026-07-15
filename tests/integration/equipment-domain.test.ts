@@ -362,4 +362,66 @@ describe('equipment-first REST domain', () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({ gymEquipmentId: null, weight: 40 });
   });
+
+  it('replays a cardio set with linked equipment idempotently', async () => {
+    const user = await db.user.create({
+      data: { email: 'cardio-equipment-replay@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Exercise bike',
+        muscleGroup: 'QUADS',
+        category: 'CARDIO',
+        equipmentType: 'CARDIO',
+      },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: 'Cardio gym', inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    mockUserId.mockResolvedValue(user.id);
+    const equipmentResponse = await createEquipment(
+      jsonRequest(`http://test.local/api/gyms/${gym.id}/equipment`, {
+        name: 'Bike 1',
+        equipmentType: 'CARDIO',
+        loadType: 'NONE',
+        exerciseIds: [exercise.id],
+      }),
+      { params: Promise.resolve({ id: gym.id }) },
+    );
+    expect(equipmentResponse.status).toBe(201);
+    const equipment = (await equipmentResponse.json()).equipment;
+    const session = await db.session.create({ data: { userId: user.id, gymId: gym.id } });
+    const payload = {
+      id: 'cardio-set-replay-0001',
+      exerciseId: exercise.id,
+      gymEquipmentId: equipment.id,
+      setNumber: 1,
+      weight: 0,
+      reps: 1,
+      rir: null,
+      durationSec: 600,
+      distanceM: 2_000,
+    };
+
+    const first = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, payload),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    const replay = await createSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/sets`, payload),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      id: payload.id,
+      gymEquipmentId: equipment.id,
+      weight: 0,
+      reps: 1,
+      durationSec: 600,
+    });
+    expect(await db.set.count({ where: { id: payload.id } })).toBe(1);
+  });
 });
