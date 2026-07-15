@@ -2,6 +2,8 @@ package org.sharteman.gymcoach.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -108,10 +110,56 @@ data class ExerciseDto(
 data class GymDto(
     val id: String,
     val name: String,
+    val inventoryMode: String = "LEGACY",
     val dumbbellWeights: List<Double> = emptyList(),
     val plateWeights: List<Double> = emptyList(),
     val barWeights: List<Double> = emptyList(),
     val exerciseConfigs: List<GymExerciseConfigDto> = emptyList(),
+    val equipment: List<GymEquipmentDto> = emptyList(),
+    val platePools: List<GymPlatePoolDto> = emptyList(),
+)
+
+@Serializable
+data class GymEquipmentDto(
+    val id: String,
+    val gymId: String,
+    val name: String,
+    val equipmentType: String = "OTHER",
+    val description: String? = null,
+    val manufacturer: String? = null,
+    val modelName: String? = null,
+    val quantity: Int = 1,
+    val loadType: String = "NONE",
+    val weightOptions: List<Double> = emptyList(),
+    val selectedLoadMultiplier: Double = 1.0,
+    val baseLoadKg: Double = 0.0,
+    val platePoolId: String? = null,
+    val loadingSides: Int = 2,
+    val exerciseLinks: List<GymEquipmentExerciseDto> = emptyList(),
+    val platePool: GymPlatePoolDto? = null,
+)
+
+@Serializable
+data class GymEquipmentExerciseDto(
+    val equipmentId: String? = null,
+    val exerciseId: String,
+)
+
+@Serializable
+data class GymPlatePoolDto(
+    val id: String,
+    val gymId: String,
+    val name: String,
+    val compatibilityKey: String,
+    val plates: List<GymPlateInventoryItemDto> = emptyList(),
+)
+
+@Serializable
+data class GymPlateInventoryItemDto(
+    val id: String? = null,
+    val poolId: String? = null,
+    val weightKg: Double,
+    val quantity: Int? = null,
 )
 
 @Serializable
@@ -145,6 +193,12 @@ data class SetDto(
     val id: String,
     val sessionId: String,
     val exerciseId: String,
+    val gymEquipmentId: String? = null,
+    val equipmentNameSnapshot: String? = null,
+    val selectedLoadKg: Double? = null,
+    val selectedLoadMultiplierSnapshot: Double? = null,
+    val nominalResistanceKg: Double? = null,
+    val equipmentLoadSnapshot: JsonObject? = null,
     val setNumber: Int,
     val weight: Double,
     val reps: Int,
@@ -165,6 +219,8 @@ data class LastPerformanceDto(
     val exerciseId: String,
     val sessionId: String,
     val sessionStartedAt: String,
+    val gymEquipmentId: String? = null,
+    val equipmentName: String? = null,
     val sets: List<PerformanceSetDto> = emptyList(),
     val maxWeight: Double,
     val repsAtMaxWeight: Int,
@@ -176,6 +232,8 @@ data class PerformanceSetDto(
     val reps: Int,
     val rir: Int? = null,
     val isDropSet: Boolean = false,
+    val gymEquipmentId: String? = null,
+    val nominalResistanceKg: Double? = null,
 )
 
 @Serializable
@@ -207,11 +265,16 @@ data class MobileSessionPayload(
     val startedAt: String,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MobileSetPayload(
     val id: String,
     val sessionId: String,
     val exerciseId: String,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val gymEquipmentId: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val equipmentSnapshotAction: String? = null,
     val setNumber: Int,
     val weight: Double,
     val reps: Int,
