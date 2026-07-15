@@ -34,18 +34,22 @@ Do not mark Bluetooth, Wear Engine, sensors, vibration, crown, screen-off execut
 
 ### Mode 3: fully local simulation
 
-The Android debug source set contains a watch simulator that uses the production `WatchTransport` interface and protocol schemas. It can:
+The local test stack contains an Android debug transport that implements the
+production `WatchTransport` interface, an Android watch-event simulator, and a
+dependency-free JavaScript watch core. The implemented Android simulator can:
 
 - Connect and disconnect.
 - Request and receive the active workout snapshot.
-- Start, edit, complete, and delete sets.
+- Complete sets.
 - Change the active exercise.
-- Start, adjust, finish, and skip rest.
 - Emit valid and invalid test heart-rate samples.
 - Queue events offline and reconnect.
-- Redeliver duplicates and reorder selected deliveries.
-- Create controlled revision conflicts.
-- Exercise the 1 KB message and 4 MB file boundaries.
+- Redeliver duplicate messages and exchange files.
+
+The JavaScript watch-core tests additionally cover set start, edit and delete,
+rest controls, revision gaps, conflicts, ordered replay, message limits and
+file limits. These are component and local-integration tests, not one complete
+Android-to-watch UI end-to-end scenario.
 
 The simulator must be absent from release variants. A release APK test must assert that simulator activities, services, debug transport classes, and manifest entries are not packaged.
 
@@ -91,6 +95,54 @@ All clocks, UUID generators, transport, filesystem, sensor collectors, and conne
 |  22 | Finish workout                           | 1, 2, 3       | Both devices show the same finished state, no new set can attach accidentally, pending data syncs, and history uses the existing session.                        |
 |  23 | Large workout                            | 1, 2, 3       | Many exercises, sets, edits, and sensor samples remain responsive, ordered, bounded in storage, and recoverable.                                                 |
 |  24 | Wear Engine size limits                  | 1, 3          | Serialized messages stay at most 900 bytes and strictly under 1 KB; files stay at most 3.5 MiB and strictly under 4 MB; oversized data is split and checksummed. |
+
+## Current Stage 6 evidence
+
+This table records the source and automated-test audit at commit `b5b5e8d` on
+2026-07-15. Tester: Codex local source/test audit. Environment: the Windows
+Home PC Android/JVM and Node toolchains documented in
+`huawei-development-environment.md`, without DevEco Studio, Previewer, Huawei
+SDKs or a physical GT 4. The Android database is Room schema version 7. On this
+workstation:
+
+- `huawei-watch-app/npm run check`: 62 tests passed, 0 failed.
+- `shared-contracts/test-contracts.mjs`: 15 schemas and 15 examples passed.
+- `android/gradlew.bat testDebugUnitTest`: 184 tests passed, 0 failed or skipped.
+
+`automated-pass` means that the deterministic local assertions listed in the
+evidence column passed. It does not promote a simulator result to real-device
+evidence. `source-implemented-not-e2e` means the participating components and
+tests exist but the entire scenario is not exercised through both production
+application entry points. Rows whose final acceptance depends on official
+Huawei APIs or a real watch remain blocked. This snapshot should be updated if
+a later integration commit adds a direct scenario test.
+
+| # | Scenario | Status | Evidence and remaining limitation |
+| --: | --- | --- | --- |
+| 1 | Start workout on phone | `source-implemented-not-e2e` | The existing repository creates one session/runtime and publishes ordered watch commands in [`GymCoachRepositorySyncTest.kt:68`](../android/app/src/test/java/org/sharteman/gymcoach/data/repository/GymCoachRepositorySyncTest.kt#L68) and [`GymCoachRepositorySyncTest.kt:110`](../android/app/src/test/java/org/sharteman/gymcoach/data/repository/GymCoachRepositorySyncTest.kt#L110). Durable-before-dispatch behavior is covered by [`WatchIntegrationRuntimeTest.kt:24`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchIntegrationRuntimeTest.kt#L24), but no single test follows the start through the watch UI. |
+| 2 | Watch receives workout | `source-implemented-not-e2e` | Snapshot rendering passes in [`workout.test.mjs:102`](../huawei-watch-app/test/workout.test.mjs#L102). The Android debug transport exchanges events, ACKs and files in [`DebugWatchTransportEndToEndTest.kt:27`](../android/app/src/test/java/org/sharteman/gymcoach/watch/simulator/DebugWatchTransportEndToEndTest.kt#L27), but the production Wear Engine adapter is unavailable. |
+| 3 | Open watch app after workout start | `missing` | Snapshot/open and retained-backend behavior are tested in [`workout.test.mjs:102`](../huawei-watch-app/test/workout.test.mjs#L102) and [`workout.test.mjs:213`](../huawei-watch-app/test/workout.test.mjs#L213). The production page still uses volatile storage and unavailable transport, so a real application restart cannot restore the session. |
+| 4 | Complete a set on watch | `source-implemented-not-e2e` | Stable IDs and exact set values pass in [`workout.test.mjs:157`](../huawei-watch-app/test/workout.test.mjs#L157); sensor flush and rest start pass in [`stage4.test.mjs:382`](../huawei-watch-app/test/stage4.test.mjs#L382). Atomic official watch storage and phone delivery are not verified. |
+| 5 | Set appears on phone | `source-implemented-not-e2e` | Existing `LocalSetEntity` upsert and single server outbox operation are covered at the coordinator boundary by [`WatchWorkoutCoordinatorTest.kt:104`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchWorkoutCoordinatorTest.kt#L104). There is no complete debug-transport-to-Room UI test. |
+| 6 | Change exercise on phone | `source-implemented-not-e2e` | The repository publishes the command in [`GymCoachRepositorySyncTest.kt:68`](../android/app/src/test/java/org/sharteman/gymcoach/data/repository/GymCoachRepositorySyncTest.kt#L68), and watch state application passes in [`workout.test.mjs:117`](../huawei-watch-app/test/workout.test.mjs#L117). No test drives the phone UI and watch UI together. |
+| 7 | Change exercise on watch | `source-implemented-not-e2e` | Durable watch event generation passes in [`workout.test.mjs:138`](../huawei-watch-app/test/workout.test.mjs#L138), and phone runtime application passes in [`WatchWorkoutCoordinatorTest.kt:71`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchWorkoutCoordinatorTest.kt#L71). Full UI propagation is not exercised. |
+| 8 | Record weight, repetitions and RIR | `source-implemented-not-e2e` | Decimal weight and integer values are preserved in [`workout.test.mjs:157`](../huawei-watch-app/test/workout.test.mjs#L157) and contract ranges in [`contracts.test.mjs:120`](../huawei-watch-app/test/contracts.test.mjs#L120). There is no explicit Russian-versus-English numeric-entry round-trip test. |
+| 9 | Record heart rate during a set | `blocked-official-toolchain-or-hardware` | Debug collection, phase linkage and set flushing pass in [`stage4.test.mjs:382`](../huawei-watch-app/test/stage4.test.mjs#L382). Real GT 4 callbacks, permissions and sampling frequency require the official SDK and watch. |
+| 10 | Record heart rate during rest | `blocked-official-toolchain-or-hardware` | REST calculations pass in [`stage4.test.mjs:286`](../huawei-watch-app/test/stage4.test.mjs#L286), [`stage4.test.mjs:577`](../huawei-watch-app/test/stage4.test.mjs#L577) and [`WatchWorkoutCoordinatorTest.kt:459`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchWorkoutCoordinatorTest.kt#L459). Real collection remains unverified. |
+| 11 | Calculate average and maximum heart rate | `automated-pass` | Deterministic min/max/average/start/end/count assertions pass in [`stage4.test.mjs:286`](../huawei-watch-app/test/stage4.test.mjs#L286) and [`HeartRateSummaryCalculatorTest.kt:9`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sensors/HeartRateSummaryCalculatorTest.kt#L9). |
+| 12 | Discard invalid heart rate | `automated-pass` | Off-wrist and invalid samples remain null and are excluded by [`stage4.test.mjs:176`](../huawei-watch-app/test/stage4.test.mjs#L176) and [`HeartRateSummaryCalculatorTest.kt:36`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sensors/HeartRateSummaryCalculatorTest.kt#L36). |
+| 13 | Rest timer | `automated-pass` | Pause, resume, skip, start-next-set, absolute time and vibration cues pass in [`stage4.test.mjs:445`](../huawei-watch-app/test/stage4.test.mjs#L445), [`stage4.test.mjs:521`](../huawei-watch-app/test/stage4.test.mjs#L521) and [`stage4.test.mjs:550`](../huawei-watch-app/test/stage4.test.mjs#L550). |
+| 14 | Restore timer after screen sleep | `blocked-official-toolchain-or-hardware` | Absolute-time restoration passes against the storage abstraction in [`stage4.test.mjs:521`](../huawei-watch-app/test/stage4.test.mjs#L521). Production storage is still volatile, and real screen-off execution requires a GT 4. |
+| 15 | Lose Bluetooth connection | `blocked-official-toolchain-or-hardware` | Local disconnect/replay passes in [`stage5.test.mjs:220`](../huawei-watch-app/test/stage5.test.mjs#L220), and debug transport connection behavior is exercised by [`DebugWatchTransportEndToEndTest.kt:27`](../android/app/src/test/java/org/sharteman/gymcoach/watch/simulator/DebugWatchTransportEndToEndTest.kt#L27). Real Bluetooth/Wear Engine behavior is unverified. |
+| 16 | Continue workout without phone | `source-implemented-not-e2e` | Offline events, files and raw sensor retention pass in [`stage5.test.mjs:220`](../huawei-watch-app/test/stage5.test.mjs#L220) and [`stage5.test.mjs:241`](../huawei-watch-app/test/stage5.test.mjs#L241). A multi-exercise offline UI run with production persistence is absent. |
+| 17 | Restore synchronization | `source-implemented-not-e2e` | Snapshot reconciliation and gap replay pass in [`stage5.test.mjs:382`](../huawei-watch-app/test/stage5.test.mjs#L382), [`stage5.test.mjs:447`](../huawei-watch-app/test/stage5.test.mjs#L447), [`WatchSyncPersistenceTest.kt:31`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchSyncPersistenceTest.kt#L31) and [`WatchInboundEventRouterTest.kt:35`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchInboundEventRouterTest.kt#L35). No complete two-application convergence test exists. |
+| 18 | Redeliver the same event | `automated-pass` | Watch receipt deduplication passes in [`workout.test.mjs:190`](../huawei-watch-app/test/workout.test.mjs#L190); phone set/server-outbox deduplication passes in [`WatchWorkoutCoordinatorTest.kt:104`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchWorkoutCoordinatorTest.kt#L104) and ACK deduplication in [`WatchSyncPersistenceTest.kt:51`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchSyncPersistenceTest.kt#L51). |
+| 19 | Conflict changes | `missing` | Conflict journaling is tested in [`WatchSyncPersistenceTest.kt:76`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchSyncPersistenceTest.kt#L76), and changed content under a reused ID is rejected in [`WatchWorkoutCoordinatorTest.kt:552`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchWorkoutCoordinatorTest.kt#L552). Concurrent edit/delete payload reconciliation and an explicit resolver are not implemented end to end. |
+| 20 | Restart Android app | `source-implemented-not-e2e` | Inbox/outbox recovery logic passes in [`WatchSyncPersistenceTest.kt:20`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchSyncPersistenceTest.kt#L20) and [`WatchSyncPersistenceTest.kt:31`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchSyncPersistenceTest.kt#L31); Room migration 6-to-7 passes in [`GymCoachDatabaseMigrationTest.kt:196`](../android/app/src/androidTest/java/org/sharteman/gymcoach/data/local/GymCoachDatabaseMigrationTest.kt#L196). A process-death runtime test is absent. |
+| 21 | Restart watch app | `missing` | Retained-backend restart behavior passes in [`workout.test.mjs:213`](../huawei-watch-app/test/workout.test.mjs#L213), but the production watch entry uses `createVolatileStorageBackend()`, so real process restart persistence is unavailable. |
+| 22 | Finish workout | `source-implemented-not-e2e` | Finished-state reducers pass in [`workout.test.mjs:227`](../huawei-watch-app/test/workout.test.mjs#L227), and finished summary persistence in [`stage6-ui.test.mjs:98`](../huawei-watch-app/test/stage6-ui.test.mjs#L98). Same-state convergence, rejection of later sets and server-history reuse are not tested as one scenario. |
+| 23 | Large workout | `missing` | Bounded receipt retention is tested in [`stage5.test.mjs:527`](../huawei-watch-app/test/stage5.test.mjs#L527), but there is no stress scenario with many exercises, sets, edits and sensor batches. |
+| 24 | Wear Engine size limits | `automated-pass` | The 900-byte outbound target and 1,024-byte inbound limit pass in [`messages.test.mjs:45`](../huawei-watch-app/test/messages.test.mjs#L45), [`messages.test.mjs:51`](../huawei-watch-app/test/messages.test.mjs#L51), [`messages.test.mjs:62`](../huawei-watch-app/test/messages.test.mjs#L62) and Android [`WatchConnectionCoordinatorTest.kt:171`](../android/app/src/test/java/org/sharteman/gymcoach/watch/sync/WatchConnectionCoordinatorTest.kt#L171). File checksum and 3.5 MB target tests pass in [`stage5.test.mjs:320`](../huawei-watch-app/test/stage5.test.mjs#L320). |
 
 ## Additional negative and security tests
 

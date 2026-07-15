@@ -106,18 +106,40 @@ on your own key - all self-hosted.
 
 ### Huawei Watch companion
 
-A standalone Huawei Lite Wearable companion for the HUAWEI WATCH GT 4 is under
-development in [`huawei-watch-app/`](huawei-watch-app/). It is designed around
-Wear Engine P2P communication, offline event queues, shared versioned contracts,
-and the existing Android session and set models.
+A standalone Stage 6 Huawei Lite Wearable companion source project for the
+HUAWEI WATCH GT 4 lives in [`huawei-watch-app/`](huawei-watch-app/). The Android
+side reuses the existing session, set and server outbox models, Room schema
+version 7, durable phone/watch event queues, shared versioned contracts and a
+debug-only transport simulator. Phone workout mutations are wired to the watch
+command publisher; the watch core implements active workout, set and rest
+flows, offline replay, heart-rate summaries, exercise/workout summaries and
+compact Russian/English diagnostics.
+
+The current automated evidence at commit `b5b5e8d` is:
+
+- 62/62 Huawei watch JavaScript/core tests passed.
+- 184/184 Android debug unit tests passed.
+- 15/15 shared JSON schemas and examples validated.
+
+These results validate source, contracts and local simulation only. The
+production watch entry deliberately still uses an unavailable transport and a
+volatile storage adapter until the exact official Huawei APIs are installed.
+DevEco Studio, Lite Wearable SDK, Previewer, Wear Engine SDK and DevEco
+Assistant are not installed on this workstation because the official setup
+requires owner-controlled HUAWEI ID access. Therefore no HAP build, signing,
+Previewer run, Watch GT 4 installation, real Wear Engine connection, real
+sensor callback, screen-off or background result is claimed.
 
 Huawei does not publish a model-specific statement that explicitly labels the
 WATCH GT 4 as a Lite Wearable. The implementation therefore treats that device
 type as an officially supported GT-series inference and requires runtime checks
 on the real watch before enabling transport and sensor features. See the
 [capability matrix](docs/huawei-watch-gt4-capabilities.md),
+[development environment](docs/huawei-development-environment.md),
 [architecture](docs/huawei-watch-architecture.md), and
-[sync protocol](docs/huawei-watch-sync-protocol.md).
+[sync protocol](docs/huawei-watch-sync-protocol.md),
+[testing evidence](docs/huawei-watch-testing.md), and
+[installation runbook](docs/huawei-watch-installation.md).
 
 ### AI coach (bring your own model)
 
