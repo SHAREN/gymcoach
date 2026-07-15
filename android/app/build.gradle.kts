@@ -16,8 +16,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.4.11"
+        versionCode = 22
+        versionName = "0.4.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -46,6 +46,9 @@ android {
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    sourceSets.getByName("test").resources.srcDir(
+        rootProject.projectDir.parentFile.resolve("shared-contracts/examples"),
+    )
 }
 
 kapt {
