@@ -107,8 +107,8 @@ On this workstation:
 - Production watch HAP: official Hvigor `assembleHap` passed; unsigned output is 762,949 bytes with SHA-256 `06A5BCBAC3E9F2CD16B7506439303C6AE19079CE98035774020355324C7CFDF0`.
 - Preview harness HAP: official Hvigor `assembleHap` passed; unsigned output is 162,641 bytes with SHA-256 `91CE82A71AFE5D86E5EB3D730BCF51FCB17B0CE86381BBAA93857AF741881A5C`. The official round Lite Wearable Previewer rendered home, workout and rest screens and accepted set start/completion.
 - `shared-contracts/test-contracts.mjs`: 15 schemas and 15 examples passed.
-- `scripts/verify.sh`: 121 web test files and 1042 tests passed, followed by lint, typecheck and production build.
-- `android/gradlew.bat testDebugUnitTest`: 48 test suites and 233 tests passed, 0 failed.
+- `scripts/verify.sh`: 125 web test files and 1058 tests passed, followed by lint, typecheck and production build.
+- `android/gradlew.bat testDebugUnitTest`: 48 test suites and 234 tests passed, 0 failed.
 - Android `testDebugUnitTest`, `lintDebug`, `assembleDebug` and release Kotlin compilation passed with Wear Engine `5.0.3.304`.
 - Published APK `gymcoach-26-01ce15d57297.apk`: 23,015,583 bytes; SHA-256 `01ce15d5729709cc36727d9815886e68edc570205543175768850762ed79e787`. `latest.json` matches the file size and hash.
 - API 34 Room instrumentation: 6 migration tests passed, including migration 8 to 9.
