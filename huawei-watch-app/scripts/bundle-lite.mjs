@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
-import { transformAsync } from '@babel/core';
+import { parseAsync } from '@babel/core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checkOnly = process.argv.includes('--check');
@@ -21,7 +21,12 @@ const paths = {
   ),
 };
 
-async function bundle(entryPoint, outfile, external = [], normalizeAppDefault = false) {
+async function bundle(
+  entryPoint,
+  outfile,
+  external = [],
+  normalizeAppDefault = false,
+) {
   await mkdir(path.dirname(outfile), { recursive: true });
   await build({
     bundle: true,
@@ -32,39 +37,42 @@ async function bundle(entryPoint, outfile, external = [], normalizeAppDefault = 
     minify: true,
     outfile,
     platform: 'neutral',
-    target: 'es2015',
+    target: 'es2017',
   });
   const bundled = await readFile(outfile, 'utf8');
-  const transformed = await transformAsync(bundled, {
-    comments: false,
-    compact: true,
-    filename: outfile,
-    minified: true,
-    presets: [
-      [
-        '@babel/preset-env',
-        {
-          modules: false,
-          targets: {
-            ie: '11',
-          },
-          useBuiltIns: false,
-        },
-      ],
-    ],
-    sourceType: 'module',
-  });
-  assert.equal(typeof transformed?.code, 'string', `Babel did not emit ${outfile}.`);
-  const code = normalizeAppDefault
-    ? transformed.code.replace(
-        /export\{([A-Za-z_$][A-Za-z0-9_$]*) as default\};?$/u,
+  const normalized = normalizeAppDefault
+    ? bundled.replace(
+        /export\s*\{\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+as\s+default\s*\};?\s*$/u,
         'export default $1;',
       )
-    : transformed.code;
+    : bundled;
+  const code = normalized;
   if (normalizeAppDefault) {
     assert.match(code, /export default [A-Za-z_$][A-Za-z0-9_$]*;$/u);
   }
+  await assertNoRegExp(code, outfile);
   await writeFile(outfile, `${code}\n`, 'utf8');
+}
+
+async function assertNoRegExp(code, outfile) {
+  const ast = await parseAsync(code, { filename: outfile, sourceType: 'module' });
+  const pending = [ast];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object') {
+      continue;
+    }
+    if (value.type === 'RegExpLiteral') {
+      throw new Error(
+        `${outfile} contains RegExp /${value.pattern}/${value.flags} unsupported by Lite JerryScript.`,
+      );
+    }
+    if (Array.isArray(value)) {
+      pending.push(...value);
+    } else {
+      pending.push(...Object.values(value));
+    }
+  }
 }
 
 async function buildOutputs(base) {
@@ -72,12 +80,17 @@ async function buildOutputs(base) {
     Object.entries(paths).map(([name, target]) => [name, path.join(base, name, path.basename(target))]),
   );
   await bundle(
-    path.join(root, 'src/lite/production-app.js'),
+    path.join(root, 'src/lite/physical-install-app.js'),
     outputs.productionApp,
-    ['@system.file', '@system.wearengine'],
+    [],
     true,
   );
-  await bundle(path.join(root, 'src/lite/watch-page.js'), outputs.productionPage);
+  await bundle(
+    path.join(root, 'src/lite/physical-install-page.js'),
+    outputs.productionPage,
+    [],
+    true,
+  );
   await mkdir(path.dirname(outputs.previewApp), { recursive: true });
   await copyFile(path.join(root, 'src/lite/preview-app.js'), outputs.previewApp);
   await mkdir(path.dirname(outputs.previewPage), { recursive: true });

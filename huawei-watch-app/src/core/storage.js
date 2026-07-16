@@ -1,4 +1,5 @@
 import { canonicalSha256 } from './canonical-json.js';
+import { sanitizeMachineCode } from './portable-text.js';
 
 const STORAGE_KEY = 'gymcoach.watch.control.v1';
 const DOCUMENT_VERSION = 6;
@@ -179,7 +180,7 @@ export class WatchStateRepository {
 
   async updateState(patch) {
     this.requireLoaded();
-    this.document.state = { ...this.document.state, ...clone(patch) };
+    this.document.state = Object.assign({}, this.document.state, clone(patch));
     await this.persist();
   }
 
@@ -269,7 +270,9 @@ export class WatchStateRepository {
         (entry) => entry.transferId === transfer.transferId,
       );
       if (!existing) {
-        this.document.pendingFileTransfers.push({ ...clone(transfer), direction: 'OUTBOUND' });
+        this.document.pendingFileTransfers.push(
+          Object.assign({}, clone(transfer), { direction: 'OUTBOUND' }),
+        );
       }
     }
     this.document.activeWorkout = clone(activeWorkout);
@@ -537,10 +540,7 @@ function migrateDocument(parsed) {
   ) {
     throw new Error('Unsupported watch state document.');
   }
-  parsed.state = {
-    ...createEmptyDocument().state,
-    ...(parsed.state || {}),
-  };
+  parsed.state = Object.assign({}, createEmptyDocument().state, parsed.state || {});
   parsed.state.lastErrorCode = sanitizeStoredError(parsed.state.lastErrorCode ?? parsed.state.lastError);
   parsed.state.lastError = parsed.state.lastErrorCode;
   parsed.receiptRecords = Array.isArray(parsed.receiptRecords) ? parsed.receiptRecords : [];
@@ -733,14 +733,7 @@ function conflictKey(conflict) {
 }
 
 function sanitizeStoredError(value) {
-  if (typeof value !== 'string' || value.length === 0) {
-    return null;
-  }
-  return value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 64) || null;
+  return sanitizeMachineCode(value);
 }
 
 function clone(value) {

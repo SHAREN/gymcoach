@@ -9,6 +9,8 @@ const generatedEntryUrl = new URL(
 );
 const hmlUrl = new URL('../entry/src/main/js/MainAbility/pages/index/index.hml', import.meta.url);
 const cssUrl = new URL('../entry/src/main/js/MainAbility/pages/index/index.css', import.meta.url);
+const physicalAppUrl = new URL('../src/lite/physical-install-app.js', import.meta.url);
+const physicalPageUrl = new URL('../src/lite/physical-install-page.js', import.meta.url);
 
 test('watch page entry resolves and does not import the debug transport', async () => {
   const source = await readFile(entryUrl, 'utf8');
@@ -30,6 +32,23 @@ test('watch page entry resolves and does not import the debug transport', async 
   assert.equal(source.includes('formatElapsed(timer.workoutElapsedMs)'), true);
   assert.equal(source.includes('setElapsed: formatElapsed(timer.setElapsedMs)'), true);
   assert.equal(source.includes("activeWorkout.session.status === 'FINISHED'"), true);
+});
+
+test('physical GT4 entry stays compact and renders an honest empty state', async () => {
+  const physicalApp = await readFile(physicalAppUrl, 'utf8');
+  const physicalPage = await readFile(physicalPageUrl, 'utf8');
+  const generated = await readFile(generatedEntryUrl, 'utf8');
+  const module = await import(`${physicalPageUrl.href}?physical-entry-test`);
+
+  assert.equal(physicalApp.includes('GymCoach physical watch build started.'), true);
+  assert.equal(module.default.data.showHome, true);
+  assert.equal(module.default.data.hasWorkout, false);
+  assert.equal(module.default.data.noWorkout, true);
+  assert.equal(typeof module.default.toggleLanguage, 'function');
+  assert.equal(typeof module.default.openDiagnostics, 'function');
+  assert.equal(physicalPage.includes('Preview connected'), false);
+  assert.equal(physicalPage.includes('Barbell squat'), false);
+  assert.equal(Buffer.byteLength(generated, 'utf8') < 8_192, true);
 });
 
 test('HML exposes workout, set, and rest controls without unsupported crown APIs', async () => {
