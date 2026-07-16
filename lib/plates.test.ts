@@ -147,4 +147,28 @@ describe('computePlateLoad', () => {
       remainder: 20,
     });
   });
+
+  it('decomposes a four-sided 10 kg implement with the same per-side result as Android', () => {
+    expect(
+      computeEquipmentPlateLoad(
+        70,
+        10,
+        [
+          { plate: 10, quantity: 4 },
+          { plate: 5, quantity: 8 },
+        ],
+        4,
+      ),
+    ).toMatchObject({
+      exact: true,
+      barWeight: 10,
+      loadingSides: 4,
+      achievedWeight: 70,
+      remainder: 0,
+      perSide: [
+        { plate: 10, count: 1 },
+        { plate: 5, count: 1 },
+      ],
+    });
+  });
 });

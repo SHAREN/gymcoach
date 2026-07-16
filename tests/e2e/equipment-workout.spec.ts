@@ -124,7 +124,7 @@ test('a workout selects one physical machine, shows its loads, and logs its snap
 });
 
 test('mobile exercise detail and workout use the preferred 10 kg bar profile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 1200 });
   const registerResponse = await page.request.post('/api/auth/register', {
     headers: { 'x-forwarded-for': '10.111.0.45' },
     data: {
@@ -145,9 +145,14 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   });
   const exercise = await exerciseResponse.json();
   const gymResponse = await page.request.post('/api/gyms', {
-    data: { name: 'E2E Bar Gym', inventoryMode: 'EQUIPMENT_FIRST', makeActive: true },
+    data: { name: 'Zulu E2E Bar Gym', inventoryMode: 'EQUIPMENT_FIRST', makeActive: true },
   });
   const gym = await gymResponse.json();
+  const otherGymResponse = await page.request.post('/api/gyms', {
+    data: { name: 'Alpha E2E Other Gym', inventoryMode: 'EQUIPMENT_FIRST' },
+  });
+  expect(otherGymResponse.ok()).toBeTruthy();
+  const otherGym = await otherGymResponse.json();
   const poolResponse = await page.request.post(`/api/gyms/${gym.id}/plate-pools`, {
     data: {
       name: 'E2E Olympic plates',
@@ -172,6 +177,7 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
     },
   });
   expect(standardResponse.ok()).toBeTruthy();
+  const standardBar = (await standardResponse.json()).equipment;
   const smallBarResponse = await page.request.post(`/api/gyms/${gym.id}/equipment`, {
     data: {
       name: '10 kg EZ bar',
@@ -181,10 +187,20 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
       platePoolId: pool.id,
       loadingSides: 2,
       exerciseIds: [exercise.id],
-      preferredExerciseIds: [exercise.id],
     },
   });
   expect(smallBarResponse.ok()).toBeTruthy();
+  const smallBar = (await smallBarResponse.json()).equipment;
+  const otherBarResponse = await page.request.post(`/api/gyms/${otherGym.id}/equipment`, {
+    data: {
+      name: 'Other gym EZ bar',
+      equipmentType: 'BARBELL',
+      exerciseIds: [exercise.id],
+      preferredExerciseIds: [exercise.id],
+    },
+  });
+  expect(otherBarResponse.ok()).toBeTruthy();
+  const otherBar = (await otherBarResponse.json()).equipment;
 
   const programResponse = await page.request.post('/api/programs', {
     data: { name: 'E2E Preferred Bar Program', phase: 'Base' },
@@ -212,8 +228,104 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await page.goto(`/exercises/${exercise.id}`);
   await expect(page.getByRole('button', { name: 'Edit exercise' })).toBeVisible();
   await expect(page.getByText('10 kg EZ bar')).toBeVisible();
+  await expect(page.getByText('20 kg standard bar')).toBeVisible();
+  await expect(page.getByText('Preferred')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Edit exercise' }).click();
+  let dialog = page.getByRole('dialog');
+  const activeHeading = dialog.getByText('Zulu E2E Bar Gym · Active gym');
+  const otherHeading = dialog.getByText('Alpha E2E Other Gym');
+  const activeBox = await activeHeading.boundingBox();
+  const otherBox = await otherHeading.boundingBox();
+  expect(activeBox).not.toBeNull();
+  expect(otherBox).not.toBeNull();
+  expect(activeBox!.y).toBeLessThan(otherBox!.y);
+  await dialog
+    .getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' })
+    .click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toBeHidden();
+
+  await page.reload();
+  await expect(page.getByText('10 kg EZ bar')).toBeVisible();
   await expect(page.getByText('Preferred')).toBeVisible();
   await expect(page.getByText('Empty load: 10 kg')).toBeVisible();
+  await expect(page.getByText('20 kg standard bar')).toBeVisible();
+
+  let otherInventory = await (
+    await page.request.get(`/api/gyms/${otherGym.id}/inventory`)
+  ).json();
+  expect(
+    otherInventory.gym.exerciseCoverage.find(
+      (item: { id: string }) => item.id === exercise.id,
+    ).preferredEquipmentId,
+  ).toBe(otherBar.id);
+
+  await page.goto('/settings');
+  await expect(page.getByText('10 kg EZ bar', { exact: true })).toBeVisible();
+  await expect(page.getByText('20 kg standard bar', { exact: true })).toBeVisible();
+  let standardCard = page
+    .getByText('20 kg standard bar', { exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
+  await standardCard.getByRole('button', { name: 'Edit equipment' }).click();
+  dialog = page.getByRole('dialog');
+  await dialog
+    .getByRole('button', {
+      name: 'Use this equipment by default for E2E EZ Skull Crusher',
+    })
+    .click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toBeHidden();
+
+  await page.reload();
+  standardCard = page
+    .getByText('20 kg standard bar', { exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
+  await standardCard.getByRole('button', { name: 'Edit equipment' }).click();
+  dialog = page.getByRole('dialog');
+  await expect(
+    dialog.getByRole('button', {
+      name: 'Use this equipment by default for E2E EZ Skull Crusher',
+    }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.goto(`/exercises/${exercise.id}`);
+  const standardDetailCard = page
+    .getByText('20 kg standard bar', { exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
+  await expect(standardDetailCard.getByText('Preferred')).toBeVisible();
+  await expect(page.getByText('10 kg EZ bar', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit exercise' }).click();
+  dialog = page.getByRole('dialog');
+  await dialog
+    .getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' })
+    .click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  const smallDetailCard = page
+    .getByText('10 kg EZ bar', { exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
+  await expect(smallDetailCard.getByText('Preferred')).toBeVisible();
+  await expect(page.getByText('20 kg standard bar', { exact: true })).toBeVisible();
+
+  const activeInventory = await (await page.request.get(`/api/gyms/${gym.id}/inventory`)).json();
+  expect(
+    activeInventory.gym.exerciseCoverage.find(
+      (item: { id: string }) => item.id === exercise.id,
+    ),
+  ).toMatchObject({
+    preferredEquipmentId: smallBar.id,
+    equipmentIds: expect.arrayContaining([smallBar.id, standardBar.id]),
+  });
+  otherInventory = await (await page.request.get(`/api/gyms/${otherGym.id}/inventory`)).json();
+  expect(
+    otherInventory.gym.exerciseCoverage.find(
+      (item: { id: string }) => item.id === exercise.id,
+    ).preferredEquipmentId,
+  ).toBe(otherBar.id);
 
   await page.goto(`/session/${session.id}`);
   await expect(page.getByRole('combobox', { name: 'Equipment used' })).toContainText(

@@ -134,4 +134,30 @@ class PlateCalculatorTest {
         assertEquals(20.0, finiteInventory.remainder, 0.001)
         assertFalse(finiteInventory.exact)
     }
+
+    @Test
+    fun fourSidedTenKgImplementMatchesTheWebPerSideDecomposition() {
+        val load = computeEquipmentPlateLoad(
+            targetWeight = 70.0,
+            baseLoad = 10.0,
+            availablePlates = listOf(
+                PlateInventoryItem(weightKg = 10.0, quantity = 4),
+                PlateInventoryItem(weightKg = 5.0, quantity = 8),
+            ),
+            loadingSides = 4,
+        )
+
+        assertEquals(10.0, load.barWeight, 0.001)
+        assertEquals(4, load.loadingSides)
+        assertEquals(70.0, load.achievedWeight, 0.001)
+        assertEquals(0.0, load.remainder, 0.001)
+        assertEquals(
+            listOf(
+                PlateGroup(plate = 10.0, count = 1),
+                PlateGroup(plate = 5.0, count = 1),
+            ),
+            load.perSide,
+        )
+        assertTrue(load.exact)
+    }
 }
