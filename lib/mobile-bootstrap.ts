@@ -15,7 +15,7 @@ import {
 } from '@/lib/return-to-training-history';
 
 export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 4;
-export const MOBILE_CALCULATION_VERSION = '2026-07-15-equipment-v1';
+export const MOBILE_CALCULATION_VERSION = '2026-07-16-return-history-v2';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
 interface MobileExerciseHistoryRow {
@@ -301,7 +301,8 @@ export async function buildMobileBootstrap(userId: string) {
                 await getReturnToTrainingRecommendations({
                   userId,
                   programExercises: workout.exercises,
-                  excludeSessionId: null,
+                  excludeSessionId:
+                    openSessions.find((session) => session.workoutId === workout.id)?.id ?? null,
                   now,
                   bodyweight: user.bodyweight,
                   gym: activeGym,
@@ -324,16 +325,20 @@ export async function buildMobileBootstrap(userId: string) {
               return gym ? [gym] : [];
             });
             const recommendationsByGym = await Promise.all(
-              (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) =>
-                getReturnToTrainingRecommendationsByEquipment({
+              (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) => {
+                const gymId = gym?.id ?? null;
+                return getReturnToTrainingRecommendationsByEquipment({
                   userId,
                   programExercises: workout.exercises,
-                  excludeSessionId: null,
+                  excludeSessionId:
+                    openSessions.find(
+                      (session) => session.workoutId === workout.id && session.gymId === gymId,
+                    )?.id ?? null,
                   now,
                   bodyweight: user.bodyweight,
                   gym,
-                }),
-              ),
+                });
+              }),
             );
             return [
               workout.id,

@@ -234,22 +234,54 @@ Current windows and ratios:
 - baseline primary-muscle volume: the preceding 56 days, normalized to 28 days;
 - recent primary-muscle activity must be within 14 days;
 - maintained-volume ratio: at least 70% of the normalized baseline;
-- start fraction when the muscle stayed trained: 85%;
-- start fraction after a broader muscle break: 75%.
+- recent exact-equipment session window: 14 days;
+- recent-biased long-term anchor: median capacity from up to the latest eight
+  older valid exact-equipment sessions, with no age cutoff;
+- established-history floor: 85% of the strongest rolling three-session median
+  across all older exact-equipment history;
+- recent exact capacity weight: 75%;
+- long-term exact anchor weight: 25%;
+- when at least three older exact sessions exist, bound the recent anchor to
+  75-125% of the long-term anchor before weighting;
+- start fraction for a return gap over 42 but under 84 days: 85%;
+- start fraction for a return gap from 84 through 167 days: 80%;
+- start fraction for a return gap of at least 168 days: 75%;
+- broader muscle return start fractions: 75% under 84 days, 70% from 84
+  through 167 days and 65% at 168 days or longer.
+
+Only valid non-warm-up, non-drop working sessions with positive repetitions
+participate in exact-load history. Same-exercise history remains eligible
+regardless of age, but its load anchor is scoped to the current gym and exact
+physical equipment identity. A live `gymEquipmentId = null` row is comparable
+to a manual or legacy null-equipment path only when it has no frozen equipment
+name or load-profile snapshot. Deleted or unlinked equipment, another physical
+machine and related exercises may lower confidence or inform muscle readiness,
+but their loads MUST NOT be converted into a current exact weight.
+
+A valid recent exact-equipment session is the primary current-capability signal
+even when it is the only recent observation. If it occurred within 14 days and
+immediately followed a gap over 42 days, the original gap remains the
+`returnGapDays` for one calibration session instead of being erased by the new
+timestamp. Older exact history supplies a robust sanity bound when enough
+observations exist. A stable three-session block anywhere in the available
+history supplies a bounded floor, so a later run of weak calibration sessions
+cannot erase an established exact-equipment history. Sample count, missing RIR,
+non-comparable equipment history and progressively longer gaps change `low`,
+`medium` or `high` confidence, not history eligibility.
 
 Current modes:
 
-| Mode               | Trigger                                                                        | Session-only targets                                                  |
-| ------------------ | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `normal`           | Cardio, no history at all, or exercise gap at most 42 days                     | Authored program                                                      |
-| `exercise-reintro` | Same exercise absent for more than 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3                                          |
-| `new-exercise`     | Muscle has history but this exercise does not                                  | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
-| `muscle-reintro`   | Primary muscle has no history or a gap over 42 days                            | 1 set, at least RIR 4                                                 |
+| Mode               | Trigger                                                                          | Session-only targets                                                  |
+| ------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `normal`           | Cardio, no history at all, or no active exact-exercise return gap over 42 days   | Authored program                                                      |
+| `exercise-reintro` | Exact exercise has a return gap over 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3                                          |
+| `new-exercise`     | Muscle has history but this exercise does not                                    | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
+| `muscle-reintro`   | Primary muscle has no history or a gap over 42 days                              | 1 set, at least RIR 4                                                 |
 
 Drop sets are disabled during return calibration. These changes apply only to
 the active session and MUST NOT silently rewrite the saved program.
 
-For each of up to the last three sessions of the same exercise:
+For every valid exact-equipment session, calculate one session capacity:
 
 ```text
 effectiveLoad = externalWeight
@@ -257,21 +289,43 @@ effectiveLoad = bodyweight + externalWeight  (bodyweight exercise)
 
 setCapacity = effectiveLoad * (1 + clamp(reps + RIR, 1, 30) / 30)
 sessionCapacity = max(setCapacity for non-drop working sets)
-historicalCapacity = median(sessionCapacity)
+```
 
+The recent and long-term anchors are then built from those session capacities.
+The recent-biased median is combined with an 85%-scaled floor from the strongest
+rolling three-session median across all older history. The recent anchor is
+bounded only when at least three older sessions provide a robust comparison,
+then the anchors are weighted 75/25. Without recent exact evidence, the
+long-term exact anchor remains eligible regardless of age. Without exact
+comparable history, the application uses calibration or the lightest
+current-equipment load and does not borrow another machine's number.
+
+```text
+historicalCapacity = weighted bounded recent anchor or long-term anchor
 targetCapacityReps = targetRepsMin + returnTargetRIR
 weightCeiling = historicalCapacity / (1 + targetCapacityReps / 30)
 suggestedWeight = weightCeiling * startFraction
 ```
 
-If RIR is absent, the current return estimate uses zero. The external load is
-then separated from bodyweight, rounded down to available gym equipment and
-never allowed above the calculated ceiling.
+If RIR is absent, the capacity estimate uses zero and confidence is reduced. It
+MUST NOT create an upward adjustment. The external load is then separated from
+bodyweight, rounded down to available gym equipment and never allowed above the
+calculated ceiling. Web and Android receive the same structured confidence,
+recent/long-term counts, non-comparable count and gap evidence. The first set
+remains session-only calibration; subsequent sets use recorded RIR and cannot
+increase above the return ceiling. If the calculated non-bodyweight ceiling is
+below the lightest attainable current-equipment load, that lightest load becomes
+both the starting load and session ceiling instead of emitting an impossible
+zero-kilogram option.
 
-The Epley equation, median-of-three rule, windows, ratios and 85%/75% fractions
-are engineering heuristics. The source-backed invariant is conservative
-reintroduction with low volume, RIR 3-4, no forced failure and movement-specific
-calibration.
+The Epley equation, all windows and gap bands, latest-eight median, rolling
+three-session floor, 85% floor ratio, 75/25 weighting, 75-125% bound,
+confidence tiers, return-episode rule, equipment-floor behavior, volume ratios
+and all 85/80/75% or 75/70/65% fractions are engineering heuristics. The
+source-backed invariants are gradual individualized reintroduction, low initial
+volume and effort, no forced failure, current RIR/RPE calibration and
+movement/equipment specificity. The sources do not establish a universal
+detraining curve or an exact return percentage.
 
 ### 5.4 Autoregulation between sets
 
@@ -803,3 +857,29 @@ and load increments. They do not define a universal cable ratio, plate sleeve
 standard, shared-pool schema, or exact cross-machine conversion. Universal
 compatible plate pools, nullable quantities, per-machine multipliers, and the
 attainable-load algorithm are therefore documented engineering heuristics.
+
+A tenth review on 2026-07-16 used the same `ИИ тренер` notebook, its current
+eight sources and conversation
+`c5d0e231-94f4-4b10-a11b-f2954b962943`. Four independent questions covered
+source-backed return principles, risks and competing interpretations,
+deterministic product translation, and an adversarial challenge to the proposed
+6/12/24-week bands, 75/25 weighting, 75-125% bound and 85/80/75% start
+fractions. A cited follow-up explicitly challenged every candidate constant.
+
+Source-backed findings were that detraining is gradual and individual; longer
+training history may improve retention and reacquisition qualitatively; daily
+capacity varies; current RIR/RPE is more useful for calibration than blindly
+reusing an old maximum; introductory return training should reduce stress and
+avoid repeated failure; and machine, free-weight and related-exercise loads are
+not exactly interchangeable. Pain, injury and post-illness return remain
+outside ordinary automatic load generation.
+
+The sources did not establish a universal percentage curve for 6, 12 or 24
+weeks, a recent-session window, a minimum sample count, an all-history statistic,
+the 75/25 blend, the 75-125% bound, confidence tiers, the one-session return
+episode rule, the 85/80/75% and 75/70/65% fractions or the RIR 3/4 product
+thresholds. These remain bounded engineering heuristics. The adversarial answer also proposed a
+72-hour lockout and absolute stale-history caps without direct source support;
+GymCoach does not adopt those generated values. Instead it preserves low
+session volume, conservative equipment-rounded starts, a hard ceiling and
+immediate RIR-based adjustment while clearly exposing confidence and evidence.

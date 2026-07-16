@@ -101,6 +101,23 @@ export const session = {
     bodyweightStart: 'Start with bodyweight and no added load.',
     chooseLoad: 'Choose a deliberately light calibration load for the first set.',
     ceiling: 'Do not exceed the history-based ceiling today: {weight}.',
+    confidence: {
+      low: 'History confidence: low.',
+      medium: 'History confidence: medium.',
+      high: 'History confidence: high.',
+    },
+    historyRecentAndLongTerm:
+      '{recent} recent exact-equipment session(s) are primary and checked against {longTerm} older exact-equipment session(s).',
+    historyRecent:
+      '{recent} recent exact-equipment session(s) provide the current capability signal; older exact history is sparse.',
+    historyLongTerm:
+      'No recent exact-equipment session is available. The load anchor uses {longTerm} older exact-equipment session(s).',
+    historyNone: 'No exact current-equipment load history is available.',
+    returnGap: 'Return conservatism uses a {days}-day exact-exercise gap.',
+    priorReturnGap:
+      'The latest exact session was recent, but it followed a {days}-day gap, so calibration remains active.',
+    nonComparableHistory:
+      '{count} session(s) from other or unlinked equipment were not converted into this load.',
     calibrate:
       'Record an honest RIR after the first set. The next-set recommendation will adapt from the result.',
   },

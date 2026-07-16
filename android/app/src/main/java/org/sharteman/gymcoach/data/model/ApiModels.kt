@@ -276,11 +276,20 @@ data class ExerciseHistorySetDto(
 data class ReturnRecommendationDto(
     val mode: String,
     val exerciseGapDays: Int? = null,
+    val returnGapDays: Int? = null,
     val muscleGapDays: Int? = null,
     val targetSets: Int,
     val targetRIR: Int,
     val suggestedWeight: Double? = null,
     val weightCeiling: Double? = null,
+    val startFraction: Double? = null,
+    val calibrationRequired: Boolean = false,
+    val historySessionCount: Int = 0,
+    val recentHistorySessionCount: Int = 0,
+    val longTermHistorySessionCount: Int = 0,
+    val nonComparableHistorySessionCount: Int = 0,
+    val historyBasis: String = "none",
+    val confidence: String = "low",
 )
 
 @Serializable

@@ -23,7 +23,7 @@ class WorkoutEquipmentHistoryTest {
             """
             {
               "schemaVersion": 4,
-              "calculationVersion": "2026-07-15-equipment-v1",
+              "calculationVersion": "2026-07-16-return-history-v2",
               "serverTime": "2026-07-15T10:00:00.000Z",
               "profile": {
                 "id": "user-1",
@@ -93,9 +93,20 @@ class WorkoutEquipmentHistoryTest {
                       "gymEquipmentId": "cable-b",
                       "recommendation": {
                         "mode": "exercise-reintro",
+                        "exerciseGapDays": 3,
+                        "returnGapDays": 87,
                         "targetSets": 2,
                         "targetRIR": 3,
-                        "suggestedWeight": 50.0
+                        "suggestedWeight": 50.0,
+                        "weightCeiling": 60.0,
+                        "startFraction": 0.8,
+                        "calibrationRequired": true,
+                        "historySessionCount": 4,
+                        "recentHistorySessionCount": 1,
+                        "longTermHistorySessionCount": 3,
+                        "nonComparableHistorySessionCount": 2,
+                        "historyBasis": "recent-and-long-term",
+                        "confidence": "medium"
                       }
                     }
                   ]
@@ -126,6 +137,16 @@ class WorkoutEquipmentHistoryTest {
         assertEquals(60.0, selectedPerformance?.maxWeight ?: 0.0, 0.001)
         assertEquals("exercise-reintro", selectedRecommendation?.mode)
         assertEquals(50.0, selectedRecommendation?.suggestedWeight ?: 0.0, 0.001)
+        assertEquals(87, selectedRecommendation?.returnGapDays)
+        assertEquals("recent-and-long-term", selectedRecommendation?.historyBasis)
+        assertEquals("medium", selectedRecommendation?.confidence)
+        assertEquals(2, selectedRecommendation?.nonComparableHistorySessionCount)
+        val evidence = returnCalibrationEvidence(selectedRecommendation)
+        assertEquals("recent-and-long-term", evidence?.historyBasis)
+        assertEquals(1, evidence?.recentHistorySessionCount)
+        assertEquals(3, evidence?.longTermHistorySessionCount)
+        assertEquals(87, evidence?.returnGapDays)
+        assertEquals(true, evidence?.followsPriorGap)
     }
 
     @Test

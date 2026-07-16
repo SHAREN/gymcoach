@@ -170,10 +170,16 @@ export interface ProgramDesignContext {
       muscleGroup: string;
       mode: string;
       exerciseGapDays: number | null;
+      returnGapDays: number | null;
       muscleGapDays: number | null;
       targetSets: number;
       targetRIR: number;
       suggestedWeight: number | null;
+      historyBasis: string;
+      confidence: string;
+      recentHistorySessionCount: number;
+      longTermHistorySessionCount: number;
+      nonComparableHistorySessionCount: number;
     }>;
     unavailableMetrics: string[];
   };
@@ -803,10 +809,16 @@ async function buildReturnRecommendations({
       muscleGroup: pe.exercise.muscleGroup,
       mode: recommendation.mode,
       exerciseGapDays: recommendation.exerciseGapDays,
+      returnGapDays: recommendation.returnGapDays,
       muscleGapDays: recommendation.muscleGapDays,
       targetSets: recommendation.targetSets,
       targetRIR: recommendation.targetRIR,
       suggestedWeight: recommendation.suggestedWeight,
+      historyBasis: recommendation.historyBasis,
+      confidence: recommendation.confidence,
+      recentHistorySessionCount: recommendation.recentHistorySessionCount,
+      longTermHistorySessionCount: recommendation.longTermHistorySessionCount,
+      nonComparableHistorySessionCount: recommendation.nonComparableHistorySessionCount,
     };
   });
 }

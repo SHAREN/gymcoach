@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
-import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
+import {
+  getReturnToTrainingRecommendations,
+  getReturnToTrainingRecommendationsByEquipment,
+} from '@/lib/return-to-training-history';
 
 const now = new Date('2026-07-12T12:00:00.000Z');
 
@@ -114,6 +117,129 @@ describe('return-to-training history builder', () => {
       weightCeiling: 19,
       suggestedWeight: 16,
       historySessionCount: 3,
+    });
+  });
+
+  it('keeps old exact-machine history after more than sixty newer other-machine sets', async () => {
+    const user = await db.user.create({
+      data: { email: 'return-equipment-history@test.dev', passwordHash: 'x' },
+    });
+    const bench = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Barbell Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: 'Return History Gym', inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    const barA = await db.gymEquipment.create({
+      data: {
+        gymId: gym.id,
+        name: 'Bench Station A',
+        equipmentType: 'BARBELL',
+        loadType: 'FIXED',
+        weightOptions: [20, 40, 50, 60, 70, 80],
+        exerciseLinks: { create: { exerciseId: bench.id } },
+      },
+    });
+    const barB = await db.gymEquipment.create({
+      data: {
+        gymId: gym.id,
+        name: 'Bench Station B',
+        equipmentType: 'BARBELL',
+        loadType: 'FIXED',
+        weightOptions: [20, 30, 40],
+        exerciseLinks: { create: { exerciseId: bench.id } },
+      },
+    });
+
+    for (const [index, age] of [180, 210, 240].entries()) {
+      const session = await db.session.create({
+        data: { userId: user.id, gymId: gym.id, startedAt: daysAgo(age) },
+      });
+      await db.set.create({
+        data: {
+          sessionId: session.id,
+          exerciseId: bench.id,
+          gymEquipmentId: barA.id,
+          setNumber: 1,
+          weight: [60, 70, 80][index]!,
+          reps: 8,
+          rir: 2,
+          completedAt: daysAgo(age),
+        },
+      });
+    }
+    for (let age = 1; age <= 61; age += 1) {
+      const session = await db.session.create({
+        data: { userId: user.id, gymId: gym.id, startedAt: daysAgo(age) },
+      });
+      await db.set.create({
+        data: {
+          sessionId: session.id,
+          exerciseId: bench.id,
+          gymEquipmentId: barB.id,
+          setNumber: 1,
+          weight: 40,
+          reps: 8,
+          rir: 2,
+          completedAt: daysAgo(age),
+        },
+      });
+    }
+
+    const recommendations = await getReturnToTrainingRecommendationsByEquipment({
+      userId: user.id,
+      programExercises: [
+        {
+          id: 'bench-program-exercise',
+          exerciseId: bench.id,
+          targetSets: 4,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise: bench,
+        },
+      ],
+      excludeSessionId: null,
+      now,
+      gym: {
+        id: gym.id,
+        inventoryMode: gym.inventoryMode,
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+        exerciseConfigs: [],
+        equipment: [barA, barB].map((equipment) => ({
+          id: equipment.id,
+          name: equipment.name,
+          equipmentType: equipment.equipmentType,
+          loadType: equipment.loadType,
+          weightOptions: equipment.weightOptions,
+          selectedLoadMultiplier: equipment.selectedLoadMultiplier,
+          baseLoadKg: equipment.baseLoadKg,
+          loadingSides: equipment.loadingSides,
+          platePoolId: equipment.platePoolId,
+          platePool: null,
+          exerciseLinks: [{ exerciseId: bench.id }],
+        })),
+      },
+    });
+    const stationA = recommendations['bench-program-exercise']?.find(
+      (item) => item.gymEquipmentId === barA.id,
+    )?.recommendation;
+
+    expect(stationA).toMatchObject({
+      mode: 'exercise-reintro',
+      exerciseGapDays: 180,
+      historySessionCount: 3,
+      longTermHistorySessionCount: 3,
+      historyBasis: 'long-term-exact',
+      suggestedWeight: 50,
+      nonComparableHistorySessionCount: 61,
     });
   });
 });

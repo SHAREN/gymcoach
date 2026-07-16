@@ -701,6 +701,7 @@ describe('EditableSetsTable', () => {
         returnRecommendation={{
           mode: 'exercise-reintro',
           exerciseGapDays: 60,
+          returnGapDays: 60,
           muscleGapDays: 5,
           muscleMaintained: true,
           recentMuscleSets: 12,
@@ -710,8 +711,14 @@ describe('EditableSetsTable', () => {
           targetRIR: 3,
           weightCeiling: 19,
           suggestedWeight: 16,
+          startFraction: 0.85,
           calibrationRequired: true,
           historySessionCount: 3,
+          recentHistorySessionCount: 0,
+          longTermHistorySessionCount: 3,
+          nonComparableHistorySessionCount: 0,
+          historyBasis: 'long-term-exact',
+          confidence: 'medium',
         }}
         readiness={null}
         deloadActive={false}

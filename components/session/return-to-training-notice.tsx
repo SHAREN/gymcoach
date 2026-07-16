@@ -23,6 +23,21 @@ export function ReturnToTrainingNotice({ recommendation, unit, usesBodyweight }:
       : recommendation.mode === 'muscle-reintro'
         ? t('muscleReintro')
         : t('newExercise');
+  const historyReason =
+    recommendation.historyBasis === 'recent-and-long-term'
+      ? t('historyRecentAndLongTerm', {
+          recent: recommendation.recentHistorySessionCount,
+          longTerm: recommendation.longTermHistorySessionCount,
+        })
+      : recommendation.historyBasis === 'recent-exact'
+        ? t('historyRecent', { recent: recommendation.recentHistorySessionCount })
+        : recommendation.historyBasis === 'long-term-exact'
+          ? t('historyLongTerm', { longTerm: recommendation.longTermHistorySessionCount })
+          : t('historyNone');
+  const priorReturnGap =
+    recommendation.returnGapDays != null &&
+    recommendation.exerciseGapDays != null &&
+    recommendation.returnGapDays > recommendation.exerciseGapDays;
 
   return (
     <section
@@ -34,6 +49,24 @@ export function ReturnToTrainingNotice({ recommendation, unit, usesBodyweight }:
         <div className="min-w-0 space-y-1 text-xs leading-relaxed sm:text-sm">
           <p className="font-semibold">{t('title')}</p>
           <p>{description}</p>
+          <p data-testid="return-history-confidence">
+            {t(`confidence.${recommendation.confidence}`)}
+          </p>
+          <p>{historyReason}</p>
+          {recommendation.returnGapDays != null && (
+            <p>
+              {priorReturnGap
+                ? t('priorReturnGap', { days: recommendation.returnGapDays })
+                : t('returnGap', { days: recommendation.returnGapDays })}
+            </p>
+          )}
+          {recommendation.nonComparableHistorySessionCount > 0 && (
+            <p>
+              {t('nonComparableHistory', {
+                count: recommendation.nonComparableHistorySessionCount,
+              })}
+            </p>
+          )}
           <p className="font-medium">
             {t('targets', {
               sets: recommendation.targetSets,

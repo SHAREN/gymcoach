@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   calculateReturnRecommendation,
+  RETURN_EXTENDED_GAP_DAYS,
+  RETURN_MODERATE_GAP_DAYS,
   type ReturnProgramExercise,
+  type ReturnHistorySession,
   type ReturnTrainingHistory,
 } from '@/lib/return-to-training';
 
@@ -27,6 +30,23 @@ function sessions(weight = 20) {
     sessionId: `session-${index}`,
     performedAt: daysAgo(50 + index * 7),
     sets: [{ weight, reps: 10, rir: 2, isDropSet: false }],
+  }));
+}
+
+function historySessions(
+  entries: Array<{ days: number; weight: number; reps?: number; rir?: number | null }>,
+): ReturnHistorySession[] {
+  return entries.map((entry, index) => ({
+    sessionId: `history-${index}`,
+    performedAt: daysAgo(entry.days),
+    sets: [
+      {
+        weight: entry.weight,
+        reps: entry.reps ?? 8,
+        rir: entry.rir === undefined ? 2 : entry.rir,
+        isDropSet: false,
+      },
+    ],
   }));
 }
 
@@ -194,5 +214,307 @@ describe('return-to-training recommendations', () => {
     expect(result.mode).toBe('exercise-reintro');
     expect(result.suggestedWeight).toBe(0);
     expect(result.weightCeiling).toBe(0);
+  });
+
+  it('keeps one recent exact session eligible and bounded by robust long-term history', () => {
+    const bench: ReturnProgramExercise = {
+      ...programExercise,
+      exerciseId: 'bench-press',
+      exercise: { ...programExercise.exercise, equipmentType: 'BARBELL' },
+    };
+    const loadConstraints = {
+      equipmentType: 'BARBELL' as const,
+      barWeights: [20],
+      plateWeights: [1.25, 2.5, 5, 10, 20],
+    };
+    const result = calculateReturnRecommendation({
+      programExercise: bench,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(3),
+        exerciseSessions: historySessions([
+          { days: 3, weight: 80 },
+          { days: 90, weight: 60 },
+          { days: 100, weight: 70 },
+          { days: 110, weight: 80 },
+        ]),
+      }),
+      now,
+      loadConstraints,
+    });
+
+    expect(result).toMatchObject({
+      mode: 'exercise-reintro',
+      exerciseGapDays: 3,
+      returnGapDays: 87,
+      recentHistorySessionCount: 1,
+      longTermHistorySessionCount: 3,
+      historyBasis: 'recent-and-long-term',
+      confidence: 'low',
+      startFraction: 0.8,
+      suggestedWeight: 60,
+    });
+    expect(result.suggestedWeight).toBeGreaterThan(20);
+  });
+
+  it('uses old exact-exercise history instead of collapsing a 60-80 kg bench to 20 kg', () => {
+    const result = calculateReturnRecommendation({
+      programExercise: {
+        ...programExercise,
+        exerciseId: 'bench-press',
+        exercise: { ...programExercise.exercise, equipmentType: 'BARBELL' },
+      },
+      history: history({
+        exerciseLastPerformedAt: daysAgo(180),
+        muscleLastPerformedAt: daysAgo(5),
+        exerciseSessions: historySessions([
+          { days: 180, weight: 60 },
+          { days: 210, weight: 70 },
+          { days: 240, weight: 80 },
+        ]),
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'BARBELL',
+        barWeights: [20],
+        plateWeights: [1.25, 2.5, 5, 10, 20],
+      },
+    });
+
+    expect(result).toMatchObject({
+      mode: 'exercise-reintro',
+      historyBasis: 'long-term-exact',
+      longTermHistorySessionCount: 3,
+      startFraction: 0.75,
+      suggestedWeight: 50,
+    });
+  });
+
+  it('keeps the 6, 12 and 24 week gap bands bounded and monotonic', () => {
+    const fineLoads = {
+      equipmentType: 'DUMBBELL' as const,
+      dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+    };
+    const recommendationAt = (gapDays: number) =>
+      calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(gapDays),
+          exerciseSessions: historySessions([
+            { days: gapDays, weight: 40 },
+            { days: gapDays + 14, weight: 42 },
+            { days: gapDays + 28, weight: 44 },
+          ]),
+        }),
+        now,
+        loadConstraints: fineLoads,
+      });
+    const sixWeeks = recommendationAt(43);
+    const twelveWeeks = recommendationAt(RETURN_MODERATE_GAP_DAYS);
+    const twentyFourWeeks = recommendationAt(RETURN_EXTENDED_GAP_DAYS);
+
+    expect(sixWeeks.startFraction).toBe(0.85);
+    expect(twelveWeeks.startFraction).toBe(0.8);
+    expect(twentyFourWeeks.startFraction).toBe(0.75);
+    expect(sixWeeks.suggestedWeight).toBeGreaterThanOrEqual(twelveWeeks.suggestedWeight!);
+    expect(twelveWeeks.suggestedWeight).toBeGreaterThanOrEqual(twentyFourWeeks.suggestedWeight!);
+  });
+
+  it('makes broad muscle return fractions and confidence more conservative across gap bands', () => {
+    const fineLoads = {
+      equipmentType: 'DUMBBELL' as const,
+      dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+    };
+    const recommendationAt = (gapDays: number) =>
+      calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(gapDays),
+          muscleLastPerformedAt: daysAgo(gapDays),
+          recentMuscleSets: 0,
+          baselineMuscleSetsPer28Days: 12,
+          exerciseSessions: historySessions([
+            { days: gapDays, weight: 40 },
+            { days: gapDays + 14, weight: 42 },
+            { days: gapDays + 28, weight: 44 },
+          ]),
+        }),
+        now,
+        loadConstraints: fineLoads,
+      });
+    const sixWeeks = recommendationAt(43);
+    const twelveWeeks = recommendationAt(RETURN_MODERATE_GAP_DAYS);
+    const twentyFourWeeks = recommendationAt(RETURN_EXTENDED_GAP_DAYS);
+
+    expect(sixWeeks.startFraction).toBe(0.75);
+    expect(twelveWeeks.startFraction).toBe(0.7);
+    expect(twentyFourWeeks.startFraction).toBe(0.65);
+    expect(sixWeeks.confidence).toBe('medium');
+    expect(twelveWeeks.confidence).toBe('low');
+    expect(twentyFourWeeks.confidence).toBe('low');
+    expect(sixWeeks.suggestedWeight).toBeGreaterThan(twelveWeeks.suggestedWeight!);
+    expect(twelveWeeks.suggestedWeight).toBeGreaterThan(twentyFourWeeks.suggestedWeight!);
+  });
+
+  it('bounds a recent PR outlier and a recent weak outlier against older exact history', () => {
+    const calculate = (recentWeight: number) =>
+      calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(3),
+          exerciseSessions: historySessions([
+            { days: 3, weight: recentWeight },
+            { days: 90, weight: 38 },
+            { days: 100, weight: 40 },
+            { days: 110, weight: 42 },
+          ]),
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+        },
+      });
+    const highOutlier = calculate(200);
+    const weakOutlier = calculate(5);
+
+    expect(highOutlier.suggestedWeight).toBeLessThan(60);
+    expect(weakOutlier.suggestedWeight).toBeGreaterThan(20);
+  });
+
+  it('keeps very old weak novice records as context without letting them dominate the anchor', () => {
+    const established = [60, 70, 80, 90, 100, 110, 120, 130].map((days, index) => ({
+      days,
+      weight: 38 + index,
+    }));
+    const calculate = (entries: Array<{ days: number; weight: number }>) =>
+      calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(60),
+          exerciseSessions: historySessions(entries),
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+        },
+      });
+    const establishedOnly = calculate(established);
+    const withOldNoviceRecords = calculate([
+      ...established,
+      { days: 1_000, weight: 5 },
+      { days: 1_100, weight: 7 },
+    ]);
+
+    expect(withOldNoviceRecords.historySessionCount).toBe(10);
+    expect(withOldNoviceRecords.suggestedWeight).toBe(establishedOnly.suggestedWeight);
+  });
+
+  it('preserves a bounded floor from an older established block after eight weak return sessions', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(60),
+        exerciseSessions: historySessions([
+          ...Array.from({ length: 8 }, (_, index) => ({
+            days: 60 + index * 7,
+            weight: 20,
+          })),
+          { days: 200, weight: 60 },
+          { days: 210, weight: 70 },
+          { days: 220, weight: 80 },
+        ]),
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'DUMBBELL',
+        dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+      },
+    });
+
+    expect(result.historySessionCount).toBe(11);
+    expect(result.suggestedWeight).toBeGreaterThan(20);
+  });
+
+  it('lowers confidence when RIR is missing without discarding the exact history', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseSessions: historySessions([
+          { days: 60, weight: 20, rir: null },
+          { days: 70, weight: 22, rir: null },
+          { days: 80, weight: 24, rir: null },
+        ]),
+      }),
+      now,
+      loadConstraints: olympDumbbells,
+    });
+
+    expect(result).toMatchObject({
+      historySessionCount: 3,
+      historyBasis: 'long-term-exact',
+      confidence: 'low',
+    });
+    expect(result.suggestedWeight).not.toBeNull();
+  });
+
+  it('never uses non-comparable equipment sessions as an exact load anchor', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        exerciseSessions: [],
+        nonComparableExerciseSessions: 4,
+      }),
+      now,
+      loadConstraints: olympDumbbells,
+    });
+
+    expect(result).toMatchObject({
+      historyBasis: 'none',
+      confidence: 'low',
+      nonComparableHistorySessionCount: 4,
+      weightCeiling: null,
+      suggestedWeight: 10,
+    });
+  });
+
+  it('returns identical output for identical long-history input', () => {
+    const input = {
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(90),
+        exerciseSessions: historySessions([
+          { days: 90, weight: 20 },
+          { days: 100, weight: 22 },
+          { days: 110, weight: 24 },
+        ]),
+      }),
+      now,
+      loadConstraints: olympDumbbells,
+    };
+
+    expect(calculateReturnRecommendation(input)).toEqual(calculateReturnRecommendation(input));
+  });
+
+  it('uses the lightest attainable non-bodyweight load when the calculated ceiling is lower', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(180),
+        exerciseSessions: historySessions([
+          { days: 180, weight: 2 },
+          { days: 200, weight: 3 },
+          { days: 220, weight: 4 },
+        ]),
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'DUMBBELL',
+        dumbbellWeights: [10, 12, 14],
+      },
+    });
+
+    expect(result).toMatchObject({ weightCeiling: 10, suggestedWeight: 10 });
   });
 });
