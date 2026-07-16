@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { exerciseInputSchema } from './exercise';
+import { exerciseEquipmentUpdateSchema, exerciseInputSchema } from './exercise';
 
 describe('exerciseInputSchema', () => {
   const valid = { name: 'Bench press', muscleGroup: 'CHEST', category: 'COMPOUND' };
@@ -38,5 +38,24 @@ describe('exerciseInputSchema', () => {
   it('enforces the default-rest-time range', () => {
     expect(exerciseInputSchema.safeParse({ ...valid, defaultRestSec: 5 }).success).toBe(false);
     expect(exerciseInputSchema.safeParse({ ...valid, defaultRestSec: 601 }).success).toBe(false);
+  });
+});
+
+describe('exerciseEquipmentUpdateSchema', () => {
+  it('accepts backward-compatible global links and scoped gym preferences', () => {
+    expect(exerciseEquipmentUpdateSchema.safeParse({ equipmentIds: ['equipment-1'] }).success).toBe(
+      true,
+    );
+    expect(
+      exerciseEquipmentUpdateSchema.safeParse({
+        gyms: [
+          {
+            gymId: 'gym-1',
+            equipmentIds: ['equipment-1', 'equipment-2'],
+            preferredEquipmentId: 'equipment-2',
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 });

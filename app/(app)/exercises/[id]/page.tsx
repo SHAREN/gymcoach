@@ -13,6 +13,7 @@ import {
 import { estimate1RM } from '@/lib/stats';
 import { formatWeight } from '@/lib/units';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
+import { ExerciseDetailEquipment } from '@/components/exercises/exercise-detail-equipment';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -30,7 +31,7 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
   const exerciseT = await getTranslations('exercises');
   const format = await getFormatter();
 
-  const [exercise, user] = await Promise.all([
+  const [exercise, user, gyms] = await Promise.all([
     db.exercise.findFirst({
       where: { id, userId: auth.userId },
       include: {
@@ -44,7 +45,41 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
         },
       },
     }),
-    db.user.findUnique({ where: { id: auth.userId }, select: { unit: true } }),
+    db.user.findUnique({
+      where: { id: auth.userId },
+      select: { unit: true, activeGymId: true },
+    }),
+    db.gym.findMany({
+      where: { userId: auth.userId },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        equipment: {
+          orderBy: { name: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            gymId: true,
+            equipmentType: true,
+            loadType: true,
+            baseLoadKg: true,
+            loadingSides: true,
+            preferredForConfigs: { select: { exerciseId: true } },
+            exerciseLinks: { select: { exerciseId: true } },
+            platePool: {
+              select: {
+                name: true,
+                plates: {
+                  orderBy: { weightKg: 'asc' },
+                  select: { id: true, weightKg: true, quantity: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
   ]);
 
   if (!exercise) notFound();
@@ -65,6 +100,22 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
   const recentSessions = [...sessions.values()]
     .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
     .slice(0, 12);
+  const equipmentChoices = gyms.flatMap((gym) =>
+    gym.equipment.map((item) => ({
+      id: item.id,
+      name: item.name,
+      gymId: item.gymId,
+      gymName: gym.name,
+      equipmentType: item.equipmentType,
+      exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
+      preferredExerciseIds: item.preferredForConfigs.map((config) => config.exerciseId),
+      loadType: item.loadType,
+      baseLoadKg: item.baseLoadKg,
+      loadingSides: item.loadingSides,
+      platePoolName: item.platePool?.name ?? null,
+      plates: item.platePool?.plates ?? [],
+    })),
+  );
 
   return (
     <main className="flex-1 px-4 py-6">
@@ -134,6 +185,13 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
             </p>
           )}
         </section>
+
+        <ExerciseDetailEquipment
+          exercise={exercise}
+          gyms={gyms.map((gym) => ({ id: gym.id, name: gym.name }))}
+          activeGymId={user?.activeGymId ?? null}
+          equipmentChoices={equipmentChoices}
+        />
 
         <section className="space-y-3 border-t border-border pt-5">
           <div className="flex items-center justify-between gap-3">

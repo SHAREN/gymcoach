@@ -100,6 +100,13 @@ async function seedUser(email: string, password = 'secret123') {
       exerciseLinks: { create: { exerciseId: exercise.id } },
     },
   });
+  await db.gymExerciseConfig.create({
+    data: {
+      gymId: gym.id,
+      exerciseId: exercise.id,
+      preferredEquipmentId: equipment.id,
+    },
+  });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
   const programExercise = await db.programExercise.findFirstOrThrow({
     where: { workoutId: program.workouts[0]!.id },
@@ -323,7 +330,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
       activeProgram: { name: 'Offline block' },
       exerciseHistoryByExerciseId: {},
@@ -335,6 +342,12 @@ describe('Android mobile API', () => {
     });
     expect(body.gyms[0]).toMatchObject({
       inventoryMode: 'EQUIPMENT_FIRST',
+      exerciseConfigs: [
+        expect.objectContaining({
+          exerciseId: seeded.exercise.id,
+          preferredEquipmentId: seeded.equipment.id,
+        }),
+      ],
       equipment: [
         expect.objectContaining({
           id: seeded.equipment.id,

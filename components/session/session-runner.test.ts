@@ -122,6 +122,17 @@ describe('session runner equipment identity helpers', () => {
     expect(requiresEquipmentSelection(singleInventory, null)).toBe(false);
   });
 
+  it('uses a preference for a new workout but keeps an explicit current selection authoritative', () => {
+    const preferredInventory = {
+      ...equipmentInventory,
+      preferredEquipmentId: 'cable-b',
+    };
+
+    expect(resolveSelectedEquipmentId(preferredInventory, null)).toBe('cable-b');
+    expect(requiresEquipmentSelection(preferredInventory, null)).toBe(false);
+    expect(resolveSelectedEquipmentId(preferredInventory, 'cable-a')).toBe('cable-a');
+  });
+
   it('keeps ordinary value corrections free of equipment mutations', () => {
     const patch = buildSetValueCorrectionPatch({ weight: 45, reps: 9, rir: 1 });
 

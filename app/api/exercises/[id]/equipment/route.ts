@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { reconcileLegacyExerciseConfigMirrors } from '@/lib/gym-equipment';
-import { exerciseEquipmentLinksSchema } from '@/lib/schemas/exercise';
+import { exerciseEquipmentUpdateSchema } from '@/lib/schemas/exercise';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -12,9 +12,105 @@ export async function PATCH(req: Request, props: Params) {
   const { id } = await props.params;
   try {
     const userId = await requireApiUserId();
-    const input = await parseJsonBody(req, exerciseEquipmentLinksSchema);
-    const exercise = await db.exercise.findFirst({ where: { id, userId }, select: { id: true } });
+    const input = await parseJsonBody(req, exerciseEquipmentUpdateSchema);
+    const exercise = await db.exercise.findFirst({
+      where: { id, userId },
+      select: { id: true, equipmentType: true },
+    });
     if (!exercise) throw new ApiError(404, 'Exercise not found.');
+
+    if ('gyms' in input) {
+      const selections = input.gyms.map((selection) => ({
+        gymId: selection.gymId,
+        equipmentIds: [...new Set(selection.equipmentIds)],
+        preferredEquipmentId: selection.preferredEquipmentId ?? null,
+      }));
+      if (new Set(selections.map((selection) => selection.gymId)).size !== selections.length) {
+        throw new ApiError(400, 'Each gym may appear only once.');
+      }
+
+      const ownedGyms = await db.gym.findMany({
+        where: { userId, id: { in: selections.map((selection) => selection.gymId) } },
+        select: { id: true },
+      });
+      if (ownedGyms.length !== selections.length) {
+        throw new ApiError(400, 'One or more gyms do not belong to the trainee.');
+      }
+
+      const requestedEquipmentIds = [
+        ...new Set(selections.flatMap((selection) => selection.equipmentIds)),
+      ];
+      const requestedEquipment = requestedEquipmentIds.length
+        ? await db.gymEquipment.findMany({
+            where: { id: { in: requestedEquipmentIds }, gym: { userId } },
+            select: { id: true, gymId: true, equipmentType: true },
+          })
+        : [];
+      if (requestedEquipment.length !== requestedEquipmentIds.length) {
+        throw new ApiError(400, 'One or more equipment IDs do not belong to the trainee.');
+      }
+      const equipmentById = new Map(requestedEquipment.map((item) => [item.id, item]));
+
+      for (const selection of selections) {
+        if (
+          selection.equipmentIds.some(
+            (equipmentId) => equipmentById.get(equipmentId)?.gymId !== selection.gymId,
+          )
+        ) {
+          throw new ApiError(400, 'Equipment must belong to the selected gym.');
+        }
+        if (selection.preferredEquipmentId) {
+          const preferred = equipmentById.get(selection.preferredEquipmentId);
+          if (!selection.equipmentIds.includes(selection.preferredEquipmentId) || !preferred) {
+            throw new ApiError(400, 'Preferred equipment must remain linked to the exercise.');
+          }
+          if (preferred.equipmentType !== exercise.equipmentType) {
+            throw new ApiError(400, 'Preferred equipment type must match the exercise type.');
+          }
+        }
+      }
+
+      await db.$transaction(async (tx) => {
+        for (const selection of selections) {
+          await tx.gymEquipmentExercise.deleteMany({
+            where: { exerciseId: id, equipment: { gymId: selection.gymId } },
+          });
+          if (selection.equipmentIds.length > 0) {
+            await tx.gymEquipmentExercise.createMany({
+              data: selection.equipmentIds.map((equipmentId) => ({
+                equipmentId,
+                exerciseId: id,
+                mirrorsLegacyConfig: false,
+              })),
+            });
+          }
+          if (selection.preferredEquipmentId) {
+            await tx.gymExerciseConfig.upsert({
+              where: { gymId_exerciseId: { gymId: selection.gymId, exerciseId: id } },
+              update: {
+                preferredEquipmentId: selection.preferredEquipmentId,
+                isEquipmentMirror: false,
+              },
+              create: {
+                gymId: selection.gymId,
+                exerciseId: id,
+                isAvailable: true,
+                preferredEquipmentId: selection.preferredEquipmentId,
+                isEquipmentMirror: false,
+              },
+            });
+          } else {
+            await tx.gymExerciseConfig.updateMany({
+              where: { gymId: selection.gymId, exerciseId: id },
+              data: { preferredEquipmentId: null },
+            });
+          }
+          await reconcileLegacyExerciseConfigMirrors(tx, selection.gymId, [id]);
+        }
+      });
+
+      return NextResponse.json({ ok: true, gyms: selections });
+    }
 
     const ownedEquipment = await db.gymEquipment.findMany({
       where: { gym: { userId } },
@@ -42,6 +138,18 @@ export async function PATCH(req: Request, props: Params) {
         });
       }
       for (const gymId of new Set(ownedEquipment.map((item) => item.gymId))) {
+        const requestedForGym = ownedEquipment
+          .filter((item) => item.gymId === gymId && requestedIds.includes(item.id))
+          .map((item) => item.id);
+        await tx.gymExerciseConfig.updateMany({
+          where: {
+            gymId,
+            exerciseId: id,
+            preferredEquipmentId:
+              requestedForGym.length > 0 ? { notIn: requestedForGym } : { not: null },
+          },
+          data: { preferredEquipmentId: null },
+        });
         await reconcileLegacyExerciseConfigMirrors(tx, gymId, [id]);
       }
     });

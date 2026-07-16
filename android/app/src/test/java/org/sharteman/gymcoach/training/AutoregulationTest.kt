@@ -9,6 +9,7 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
 import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
@@ -189,6 +190,38 @@ class AutoregulationTest {
         assertTrue(unresolved.requiresEquipmentSelection)
         assertTrue(unresolved.weightOptions.isEmpty())
         assertEquals(listOf(5.0, 10.0, 15.0), selected.weightOptions)
+    }
+
+    @Test
+    fun preferredEquipmentInitializesAWorkoutAndExplicitSelectionWins() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "TRICEPS",
+            equipmentType = "CABLE",
+        )
+        val gym = GymDto(
+            id = "gym_1",
+            name = "Olymp",
+            exerciseConfigs = listOf(
+                GymExerciseConfigDto(
+                    gymId = "gym_1",
+                    exerciseId = exercise.exerciseId,
+                    preferredEquipmentId = "cable_b",
+                ),
+            ),
+            equipment = listOf(
+                selectorized("cable_a", exercise.exerciseId, listOf(40.0, 45.0, 50.0)),
+                selectorized("cable_b", exercise.exerciseId, listOf(5.0, 10.0, 15.0)),
+            ),
+        )
+
+        val preferred = resolveExerciseInventory(exercise, gym)
+        val explicit = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "cable_a")
+
+        assertEquals("cable_b", selectedEquipment(preferred)?.equipmentId)
+        assertEquals(listOf(5.0, 10.0, 15.0), preferred.weightOptions)
+        assertEquals("cable_a", selectedEquipment(explicit)?.equipmentId)
+        assertEquals(listOf(40.0, 45.0, 50.0), explicit.weightOptions)
     }
 
     @Test

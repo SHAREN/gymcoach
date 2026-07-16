@@ -158,6 +158,147 @@ describe('route ownership: PUT /api/sessions/[id]', () => {
 });
 
 describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
+  it('updates one gym preference without removing another gym links or frozen set facts', async () => {
+    const { a, exercise, set } = await seed();
+    await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'BARBELL' } });
+    const [activeGym, otherGym] = await Promise.all([
+      db.gym.create({ data: { userId: a.id, name: 'Active gym' } }),
+      db.gym.create({ data: { userId: a.id, name: 'Other gym' } }),
+    ]);
+    const [smallBar, standardBar, otherBar] = await Promise.all([
+      db.gymEquipment.create({
+        data: { gymId: activeGym.id, name: '10 kg EZ bar', equipmentType: 'BARBELL' },
+      }),
+      db.gymEquipment.create({
+        data: { gymId: activeGym.id, name: '20 kg bar', equipmentType: 'BARBELL' },
+      }),
+      db.gymEquipment.create({
+        data: { gymId: otherGym.id, name: 'Other gym bar', equipmentType: 'BARBELL' },
+      }),
+    ]);
+    await db.gymEquipmentExercise.createMany({
+      data: [
+        { equipmentId: standardBar.id, exerciseId: exercise.id },
+        { equipmentId: otherBar.id, exerciseId: exercise.id },
+      ],
+    });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: otherGym.id,
+        exerciseId: exercise.id,
+        preferredEquipmentId: otherBar.id,
+      },
+    });
+    const frozenSnapshot = {
+      version: 1,
+      equipmentId: standardBar.id,
+      equipmentName: standardBar.name,
+      equipmentType: 'BARBELL',
+      loadType: 'PLATE_LOADED',
+      selectedLoadKg: 40,
+      selectedLoadMultiplier: 1,
+      nominalResistanceKg: null,
+      baseLoadKg: 20,
+      loadingSides: 2,
+      platePoolId: null,
+      platePoolName: null,
+      platePoolCompatibilityKey: null,
+      plates: [],
+    };
+    await db.set.update({
+      where: { id: set.id },
+      data: {
+        gymEquipmentId: standardBar.id,
+        equipmentNameSnapshot: standardBar.name,
+        selectedLoadKg: 40,
+        selectedLoadMultiplierSnapshot: 1,
+        equipmentLoadSnapshot: frozenSnapshot,
+      },
+    });
+    actAs(a.id);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [
+          {
+            gymId: activeGym.id,
+            equipmentIds: [smallBar.id, standardBar.id],
+            preferredEquipmentId: smallBar.id,
+          },
+        ],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: activeGym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: smallBar.id, isEquipmentMirror: false });
+    expect(
+      await db.gymEquipmentExercise.findUnique({
+        where: {
+          equipmentId_exerciseId: { equipmentId: otherBar.id, exerciseId: exercise.id },
+        },
+      }),
+    ).not.toBeNull();
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: otherGym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: otherBar.id });
+    expect(await db.set.findUniqueOrThrow({ where: { id: set.id } })).toMatchObject({
+      gymEquipmentId: standardBar.id,
+      equipmentNameSnapshot: standardBar.name,
+      selectedLoadKg: 40,
+      selectedLoadMultiplierSnapshot: 1,
+      equipmentLoadSnapshot: frozenSnapshot,
+    });
+  });
+
+  it('rejects a cross-gym or type-incompatible preferred item before changing links', async () => {
+    const { a, exercise } = await seed();
+    await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'BARBELL' } });
+    const [gymA, gymB] = await Promise.all([
+      db.gym.create({ data: { userId: a.id, name: 'Gym A' } }),
+      db.gym.create({ data: { userId: a.id, name: 'Gym B' } }),
+    ]);
+    const [bar, cable] = await Promise.all([
+      db.gymEquipment.create({
+        data: { gymId: gymA.id, name: 'Bar', equipmentType: 'BARBELL' },
+      }),
+      db.gymEquipment.create({
+        data: { gymId: gymB.id, name: 'Cable', equipmentType: 'CABLE' },
+      }),
+    ]);
+    await db.gymEquipmentExercise.create({
+      data: { equipmentId: bar.id, exerciseId: exercise.id },
+    });
+    actAs(a.id);
+
+    const crossGym = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [{ gymId: gymA.id, equipmentIds: [cable.id], preferredEquipmentId: cable.id }],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(crossGym.status).toBe(400);
+
+    const wrongType = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [{ gymId: gymB.id, equipmentIds: [cable.id], preferredEquipmentId: cable.id }],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(wrongType.status).toBe(400);
+    expect(
+      await db.gymEquipmentExercise.findUnique({
+        where: { equipmentId_exerciseId: { equipmentId: bar.id, exerciseId: exercise.id } },
+      }),
+    ).not.toBeNull();
+  });
+
   it('replaces only the owner exercise links with owner equipment', async () => {
     const { a, exercise } = await seed();
     const gym = await db.gym.create({ data: { userId: a.id, name: 'Owner gym' } });

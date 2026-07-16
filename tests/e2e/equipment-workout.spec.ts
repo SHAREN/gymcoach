@@ -122,3 +122,105 @@ test('a workout selects one physical machine, shows its loads, and logs its snap
       nominalResistanceKg: 10,
     });
 });
+
+test('mobile exercise detail and workout use the preferred 10 kg bar profile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const registerResponse = await page.request.post('/api/auth/register', {
+    headers: { 'x-forwarded-for': '10.111.0.45' },
+    data: {
+      displayName: 'Preferred bar E2E',
+      email: `e2e-preferred-bar-${Date.now()}@test.dev`,
+      password: 'supersecret',
+    },
+  });
+  expect(registerResponse.ok()).toBeTruthy();
+
+  const exerciseResponse = await page.request.post('/api/exercises', {
+    data: {
+      name: 'E2E EZ Skull Crusher',
+      muscleGroup: 'TRICEPS',
+      category: 'ISOLATION',
+      equipmentType: 'BARBELL',
+    },
+  });
+  const exercise = await exerciseResponse.json();
+  const gymResponse = await page.request.post('/api/gyms', {
+    data: { name: 'E2E Bar Gym', inventoryMode: 'EQUIPMENT_FIRST', makeActive: true },
+  });
+  const gym = await gymResponse.json();
+  const poolResponse = await page.request.post(`/api/gyms/${gym.id}/plate-pools`, {
+    data: {
+      name: 'E2E Olympic plates',
+      compatibilityKey: 'e2e_olympic',
+      plates: [
+        { weightKg: 10, quantity: 2 },
+        { weightKg: 5, quantity: 4 },
+      ],
+    },
+  });
+  expect(poolResponse.ok()).toBeTruthy();
+  const pool = await poolResponse.json();
+  const standardResponse = await page.request.post(`/api/gyms/${gym.id}/equipment`, {
+    data: {
+      name: '20 kg standard bar',
+      equipmentType: 'BARBELL',
+      loadType: 'PLATE_LOADED',
+      baseLoadKg: 20,
+      platePoolId: pool.id,
+      loadingSides: 2,
+      exerciseIds: [exercise.id],
+    },
+  });
+  expect(standardResponse.ok()).toBeTruthy();
+  const smallBarResponse = await page.request.post(`/api/gyms/${gym.id}/equipment`, {
+    data: {
+      name: '10 kg EZ bar',
+      equipmentType: 'BARBELL',
+      loadType: 'PLATE_LOADED',
+      baseLoadKg: 10,
+      platePoolId: pool.id,
+      loadingSides: 2,
+      exerciseIds: [exercise.id],
+      preferredExerciseIds: [exercise.id],
+    },
+  });
+  expect(smallBarResponse.ok()).toBeTruthy();
+
+  const programResponse = await page.request.post('/api/programs', {
+    data: { name: 'E2E Preferred Bar Program', phase: 'Base' },
+  });
+  const program = await programResponse.json();
+  const workoutResponse = await page.request.post(`/api/programs/${program.id}/workouts`, {
+    data: { name: 'EZ day' },
+  });
+  const workout = await workoutResponse.json();
+  await page.request.post(`/api/workouts/${workout.id}/program-exercises`, {
+    data: {
+      exerciseId: exercise.id,
+      targetSets: 1,
+      targetRepsMin: 8,
+      targetRepsMax: 12,
+      targetRIR: 2,
+      restSec: 15,
+    },
+  });
+  const sessionResponse = await page.request.post('/api/sessions', {
+    data: { workoutId: workout.id, gymId: gym.id },
+  });
+  const session = await sessionResponse.json();
+
+  await page.goto(`/exercises/${exercise.id}`);
+  await expect(page.getByRole('button', { name: 'Edit exercise' })).toBeVisible();
+  await expect(page.getByText('10 kg EZ bar')).toBeVisible();
+  await expect(page.getByText('Preferred')).toBeVisible();
+  await expect(page.getByText('Empty load: 10 kg')).toBeVisible();
+
+  await page.goto(`/session/${session.id}`);
+  await expect(page.getByRole('combobox', { name: 'Equipment used' })).toContainText(
+    '10 kg EZ bar',
+  );
+  await page.getByRole('button', { name: 'Set 1 weight in KG' }).click();
+  await page.getByTestId('set-value-options').getByText('40 kg').click();
+  await expect(page.getByTestId('barbell-weight-label')).toContainText('Bar 10 kg');
+  await expect(page.getByTestId('barbell-plates')).toBeVisible();
+});

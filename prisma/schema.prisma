@@ -395,9 +395,14 @@ model GymExerciseConfig {
   // True only for an availability-only compatibility row generated from
   // explicitly marked physical equipment links. Manual configs stay false.
   isEquipmentMirror Boolean  @default(false)
+  // One concrete default for this exercise in this gym. Alternative linked
+  // equipment remains available for explicit workout selection.
+  preferredEquipmentId String?
+  preferredEquipment   GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
 
   @@unique([gymId, exerciseId])
   @@index([exerciseId])
+  @@index([preferredEquipmentId])
 }
 
 model GymEquipment {
@@ -432,6 +437,7 @@ model GymEquipment {
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   exerciseLinks          GymEquipmentExercise[]
+  preferredForConfigs    GymExerciseConfig[]      @relation("PreferredGymEquipment")
   performedSets          Set[]
 
   @@unique([gymId, name])

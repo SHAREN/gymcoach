@@ -625,6 +625,12 @@ The following deterministic domain rules are engineering heuristics:
   machines with the same nominal number are equivalent;
 - when several physical machines support one exercise, their attainable loads
   remain separate until the trainee selects the concrete equipment instance.
+- one validated preferred equipment item may be stored per gym and exercise;
+  it initializes future workouts, while an explicit selection or already
+  recorded set in the current session remains authoritative;
+- plate-loaded displays use the selected item's exact empty bar or carriage
+  load, compatible plate quantities and equally loaded side count. A generic
+  bar weight must not replace a known concrete equipment profile.
 
 Workout history preserves `Set.weight` and the displayed/selected load as the
 primary historical facts. It also stores the concrete equipment ID, equipment
@@ -926,3 +932,22 @@ calibration are therefore engineering heuristics, not universal training
 science. Follow-up questions corrected two generated overstatements: the
 sources do not say every one-session return is dangerous, and they do not
 directly prescribe zero numerical weight for sparse older history.
+
+A twelfth review on 2026-07-16 used the same `ИИ тренер` notebook, its eight
+current sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`.
+Four independent questions covered source-backed equipment specificity,
+equipment-change risks, deterministic preferred-equipment rules and an
+adversarial review of base load, plate quantities, loading sides and warm-up
+floors.
+
+Source-backed findings were that free weights, machines and pulley systems are
+not load-equivalent; actual implement or carriage mass matters; available
+hardware constrains practical progression; and accurate equipment-specific
+records are necessary for interpreting training history. The sources did not
+define a per-gym preference schema, a deletion fallback, equal-side inventory
+algorithm, finite-quantity decomposition, immutable database snapshot format
+or universal numerical warm-up floor. Those remain engineering heuristics.
+The adversarial review also corrected an overstatement about a 20 kg fallback:
+the direction of the physical loading error depends on the implementation, but
+using any fallback instead of a known 10 kg bar corrupts the loading instruction
+and historical record.

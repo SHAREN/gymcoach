@@ -177,6 +177,32 @@ describe('saved gym load constraints', () => {
     ]);
   });
 
+  it('initializes multiple equipment options from the validated preferred item', () => {
+    const base = {
+      equipmentType: 'BARBELL' as const,
+      loadType: 'PLATE_LOADED' as const,
+      weightOptions: [],
+      selectedLoadMultiplier: 1,
+      loadingSides: 2,
+      platePoolId: 'plates',
+      plates: [{ weightKg: 5, quantity: 4 }],
+    };
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'curl', name: 'EZ curl', equipmentType: 'BARBELL' },
+      preferredEquipmentId: 'ez-bar',
+      linkedEquipment: [
+        { ...base, equipmentId: 'standard-bar', equipmentName: 'Standard bar', baseLoadKg: 20 },
+        { ...base, equipmentId: 'ez-bar', equipmentName: 'EZ bar', baseLoadKg: 10 },
+      ],
+    });
+
+    expect(resolved.preferredEquipmentId).toBe('ez-bar');
+    expect(resolved.constraints.equipmentId).toBe('ez-bar');
+    expect(resolved.weightOptions).toEqual([10, 20, 30]);
+    expect(resolved.requiresEquipmentSelection).toBe(true);
+  });
+
   it('marks equipment-first exercises unavailable after links and legacy config are removed', () => {
     const resolved = resolveExerciseInventory({
       inventoryMode: 'EQUIPMENT_FIRST',

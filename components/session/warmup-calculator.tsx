@@ -17,19 +17,21 @@ import { Badge } from '@/components/ui/badge';
 import { computeWarmupRamp } from '@/lib/warmup';
 import { plateConfigForUnit } from '@/lib/preferences';
 import { roundWeight, toDisplayWeight, unitLabel } from '@/lib/units';
+import type { GymLoadConstraints } from '@/lib/gym-loads';
 
 interface Props {
   // The current working load, stored in kg (the app's storage unit).
   weightKg: number;
   unit: WeightUnit;
   barWeightsKg?: number[];
+  loadConstraints?: GymLoadConstraints | null;
 }
 
 // In-workout warm-up ramp calculator (issue #69). Given the working weight, it
 // suggests a short ramp of warm-up sets at ascending percentages with
 // descending reps, in the user's display unit and rounded to loadable plates.
 // Display-only; it never creates or mutates a set (mirrors the plate calculator).
-export function WarmupCalculator({ weightKg, unit, barWeightsKg }: Props) {
+export function WarmupCalculator({ weightKg, unit, barWeightsKg, loadConstraints = null }: Props) {
   const t = useTranslations('session.calculator');
   const [open, setOpen] = useState(false);
 
@@ -38,12 +40,20 @@ export function WarmupCalculator({ weightKg, unit, barWeightsKg }: Props) {
   const ramp = useMemo(() => {
     if (!open) return null;
     const fallback = plateConfigForUnit(unit);
-    const barWeight = barWeightsKg?.length
-      ? Math.min(...barWeightsKg.map((weight) => roundWeight(toDisplayWeight(weight, unit), 2)))
-      : fallback.barWeight;
+    const selectedEquipment = loadConstraints?.equipmentId
+      ? loadConstraints.equipmentOptions?.find(
+          (item) => item.equipmentId === loadConstraints.equipmentId,
+        )
+      : null;
+    const barWeight =
+      selectedEquipment?.loadType === 'PLATE_LOADED'
+        ? roundWeight(toDisplayWeight(selectedEquipment.baseLoadKg, unit), 2)
+        : barWeightsKg?.length
+          ? Math.min(...barWeightsKg.map((weight) => roundWeight(toDisplayWeight(weight, unit), 2)))
+          : fallback.barWeight;
     const working = roundWeight(toDisplayWeight(weightKg, unit), 2);
     return computeWarmupRamp(working, unit, barWeight);
-  }, [barWeightsKg, open, weightKg, unit]);
+  }, [barWeightsKg, loadConstraints, open, weightKg, unit]);
 
   const label = unitLabel(unit);
 

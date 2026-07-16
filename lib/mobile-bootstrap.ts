@@ -14,7 +14,7 @@ import {
   type EquipmentReturnRecommendation,
 } from '@/lib/return-to-training-history';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 4;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 5;
 export const MOBILE_CALCULATION_VERSION = '2026-07-16-return-history-v2';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 

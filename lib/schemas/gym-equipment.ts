@@ -50,6 +50,7 @@ const gymEquipmentShape = {
   platePoolId: databaseIdSchema.nullable().optional(),
   loadingSides: z.coerce.number().int().min(1).max(8).optional(),
   exerciseIds: z.array(databaseIdSchema).max(500).optional(),
+  preferredExerciseIds: z.array(databaseIdSchema).max(500).optional(),
   // Accepted for the current Android settings client and older MCP clients.
   // Equipment-first availability is derived directly from the links.
   markExercisesAvailable: z.boolean().optional(),
@@ -60,6 +61,8 @@ function validateEquipmentLoad(
     loadType?: EquipmentLoadTypeValue;
     weightOptions?: number[];
     platePoolId?: string | null;
+    exerciseIds?: string[];
+    preferredExerciseIds?: string[];
   },
   ctx: z.RefinementCtx,
 ) {
@@ -85,6 +88,16 @@ function validateEquipmentLoad(
       code: 'custom',
       path: ['platePoolId'],
       message: 'Only plate-loaded equipment may reference a plate pool.',
+    });
+  }
+  if (
+    input.exerciseIds !== undefined &&
+    input.preferredExerciseIds?.some((exerciseId) => !input.exerciseIds!.includes(exerciseId))
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['preferredExerciseIds'],
+      message: 'Preferred exercises must also remain linked to the equipment.',
     });
   }
 }

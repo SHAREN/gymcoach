@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { computeBestPlateLoad } from '@/lib/plates';
+import { computeBestPlateLoad, computeEquipmentPlateLoad } from '@/lib/plates';
+import type { GymLoadConstraints } from '@/lib/gym-loads';
 import { plateConfigForUnit } from '@/lib/preferences';
 import { roundWeight, toDisplayWeight, unitLabel } from '@/lib/units';
 
@@ -24,12 +25,19 @@ interface Props {
   unit: WeightUnit;
   barWeightsKg?: number[];
   plateWeightsKg?: number[];
+  loadConstraints?: GymLoadConstraints | null;
 }
 
 // In-workout plate-loading calculator (issue #39). Reads the user's per-unit
 // bar weight + plate inventory from preferences and shows the plates to load
 // per side for the current target weight. Display-only; never mutates the set.
-export function PlateCalculator({ weightKg, unit, barWeightsKg, plateWeightsKg }: Props) {
+export function PlateCalculator({
+  weightKg,
+  unit,
+  barWeightsKg,
+  plateWeightsKg,
+  loadConstraints = null,
+}: Props) {
   const t = useTranslations('session.calculator');
   const [open, setOpen] = useState(false);
 
@@ -38,16 +46,33 @@ export function PlateCalculator({ weightKg, unit, barWeightsKg, plateWeightsKg }
   const result = useMemo(() => {
     if (!open) return null;
     const fallback = plateConfigForUnit(unit);
+    const selectedEquipment = loadConstraints?.equipmentId
+      ? loadConstraints.equipmentOptions?.find(
+          (item) => item.equipmentId === loadConstraints.equipmentId,
+        )
+      : null;
+    const target = roundWeight(toDisplayWeight(weightKg, unit), 2);
+    if (selectedEquipment?.loadType === 'PLATE_LOADED') {
+      const equipmentResult = computeEquipmentPlateLoad(
+        target,
+        roundWeight(toDisplayWeight(selectedEquipment.baseLoadKg, unit), 2),
+        (selectedEquipment.plates ?? []).map((plate) => ({
+          plate: roundWeight(toDisplayWeight(plate.weightKg, unit), 2),
+          quantity: plate.quantity,
+        })),
+        selectedEquipment.loadingSides,
+      );
+      return { target, ...equipmentResult };
+    }
     const bars = barWeightsKg?.length
       ? barWeightsKg.map((weight) => roundWeight(toDisplayWeight(weight, unit), 2))
       : [fallback.barWeight];
     const plates = plateWeightsKg?.length
       ? plateWeightsKg.map((weight) => roundWeight(toDisplayWeight(weight, unit), 2))
       : fallback.plates;
-    const target = roundWeight(toDisplayWeight(weightKg, unit), 2);
     const result = computeBestPlateLoad(target, bars, plates, fallback.barWeight);
     return { target, ...result };
-  }, [barWeightsKg, open, plateWeightsKg, weightKg, unit]);
+  }, [barWeightsKg, loadConstraints, open, plateWeightsKg, weightKg, unit]);
 
   const label = unitLabel(unit);
 

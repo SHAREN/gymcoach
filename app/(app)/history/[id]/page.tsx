@@ -315,6 +315,10 @@ export default async function HistorySessionPage(props: Params) {
                           platePoolName: equipment.platePool?.name ?? null,
                           plates: equipment.platePool?.plates ?? [],
                         })),
+                      preferredEquipmentId:
+                        session.gym.exerciseConfigs.find(
+                          (item) => item.exerciseId === entry.exercise.id,
+                        )?.preferredEquipmentId ?? null,
                       legacyConfig: (() => {
                         const config = session.gym.exerciseConfigs.find(
                           (item) => item.exerciseId === entry.exercise.id,

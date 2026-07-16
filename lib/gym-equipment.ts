@@ -66,6 +66,9 @@ const equipmentSelection = {
       },
     },
   },
+  preferredForConfigs: {
+    select: { exerciseId: true },
+  },
 } as const;
 
 export async function listOwnedGyms(userId: string) {
@@ -183,9 +186,10 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
       },
       platePools: details.platePools,
       equipment: details.equipment.map((item) => ({
-        ...item,
+        ...withoutPreferredConfigRelation(item),
         image: equipmentImage(item, baseUrl),
         exerciseLinks: item.exerciseLinks.map((link) => link.exercise),
+        preferredExerciseIds: item.preferredForConfigs.map((config) => config.exerciseId),
       })),
       exerciseCoverage: exercises.map((exercise) => {
         const config = configByExercise.get(exercise.id);
@@ -194,6 +198,7 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
           inventoryMode: details.inventoryMode,
           exercise,
           linkedEquipment: equipmentByExercise.get(exercise.id) ?? [],
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           legacyConfig: config,
           sharedDumbbellWeights: details.dumbbellWeights,
           legacyPlateWeights: details.plateWeights,
@@ -212,6 +217,7 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
           plateWeightsKg: config?.plateWeights ?? [],
           barWeightsKg: config?.barWeights ?? [],
           equipmentIds: equipmentIdsByExercise.get(exercise.id) ?? [],
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           builtInMedia: media
             ? {
                 frames: media.frames.map((frame) => new URL(frame, baseUrl).toString()),
@@ -271,6 +277,9 @@ export async function upsertOwnedGymEquipment(
 ) {
   const gym = await resolveOwnedGym(userId, gymId);
   const requestedExerciseIds = input.exerciseIds ? [...new Set(input.exerciseIds)] : undefined;
+  const requestedPreferredExerciseIds = input.preferredExerciseIds
+    ? [...new Set(input.preferredExerciseIds)]
+    : undefined;
   const current = input.equipmentId
     ? await db.gymEquipment.findFirst({
         where: { id: input.equipmentId, gymId: gym.id },
@@ -284,6 +293,7 @@ export async function upsertOwnedGymEquipment(
           platePoolId: true,
           loadingSides: true,
           exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
+          preferredForConfigs: { select: { exerciseId: true } },
         },
       })
     : await db.gymEquipment.findFirst({
@@ -298,11 +308,14 @@ export async function upsertOwnedGymEquipment(
           platePoolId: true,
           loadingSides: true,
           exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
+          preferredForConfigs: { select: { exerciseId: true } },
         },
       });
   if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
 
   const previousExerciseIds = current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
+  const previousPreferredExerciseIds =
+    current?.preferredForConfigs.map((config) => config.exerciseId) ?? [];
   const exerciseIds = requestedExerciseIds ?? previousExerciseIds;
   const exercises = exerciseIds.length
     ? await db.exercise.findMany({
@@ -312,6 +325,20 @@ export async function upsertOwnedGymEquipment(
     : [];
   if (exercises.length !== exerciseIds.length) {
     throw new ApiError(400, 'One or more exercise IDs do not belong to the trainee.');
+  }
+  const preferredExerciseIds =
+    requestedPreferredExerciseIds ??
+    previousPreferredExerciseIds.filter((exerciseId) => exerciseIds.includes(exerciseId));
+  if (preferredExerciseIds.some((exerciseId) => !exerciseIds.includes(exerciseId))) {
+    throw new ApiError(400, 'Preferred exercises must remain linked to the equipment.');
+  }
+  const exerciseById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  if (
+    preferredExerciseIds.some(
+      (exerciseId) => exerciseById.get(exerciseId)?.equipmentType !== input.equipmentType,
+    )
+  ) {
+    throw new ApiError(400, 'Preferred equipment type must match every preferred exercise.');
   }
   const inferredLoadType =
     input.loadType ??
@@ -398,6 +425,23 @@ export async function upsertOwnedGymEquipment(
         data: { mirrorsLegacyConfig: input.markExercisesAvailable },
       });
     }
+    await tx.gymExerciseConfig.updateMany({
+      where: { preferredEquipmentId: item.id },
+      data: { preferredEquipmentId: null },
+    });
+    for (const exerciseId of preferredExerciseIds) {
+      await tx.gymExerciseConfig.upsert({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId } },
+        update: { preferredEquipmentId: item.id, isEquipmentMirror: false },
+        create: {
+          gymId: gym.id,
+          exerciseId,
+          isAvailable: true,
+          preferredEquipmentId: item.id,
+          isEquipmentMirror: false,
+        },
+      });
+    }
     if (requestedExerciseIds !== undefined || input.markExercisesAvailable !== undefined) {
       await reconcileLegacyExerciseConfigMirrors(tx, gym.id, [
         ...previousExerciseIds,
@@ -424,7 +468,13 @@ export async function upsertOwnedGymEquipment(
       name: exercise.name,
       exerciseEquipmentType: exercise.equipmentType,
     }));
-  return { equipment: saved, mismatchedExercises };
+  return {
+    equipment: {
+      ...withoutPreferredConfigRelation(saved),
+      preferredExerciseIds: saved.preferredForConfigs.map((config) => config.exerciseId),
+    },
+    mismatchedExercises,
+  };
 }
 
 export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
@@ -748,6 +798,13 @@ function equipmentImage(
     };
   }
   return item.imageUrl ? { kind: 'external', url: item.imageUrl, mimeType: null } : null;
+}
+
+function withoutPreferredConfigRelation<
+  T extends { preferredForConfigs: Array<{ exerciseId: string }> },
+>(item: T): Omit<T, 'preferredForConfigs'> {
+  const { preferredForConfigs: _preferredForConfigs, ...rest } = item;
+  return rest;
 }
 
 function matchesImageSignature(buffer: Buffer, mimeType: GymEquipmentImageMimeType): boolean {

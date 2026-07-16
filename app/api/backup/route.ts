@@ -59,7 +59,7 @@ import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 10;
+const VERSION = 11;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -160,7 +160,12 @@ export async function GET(req: Request) {
             orderBy: { name: 'asc' },
             include: { plates: { orderBy: { weightKg: 'asc' } } },
           },
-          exerciseConfigs: { include: { exercise: { select: { name: true } } } },
+          exerciseConfigs: {
+            include: {
+              exercise: { select: { name: true } },
+              preferredEquipment: { select: { name: true } },
+            },
+          },
         },
       }),
     ]);
@@ -235,6 +240,7 @@ export async function GET(req: Request) {
           plateWeights: config.plateWeights,
           barWeights: config.barWeights,
           isEquipmentMirror: config.isEquipmentMirror,
+          preferredEquipmentName: config.preferredEquipment?.name ?? null,
         })),
       })),
       programs: programs.map((p) => ({
@@ -603,6 +609,7 @@ const importSchema = z.object({
               plateWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               barWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               isEquipmentMirror: z.boolean().optional(),
+              preferredEquipmentName: z.string().trim().min(1).max(120).nullable().optional(),
             }),
           )
           .max(2000),
@@ -710,6 +717,43 @@ function validateImportedMembershipOrdinals(
   }
 }
 
+function validateImportedPreferredEquipment(
+  exercises: Array<{ name: string; equipmentType?: EquipmentType }>,
+  gyms: Array<{
+    equipment?: Array<{
+      name: string;
+      equipmentType: EquipmentType;
+      exerciseNames: string[];
+    }>;
+    exerciseConfigs: Array<{
+      exerciseName: string;
+      preferredEquipmentName?: string | null;
+    }>;
+  }>,
+) {
+  const exerciseTypeByName = new Map(
+    exercises.map((exercise) => [exercise.name, exercise.equipmentType ?? EquipmentType.OTHER]),
+  );
+  for (const gym of gyms) {
+    for (const config of gym.exerciseConfigs) {
+      if (!config.preferredEquipmentName) continue;
+      const equipment = gym.equipment?.find(
+        (item) => item.name === config.preferredEquipmentName,
+      );
+      if (
+        !equipment ||
+        !equipment.exerciseNames.includes(config.exerciseName) ||
+        equipment.equipmentType !== exerciseTypeByName.get(config.exerciseName)
+      ) {
+        throw new ApiError(
+          400,
+          'Preferred equipment must be linked to an exercise with a compatible equipment type.',
+        );
+      }
+    }
+  }
+}
+
 // POST /api/backup: clears the current user's data and recreates it from the
 // payload. Atomic: everything runs in a Prisma transaction, so a failure
 // rolls back to the pre-import state.
@@ -721,6 +765,7 @@ export async function POST(req: Request) {
     });
     validateImportedLegacyEquipmentSnapshots(payload.sessions);
     validateImportedMembershipOrdinals(payload.sessions);
+    validateImportedPreferredEquipment(payload.exercises, payload.gyms ?? []);
 
     await db.$transaction(
       async (tx) => {
@@ -902,6 +947,20 @@ export async function POST(req: Request) {
                 })),
               });
             }
+          }
+          for (const config of gym.exerciseConfigs) {
+            if (!config.preferredEquipmentName) continue;
+            const exerciseId = exerciseIdByName.get(config.exerciseName);
+            const preferredEquipmentId = equipmentIdByGymAndName.get(
+              `${gym.name}\u0000${config.preferredEquipmentName}`,
+            );
+            if (!exerciseId || !preferredEquipmentId) {
+              throw new ApiError(400, 'Preferred equipment could not be restored.');
+            }
+            await tx.gymExerciseConfig.update({
+              where: { gymId_exerciseId: { gymId: created.id, exerciseId } },
+              data: { preferredEquipmentId, isEquipmentMirror: false },
+            });
           }
           gymIdByName.set(gym.name, created.id);
         }

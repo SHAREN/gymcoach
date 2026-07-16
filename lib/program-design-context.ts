@@ -243,6 +243,7 @@ interface ActiveGymSummary {
   exerciseConfigs: Array<{
     exerciseId: string;
     exerciseName: string;
+    preferredEquipmentId: string | null;
     isAvailable: boolean;
     weightOptions: number[];
     dumbbellWeights: number[];
@@ -365,6 +366,7 @@ export async function buildProgramDesignContext({
           linkedEquipment: activeGym.equipment
             .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === exercise.id))
             .map(toEquipmentLoadProfile),
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           legacyConfig: config,
           sharedDumbbellWeights: activeGym.dumbbellWeights,
           legacyPlateWeights: activeGym.plateWeights,
@@ -572,6 +574,7 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
     exerciseConfigs: gym.exerciseConfigs.map((config) => ({
       exerciseId: config.exerciseId,
       exerciseName: config.exercise.name,
+      preferredEquipmentId: config.preferredEquipmentId,
       isAvailable: config.isAvailable,
       weightOptions: config.weightOptions,
       dumbbellWeights: config.dumbbellWeights,

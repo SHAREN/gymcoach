@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { GymInventoryManager, expandLoadRange } from './gym-inventory-manager';
 
 afterEach(() => {
@@ -53,6 +54,7 @@ describe('GymInventoryManager', () => {
                   platePoolId: null,
                   loadingSides: 2,
                   platePool: null,
+                  preferredExerciseIds: [],
                   exerciseLinks: [
                     {
                       id: 'exercise-1',
@@ -80,6 +82,7 @@ describe('GymInventoryManager', () => {
                   attainableLoadsKg: [5, 10, 15],
                   equipmentOptions: [],
                   equipmentIds: ['cable-1'],
+                  preferredEquipmentId: null,
                 },
               ],
             },
@@ -96,5 +99,13 @@ describe('GymInventoryManager', () => {
     expect(screen.getByText('Lat pulldown')).toBeInTheDocument();
     expect(screen.getByText(/displayed load x 0.5/i)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('Linked physical equipment')).toBeInTheDocument());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Edit equipment' }));
+    const preferredButton = screen.getByRole('button', {
+      name: 'Use this equipment by default for Lat Pulldown',
+    });
+    await user.click(preferredButton);
+    expect(preferredButton).toHaveAttribute('aria-pressed', 'true');
   });
 });

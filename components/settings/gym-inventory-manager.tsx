@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { EquipmentLoadType, EquipmentType, GymInventoryMode } from '@/lib/prisma-client';
 import type {
@@ -557,6 +557,7 @@ interface EquipmentDraft {
   loadingSides: string;
   platePoolId: string;
   exerciseIds: Set<string>;
+  preferredExerciseIds: Set<string>;
 }
 
 function EquipmentDialog({
@@ -597,9 +598,23 @@ function EquipmentDialog({
   function toggleExercise(id: string, checked: boolean) {
     setDraft((current) => {
       const exerciseIds = new Set(current.exerciseIds);
+      const preferredExerciseIds = new Set(current.preferredExerciseIds);
       if (checked) exerciseIds.add(id);
-      else exerciseIds.delete(id);
-      return { ...current, exerciseIds };
+      else {
+        exerciseIds.delete(id);
+        preferredExerciseIds.delete(id);
+      }
+      return { ...current, exerciseIds, preferredExerciseIds };
+    });
+  }
+
+  function togglePreferredExercise(id: string) {
+    setDraft((current) => {
+      if (!current.exerciseIds.has(id)) return current;
+      const preferredExerciseIds = new Set(current.preferredExerciseIds);
+      if (preferredExerciseIds.has(id)) preferredExerciseIds.delete(id);
+      else preferredExerciseIds.add(id);
+      return { ...current, preferredExerciseIds };
     });
   }
 
@@ -625,6 +640,7 @@ function EquipmentDialog({
         platePoolId: draft.loadType === 'PLATE_LOADED' ? draft.platePoolId || null : null,
         loadingSides: Number(draft.loadingSides),
         exerciseIds: [...draft.exerciseIds],
+        preferredExerciseIds: [...draft.preferredExerciseIds],
       };
       const response = await fetch(
         value === 'new' ? `/api/gyms/${gymId}/equipment` : `/api/gym-equipment/${value.id}`,
@@ -864,16 +880,43 @@ function EquipmentDialog({
             />
             <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
               {filteredExercises.map((exercise) => (
-                <label
+                <div
                   key={exercise.id}
                   className="flex items-center justify-between gap-3 rounded-md border p-2"
                 >
                   <span className="truncate text-sm">{exerciseName(exercise.name)}</span>
-                  <Switch
-                    checked={draft.exerciseIds.has(exercise.id)}
-                    onCheckedChange={(checked) => toggleExercise(exercise.id, checked)}
-                  />
-                </label>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t('preferredForExercise', {
+                        exercise: exerciseName(exercise.name),
+                      })}
+                      aria-pressed={draft.preferredExerciseIds.has(exercise.id)}
+                      disabled={
+                        !draft.exerciseIds.has(exercise.id) ||
+                        exercise.equipmentType !== draft.equipmentType
+                      }
+                      onClick={() => togglePreferredExercise(exercise.id)}
+                    >
+                      <Star
+                        className={`size-4 ${
+                          draft.preferredExerciseIds.has(exercise.id)
+                            ? 'fill-amber-400 text-amber-500'
+                            : ''
+                        }`}
+                      />
+                    </Button>
+                    <Switch
+                      aria-label={t('supportedForExercise', {
+                        exercise: exerciseName(exercise.name),
+                      })}
+                      checked={draft.exerciseIds.has(exercise.id)}
+                      onCheckedChange={(checked) => toggleExercise(exercise.id, checked)}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -916,6 +959,7 @@ function emptyEquipmentDraft(): EquipmentDraft {
     loadingSides: '2',
     platePoolId: '',
     exerciseIds: new Set(),
+    preferredExerciseIds: new Set(),
   };
 }
 
@@ -939,6 +983,7 @@ function draftFromEquipment(item: GymEquipmentView): EquipmentDraft {
     loadingSides: String(item.loadingSides),
     platePoolId: item.platePoolId ?? '',
     exerciseIds: new Set(item.exerciseLinks.map((exercise) => exercise.id)),
+    preferredExerciseIds: new Set(item.preferredExerciseIds),
   };
 }
 

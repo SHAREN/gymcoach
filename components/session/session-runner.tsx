@@ -218,6 +218,14 @@ export function resolveSelectedEquipmentId(
   ) {
     return requestedId;
   }
+  if (
+    inventory.preferredEquipmentId &&
+    inventory.equipment.some(
+      (equipment) => equipment.equipmentId === inventory.preferredEquipmentId,
+    )
+  ) {
+    return inventory.preferredEquipmentId;
+  }
   if (inventory.source === 'equipment' && inventory.equipment.length === 1) {
     return inventory.equipment[0]!.equipmentId;
   }
@@ -1241,6 +1249,7 @@ function resolveSessionExerciseInventory(
     inventoryMode: sessionGym.inventoryMode,
     exercise: pe.exercise,
     linkedEquipment,
+    preferredEquipmentId: config?.preferredEquipmentId ?? null,
     legacyConfig: config,
     sharedDumbbellWeights: sessionGym.dumbbellWeights,
     legacyPlateWeights: sessionGym.plateWeights,

@@ -33,15 +33,17 @@ type ProgramExerciseForReturn = Pick<
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
   id?: Gym['id'];
   inventoryMode?: Gym['inventoryMode'];
-  exerciseConfigs: Pick<
-    GymExerciseConfig,
-    | 'exerciseId'
-    | 'isAvailable'
-    | 'weightOptions'
-    | 'dumbbellWeights'
-    | 'plateWeights'
-    | 'barWeights'
-  >[];
+  exerciseConfigs: Array<
+    Pick<
+      GymExerciseConfig,
+      | 'exerciseId'
+      | 'isAvailable'
+      | 'weightOptions'
+      | 'dumbbellWeights'
+      | 'plateWeights'
+      | 'barWeights'
+    > & { preferredEquipmentId?: string | null }
+  >;
   equipment?: Array<{
     id: string;
     name: string;
@@ -402,6 +404,7 @@ function loadConstraintsFor(
       equipmentType: pe.exercise.equipmentType,
     },
     linkedEquipment,
+    preferredEquipmentId: config?.preferredEquipmentId ?? null,
     legacyConfig: config,
     sharedDumbbellWeights: gym.dumbbellWeights,
     legacyPlateWeights: gym.plateWeights,

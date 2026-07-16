@@ -10,6 +10,7 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
@@ -173,6 +174,13 @@ class WorkoutEquipmentHistoryTest {
             id = "gym-1",
             name = "Gym",
             inventoryMode = "EQUIPMENT_FIRST",
+            exerciseConfigs = listOf(
+                GymExerciseConfigDto(
+                    gymId = "gym-1",
+                    exerciseId = exercise.exerciseId,
+                    preferredEquipmentId = "cable-a",
+                ),
+            ),
             equipment = listOf(
                 equipment("cable-a"),
                 equipment("cable-b"),

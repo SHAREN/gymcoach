@@ -475,6 +475,158 @@ describe('gym equipment REST API', () => {
     ).toMatchObject({ isEquipmentMirror: false, weightOptions: [12, 24] });
   });
 
+  it('edits a small bar preference and lets an older settings payload clear it on unlink', async () => {
+    const { user, token, gym } = await seedUser('preferred-bar-settings@test.dev');
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'EZ skull crusher',
+        muscleGroup: 'TRICEPS',
+        category: 'ISOLATION',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const pool = await db.gymPlatePool.create({
+      data: {
+        gymId: gym.id,
+        name: 'Olympic plates',
+        compatibilityKey: 'olympic',
+        plates: { createMany: { data: [{ weightKg: 5, quantity: 4 }] } },
+      },
+    });
+
+    const createdResponse = await createEquipment(
+      request(`http://test.local/api/gyms/${gym.id}/equipment`, 'POST', token, {
+        name: '10 kg EZ bar',
+        equipmentType: 'BARBELL',
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 10,
+        platePoolId: pool.id,
+        loadingSides: 2,
+        exerciseIds: [exercise.id],
+        preferredExerciseIds: [exercise.id],
+      }),
+      params(gym.id),
+    );
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as { equipment: { id: string } };
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: created.equipment.id, isEquipmentMirror: false });
+
+    const inventory = await (
+      await getInventory(
+        request(`http://test.local/api/gyms/${gym.id}/equipment`, 'GET', token),
+        params(gym.id),
+      )
+    ).json();
+    expect(inventory.gym.equipment[0]).toMatchObject({
+      id: created.equipment.id,
+      baseLoadKg: 10,
+      loadingSides: 2,
+      preferredExerciseIds: [exercise.id],
+    });
+    expect(
+      inventory.gym.exerciseCoverage.find((item: { id: string }) => item.id === exercise.id),
+    ).toMatchObject({ preferredEquipmentId: created.equipment.id });
+
+    const updatedResponse = await updateEquipment(
+      request(`http://test.local/api/gym-equipment/${created.equipment.id}`, 'PUT', token, {
+        name: '10 kg EZ bar',
+        equipmentType: 'BARBELL',
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 10,
+        platePoolId: pool.id,
+        loadingSides: 2,
+        exerciseIds: [],
+      }),
+      params(created.equipment.id),
+    );
+    expect(updatedResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: null });
+  });
+
+  it('clears a live preferred foreign key on delete while retaining frozen set snapshots', async () => {
+    const { user, token, gym } = await seedUser('preferred-delete@test.dev');
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Preferred curl',
+        muscleGroup: 'BICEPS',
+        category: 'ISOLATION',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const equipment = await db.gymEquipment.create({
+      data: { gymId: gym.id, name: 'Frozen EZ bar', equipmentType: 'BARBELL' },
+    });
+    await db.gymEquipmentExercise.create({
+      data: { equipmentId: equipment.id, exerciseId: exercise.id },
+    });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        preferredEquipmentId: equipment.id,
+      },
+    });
+    const session = await db.session.create({ data: { userId: user.id, gymId: gym.id } });
+    const snapshot = {
+      version: 1,
+      equipmentId: equipment.id,
+      equipmentName: equipment.name,
+      equipmentType: 'BARBELL',
+      loadType: 'PLATE_LOADED',
+      selectedLoadKg: 30,
+      selectedLoadMultiplier: 1,
+      nominalResistanceKg: null,
+      baseLoadKg: 10,
+      loadingSides: 2,
+      platePoolId: null,
+      platePoolName: null,
+      platePoolCompatibilityKey: null,
+      plates: [],
+    };
+    const set = await db.set.create({
+      data: {
+        sessionId: session.id,
+        exerciseId: exercise.id,
+        gymEquipmentId: equipment.id,
+        equipmentNameSnapshot: equipment.name,
+        selectedLoadKg: 30,
+        selectedLoadMultiplierSnapshot: 1,
+        equipmentLoadSnapshot: snapshot,
+        setNumber: 1,
+        weight: 30,
+        reps: 10,
+      },
+    });
+
+    const response = await deleteEquipment(
+      request(`http://test.local/api/gym-equipment/${equipment.id}`, 'DELETE', token),
+      params(equipment.id),
+    );
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: null });
+    expect(await db.set.findUniqueOrThrow({ where: { id: set.id } })).toMatchObject({
+      gymEquipmentId: null,
+      equipmentNameSnapshot: equipment.name,
+      selectedLoadKg: 30,
+      selectedLoadMultiplierSnapshot: 1,
+      equipmentLoadSnapshot: snapshot,
+    });
+  });
+
   it('keeps cookie authentication and ownership boundaries', async () => {
     const owner = await seedUser('equipment-cookie@test.dev');
     const stranger = await seedUser('equipment-stranger@test.dev');

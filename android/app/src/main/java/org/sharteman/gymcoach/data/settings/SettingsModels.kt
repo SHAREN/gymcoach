@@ -32,6 +32,7 @@ data class SettingsGymExerciseConfigDto(
     val id: String? = null,
     val gymId: String? = null,
     val exerciseId: String,
+    val preferredEquipmentId: String? = null,
     val isAvailable: Boolean = true,
     val weightOptions: List<Double> = emptyList(),
     val dumbbellWeights: List<Double> = emptyList(),
@@ -70,6 +71,7 @@ data class SettingsGymEquipmentDto(
     val imageUrl: String? = null,
     val image: SettingsEquipmentImageDto? = null,
     val exerciseLinks: List<ExerciseDto> = emptyList(),
+    val preferredExerciseIds: List<String> = emptyList(),
 )
 
 @Serializable

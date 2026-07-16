@@ -41,6 +41,7 @@ export interface GymEquipmentView {
   loadingSides: number;
   platePool: GymPlatePoolView | null;
   exerciseLinks: GymInventoryExercise[];
+  preferredExerciseIds: string[];
 }
 
 export type ExerciseAvailabilitySource =
@@ -59,6 +60,7 @@ export interface GymExerciseCoverageView extends GymInventoryExercise {
   attainableLoadsKg: number[];
   equipmentOptions: ResolvedEquipmentLoadProfile[];
   equipmentIds: string[];
+  preferredEquipmentId: string | null;
 }
 
 export interface GymInventoryView {
@@ -86,4 +88,10 @@ export interface ExerciseEquipmentChoice {
   gymName: string;
   equipmentType: EquipmentType;
   exerciseIds: string[];
+  preferredExerciseIds?: string[];
+  loadType?: EquipmentLoadType;
+  baseLoadKg?: number;
+  loadingSides?: number;
+  platePoolName?: string | null;
+  plates?: GymPlateInventoryItemView[];
 }

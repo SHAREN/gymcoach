@@ -181,6 +181,7 @@ data class GymExerciseConfigDto(
     val id: String? = null,
     val gymId: String,
     val exerciseId: String,
+    val preferredEquipmentId: String? = null,
     val isAvailable: Boolean = true,
     val weightOptions: List<Double> = emptyList(),
     val dumbbellWeights: List<Double> = emptyList(),

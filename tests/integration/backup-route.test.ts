@@ -352,7 +352,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 10 with provenance, membership order, snapshots, and earlier fields', async () => {
+  it('exports version 11 with preferences, provenance, membership order, snapshots, and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -360,7 +360,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(10);
+    expect(dump.version).toBe(11);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -423,6 +423,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
             plateWeights: [1.25],
             barWeights: [10],
             isEquipmentMirror: false,
+            preferredEquipmentName: null,
           },
         ],
       },
@@ -780,6 +781,111 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     ]);
     expect(restoredLink.mirrorsLegacyConfig).toBe(true);
     expect(restoredConfig.isEquipmentMirror).toBe(true);
+  });
+
+  it('round-trips preferred equipment and accepts an older payload without the optional field', async () => {
+    const source = await seedFullUser('preferred-backup-source@test.dev');
+    const [gym, equipment, exercise] = await Promise.all([
+      db.gym.findFirstOrThrow({ where: { userId: source.id, name: 'Basement' } }),
+      db.gymEquipment.findFirstOrThrow({
+        where: { gym: { userId: source.id }, name: 'Competition bench station' },
+      }),
+      db.exercise.findFirstOrThrow({ where: { userId: source.id, name: 'Bench Press' } }),
+    ]);
+    await db.gymExerciseConfig.upsert({
+      where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      update: { preferredEquipmentId: equipment.id, isEquipmentMirror: false },
+      create: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        preferredEquipmentId: equipment.id,
+      },
+    });
+
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    expect(
+      dump.gyms[0].exerciseConfigs.find(
+        (config: { exerciseName: string }) => config.exerciseName === 'Bench Press',
+      ),
+    ).toMatchObject({ preferredEquipmentName: 'Competition bench station' });
+
+    const target = await db.user.create({
+      data: { email: 'preferred-backup-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    expect((await postBackup(jsonReq({ payload: dump, confirmReplace: true }))).status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findFirstOrThrow({
+        where: {
+          gym: { userId: target.id, name: 'Basement' },
+          exercise: { userId: target.id, name: 'Bench Press' },
+        },
+        include: { preferredEquipment: true },
+      }),
+    ).toMatchObject({ preferredEquipment: { name: 'Competition bench station' } });
+
+    const legacyTarget = await db.user.create({
+      data: { email: 'preferred-backup-legacy@test.dev', passwordHash: 'x' },
+    });
+    const legacyDump = structuredClone(dump);
+    legacyDump.version = 10;
+    for (const legacyGym of legacyDump.gyms) {
+      for (const config of legacyGym.exerciseConfigs) delete config.preferredEquipmentName;
+    }
+    actAs(legacyTarget.id);
+    expect((await postBackup(jsonReq({ payload: legacyDump, confirmReplace: true }))).status).toBe(
+      200,
+    );
+  });
+
+  it('rejects an invalid preferred equipment tuple before replacing existing account data', async () => {
+    const source = await seedFullUser('preferred-backup-invalid-source@test.dev');
+    const [gym, equipment, exercise] = await Promise.all([
+      db.gym.findFirstOrThrow({ where: { userId: source.id, name: 'Basement' } }),
+      db.gymEquipment.findFirstOrThrow({
+        where: { gym: { userId: source.id }, name: 'Competition bench station' },
+      }),
+      db.exercise.findFirstOrThrow({ where: { userId: source.id, name: 'Bench Press' } }),
+    ]);
+    await db.gymExerciseConfig.upsert({
+      where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      update: { preferredEquipmentId: equipment.id, isEquipmentMirror: false },
+      create: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        preferredEquipmentId: equipment.id,
+      },
+    });
+
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    const dumpedGym = dump.gyms.find((item: { name: string }) => item.name === 'Basement');
+    const dumpedEquipment = dumpedGym.equipment.find(
+      (item: { name: string }) => item.name === 'Competition bench station',
+    );
+    dumpedEquipment.exerciseNames = [];
+
+    const target = await db.user.create({
+      data: { email: 'preferred-backup-invalid-target@test.dev', passwordHash: 'x' },
+    });
+    const retainedExercise = await db.exercise.create({
+      data: {
+        userId: target.id,
+        name: 'Keep me',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+      },
+    });
+    actAs(target.id);
+
+    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'Preferred equipment must be linked to an exercise with a compatible equipment type.',
+    });
+    expect(await db.exercise.findUnique({ where: { id: retainedExercise.id } })).not.toBeNull();
   });
 
   it('rejects inconsistent legacy v1 equipment snapshots before replacing account data', async () => {
