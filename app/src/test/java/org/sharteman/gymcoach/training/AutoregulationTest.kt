@@ -55,6 +55,23 @@ class AutoregulationTest {
     }
 
     @Test
+    fun returnCeilingPreventsAnEasyCalibrationSetFromIncreasingPastTheLimit() {
+        val recommendation = recommendNextSet(
+            programExercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS"),
+            completedSets = listOf(set(weight = 20.0, reps = 12, rir = 5)),
+            recoverySec = 120,
+            maxWeight = 20.0,
+            constraints = LoadConstraints(
+                equipmentType = "DUMBBELL",
+                dumbbellWeights = listOf(20.0, 22.0, 24.0),
+            ),
+        )
+
+        requireNotNull(recommendation)
+        assertEquals(20.0, recommendation.weight, 0.001)
+    }
+
+    @Test
     fun barbellOptionsContainConstructibleSixtyFiveKg() {
         val weights = constructibleBarbellWeights(
             barWeights = listOf(20.0),
