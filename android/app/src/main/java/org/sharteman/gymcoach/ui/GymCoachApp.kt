@@ -49,6 +49,7 @@ fun GymCoachApp(
     settingsContent: (@Composable (
         onBack: () -> Unit,
         onOpenWebPath: (String) -> Unit,
+        onAuthenticationRequired: () -> Unit,
         watchDiagnosticsLabel: String?,
         onOpenWatchDiagnostics: (() -> Unit)?,
     ) -> Unit)? = null,
@@ -427,6 +428,10 @@ fun GymCoachApp(
                     settingsContent(
                         back,
                         ::openWebPath,
+                        {
+                            accountStore.clearAccessToken()
+                            loggedIn = false
+                        },
                         watchDiagnosticsDestination?.settingsLabel,
                         watchDiagnosticsDestination?.let {
                             { navController.navigate(WATCH_DIAGNOSTICS_ROUTE) }

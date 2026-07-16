@@ -102,6 +102,7 @@ import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenWebPath: (String) -> Unit,
+    onAuthenticationRequired: () -> Unit,
     appRepository: GymCoachRepository? = null,
     repository: SettingsDataSource = SettingsRepository.create(LocalContext.current),
     watchDiagnosticsLabel: String? = null,
@@ -136,6 +137,12 @@ fun SettingsScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     fun showFailure(throwable: Throwable, apkCheck: Boolean = false) {
+        if (settingsErrorKind(throwable) == SettingsErrorKind.AUTHENTICATION) {
+            error = null
+            feedback = null
+            onAuthenticationRequired()
+            return
+        }
         error = settingsErrorMessage(context, throwable, apkCheck)
         feedback = null
     }
@@ -1332,7 +1339,7 @@ private fun detectEquipmentImageMimeType(bytes: ByteArray): String? = when {
 }
 
 private fun settingsErrorMessage(context: Context, throwable: Throwable, apkCheck: Boolean): String {
-    val kind = (throwable as? SettingsException)?.kind ?: classifySettingsError(throwable)
+    val kind = settingsErrorKind(throwable)
     val resource = when (kind) {
         SettingsErrorKind.AUTHENTICATION -> R.string.settings_native_error_auth
         SettingsErrorKind.FORBIDDEN -> R.string.settings_native_error_forbidden
@@ -1351,3 +1358,6 @@ private fun settingsErrorMessage(context: Context, throwable: Throwable, apkChec
     }
     return context.getString(resource)
 }
+
+private fun settingsErrorKind(throwable: Throwable): SettingsErrorKind =
+    (throwable as? SettingsException)?.kind ?: classifySettingsError(throwable)
