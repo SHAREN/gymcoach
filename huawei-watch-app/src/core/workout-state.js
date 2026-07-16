@@ -5,6 +5,7 @@ import {
   validateWatchEvent,
   WatchEventType,
 } from './contracts.js';
+import { isUuid } from './portable-text.js';
 import { emptyTiming } from './timers.js';
 
 const ACTIVE_EXERCISE_FIELDS = ['exerciseId', 'exerciseSessionId', 'order'];
@@ -48,12 +49,11 @@ export function activeWorkoutFromSnapshot(snapshot) {
         }
       : null;
   return {
-    session: {
-      ...clone(snapshot.workoutSession),
+    session: Object.assign({}, clone(snapshot.workoutSession), {
       status: runtime?.status ?? snapshot.workoutSession.status,
       activeExerciseId,
       activeSetId: runtime?.activeSetId ?? snapshot.workoutSession.activeSetId,
-    },
+    }),
     exercises: snapshot.exerciseSessions.map(clone).sort((left, right) => left.order - right.order),
     activeExerciseId,
     activeSetId: runtime?.activeSetId ?? snapshot.workoutSession.activeSetId,
@@ -200,11 +200,10 @@ function applySetStarted(activeWorkout, payload) {
   positiveInteger(payload.setNumber, 'SET_STARTED.setNumber');
   nonNegativeInteger(payload.startedAt, 'SET_STARTED.startedAt');
   requireExercise(activeWorkout, payload.exerciseSessionId);
-  activeWorkout.pendingSet = {
-    ...clone(payload),
+  activeWorkout.pendingSet = Object.assign({}, clone(payload), {
     accumulatedPauseMs: 0,
     pauseStartedAt: null,
-  };
+  });
   activeWorkout.activeSetId = payload.setId;
   activeWorkout.session.activeSetId = payload.setId;
 }
@@ -317,12 +316,11 @@ function applyRestStarted(activeWorkout, payload) {
   if (payload.restEndsAt < payload.startedAt) {
     throw new Error('REST_STARTED.restEndsAt must not precede startedAt.');
   }
-  activeWorkout.rest = {
-    ...clone(payload),
+  activeWorkout.rest = Object.assign({}, clone(payload), {
     pausedRemainingMs: null,
     warningVibrated: false,
     finishVibrated: false,
-  };
+  });
 }
 
 function applyRestUpdated(activeWorkout, payload) {
@@ -355,10 +353,7 @@ function applyRestFinished(activeWorkout, payload) {
 }
 
 function applyRestSummary(activeWorkout, setId, summary) {
-  const completed = {
-    setId,
-    ...clone(summary),
-  };
+  const completed = Object.assign({ setId }, clone(summary));
   activeWorkout.restSummaries = (activeWorkout.restSummaries || []).filter(
     (candidate) => candidate.setId !== completed.setId,
   );
@@ -389,10 +384,7 @@ function applyRestSkipped(activeWorkout, payload) {
 function applySensorBatchRecorded(payload) {
   exactPayload(payload, SENSOR_BATCH_RECORDED_FIELDS, 'SENSOR_BATCH_RECORDED');
   if (
-    typeof payload.batchId !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      payload.batchId,
-    )
+    !isUuid(payload.batchId)
   ) {
     throw new Error('SENSOR_BATCH_RECORDED.batchId must be a UUID.');
   }

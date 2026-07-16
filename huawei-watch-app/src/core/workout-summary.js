@@ -13,13 +13,13 @@ export function summarizeExercise(activeWorkout, exerciseSessionId) {
   }
   const sets = completedSetsForExercise(activeWorkout, exerciseSessionId);
   const setIds = new Set(sets.map((set) => set.setId));
-  return {
-    exercise,
-    ...summarizeSets(sets),
-    ...summarizeRests(
+  return Object.assign(
+    { exercise },
+    summarizeSets(sets),
+    summarizeRests(
       (activeWorkout.restSummaries || []).filter((summary) => setIds.has(summary.setId)),
     ),
-  };
+  );
 }
 
 export function summarizeWorkout(activeWorkout, now = Date.now()) {
@@ -28,12 +28,14 @@ export function summarizeWorkout(activeWorkout, now = Date.now()) {
   }
   const finishedAt = activeWorkout.session.finishedAt;
   const effectiveEnd = Number.isInteger(finishedAt) ? finishedAt : now;
-  return {
-    durationMs: workoutElapsedMs(activeWorkout, effectiveEnd),
-    exerciseCount: activeWorkout.exercises.length,
-    ...summarizeSets(activeWorkout.completedSets),
-    ...summarizeRests(activeWorkout.restSummaries || []),
-  };
+  return Object.assign(
+    {
+      durationMs: workoutElapsedMs(activeWorkout, effectiveEnd),
+      exerciseCount: activeWorkout.exercises.length,
+    },
+    summarizeSets(activeWorkout.completedSets),
+    summarizeRests(activeWorkout.restSummaries || []),
+  );
 }
 
 function summarizeSets(sets) {

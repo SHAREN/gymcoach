@@ -1,3 +1,5 @@
+import { safeFileToken } from '../core/portable-text.js';
+
 const DEFAULT_STATE_URI = 'internal://app/gymcoach-state-v1.json';
 const FILE_NOT_FOUND_CODE = 301;
 
@@ -16,22 +18,19 @@ function fileError(action, data, code) {
 function invoke(fileApi, method, options, { missingValue, result } = {}) {
   requiredFunction(fileApi?.[method], `fileApi.${method}`);
   return new Promise((resolve, reject) => {
-    fileApi[method]({
-      ...options,
-      success: (value) => resolve(result ? result(value) : value),
-      fail: (data, code) => {
-        if (missingValue !== undefined && code === FILE_NOT_FOUND_CODE) {
-          resolve(missingValue);
-          return;
-        }
-        reject(fileError(`File ${method}`, data, code));
-      },
-    });
+    fileApi[method](
+      Object.assign({}, options, {
+        success: (value) => resolve(result ? result(value) : value),
+        fail: (data, code) => {
+          if (missingValue !== undefined && code === FILE_NOT_FOUND_CODE) {
+            resolve(missingValue);
+            return;
+          }
+          reject(fileError(`File ${method}`, data, code));
+        },
+      }),
+    );
   });
-}
-
-function safeToken(value) {
-  return String(value).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 48);
 }
 
 export function createLiteFileStore({ fileApi, now = Date.now } = {}) {
@@ -40,7 +39,7 @@ export function createLiteFileStore({ fileApi, now = Date.now } = {}) {
   return {
     async writeOutbound(serialized) {
       sequence += 1;
-      const uri = `internal://app/gymcoach-${safeToken(now())}-${sequence}.json`;
+      const uri = `internal://app/gymcoach-${safeFileToken(now())}-${sequence}.json`;
       await invoke(fileApi, 'writeText', {
         append: false,
         encoding: 'UTF-8',

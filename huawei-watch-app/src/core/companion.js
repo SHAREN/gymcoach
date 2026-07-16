@@ -16,6 +16,7 @@ import {
   WatchEventType,
 } from './contracts.js';
 import { canonicalSha256 } from './canonical-json.js';
+import { sanitizeMachineCode } from './portable-text.js';
 import {
   ControlMessageType,
   createControlMessage,
@@ -51,11 +52,19 @@ function defaultIdGenerator() {
 }
 
 function defaultUuidGenerator() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (symbol) => {
+  const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+  let result = '';
+  for (let index = 0; index < template.length; index += 1) {
+    const symbol = template[index];
+    if (symbol !== 'x' && symbol !== 'y') {
+      result += symbol;
+      continue;
+    }
     const random = Math.floor(Math.random() * 16);
     const value = symbol === 'x' ? random : (random & 0x3) | 0x8;
-    return value.toString(16);
-  });
+    result += value.toString(16);
+  }
+  return result;
 }
 
 function defaultSetIdGenerator() {
@@ -94,7 +103,7 @@ export class WatchCompanion {
     this.source = source;
     this.transport = assertTransport(transport);
     this.vibrationAdapter = vibrationAdapter;
-    this.listeners = new Set();
+    this.listeners = [];
     this.started = false;
     this.state = {
       connection: ConnectionState.DISCONNECTED,
@@ -118,9 +127,16 @@ export class WatchCompanion {
   }
 
   subscribe(listener) {
-    this.listeners.add(listener);
+    if (!this.listeners.includes(listener)) {
+      this.listeners.push(listener);
+    }
     listener(this.getState());
-    return () => this.listeners.delete(listener);
+    return () => {
+      const index = this.listeners.indexOf(listener);
+      if (index >= 0) {
+        this.listeners.splice(index, 1);
+      }
+    };
   }
 
   async start() {
@@ -129,14 +145,12 @@ export class WatchCompanion {
     }
 
     const document = await this.repository.load();
-    this.state = {
-      ...this.state,
-      ...document.state,
+    this.state = Object.assign({}, this.state, document.state, {
       activeWorkout: document.activeWorkout,
       lastWorkout: document.lastWorkout,
       pendingCount: document.outbox.length,
       connection: ConnectionState.CONNECTING,
-    };
+    });
     this.started = true;
     this.transport.setMessageHandler((serialized) => this.receive(serialized));
     this.transport.setFileHandler((serialized) => this.receiveFile(serialized));
@@ -461,8 +475,7 @@ export class WatchCompanion {
     }
     const previous = this.lastSetForCurrentExercise(activeWorkout);
     return this.emitWorkoutEvent(WatchEventType.SET_UPDATED, (revision) =>
-      validateSetRecord({
-        ...previous,
+      validateSetRecord(Object.assign({}, previous, {
         weight,
         reps,
         rir,
@@ -470,7 +483,7 @@ export class WatchCompanion {
         comment: comment === undefined ? previous.comment ?? null : comment,
         source: this.source,
         revision,
-      }),
+      })),
     );
   }
 
@@ -1266,10 +1279,9 @@ export class WatchCompanion {
   }
 
   async recordConflict(conflict) {
-    await this.repository.recordConflict({
-      ...conflict,
+    await this.repository.recordConflict(Object.assign({}, conflict, {
       recordedAt: conflict.recordedAt ?? this.clock(),
-    });
+    }));
     const document = this.repository.snapshot();
     this.state.conflictCount = document.state.conflictCount;
     this.state.lastError = document.state.lastError;
@@ -1318,7 +1330,7 @@ function preserveRestSummaries(next, previous) {
     (left, right) => left.finishedAt - right.finishedAt || left.setId.localeCompare(right.setId),
   );
   if (next.restSummaries.length > 0) {
-    const summary = { ...next.restSummaries[next.restSummaries.length - 1] };
+    const summary = Object.assign({}, next.restSummaries[next.restSummaries.length - 1]);
     delete summary.setId;
     next.lastRestSummary = summary;
   }
@@ -1344,11 +1356,5 @@ function sanitizedErrorCode(error) {
       : error instanceof Error
         ? error.message || error.name
         : String(error);
-  return (
-    raw
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 64) || 'SYNC_ERROR'
-  );
+  return sanitizeMachineCode(raw) || 'SYNC_ERROR';
 }

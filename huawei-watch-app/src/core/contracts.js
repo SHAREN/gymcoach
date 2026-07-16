@@ -6,6 +6,7 @@ import {
   utf8ByteLength,
 } from './messages.js';
 import { canonicalJson, canonicalSha256 } from './canonical-json.js';
+import { isLowerHex, isMachineCode, isUuid } from './portable-text.js';
 
 export const MAX_FILE_BYTES = 4_000_000;
 export const FILE_TARGET_BYTES = 3_500_000;
@@ -40,8 +41,6 @@ const EXERCISE_STATUSES = new Set(['PENDING', 'ACTIVE', 'COMPLETED', 'SKIPPED'])
 const SENSOR_PHASES = new Set(['WORKOUT', 'SET', 'REST', 'PAUSE', 'WARMUP', 'RECOVERY']);
 const ACK_STATUSES = new Set(['APPLIED', 'DUPLICATE', 'STALE', 'CONFLICT', 'REJECTED']);
 const FILE_PAYLOAD_TYPES = new Set(['SENSOR_BATCH', 'SYNC_SNAPSHOT', 'EVENT_BATCH']);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const WATCH_EVENT_FIELDS = [
   'protocolVersion',
   'schemaVersion',
@@ -466,7 +465,7 @@ export function validateSyncAck(value) {
   nonNegativeInteger(value.revision, 'SyncAck.revision');
   if (value.errorCode !== null) {
     nonBlankString(value.errorCode, 'SyncAck.errorCode');
-    if (!/^[A-Z0-9_]{1,64}$/.test(value.errorCode)) {
+    if (!isMachineCode(value.errorCode)) {
       throw new Error('SyncAck.errorCode must be a sanitized machine-readable code.');
     }
   }
@@ -495,7 +494,7 @@ export function validateFileTransferEnvelope(value) {
   if (value.byteLength >= MAX_FILE_BYTES) {
     throw new Error('FileTransferEnvelope.byteLength must be below 4,000,000 bytes.');
   }
-  if (typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.sha256)) {
+  if (!isLowerHex(value.sha256, 64)) {
     throw new Error('FileTransferEnvelope.sha256 must be a lowercase SHA-256 digest.');
   }
   nonNegativeInteger(value.createdAt, 'FileTransferEnvelope.createdAt');
@@ -819,7 +818,7 @@ function nullableOpaqueId(value, label) {
 }
 
 function uuid(value, label) {
-  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+  if (!isUuid(value)) {
     throw new Error(`${label} must be a UUID.`);
   }
 }

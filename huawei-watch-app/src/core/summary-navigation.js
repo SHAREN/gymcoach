@@ -44,8 +44,7 @@ export function moveSummaryExercise(selection, workout, offset) {
     workout.exercises.length - 1,
     Math.max(0, currentIndex + offset),
   );
-  return {
-    ...selection,
+  return Object.assign({}, selection, {
     exerciseSessionId: workout.exercises[nextIndex].exerciseSessionId,
-  };
+  });
 }
