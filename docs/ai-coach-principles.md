@@ -243,6 +243,15 @@ Current windows and ratios:
 - long-term exact anchor weight: 25%;
 - when at least three older exact sessions exist, bound the recent anchor to
   75-125% of the long-term anchor before weighting;
+- when recent evidence exists, one or two older exact sessions are never
+  numerically blended: with a recent sample of one or two sessions, every sparse
+  older capacity must fall within 75-125% of the recent median to confirm use of
+  the recent median alone; otherwise the load falls back to current-equipment
+  calibration; three or more recent sessions use their median alone when older
+  history remains sparse;
+- without recent exact evidence, one or two older exact sessions retain the
+  existing low-confidence long-term-only anchor because no current signal is
+  available to contradict them;
 - start fraction for a return gap over 42 but under 84 days: 85%;
 - start fraction for a return gap from 84 through 167 days: 80%;
 - start fraction for a return gap of at least 168 days: 75%;
@@ -268,6 +277,17 @@ history supplies a bounded floor, so a later run of weak calibration sessions
 cannot erase an established exact-equipment history. Sample count, missing RIR,
 non-comparable equipment history and progressively longer gaps change `low`,
 `medium` or `high` confidence, not history eligibility.
+
+The base confidence tier is `high` only with at least two recent exact sessions
+and at least three older exact sessions. It is `medium` with at least one recent
+exact session or at least three older exact sessions, and otherwise `low`. Any
+missing RIR in eligible exact history or any non-comparable equipment history
+lowers one tier (`high` to `medium`, otherwise to `low`). A return gap from 84
+through 167 days lowers one additional tier; a gap of at least 168 days lowers
+two; a gap from 43 through 83 days adds no confidence penalty. Sample, data and
+gap penalties are cumulative and cannot lower confidence below `low`. A
+conflict between a recent sample of one or two sessions and one or two older
+sessions forces confidence to `low` before the data and gap penalties.
 
 Current modes:
 
@@ -295,13 +315,22 @@ The recent and long-term anchors are then built from those session capacities.
 The recent-biased median is combined with an 85%-scaled floor from the strongest
 rolling three-session median across all older history. The recent anchor is
 bounded only when at least three older sessions provide a robust comparison,
-then the anchors are weighted 75/25. Without recent exact evidence, the
-long-term exact anchor remains eligible regardless of age. Without exact
-comparable history, the application uses calibration or the lightest
-current-equipment load and does not borrow another machine's number.
+then the anchors are weighted 75/25. One or two older sessions are consistency
+context only and never enter that blend. If both recent and older samples are
+sparse, all older capacities must agree with the recent median inside the same
+75-125% band; agreement preserves the recent-only anchor, while disagreement
+uses current-equipment calibration rather than guessing which observation is
+wrong. With no recent evidence, fewer than three older sessions likewise remain
+eligible as the low-confidence long-term-only anchor. Long-term exact history
+remains eligible regardless of age; at least three older sessions are required
+before it is treated as robust enough to bound and blend with recent evidence.
+Without exact comparable history, the application uses calibration or the
+lightest current-equipment load and does not borrow another machine's number.
 
 ```text
-historicalCapacity = weighted bounded recent anchor or long-term anchor
+historicalCapacity = robust weighted anchors, confirmed recent-only anchor,
+                     long-term-only anchor (low-confidence when sparse),
+                     or no precise anchor on sparse conflict
 targetCapacityReps = targetRepsMin + returnTargetRIR
 weightCeiling = historicalCapacity / (1 + targetCapacityReps / 30)
 suggestedWeight = weightCeiling * startFraction
@@ -883,3 +912,17 @@ thresholds. These remain bounded engineering heuristics. The adversarial answer 
 GymCoach does not adopt those generated values. Instead it preserves low
 session volume, conservative equipment-rounded starts, a hard ceiling and
 immediate RIR-based adjustment while clearly exposing confidence and evidence.
+
+An eleventh review on 2026-07-16 reused the same notebook, all eight current
+sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`. Separate
+questions covered sparse older-history blending, PR and weak-record risks,
+deterministic product translation and an adversarial challenge to sample and
+confidence thresholds. The sources support current readiness, RIR/RPE
+autoregulation, conservative non-failure return and exact movement/equipment
+specificity. They do not specify any `n=1`, `n=2` or `n=3` cutoff, sparse-sample
+weight, clamp, confidence tier or calendar penalty. Excluding sparse older loads
+from numerical blending and using conflicting small samples only to require
+calibration are therefore engineering heuristics, not universal training
+science. Follow-up questions corrected two generated overstatements: the
+sources do not say every one-session return is dangerous, and they do not
+directly prescribe zero numerical weight for sparse older history.

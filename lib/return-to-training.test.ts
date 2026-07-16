@@ -381,6 +381,101 @@ describe('return-to-training recommendations', () => {
     expect(weakOutlier.suggestedWeight).toBeGreaterThan(20);
   });
 
+  it('uses an agreeing sparse older sample only as confirmation of the recent anchor', () => {
+    const calculate = (olderWeights: number[]) =>
+      calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(3),
+          exerciseSessions: historySessions([
+            { days: 3, weight: 40 },
+            ...olderWeights.map((weight, index) => ({ days: 90 + index * 10, weight })),
+          ]),
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+        },
+      });
+    const oneOlder = calculate([40]);
+    const twoOlder = calculate([38, 42]);
+
+    expect(oneOlder).toMatchObject({
+      recentHistorySessionCount: 1,
+      longTermHistorySessionCount: 1,
+      historyBasis: 'recent-and-long-term',
+    });
+    expect(oneOlder.weightCeiling).not.toBeNull();
+    expect(oneOlder.suggestedWeight).toBeGreaterThan(1);
+    expect(twoOlder.weightCeiling).toBe(oneOlder.weightCeiling);
+    expect(twoOlder.suggestedWeight).toBe(oneOlder.suggestedWeight);
+  });
+
+  it.each([
+    { label: 'old PR', recentWeight: 40, olderWeights: [200] },
+    { label: 'old weak record', recentWeight: 40, olderWeights: [5] },
+    { label: 'recent PR', recentWeight: 200, olderWeights: [40] },
+    { label: 'recent weak record', recentWeight: 5, olderWeights: [40] },
+    { label: 'two older records with a PR', recentWeight: 40, olderWeights: [40, 200] },
+    { label: 'two older records with a weak outlier', recentWeight: 40, olderWeights: [40, 5] },
+  ])('uses equipment-floor calibration for conflicting sparse history: $label', ({
+    recentWeight,
+    olderWeights,
+  }) => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(3),
+        exerciseSessions: historySessions([
+          { days: 3, weight: recentWeight },
+          ...olderWeights.map((weight, index) => ({ days: 90 + index * 10, weight })),
+        ]),
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'DUMBBELL',
+        dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+      },
+    });
+
+    expect(result).toMatchObject({
+      historyBasis: 'recent-and-long-term',
+      confidence: 'low',
+      weightCeiling: null,
+      suggestedWeight: 1,
+    });
+  });
+
+  it.each([{ olderWeights: [40] }, { olderWeights: [40, 42] }])(
+    'keeps sparse older-only exact history eligible at low confidence: $olderWeights',
+    ({ olderWeights }) => {
+      const result = calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(90),
+          exerciseSessions: historySessions(
+            olderWeights.map((weight, index) => ({ days: 90 + index * 10, weight })),
+          ),
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+        },
+      });
+
+      expect(result).toMatchObject({
+        historyBasis: 'long-term-exact',
+        recentHistorySessionCount: 0,
+        longTermHistorySessionCount: olderWeights.length,
+        confidence: 'low',
+      });
+      expect(result.weightCeiling).not.toBeNull();
+      expect(result.suggestedWeight).toBeGreaterThan(1);
+    },
+  );
+
   it('keeps very old weak novice records as context without letting them dominate the anchor', () => {
     const established = [60, 70, 80, 90, 100, 110, 120, 130].map((days, index) => ({
       days,

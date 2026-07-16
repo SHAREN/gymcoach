@@ -334,18 +334,37 @@ function historicalCapacityEvidence({
         )
       : (recentBiasedLongTermAnchor ?? establishedAnchor);
   const recentAnchor = recent.length > 0 ? median(recent.map((item) => item.capacity)) : null;
+  const hasRobustLongTermAnchor = longTerm.length >= RETURN_ROBUST_ANCHOR_MIN_SESSIONS;
   const boundedRecentAnchor =
-    recentAnchor != null &&
-    longTermAnchor != null &&
-    longTerm.length >= RETURN_ROBUST_ANCHOR_MIN_SESSIONS
+    recentAnchor != null && longTermAnchor != null && hasRobustLongTermAnchor
       ? clamp(
           recentAnchor,
           longTermAnchor * RETURN_RECENT_ANCHOR_MIN_RATIO,
           longTermAnchor * RETURN_RECENT_ANCHOR_MAX_RATIO,
         )
       : recentAnchor;
-  const capacity =
-    boundedRecentAnchor != null && longTermAnchor != null && longTerm.length > 0
+  const sparseLongTermHistory =
+    longTerm.length > 0 && longTerm.length < RETURN_ROBUST_ANCHOR_MIN_SESSIONS;
+  const sparseLongTermSupportsRecent =
+    recentAnchor != null &&
+    sparseLongTermHistory &&
+    longTerm.every(
+      (item) =>
+        item.capacity >= recentAnchor * RETURN_RECENT_ANCHOR_MIN_RATIO &&
+        item.capacity <= recentAnchor * RETURN_RECENT_ANCHOR_MAX_RATIO,
+    );
+  // One or two older observations cannot identify whether the old or recent
+  // value is the outlier. They never enter the numerical blend. When the
+  // recent sample is also sparse, a conflict deliberately falls back to an
+  // equipment-floor calibration instead of inventing a precise anchor.
+  const sparseHistoryRequiresCalibration =
+    sparseLongTermHistory &&
+    recentAnchor != null &&
+    recent.length < RETURN_ROBUST_ANCHOR_MIN_SESSIONS &&
+    !sparseLongTermSupportsRecent;
+  const capacity = sparseHistoryRequiresCalibration
+    ? null
+    : boundedRecentAnchor != null && longTermAnchor != null && hasRobustLongTermAnchor
       ? boundedRecentAnchor * RETURN_RECENT_CAPACITY_WEIGHT +
         longTermAnchor * RETURN_LONG_TERM_CAPACITY_WEIGHT
       : (boundedRecentAnchor ?? longTermAnchor);
@@ -363,6 +382,7 @@ function historicalCapacityEvidence({
       : recent.length >= 1 || longTerm.length >= RETURN_ROBUST_ANCHOR_MIN_SESSIONS
         ? 'medium'
         : 'low';
+  if (sparseHistoryRequiresCalibration) confidence = 'low';
   const rirComplete = estimates.length > 0 && estimates.every((item) => item.hasRecordedRIR);
   if (!rirComplete || nonComparableHistorySessionCount > 0) {
     confidence = confidence === 'high' ? 'medium' : 'low';
