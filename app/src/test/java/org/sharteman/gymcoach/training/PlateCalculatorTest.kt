@@ -99,4 +99,39 @@ class PlateCalculatorTest {
         assertEquals(listOf(PlateGroup(plate = 20.0, count = 1)), load.perSide)
         assertTrue(load.exact)
     }
+
+    @Test
+    fun concreteSmallBarUsesItsBaseLoadQuantitiesAndLoadingSides() {
+        val load = computeEquipmentPlateLoad(
+            targetWeight = 40.0,
+            baseLoad = 10.0,
+            availablePlates = listOf(
+                PlateInventoryItem(weightKg = 10.0, quantity = 2),
+                PlateInventoryItem(weightKg = 5.0, quantity = 4),
+            ),
+            loadingSides = 2,
+        )
+
+        assertEquals(10.0, load.barWeight, 0.001)
+        assertEquals(2, load.loadingSides)
+        assertEquals(40.0, load.achievedWeight, 0.001)
+        assertEquals(
+            listOf(
+                PlateGroup(plate = 10.0, count = 1),
+                PlateGroup(plate = 5.0, count = 1),
+            ),
+            load.perSide,
+        )
+        assertTrue(load.exact)
+
+        val finiteInventory = computeEquipmentPlateLoad(
+            targetWeight = 50.0,
+            baseLoad = 10.0,
+            availablePlates = listOf(PlateInventoryItem(weightKg = 10.0, quantity = 2)),
+            loadingSides = 2,
+        )
+        assertEquals(30.0, finiteInventory.achievedWeight, 0.001)
+        assertEquals(20.0, finiteInventory.remainder, 0.001)
+        assertFalse(finiteInventory.exact)
+    }
 }

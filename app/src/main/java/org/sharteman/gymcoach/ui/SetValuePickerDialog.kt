@@ -56,6 +56,7 @@ import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.PlateLoad
 import org.sharteman.gymcoach.training.computeBestPlateLoad
+import org.sharteman.gymcoach.training.computeEquipmentPlateLoad
 import org.sharteman.gymcoach.training.fromDisplayWeight
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
@@ -97,7 +98,23 @@ fun SetValuePickerDialog(
         SetValuePickerKind.RIR -> manualValue.isBlank() ||
             numericValue?.roundToInt()?.let { it in 0..5 } == true
     }
+    val selectedEquipment = loadConstraints?.equipmentId?.let { equipmentId ->
+        loadConstraints.equipmentOptions.firstOrNull { it.equipmentId == equipmentId }
+    }
     val plateLoad = if (
+        kind == SetValuePickerKind.WEIGHT &&
+        selectedEquipment?.loadType == "PLATE_LOADED" &&
+        numericValue != null && numericValue > 0
+    ) {
+        computeEquipmentPlateLoad(
+            targetWeight = numericValue,
+            baseLoad = roundWeight(toDisplayWeight(selectedEquipment.baseLoadKg, unit), 2),
+            availablePlates = selectedEquipment.plates.map { plate ->
+                plate.copy(weightKg = roundWeight(toDisplayWeight(plate.weightKg, unit), 2))
+            },
+            loadingSides = selectedEquipment.loadingSides,
+        )
+    } else if (
         kind == SetValuePickerKind.WEIGHT &&
         loadConstraints?.equipmentType == "BARBELL" &&
         numericValue != null && numericValue > 0
