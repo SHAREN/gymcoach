@@ -201,6 +201,33 @@ fall back to implementing multiple tasks in one Worktree.
 - The historical docs/loops backlog and GitHub issue loop are not active task
   sources. Do not append new tasks to docs/loops/ideas-backlog.md.
 
+## Automation tool routing
+
+Select automation by the capability required, while keeping repository-native
+tests and gates authoritative:
+
+- For browser development, deterministic web UI checks, and Playwright E2E
+  authoring or debugging, use Playwright CLI with the project-local
+  `.agents/skills/playwright-cli` skill.
+- For an authenticated live Chrome tab that requires DOM, Network, Console, or
+  performance inspection, prefer Chrome DevTools MCP when it is loaded and the
+  session is authorized for the task.
+- For Android or mobile UI flows, prefer Maestro CLI or Maestro MCP for
+  repeatable automation and Mobile MCP for interactive device inspection and
+  control. Use ADB for deterministic device state, logs, installation, and as
+  the fallback when a mobile MCP is unavailable.
+- Do not restart or duplicate an active task solely to load a newly installed
+  MCP. Continue with an available CLI or ADB fallback; newly created tasks may
+  use the MCP after the required Codex restart.
+- These tools do not replace the canonical web, Android, Huawei, integration,
+  or deployment gates. Preserve one writer per task and Worktree, record
+  reproducible commands and outcomes, and distinguish automated evidence from
+  manual or device-only observations.
+- Treat authenticated sessions and device state as sensitive. Never expose or
+  commit credentials, cookies, tokens, browser profiles, saved storage state,
+  raw recordings or traces, or personal device data. Collect only the minimum
+  sanitized evidence required by the acceptance criteria.
+
 ## Verification commands
 
 The canonical web/backend/shared green-gate is:
