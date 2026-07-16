@@ -225,6 +225,75 @@ class AutoregulationTest {
     }
 
     @Test
+    fun preferredTenKgEzBarInitializesItsFourSidedAttainableLoads() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "TRICEPS",
+            equipmentType = "BARBELL",
+        )
+        val pool = GymPlatePoolDto(
+            id = "pool_ez",
+            gymId = "gym_1",
+            name = "EZ plates",
+            compatibilityKey = "EZ_25MM",
+            plates = listOf(
+                GymPlateInventoryItemDto(weightKg = 10.0, quantity = 4),
+                GymPlateInventoryItemDto(weightKg = 5.0, quantity = 8),
+            ),
+        )
+        val gym = GymDto(
+            id = "gym_1",
+            name = "Olymp",
+            inventoryMode = "EQUIPMENT_FIRST",
+            exerciseConfigs = listOf(
+                GymExerciseConfigDto(
+                    gymId = "gym_1",
+                    exerciseId = exercise.exerciseId,
+                    preferredEquipmentId = "ez_bar",
+                ),
+            ),
+            platePools = listOf(pool),
+            equipment = listOf(
+                GymEquipmentDto(
+                    id = "standard_bar",
+                    gymId = "gym_1",
+                    name = "20 kg standard bar",
+                    equipmentType = "BARBELL",
+                    loadType = "PLATE_LOADED",
+                    baseLoadKg = 20.0,
+                    platePoolId = pool.id,
+                    loadingSides = 2,
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+                GymEquipmentDto(
+                    id = "ez_bar",
+                    gymId = "gym_1",
+                    name = "10 kg EZ bar",
+                    equipmentType = "BARBELL",
+                    loadType = "PLATE_LOADED",
+                    baseLoadKg = 10.0,
+                    platePoolId = pool.id,
+                    loadingSides = 4,
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+            ),
+        )
+
+        val inventory = resolveExerciseInventory(exercise, gym)
+        val selected = requireNotNull(selectedEquipment(inventory))
+
+        assertEquals("ez_bar", selected.equipmentId)
+        assertEquals(10.0, selected.baseLoadKg, 0.001)
+        assertEquals(4, selected.loadingSides)
+        assertEquals(listOf(10.0, 30.0, 50.0, 70.0, 90.0), inventory.weightOptions)
+        assertTrue(20.0 !in inventory.weightOptions)
+    }
+
+    @Test
     fun equipmentFirstGymWithoutLinksOrLegacyConfigIsUnavailable() {
         val exercise = programExercise(
             mode = "PRESERVE_RIR",
