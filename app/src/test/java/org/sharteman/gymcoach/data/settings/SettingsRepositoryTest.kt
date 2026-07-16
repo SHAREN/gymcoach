@@ -35,6 +35,7 @@ class SettingsRepositoryTest {
         assertEquals(expected, repository.load())
         assertEquals(listOf(PRIMARY, FALLBACK), attempts)
         assertEquals(FALLBACK, accountStore.serverUrl)
+        assertTrue(accountStore.isAuthenticated)
     }
 
     @Test
@@ -60,6 +61,7 @@ class SettingsRepositoryTest {
         assertTrue(failure is SettingsException)
         assertEquals(listOf(PRIMARY), attempts)
         assertEquals(PRIMARY, accountStore.serverUrl)
+        assertTrue(!accountStore.isAuthenticated)
     }
 
     private fun snapshot() = SettingsSnapshot(
@@ -85,6 +87,7 @@ class SettingsRepositoryTest {
         override var userId: String? = "user_1"
         override var userEmail: String? = "user@example.com"
         private var token: String? = "token"
+        val isAuthenticated: Boolean get() = token != null
 
         override fun getAccessToken() = token
         override fun setAccessToken(token: String) {
