@@ -132,6 +132,8 @@ describe('session runner equipment identity helpers', () => {
       status: 'pending',
       attempts: 0,
       lastError: null,
+      lastHttpStatus: null,
+      nextAttemptAt: null,
     });
     expect(patch).not.toHaveProperty('gymEquipmentId');
     expect(patch).not.toHaveProperty('equipmentSnapshotAction');

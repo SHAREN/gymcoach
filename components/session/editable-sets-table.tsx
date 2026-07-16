@@ -1,7 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Droplet, Loader2, Pencil, Sparkles, Wrench } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  CloudOff,
+  Droplet,
+  Loader2,
+  Pencil,
+  Sparkles,
+  Wrench,
+} from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
@@ -73,6 +82,7 @@ interface Props {
   ) => Promise<void>;
   onChangeSetEquipment?: (set: PendingSet, equipmentId: string | null) => Promise<void>;
   onDeleteSet?: (set: PendingSet) => Promise<boolean | void>;
+  onRetrySet?: (set: PendingSet) => Promise<void>;
   onTargetSetsChange?: (targetSets: number) => Promise<void>;
 }
 
@@ -233,13 +243,15 @@ export function EditableSetsTable({
   onUpdateSet,
   onChangeSetEquipment,
   onDeleteSet,
+  onRetrySet,
   onTargetSetsChange,
 }: Props) {
   const t = useTranslations('session.editableSets');
   const inputT = useTranslations('session.input');
   const locale = useLocale();
-  const visibleSets = useMemo(
-    () => projectSetsToTarget(programExercise, sets).visible,
+  const visibleSets = sets;
+  const extraLocalIds = useMemo(
+    () => new Set(projectSetsToTarget(programExercise, sets).overflow.map((set) => set.localId)),
     [programExercise, sets],
   );
   const equipmentHistorySets = historySets ?? visibleSets;
@@ -577,9 +589,10 @@ export function EditableSetsTable({
 
   async function changeSetEquipment(equipmentId: string | null) {
     if (!setControlsSet || !onChangeSetEquipment || disabled || setControlsBusy) return;
+    const currentSet = sets.find((set) => set.localId === setControlsSet.localId) ?? setControlsSet;
     setSetControlsBusy(true);
     try {
-      await onChangeSetEquipment(setControlsSet, equipmentId);
+      await onChangeSetEquipment(currentSet, equipmentId);
       setSetControlsOpen(false);
       setSetControlsSet(null);
     } catch {
@@ -619,6 +632,36 @@ export function EditableSetsTable({
       setSetControlsBusy(false);
     }
   }
+
+  async function retrySelectedSet() {
+    if (!setControlsSet || !onRetrySet || disabled || setControlsBusy) return;
+    const currentSet = sets.find((set) => set.localId === setControlsSet.localId) ?? setControlsSet;
+    setSetControlsBusy(true);
+    try {
+      await onRetrySet(currentSet);
+    } finally {
+      setSetControlsBusy(false);
+    }
+  }
+
+  async function deleteSelectedSet() {
+    if (!setControlsSet || !onDeleteSet || disabled || setControlsBusy) return;
+    const currentSet = sets.find((set) => set.localId === setControlsSet.localId) ?? setControlsSet;
+    setSetControlsBusy(true);
+    try {
+      const deleted = await onDeleteSet(currentSet);
+      if (deleted !== false) {
+        setSetControlsOpen(false);
+        setSetControlsSet(null);
+      }
+    } finally {
+      setSetControlsBusy(false);
+    }
+  }
+
+  const selectedControlsSet = setControlsSet
+    ? (sets.find((set) => set.localId === setControlsSet.localId) ?? setControlsSet)
+    : null;
 
   return (
     <section
@@ -749,88 +792,119 @@ export function EditableSetsTable({
           const isEditing = editingSet?.set.localId === set.localId;
           const rowDraft = isEditing ? editingSet.draft : draftFromSet(set);
           const isUpdating = updatingSetId === set.localId;
+          const isExtra = extraLocalIds.has(set.localId);
 
           return (
             <div
               key={set.localId}
               data-testid={`completed-set-${rowNumber}`}
-              className={`grid ${gridColumns} items-center gap-0.5 border-b border-border px-1 py-1.5 text-center text-xs tabular-nums transition-colors sm:gap-1 sm:px-2 sm:text-sm ${isEditing ? 'bg-primary/5' : ''}`}
+              className={`border-b border-border transition-colors ${isEditing ? 'bg-primary/5' : ''}`}
             >
-              <span
-                className="flex items-center justify-center gap-0.5 text-muted-foreground"
-                title={set.isDropSet ? t('dropSetNumber', { number: rowNumber }) : undefined}
+              <div
+                className={`grid ${gridColumns} items-center gap-0.5 px-1 py-1.5 text-center text-xs tabular-nums sm:gap-1 sm:px-2 sm:text-sm`}
               >
-                {set.isDropSet && <Droplet className="size-3 fill-current" />}
-                {rowNumber}
-              </span>
-              <button
-                type="button"
-                onClick={() => openPicker('weight', set)}
-                disabled={disabled || isUpdating}
-                aria-label={t('weight', { number: rowNumber, unit })}
-                className={`h-9 w-full min-w-0 rounded-md border px-0.5 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
-              >
-                {formatWeight(rowDraft.weight, unit, {
-                  decimals: 2,
-                  group: false,
-                  locale,
-                })}
-              </button>
-              <button
-                type="button"
-                onClick={() => openPicker('reps', set)}
-                disabled={disabled || isUpdating}
-                aria-label={t('reps', { number: rowNumber })}
-                className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
-              >
-                {rowDraft.reps}
-              </button>
-              <select
-                aria-label={t('rir', { number: rowNumber })}
-                value={rowDraft.rir ?? ''}
-                onChange={(event) =>
-                  updateEditingRir(
-                    set,
-                    event.target.value === '' ? null : Number(event.target.value),
-                  )
-                }
-                disabled={disabled || isUpdating}
-                className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'appearance-none border-transparent bg-transparent'}`}
-              >
-                <option value="">–</option>
-                {[0, 1, 2, 3, 4, 5].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              {metrics.map((metric) => (
                 <span
-                  key={metric}
-                  data-testid={`completed-set-${rowNumber}-metric-${metric}`}
-                  className="min-w-0 whitespace-nowrap text-[0.625rem] text-muted-foreground sm:text-sm"
+                  className="flex items-center justify-center gap-0.5 text-muted-foreground"
+                  title={set.isDropSet ? t('dropSetNumber', { number: rowNumber }) : undefined}
                 >
-                  {formatSetMetric(metric, rowDraft, unit, locale)}
+                  {set.isDropSet && <Droplet className="size-3 fill-current" />}
+                  {rowNumber}
                 </span>
-              ))}
-              <span className="flex items-center justify-center">
-                {isUpdating ? (
-                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => openSetControls(set)}
-                    disabled={
-                      disabled || (!onTargetSetsChange && !onDeleteSet && !onChangeSetEquipment)
-                    }
-                    aria-label={t('setControls.openForSet', { number: rowNumber })}
-                    title={t('setControls.openForSet', { number: rowNumber })}
-                    className="flex size-8 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground disabled:opacity-40"
+                <button
+                  type="button"
+                  onClick={() => openPicker('weight', set)}
+                  disabled={disabled || isUpdating}
+                  aria-label={t('weight', { number: rowNumber, unit })}
+                  className={`h-9 w-full min-w-0 rounded-md border px-0.5 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
+                >
+                  {formatWeight(rowDraft.weight, unit, {
+                    decimals: 2,
+                    group: false,
+                    locale,
+                  })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPicker('reps', set)}
+                  disabled={disabled || isUpdating}
+                  aria-label={t('reps', { number: rowNumber })}
+                  className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'border-transparent bg-transparent hover:bg-muted/40'}`}
+                >
+                  {rowDraft.reps}
+                </button>
+                <select
+                  aria-label={t('rir', { number: rowNumber })}
+                  value={rowDraft.rir ?? ''}
+                  onChange={(event) =>
+                    updateEditingRir(
+                      set,
+                      event.target.value === '' ? null : Number(event.target.value),
+                    )
+                  }
+                  disabled={disabled || isUpdating}
+                  className={`h-9 w-full min-w-0 rounded-md border px-0 text-center text-xs font-semibold tabular-nums sm:text-sm ${isEditing ? 'border-input bg-background' : 'appearance-none border-transparent bg-transparent'}`}
+                >
+                  <option value="">–</option>
+                  {[0, 1, 2, 3, 4, 5].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                {metrics.map((metric) => (
+                  <span
+                    key={metric}
+                    data-testid={`completed-set-${rowNumber}-metric-${metric}`}
+                    className="min-w-0 whitespace-nowrap text-[0.625rem] text-muted-foreground sm:text-sm"
                   >
-                    <Check className="size-5" />
-                  </button>
-                )}
-              </span>
+                    {formatSetMetric(metric, rowDraft, unit, locale)}
+                  </span>
+                ))}
+                <span className="flex items-center justify-center">
+                  {isUpdating ? (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openSetControls(set)}
+                      disabled={
+                        disabled || (!onTargetSetsChange && !onDeleteSet && !onChangeSetEquipment)
+                      }
+                      aria-label={t('setControls.openForSet', { number: rowNumber })}
+                      title={t(`sync.${set.status}`)}
+                      className="flex size-8 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground disabled:opacity-40"
+                    >
+                      {set.status === 'syncing' ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : set.status === 'failed' ? (
+                        <AlertTriangle className="size-5 text-destructive" />
+                      ) : set.status === 'pending' ? (
+                        <CloudOff className="size-5 text-amber-500" />
+                      ) : (
+                        <Check className="size-5 text-primary" />
+                      )}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {(isExtra || set.status !== 'synced') && (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pb-2 text-xs">
+                  {isExtra && (
+                    <span className="rounded-full bg-muted px-2 py-0.5 font-medium">
+                      {t('extra')}
+                    </span>
+                  )}
+                  {set.status !== 'synced' && (
+                    <span
+                      data-testid={`set-sync-status-${rowNumber}`}
+                      className={set.status === 'failed' ? 'text-destructive' : 'text-amber-600'}
+                    >
+                      {t(`sync.${set.status}`)}
+                      {set.lastError ? `: ${set.lastError}` : ''}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -988,23 +1062,38 @@ export function EditableSetsTable({
         onIncrease={() => void changePlannedRows(plannedRows + 1)}
         onUndo={() => void undoLastSet()}
         equipment={
-          setControlsSet && onChangeSetEquipment
+          selectedControlsSet && onChangeSetEquipment
             ? {
                 setNumber:
-                  loggedSets.findIndex((set) => set.localId === setControlsSet.localId) + 1,
-                equipmentId: setControlsSet.gymEquipmentId ?? null,
+                  loggedSets.findIndex((set) => set.localId === selectedControlsSet.localId) + 1,
+                equipmentId: selectedControlsSet.gymEquipmentId ?? null,
                 equipmentName:
-                  setControlsSet.equipmentNameSnapshot ??
+                  selectedControlsSet.equipmentNameSnapshot ??
                   loadConstraints?.equipmentOptions?.find(
-                    (equipment) => equipment.equipmentId === setControlsSet.gymEquipmentId,
+                    (equipment) => equipment.equipmentId === selectedControlsSet.gymEquipmentId,
                   )?.equipmentName ??
                   null,
                 options: loadConstraints?.equipmentOptions ?? [],
                 canClear:
                   !loadConstraints?.equipmentOptions?.length &&
-                  setControlsSet.gymEquipmentId != null,
+                  selectedControlsSet.gymEquipmentId != null,
                 onReplace: (equipmentId) => void changeSetEquipment(equipmentId),
                 onClear: () => void changeSetEquipment(null),
+              }
+            : null
+        }
+        sync={
+          selectedControlsSet
+            ? {
+                setNumber:
+                  loggedSets.findIndex((set) => set.localId === selectedControlsSet.localId) + 1,
+                status: selectedControlsSet.status,
+                error: selectedControlsSet.lastError,
+                attempts: selectedControlsSet.attempts,
+                canRetry: selectedControlsSet.status !== 'synced' && onRetrySet != null,
+                canDelete: onDeleteSet != null,
+                onRetry: () => void retrySelectedSet(),
+                onDelete: () => void deleteSelectedSet(),
               }
             : null
         }

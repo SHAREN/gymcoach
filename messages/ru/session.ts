@@ -30,9 +30,14 @@ export const session = {
   setDeleteError: 'Не удалось удалить подход.',
   setUpdated: 'Подход исправлен.',
   setUpdateError: 'Не удалось исправить подход.',
+  setLocalSaveError:
+    'Не удалось сохранить подход на этом устройстве. Тренировка не была продолжена.',
+  setRetryError: 'Пока не удалось повторить сохранение подхода.',
   finished: 'Тренировка завершена.',
   finishError: 'Не удалось завершить тренировку.',
-  finishSyncError: 'Некоторые подходы ещё не сохранены. Проверьте соединение и повторите.',
+  finishSyncError:
+    'Нельзя завершить: сервер ещё не подтвердил подходы (ожидают: {pending}, с ошибкой: {failed}).',
+  retrySync: 'Повторить',
   controls: {
     open: 'Управление тренировкой «{name}»',
     cancel: 'Отмена',
@@ -209,6 +214,13 @@ export const session = {
     applyValue: 'Применить значение',
     repsShort: 'повт.',
     cancel: 'Отмена',
+    extra: 'Дополнительный выполненный подход',
+    sync: {
+      pending: 'Ожидает синхронизации',
+      syncing: 'Синхронизация',
+      synced: 'Сохранён на сервере',
+      failed: 'Ошибка синхронизации',
+    },
     manualWeight: 'Ввод веса',
     manualReps: 'Ввод повторений',
     keypad: 'Цифровая клавиатура',
@@ -233,6 +245,17 @@ export const session = {
       equipmentSelect: 'Выберите замену оборудования',
       equipmentReplace: 'Заменить снимок оборудования',
       equipmentClear: 'Очистить старый снимок оборудования',
+      syncTitle: 'Сохранение подхода {number}',
+      syncAttempts:
+        '{count, plural, one {# попытка} few {# попытки} many {# попыток} other {# попытки}}',
+      syncRetry: 'Повторить',
+      deleteSet: 'Удалить подход',
+      syncStatus: {
+        pending: 'Ожидает подтверждения сервера',
+        syncing: 'Идёт синхронизация',
+        synced: 'Подтверждён сервером',
+        failed: 'Сервер отклонил этот подход',
+      },
     },
     metrics: {
       open: 'Выбрать расчётные столбцы',
@@ -297,6 +320,14 @@ export const session = {
     bodyweight: 'СВ',
     note: 'заметка',
     delete: 'Удалить подход',
+    retrySet: 'Повторить сохранение подхода {number}',
+    extra: 'Дополнительный выполненный подход',
+    sync: {
+      pending: 'Ожидает синхронизации',
+      syncing: 'Синхронизация',
+      synced: 'Сохранён на сервере',
+      failed: 'Ошибка синхронизации',
+    },
     current: 'Подход {number} · выполняется',
     upcoming: 'Подход {number} · далее',
     weightPr: 'Рекорд веса',

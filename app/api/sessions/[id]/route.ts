@@ -32,7 +32,7 @@ export async function GET(_req: Request, props: Params) {
           },
         },
         program: true,
-        sets: { orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }] },
+        sets: { orderBy: [{ exerciseId: 'asc' }, { completedAt: 'asc' }, { id: 'asc' }] },
       },
     });
     return NextResponse.json(session);

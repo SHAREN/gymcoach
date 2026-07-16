@@ -208,7 +208,7 @@ describe('EditableSetsTable', () => {
     );
   });
 
-  it('soft-hides overflow rows, restores them, and undoes only the latest stored row', async () => {
+  it('keeps completed overflow visible as extra and undoes only the latest stored row', async () => {
     const onDeleteSet = vi.fn().mockResolvedValue(true);
     const props = {
       sets: [completedSet, completedSet2, completedSet3, completedSet4],
@@ -238,11 +238,12 @@ describe('EditableSetsTable', () => {
       />,
     );
 
-    expect(screen.queryByTestId('completed-set-4')).not.toBeInTheDocument();
+    expect(screen.getByTestId('completed-set-4')).toBeInTheDocument();
+    expect(screen.getByText('Extra completed set')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Confirm set 4' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Set 3 repetitions' })).toHaveTextContent('8');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 4' }));
     expect(screen.getByTestId('set-count-value')).toHaveTextContent('3');
     expect(screen.getByRole('button', { name: 'Decrease total sets' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Undo last set' }));
@@ -257,7 +258,46 @@ describe('EditableSetsTable', () => {
       />,
     );
     expect(screen.getByTestId('completed-set-4')).toBeInTheDocument();
+    expect(screen.queryByText('Extra completed set')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Set 3 repetitions' })).toHaveTextContent('8');
+  });
+
+  it('shows failed row details with explicit retry and delete recovery', async () => {
+    const failedSet = {
+      ...completedSet,
+      status: 'failed' as const,
+      attempts: 2,
+      lastError: 'Invalid exercise.',
+      lastHttpStatus: 400,
+    };
+    const onRetrySet = vi.fn().mockResolvedValue(undefined);
+    const onDeleteSet = vi.fn().mockResolvedValue(true);
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[failedSet]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+        onRetrySet={onRetrySet}
+        onDeleteSet={onDeleteSet}
+      />,
+    );
+
+    expect(screen.getByTestId('set-sync-status-1')).toHaveTextContent(
+      'Sync failed: Invalid exercise.',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open set controls after set 1' }));
+    expect(screen.getByTestId('set-sync-recovery')).toHaveTextContent('2 attempts');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(onRetrySet).toHaveBeenCalledWith(failedSet));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete set' }));
+    await waitFor(() => expect(onDeleteSet).toHaveBeenCalledWith(failedSet));
   });
 
   it('shows volume alone or paired with one rep-max estimate', async () => {
