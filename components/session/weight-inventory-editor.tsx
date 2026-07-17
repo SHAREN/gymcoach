@@ -36,7 +36,8 @@ export function WeightInventoryEditor({ open, gym, exercise, unit, onOpenChange,
   const locale = useLocale();
   const exerciseName = useExerciseName();
   const equipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name);
-  const supportsSharedInventory = equipmentType === 'BARBELL' || equipmentType === 'DUMBBELL';
+  const supportsSharedInventory =
+    gym.inventoryMode === 'LEGACY' && (equipmentType === 'BARBELL' || equipmentType === 'DUMBBELL');
   const [scope, setScope] = useState<Scope | null>(null);
   const [barValues, setBarValues] = useState<string[]>([]);
   const [plateValues, setPlateValues] = useState<string[]>([]);

@@ -240,9 +240,7 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   expect(activeBox).not.toBeNull();
   expect(otherBox).not.toBeNull();
   expect(activeBox!.y).toBeLessThan(otherBox!.y);
-  await dialog
-    .getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' })
-    .click();
+  await dialog.getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toBeHidden();
 
@@ -252,13 +250,10 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await expect(page.getByText('Empty load: 10 kg')).toBeVisible();
   await expect(page.getByText('20 kg standard bar')).toBeVisible();
 
-  let otherInventory = await (
-    await page.request.get(`/api/gyms/${otherGym.id}/inventory`)
-  ).json();
+  let otherInventory = await (await page.request.get(`/api/gyms/${otherGym.id}/inventory`)).json();
   expect(
-    otherInventory.gym.exerciseCoverage.find(
-      (item: { id: string }) => item.id === exercise.id,
-    ).preferredEquipmentId,
+    otherInventory.gym.exerciseCoverage.find((item: { id: string }) => item.id === exercise.id)
+      .preferredEquipmentId,
   ).toBe(otherBar.id);
 
   await page.goto('/settings');
@@ -299,9 +294,7 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
 
   await page.getByRole('button', { name: 'Edit exercise' }).click();
   dialog = page.getByRole('dialog');
-  await dialog
-    .getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' })
-    .click();
+  await dialog.getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toBeHidden();
   await page.reload();
@@ -313,18 +306,15 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
 
   const activeInventory = await (await page.request.get(`/api/gyms/${gym.id}/inventory`)).json();
   expect(
-    activeInventory.gym.exerciseCoverage.find(
-      (item: { id: string }) => item.id === exercise.id,
-    ),
+    activeInventory.gym.exerciseCoverage.find((item: { id: string }) => item.id === exercise.id),
   ).toMatchObject({
     preferredEquipmentId: smallBar.id,
     equipmentIds: expect.arrayContaining([smallBar.id, standardBar.id]),
   });
   otherInventory = await (await page.request.get(`/api/gyms/${otherGym.id}/inventory`)).json();
   expect(
-    otherInventory.gym.exerciseCoverage.find(
-      (item: { id: string }) => item.id === exercise.id,
-    ).preferredEquipmentId,
+    otherInventory.gym.exerciseCoverage.find((item: { id: string }) => item.id === exercise.id)
+      .preferredEquipmentId,
   ).toBe(otherBar.id);
 
   await page.goto(`/session/${session.id}`);
@@ -335,4 +325,129 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await page.getByTestId('set-value-options').getByText('40 kg').click();
   await expect(page.getByTestId('barbell-weight-label')).toContainText('Bar 10 kg');
   await expect(page.getByTestId('barbell-plates')).toBeVisible();
+});
+
+test('settings exposes permanent Dumbbells and isolated Barbell system profiles', async ({
+  page,
+}) => {
+  const registerResponse = await page.request.post('/api/auth/register', {
+    headers: { 'x-forwarded-for': '10.111.0.46' },
+    data: {
+      displayName: 'System Profiles E2E',
+      email: `e2e-system-profiles-${Date.now()}@test.dev`,
+      password: 'supersecret',
+    },
+  });
+  expect(registerResponse.ok()).toBeTruthy();
+  const dumbbellExercise = await (
+    await page.request.post('/api/exercises', {
+      data: {
+        name: 'E2E Dumbbell Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'DUMBBELL',
+      },
+    })
+  ).json();
+  const barbellExercise = await (
+    await page.request.post('/api/exercises', {
+      data: {
+        name: 'E2E Barbell Squat',
+        muscleGroup: 'QUADS',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    })
+  ).json();
+  const gym = await (
+    await page.request.post('/api/gyms', {
+      data: { name: 'E2E System Gym', inventoryMode: 'EQUIPMENT_FIRST', makeActive: true },
+    })
+  ).json();
+  expect(
+    (
+      await page.request.put(`/api/gyms/${gym.id}/system-profiles/dumbbells`, {
+        data: { weightsKg: [10, 12.5, 20], exerciseIds: [dumbbellExercise.id] },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  expect(
+    (
+      await page.request.put(`/api/gyms/${gym.id}/system-profiles/barbell`, {
+        data: {
+          exerciseIds: [barbellExercise.id],
+          families: [
+            {
+              family: 'LARGE',
+              loadingSides: 2,
+              bars: [{ weightKg: 12 }, { weightKg: 17.5 }, { weightKg: 20 }],
+              plates: [
+                { weightKg: 1.25, quantity: null },
+                { weightKg: 2.5, quantity: null },
+                { weightKg: 5, quantity: null },
+                { weightKg: 10, quantity: null },
+                { weightKg: 15, quantity: null },
+                { weightKg: 20, quantity: null },
+              ],
+            },
+            {
+              family: 'SMALL',
+              loadingSides: 2,
+              bars: [{ weightKg: 6 }],
+              plates: [
+                { weightKg: 1.25, quantity: null },
+                { weightKg: 2.5, quantity: null },
+                { weightKg: 3.5, quantity: null },
+                { weightKg: 5, quantity: null },
+              ],
+            },
+          ],
+        },
+      })
+    ).ok(),
+  ).toBeTruthy();
+
+  await page.goto('/settings');
+  await expect(page.getByTestId('system-profile-dumbbells')).toContainText('Dumbbells');
+  await expect(page.getByTestId('system-profile-barbell')).toContainText('Barbell');
+  await expect(page.getByText('Derived exercise availability')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit Dumbbells profile' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit Barbell profile' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit Barbell profile' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Large / thick diameter')).toBeVisible();
+  await expect(dialog.getByText('Small / thin diameter')).toBeVisible();
+  const barbellInputValues = await dialog
+    .locator('input')
+    .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+  expect(barbellInputValues).toEqual(expect.arrayContaining(['17.5', '6']));
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  const inventory = await (await page.request.get(`/api/gyms/${gym.id}/inventory`)).json();
+  const coverage = inventory.gym.exerciseCoverage.find(
+    (item: { id: string }) => item.id === barbellExercise.id,
+  );
+  const largeBar = coverage.equipmentOptions.find(
+    (item: { baseLoadKg: number }) => item.baseLoadKg === 12,
+  );
+  const smallBar = coverage.equipmentOptions.find(
+    (item: { baseLoadKg: number }) => item.baseLoadKg === 6,
+  );
+  const largeFamily = inventory.gym.systemProfiles.barbell.families.find(
+    (family: { family: string }) => family.family === 'LARGE',
+  );
+  const smallFamily = inventory.gym.systemProfiles.barbell.families.find(
+    (family: { family: string }) => family.family === 'SMALL',
+  );
+  expect(largeBar.attainableLoads).toContain(32);
+  expect(smallBar.attainableLoads).toContain(13);
+  expect(largeBar.platePoolId).toBe(largeFamily.pool.id);
+  expect(smallBar.platePoolId).toBe(smallFamily.pool.id);
+  expect(largeBar.plates.map((plate: { weightKg: number }) => plate.weightKg)).toEqual([
+    1.25, 2.5, 5, 10, 15, 20,
+  ]);
+  expect(smallBar.plates.map((plate: { weightKg: number }) => plate.weightKg)).toEqual([
+    1.25, 2.5, 3.5, 5,
+  ]);
 });

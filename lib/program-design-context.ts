@@ -245,6 +245,7 @@ interface ActiveGymSummary {
     exerciseName: string;
     preferredEquipmentId: string | null;
     isAvailable: boolean;
+    systemProfileSupported: boolean | null;
     weightOptions: number[];
     dumbbellWeights: number[];
     plateWeights: number[];
@@ -576,6 +577,7 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
       exerciseName: config.exercise.name,
       preferredEquipmentId: config.preferredEquipmentId,
       isAvailable: config.isAvailable,
+      systemProfileSupported: config.systemProfileSupported,
       weightOptions: config.weightOptions,
       dumbbellWeights: config.dumbbellWeights,
       plateWeights: config.plateWeights,

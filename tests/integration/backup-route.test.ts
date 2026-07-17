@@ -108,14 +108,21 @@ async function seedFullUser(email: string) {
       plateWeights: [1.25, 2.5, 5, 10, 20],
       barWeights: [20],
       exerciseConfigs: {
-        create: {
-          exerciseId: running.id,
-          isAvailable: false,
-          weightOptions: [],
-          dumbbellWeights: [7.5],
-          plateWeights: [1.25],
-          barWeights: [10],
-        },
+        create: [
+          {
+            exerciseId: running.id,
+            isAvailable: false,
+            weightOptions: [],
+            dumbbellWeights: [7.5],
+            plateWeights: [1.25],
+            barWeights: [10],
+          },
+          {
+            exerciseId: bench.id,
+            isAvailable: true,
+            systemProfileSupported: true,
+          },
+        ],
       },
     },
   });
@@ -125,6 +132,7 @@ async function seedFullUser(email: string) {
       gymId: gym.id,
       name: 'Olympic plates',
       compatibilityKey: 'olympic_50mm',
+      systemBarbellFamily: 'LARGE',
       plates: {
         createMany: {
           data: [
@@ -133,6 +141,14 @@ async function seedFullUser(email: string) {
           ],
         },
       },
+    },
+  });
+  await db.gymPlatePool.create({
+    data: {
+      gymId: gym.id,
+      name: 'Small diameter plates',
+      compatibilityKey: 'system_barbell_small',
+      systemBarbellFamily: 'SMALL',
     },
   });
   const equipment = await db.gymEquipment.create({
@@ -148,6 +164,7 @@ async function seedFullUser(email: string) {
       baseLoadKg: 20,
       platePoolId: platePool.id,
       loadingSides: 2,
+      systemBarbellFamily: 'LARGE',
       imageData: EQUIPMENT_PNG,
       imageMimeType: 'image/png',
       exerciseLinks: { create: { exerciseId: bench.id } },
@@ -352,7 +369,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 11 with preferences, provenance, membership order, snapshots, and earlier fields', async () => {
+  it('exports version 12 with system profiles, preferences, provenance, membership order, snapshots, and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -360,7 +377,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(11);
+    expect(dump.version).toBe(12);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -376,58 +393,67 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const pullup = dump.exercises.find((e: { name: string }) => e.name === 'Pull-up');
     expect(pullup.usesBodyweight).toBe(true);
     expect(pullup.equipmentType).toBe('BODYWEIGHT');
-    expect(dump.gyms).toEqual([
-      {
-        name: 'Basement',
-        inventoryMode: 'EQUIPMENT_FIRST',
-        dumbbellWeights: [10, 12, 14, 16, 19],
-        plateWeights: [1.25, 2.5, 5, 10, 20],
-        barWeights: [20],
-        platePools: [
-          {
-            name: 'Olympic plates',
-            compatibilityKey: 'olympic_50mm',
-            plates: [
-              { weightKg: 5, quantity: null },
-              { weightKg: 20, quantity: 4 },
-            ],
-          },
-        ],
-        equipment: [
-          {
-            name: 'Competition bench station',
-            equipmentType: 'BARBELL',
-            description: 'Flat bench with uprights and safety arms.',
-            manufacturer: 'GymCo',
-            modelName: 'Bench Pro',
-            quantity: 2,
-            loadType: 'PLATE_LOADED',
-            weightOptions: [],
-            selectedLoadMultiplier: 1,
-            baseLoadKg: 20,
-            platePoolCompatibilityKey: 'olympic_50mm',
-            loadingSides: 2,
-            imageUrl: null,
-            imageMimeType: 'image/png',
-            imageBase64: EQUIPMENT_PNG_BASE64,
-            exerciseNames: ['Bench Press'],
-            legacyMirrorExerciseNames: [],
-          },
-        ],
-        exerciseConfigs: [
-          {
-            exerciseName: 'Running',
-            isAvailable: false,
-            weightOptions: [],
-            dumbbellWeights: [7.5],
-            plateWeights: [1.25],
-            barWeights: [10],
-            isEquipmentMirror: false,
-            preferredEquipmentName: null,
-          },
-        ],
-      },
+    expect(dump.gyms).toHaveLength(1);
+    const exportedGym = dump.gyms[0];
+    expect(exportedGym).toMatchObject({
+      name: 'Basement',
+      inventoryMode: 'EQUIPMENT_FIRST',
+      dumbbellWeights: [10, 12, 14, 16, 19],
+      plateWeights: [1.25, 2.5, 5, 10, 20],
+      barWeights: [20],
+    });
+    expect(exportedGym.platePools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Olympic plates',
+          compatibilityKey: 'olympic_50mm',
+          systemBarbellFamily: 'LARGE',
+          plates: [
+            { weightKg: 5, quantity: null },
+            { weightKg: 20, quantity: 4 },
+          ],
+        }),
+        expect.objectContaining({
+          compatibilityKey: 'system_barbell_small',
+          systemBarbellFamily: 'SMALL',
+          plates: [],
+        }),
+      ]),
+    );
+    expect(exportedGym.equipment).toEqual([
+      expect.objectContaining({
+        name: 'Competition bench station',
+        equipmentType: 'BARBELL',
+        description: 'Flat bench with uprights and safety arms.',
+        manufacturer: 'GymCo',
+        modelName: 'Bench Pro',
+        quantity: 2,
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 20,
+        platePoolCompatibilityKey: 'olympic_50mm',
+        loadingSides: 2,
+        systemBarbellFamily: 'LARGE',
+        imageMimeType: 'image/png',
+        imageBase64: EQUIPMENT_PNG_BASE64,
+        exerciseNames: ['Bench Press'],
+      }),
     ]);
+    expect(exportedGym.exerciseConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          exerciseName: 'Bench Press',
+          systemProfileSupported: true,
+        }),
+        expect.objectContaining({
+          exerciseName: 'Running',
+          isAvailable: false,
+          dumbbellWeights: [7.5],
+          plateWeights: [1.25],
+          barWeights: [10],
+          systemProfileSupported: null,
+        }),
+      ]),
+    );
     expect(dump.sessions[0]).toMatchObject({
       gymName: 'Basement',
       sessionRpe: 8,
@@ -741,13 +767,9 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
       },
       data: { mirrorsLegacyConfig: true },
     });
-    await db.gymExerciseConfig.create({
-      data: {
-        gymId: gym.id,
-        exerciseId: exercise.id,
-        isAvailable: true,
-        isEquipmentMirror: true,
-      },
+    await db.gymExerciseConfig.update({
+      where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      data: { isAvailable: true, isEquipmentMirror: true },
     });
 
     actAs(source.id);
@@ -1071,6 +1093,18 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
 });
 
 describe('POST /api/backup - malformed and oversized input (issue #168)', () => {
+  it('rejects a system Barbell member assigned to a different pool family', async () => {
+    const user = await seedFullUser('victim-family@test.dev');
+    actAs(user.id);
+    const before = await countsFor(user.id);
+    const dump = await (await getBackup(getReq())).json();
+    dump.gyms[0].equipment[0].systemBarbellFamily = 'SMALL';
+
+    const res = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+    expect(res.status).toBe(400);
+    expect(await countsFor(user.id)).toEqual(before);
+  });
+
   it('rejects out-of-bounds values without touching existing data', async () => {
     const user = await seedFullUser('victim@test.dev');
     actAs(user.id);

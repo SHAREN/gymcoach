@@ -42,7 +42,10 @@ type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'>
       | 'dumbbellWeights'
       | 'plateWeights'
       | 'barWeights'
-    > & { preferredEquipmentId?: string | null }
+    > & {
+      preferredEquipmentId?: string | null;
+      systemProfileSupported?: boolean | null;
+    }
   >;
   equipment?: Array<{
     id: string;

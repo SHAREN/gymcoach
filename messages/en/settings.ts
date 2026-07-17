@@ -83,9 +83,9 @@ export const settings = {
         other: 'Other / unrestricted',
       },
       plates: {
-        title: 'Gym-wide plate pools',
+        title: 'Additional plate pools',
         description:
-          'A pool is shared by every compatible bar, Smith machine, leg press, or plate-loaded station in this gym.',
+          'Add compatibility pools for custom Smith machines, leg presses, specialty bars, or other plate-loaded stations.',
         add: 'Add plate pool',
         empty: 'No plate pools yet. Add Olympic, standard, or another compatibility group.',
         edit: 'Edit plate pool',
@@ -110,9 +110,11 @@ export const settings = {
       equipment: {
         title: 'Physical equipment',
         description:
-          'Add each machine or station once, configure how its load works, and link supported exercises.',
+          'Dumbbells and Barbell are permanent system profiles. Add each custom machine or station separately.',
         add: 'Add equipment',
         empty: 'No physical equipment has been added to this gym.',
+        customEmpty:
+          'No custom equipment has been added. The two system profiles remain available above.',
         edit: 'Edit equipment',
         delete: 'Delete equipment',
         deleted: 'Equipment deleted.',
@@ -155,6 +157,63 @@ export const settings = {
         saved: 'Equipment saved.',
         saveError: 'Could not save the equipment.',
         rangeError: 'Check the load range. It must contain no more than 200 values.',
+      },
+      systemProfiles: {
+        systemBadge: 'System',
+        saved: 'System equipment profile saved.',
+        saveError:
+          'Could not save the system equipment profile. Check for duplicate or invalid weights.',
+        dumbbells: {
+          title: 'Dumbbells',
+          edit: 'Edit Dumbbells profile',
+          summary: '{weights} weights · {exercises} exercises',
+          help: 'One normalized weight list is used by every supported dumbbell exercise.',
+          noWeights: 'Add available weights before using this profile for load selection.',
+          dialogTitle: 'Edit Dumbbells',
+          dialogDescription:
+            'Record the available dumbbell weights and choose which exercises this system profile supports.',
+          weights: 'Available dumbbell weights (kg)',
+          weightsHelp: 'Enter each distinct weight once, separated by commas.',
+        },
+        barbell: {
+          title: 'Barbell',
+          edit: 'Edit Barbell profile',
+          summary: '{exercises} supported exercises',
+          familySummary: '{bars} bars · {plates} plate denominations · {sides} loading sides',
+          dialogTitle: 'Edit Barbell',
+          dialogDescription:
+            'Large and small diameter families stay isolated. Every concrete bar uses only its family plate pool.',
+          barWeights: 'Empty bar weights (kg)',
+          barWeight: 'Empty bar weight (kg)',
+          addBar: 'Add bar weight',
+          removeBar: 'Remove bar weight',
+          loadingSides: 'Equally loaded sides',
+          plates: 'Plate denominations',
+          plateWeight: 'Plate weight (kg)',
+          plateQuantity: 'Total quantity',
+          unknownQuantity: 'Unknown',
+          addPlate: 'Add denomination',
+          removePlate: 'Remove denomination',
+        },
+        families: {
+          LARGE: {
+            title: 'Large / thick diameter',
+            description: 'Bars and plates for the large-diameter compatibility standard.',
+          },
+          SMALL: {
+            title: 'Small / thin diameter',
+            description: 'Bars and plates for the small-diameter compatibility standard.',
+          },
+        },
+        exercises: {
+          title: 'Supported exercises',
+          description:
+            'This is the understandable profile list. Saving Barbell applies it to every managed concrete bar.',
+          addMatching: 'Add all matching exercises',
+          clear: 'Clear selection',
+          search: 'Search supported exercises',
+          supportedForExercise: 'Support {exercise}',
+        },
       },
       coverage: {
         title: 'Derived exercise availability',

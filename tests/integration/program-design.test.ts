@@ -101,6 +101,64 @@ describe('buildProgramDesignContext', () => {
     expect(context.history.returnToTraining[0]?.mode).toBe('normal');
   });
 
+  it('keeps an explicitly removed Dumbbells profile exercise unavailable', async () => {
+    const user = await db.user.create({
+      data: { email: 'program-design-system-profile@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Dumbbell fly',
+        muscleGroup: 'CHEST',
+        category: 'ISOLATION',
+        equipmentType: 'DUMBBELL',
+      },
+    });
+    const gym = await db.gym.create({
+      data: {
+        userId: user.id,
+        name: 'Profile exclusions',
+        inventoryMode: 'EQUIPMENT_FIRST',
+        dumbbellWeights: [10, 20],
+        exerciseConfigs: {
+          create: {
+            exerciseId: exercise.id,
+            isAvailable: true,
+            systemProfileSupported: false,
+          },
+        },
+      },
+    });
+    await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
+
+    const context = await buildProgramDesignContext({
+      userId: user.id,
+      goal: 'Build a balanced program',
+      mode: 'NEW_PROGRAM',
+      answers: {
+        trainingExperience: 'INTERMEDIATE',
+        healthStatus: 'NO_RELEVANT_CONCERNS',
+        availableDays: [1, 3, 5],
+        weeklyFrequency: 3,
+        sessionDurationMin: 60,
+        limitations: 'none',
+        equipmentAccess: 'Dumbbells',
+      },
+    });
+
+    expect(context.gym?.exerciseConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          exerciseId: exercise.id,
+          systemProfileSupported: false,
+        }),
+      ]),
+    );
+    expect(context.availableExercises.find((item) => item.id === exercise.id)).toMatchObject({
+      isAvailableInActiveGym: false,
+    });
+  });
+
   it('returns focused questions instead of letting the LLM guess', async () => {
     const user = await db.user.create({
       data: { email: 'questions@test.dev', passwordHash: 'x' },

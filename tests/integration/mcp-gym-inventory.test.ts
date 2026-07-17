@@ -51,6 +51,19 @@ describe('GymCoach MCP gym inventory', () => {
     expect(listedData.activeGymId).toBe(gymA.id);
     expect(listedData.gyms).toEqual([expect.objectContaining({ id: gymA.id, name: 'Olymp' })]);
 
+    const ownedRead = await client.callTool({
+      name: 'get_gym_inventory',
+      arguments: { gymId: gymA.id },
+    });
+    expect(ownedRead.structuredContent).toMatchObject({
+      gym: {
+        systemProfiles: {
+          dumbbells: { kind: 'DUMBBELLS' },
+          barbell: { kind: 'BARBELL' },
+        },
+      },
+    });
+
     const foreignRead = await client.callTool({
       name: 'get_gym_inventory',
       arguments: { gymId: gymB.id },
@@ -87,6 +100,16 @@ describe('GymCoach MCP gym inventory', () => {
         equipmentType: 'MACHINE',
       },
     });
+    const dumbbellExercise = await db.exercise.create({
+      data: {
+        id: '550e8400-e29b-41d4-a716-446655440101',
+        userId: user.id,
+        name: 'Dumbbell press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'DUMBBELL',
+      },
+    });
     const gym = await db.gym.create({ data: { userId: user.id, name: 'Olymp' } });
     await db.gymExerciseConfig.create({
       data: {
@@ -114,6 +137,31 @@ describe('GymCoach MCP gym inventory', () => {
     expect((await db.gym.findUniqueOrThrow({ where: { id: gym.id } })).dumbbellWeights).toEqual([
       10, 15.5, 19,
     ]);
+
+    const systemProfile = await client.callTool({
+      name: 'update_gym_system_profile',
+      arguments: {
+        confirmed: true,
+        gymId: gym.id,
+        profile: 'DUMBBELLS',
+        dumbbellWeights: [12.5, 20],
+        exerciseIds: [dumbbellExercise.id],
+      },
+    });
+    expect(systemProfile.isError).not.toBe(true);
+    expect(systemProfile.structuredContent).toMatchObject({
+      ok: true,
+      inventory: {
+        gym: {
+          systemProfiles: {
+            dumbbells: {
+              weightsKg: [12.5, 20],
+              exerciseLinks: [expect.objectContaining({ id: dumbbellExercise.id })],
+            },
+          },
+        },
+      },
+    });
 
     const platePool = await client.callTool({
       name: 'upsert_gym_plate_pool',
@@ -236,7 +284,11 @@ describe('GymCoach MCP gym inventory', () => {
           image: { kind: string; mimeType: string } | null;
           exerciseLinks: Array<{ id: string }>;
         }>;
-        platePools: Array<{ compatibilityKey: string; plates: Array<{ quantity: number | null }> }>;
+        platePools: Array<{
+          compatibilityKey: string;
+          systemBarbellFamily: 'LARGE' | 'SMALL' | null;
+          plates: Array<{ quantity: number | null }>;
+        }>;
         exerciseCoverage: Array<{
           id: string;
           availabilitySource: string;
@@ -252,19 +304,25 @@ describe('GymCoach MCP gym inventory', () => {
         exerciseLinks: [expect.objectContaining({ id: exercise.id })],
       }),
     ]);
-    expect(inventoryData.gym.platePools).toEqual([
-      expect.objectContaining({
-        compatibilityKey: 'olympic_50mm',
-        plates: expect.arrayContaining([expect.objectContaining({ quantity: null })]),
-      }),
-    ]);
-    expect(inventoryData.gym.exerciseCoverage).toEqual([
-      expect.objectContaining({
-        id: exercise.id,
-        availabilitySource: 'equipment',
-        attainableLoadsKg: [15, 25, 35, 45],
-      }),
-    ]);
+    expect(inventoryData.gym.platePools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          compatibilityKey: 'olympic_50mm',
+          plates: expect.arrayContaining([expect.objectContaining({ quantity: null })]),
+        }),
+        expect.objectContaining({ systemBarbellFamily: 'LARGE' }),
+        expect.objectContaining({ systemBarbellFamily: 'SMALL' }),
+      ]),
+    );
+    expect(inventoryData.gym.exerciseCoverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: exercise.id,
+          availabilitySource: 'equipment',
+          attainableLoadsKg: [15, 25, 35, 45],
+        }),
+      ]),
+    );
 
     const cleared = await client.callTool({
       name: 'set_gym_equipment_image',

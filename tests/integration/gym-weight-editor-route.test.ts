@@ -37,6 +37,7 @@ describe('PATCH /api/gyms/:id/weights', () => {
       data: {
         userId: user.id,
         name: 'Olymp',
+        inventoryMode: 'LEGACY',
         barWeights: [20],
         plateWeights: [1.25, 2.5],
         exerciseConfigs: {
@@ -75,6 +76,57 @@ describe('PATCH /api/gyms/:id/weights', () => {
       barWeights: [10],
       plateWeights: [1.25],
     });
+  });
+
+  it('rejects a shared legacy free-weight write in equipment-first mode', async () => {
+    const user = await db.user.create({
+      data: { email: 'gym-weights-equipment-first@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const gym = await db.gym.create({
+      data: {
+        userId: user.id,
+        name: 'Equipment first',
+        inventoryMode: 'EQUIPMENT_FIRST',
+        barWeights: [20],
+        exerciseConfigs: {
+          create: {
+            exerciseId: exercise.id,
+            isAvailable: true,
+            systemProfileSupported: true,
+          },
+        },
+      },
+    });
+    mockUserId.mockResolvedValue(user.id);
+
+    const response = await PATCH(
+      request({
+        exerciseId: exercise.id,
+        scope: 'equipment',
+        barWeights: [15, 20],
+        plateWeights: [1.25, 2.5],
+      }),
+      { params: Promise.resolve({ id: gym.id }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await db.gym.findUniqueOrThrow({ where: { id: gym.id } })).toMatchObject({
+      barWeights: [20],
+    });
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ systemProfileSupported: true });
   });
 
   it('stores a dumbbell override only for the selected exercise', async () => {

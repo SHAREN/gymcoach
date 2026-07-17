@@ -120,6 +120,73 @@ describe('return-to-training history builder', () => {
     });
   });
 
+  it('does not reuse shared Dumbbells loads after explicit profile removal', async () => {
+    const user = await db.user.create({
+      data: { email: 'return-system-profile@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Dumbbell row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'DUMBBELL',
+      },
+    });
+    const session = await db.session.create({
+      data: { userId: user.id, startedAt: daysAgo(60) },
+    });
+    await db.set.create({
+      data: {
+        sessionId: session.id,
+        exerciseId: exercise.id,
+        setNumber: 1,
+        weight: 20,
+        reps: 10,
+        rir: 2,
+        completedAt: daysAgo(60),
+      },
+    });
+
+    const recommendations = await getReturnToTrainingRecommendations({
+      userId: user.id,
+      programExercises: [
+        {
+          id: 'removed-dumbbell-profile',
+          exerciseId: exercise.id,
+          targetSets: 3,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise,
+        },
+      ],
+      excludeSessionId: null,
+      now,
+      gym: {
+        inventoryMode: 'EQUIPMENT_FIRST',
+        dumbbellWeights: [10, 20],
+        plateWeights: [],
+        barWeights: [],
+        exerciseConfigs: [
+          {
+            exerciseId: exercise.id,
+            isAvailable: true,
+            systemProfileSupported: false,
+            weightOptions: [],
+            dumbbellWeights: [],
+            plateWeights: [],
+            barWeights: [],
+          },
+        ],
+      },
+    });
+
+    expect(recommendations['removed-dumbbell-profile']).toMatchObject({
+      weightCeiling: null,
+      suggestedWeight: null,
+    });
+  });
+
   it('keeps old exact-machine history after more than sixty newer other-machine sets', async () => {
     const user = await db.user.create({
       data: { email: 'return-equipment-history@test.dev', passwordHash: 'x' },

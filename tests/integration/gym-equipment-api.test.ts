@@ -24,6 +24,7 @@ import {
 } from '@/app/api/gym-equipment/[id]/image/route';
 import { PATCH as updateExerciseWeights } from '@/app/api/gyms/[id]/weights/route';
 import { PATCH as updateInventoryMode } from '@/app/api/gyms/[id]/inventory/route';
+import { PUT as updateSystemProfile } from '@/app/api/gyms/[id]/system-profiles/[profile]/route';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -475,7 +476,7 @@ describe('gym equipment REST API', () => {
     ).toMatchObject({ isEquipmentMirror: false, weightOptions: [12, 24] });
   });
 
-  it('edits a small bar preference and lets an older settings payload clear it on unlink', async () => {
+  it('preserves a small bar preference until the Barbell profile removes support', async () => {
     const { user, token, gym } = await seedUser('preferred-bar-settings@test.dev');
     const exercise = await db.exercise.create({
       data: {
@@ -544,7 +545,44 @@ describe('gym equipment REST API', () => {
       }),
       params(created.equipment.id),
     );
-    expect(updatedResponse.status).toBe(200);
+    expect(updatedResponse.status).toBe(409);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: created.equipment.id });
+
+    const profileResponse = await updateSystemProfile(
+      request(`http://test.local/api/gyms/${gym.id}/system-profiles/barbell`, 'PUT', token, {
+        exerciseIds: [],
+        families: inventory.gym.systemProfiles.barbell.families.map(
+          (family: {
+            family: 'LARGE' | 'SMALL';
+            loadingSides: number;
+            bars: Array<{ id: string; baseLoadKg: number }>;
+            pool: {
+              plates: Array<{ weightKg: number; quantity: number | null }>;
+            };
+          }) => ({
+            family: family.family,
+            loadingSides: family.loadingSides,
+            bars:
+              family.bars.length > 0
+                ? family.bars.map((bar) => ({
+                    equipmentId: bar.id,
+                    weightKg: bar.baseLoadKg,
+                  }))
+                : [{ weightKg: 6 }],
+            plates: family.pool.plates.map((plate) => ({
+              weightKg: plate.weightKg,
+              quantity: plate.quantity,
+            })),
+          }),
+        ),
+      }),
+      { params: Promise.resolve({ id: gym.id, profile: 'barbell' }) },
+    );
+    expect(profileResponse.status).toBe(200);
     expect(
       await db.gymExerciseConfig.findUniqueOrThrow({
         where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },

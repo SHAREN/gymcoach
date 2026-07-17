@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { gymCreateSchema } from '@/lib/schemas/gym';
 import { validateGymExerciseConfigs } from '@/lib/gym-data';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 
 export async function GET(req: Request) {
   try {
@@ -47,12 +48,8 @@ export async function POST(req: Request) {
           barWeights: input.barWeights,
           exerciseConfigs: { createMany: { data: exerciseConfigs } },
         },
-        include: {
-          exerciseConfigs: true,
-          platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
-          equipment: { include: { exerciseLinks: true, platePool: { include: { plates: true } } } },
-        },
       });
+      await ensureGymSystemProfiles(tx, userId, gym.id);
       const user = await tx.user.findUnique({
         where: { id: userId },
         select: { activeGymId: true },
@@ -60,7 +57,14 @@ export async function POST(req: Request) {
       if (input.makeActive || !user?.activeGymId) {
         await tx.user.update({ where: { id: userId }, data: { activeGymId: gym.id } });
       }
-      return gym;
+      return tx.gym.findUniqueOrThrow({
+        where: { id: gym.id },
+        include: {
+          exerciseConfigs: true,
+          platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
+          equipment: { include: { exerciseLinks: true, platePool: { include: { plates: true } } } },
+        },
+      });
     });
 
     return NextResponse.json(created, { status: 201 });

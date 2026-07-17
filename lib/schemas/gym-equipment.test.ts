@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gymBarbellSystemProfileInputSchema,
+  gymDumbbellsSystemProfileInputSchema,
   gymEquipmentImageSchema,
   gymEquipmentInputSchema,
   gymEquipmentUpsertSchema,
@@ -96,5 +98,34 @@ describe('gym equipment schemas', () => {
     expect(
       gymEquipmentImageSchema.safeParse({ imageBase64: 'abcd', mimeType: 'image/jpeg' }).success,
     ).toBe(true);
+  });
+
+  it('rejects duplicate system-profile weights and requires both barbell families', () => {
+    expect(() =>
+      gymDumbbellsSystemProfileInputSchema.parse({
+        weightsKg: [10, 10],
+        exerciseIds: [],
+      }),
+    ).toThrow(/Duplicate weights/);
+
+    expect(() =>
+      gymBarbellSystemProfileInputSchema.parse({
+        exerciseIds: [],
+        families: [
+          {
+            family: 'LARGE',
+            loadingSides: 2,
+            bars: [{ weightKg: 20 }],
+            plates: [{ weightKg: 5, quantity: null }],
+          },
+          {
+            family: 'LARGE',
+            loadingSides: 2,
+            bars: [{ weightKg: 10 }],
+            plates: [{ weightKg: 2.5, quantity: null }],
+          },
+        ],
+      }),
+    ).toThrow(/one large and one small/);
   });
 });

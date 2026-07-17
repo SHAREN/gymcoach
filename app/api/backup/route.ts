@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
+  BarbellDiameterFamily,
   ExerciseCategory,
   EquipmentLoadType,
   EquipmentType,
@@ -27,6 +28,8 @@ import {
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { sorenessSchema } from '@/lib/schemas/readiness';
 import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
+import { resolveEquipmentType } from '@/lib/gym-loads';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -59,7 +62,7 @@ import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 11;
+const VERSION = 12;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -206,6 +209,7 @@ export async function GET(req: Request) {
         platePools: gym.platePools.map((pool) => ({
           name: pool.name,
           compatibilityKey: pool.compatibilityKey,
+          systemBarbellFamily: pool.systemBarbellFamily,
           plates: pool.plates.map((plate) => ({
             weightKg: plate.weightKg,
             quantity: plate.quantity,
@@ -224,6 +228,7 @@ export async function GET(req: Request) {
           baseLoadKg: item.baseLoadKg,
           platePoolCompatibilityKey: item.platePool?.compatibilityKey ?? null,
           loadingSides: item.loadingSides,
+          systemBarbellFamily: item.systemBarbellFamily,
           imageUrl: item.imageUrl,
           imageMimeType: item.imageMimeType,
           imageBase64: item.imageData ? Buffer.from(item.imageData).toString('base64') : null,
@@ -240,6 +245,7 @@ export async function GET(req: Request) {
           plateWeights: config.plateWeights,
           barWeights: config.barWeights,
           isEquipmentMirror: config.isEquipmentMirror,
+          systemProfileSupported: config.systemProfileSupported,
           preferredEquipmentName: config.preferredEquipment?.name ?? null,
         })),
       })),
@@ -555,6 +561,7 @@ const importSchema = z.object({
                 .min(1)
                 .max(80)
                 .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
               plates: z
                 .array(
                   z.object({
@@ -582,6 +589,7 @@ const importSchema = z.object({
               baseLoadKg: z.number().min(0).max(5000).optional(),
               platePoolCompatibilityKey: z.string().max(80).nullable().optional(),
               loadingSides: z.number().int().min(1).max(8).optional(),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
               imageUrl: z
                 .string()
                 .url()
@@ -609,6 +617,7 @@ const importSchema = z.object({
               plateWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               barWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               isEquipmentMirror: z.boolean().optional(),
+              systemProfileSupported: z.boolean().nullable().optional(),
               preferredEquipmentName: z.string().trim().min(1).max(120).nullable().optional(),
             }),
           )
@@ -732,14 +741,15 @@ function validateImportedPreferredEquipment(
   }>,
 ) {
   const exerciseTypeByName = new Map(
-    exercises.map((exercise) => [exercise.name, exercise.equipmentType ?? EquipmentType.OTHER]),
+    exercises.map((exercise) => {
+      const equipmentType = exercise.equipmentType ?? EquipmentType.OTHER;
+      return [exercise.name, resolveEquipmentType(equipmentType, exercise.name)];
+    }),
   );
   for (const gym of gyms) {
     for (const config of gym.exerciseConfigs) {
       if (!config.preferredEquipmentName) continue;
-      const equipment = gym.equipment?.find(
-        (item) => item.name === config.preferredEquipmentName,
-      );
+      const equipment = gym.equipment?.find((item) => item.name === config.preferredEquipmentName);
       if (
         !equipment ||
         !equipment.exerciseNames.includes(config.exerciseName) ||
@@ -748,6 +758,56 @@ function validateImportedPreferredEquipment(
         throw new ApiError(
           400,
           'Preferred equipment must be linked to an exercise with a compatible equipment type.',
+        );
+      }
+    }
+  }
+}
+
+function validateImportedSystemBarbellFamilies(
+  gyms: Array<{
+    platePools?: Array<{
+      compatibilityKey: string;
+      systemBarbellFamily?: BarbellDiameterFamily | null;
+    }>;
+    equipment?: Array<{
+      equipmentType: EquipmentType;
+      loadType?: EquipmentLoadType;
+      platePoolCompatibilityKey?: string | null;
+      systemBarbellFamily?: BarbellDiameterFamily | null;
+    }>;
+  }>,
+) {
+  for (const gym of gyms) {
+    const poolsByCompatibilityKey = new Map(
+      (gym.platePools ?? []).map((pool) => [pool.compatibilityKey, pool]),
+    );
+    const familyCounts = new Map<BarbellDiameterFamily, number>();
+    for (const pool of gym.platePools ?? []) {
+      if (!pool.systemBarbellFamily) continue;
+      familyCounts.set(
+        pool.systemBarbellFamily,
+        (familyCounts.get(pool.systemBarbellFamily) ?? 0) + 1,
+      );
+    }
+    if ([...familyCounts.values()].some((count) => count > 1)) {
+      throw new ApiError(400, 'A gym may contain only one plate pool per Barbell family.');
+    }
+
+    for (const equipment of gym.equipment ?? []) {
+      if (!equipment.systemBarbellFamily) continue;
+      const pool = equipment.platePoolCompatibilityKey
+        ? poolsByCompatibilityKey.get(equipment.platePoolCompatibilityKey)
+        : null;
+      if (
+        equipment.equipmentType !== EquipmentType.BARBELL ||
+        (equipment.loadType ?? EquipmentLoadType.FIXED) !== EquipmentLoadType.PLATE_LOADED ||
+        !pool ||
+        pool.systemBarbellFamily !== equipment.systemBarbellFamily
+      ) {
+        throw new ApiError(
+          400,
+          'A system Barbell member must reference a plate pool from the same family.',
         );
       }
     }
@@ -766,6 +826,7 @@ export async function POST(req: Request) {
     validateImportedLegacyEquipmentSnapshots(payload.sessions);
     validateImportedMembershipOrdinals(payload.sessions);
     validateImportedPreferredEquipment(payload.exercises, payload.gyms ?? []);
+    validateImportedSystemBarbellFamilies(payload.gyms ?? []);
 
     await db.$transaction(
       async (tx) => {
@@ -841,6 +902,7 @@ export async function POST(req: Request) {
                     plateWeights: config.plateWeights,
                     barWeights: config.barWeights,
                     isEquipmentMirror: config.isEquipmentMirror ?? false,
+                    systemProfileSupported: config.systemProfileSupported ?? null,
                   },
                 ]
               : [];
@@ -877,6 +939,7 @@ export async function POST(req: Request) {
                 gymId: created.id,
                 name: pool.name,
                 compatibilityKey: pool.compatibilityKey,
+                systemBarbellFamily: pool.systemBarbellFamily ?? null,
                 plates: {
                   createMany: {
                     data: [
@@ -919,6 +982,7 @@ export async function POST(req: Request) {
                   ? (poolIdByCompatibilityKey.get(item.platePoolCompatibilityKey) ?? null)
                   : null,
                 loadingSides: item.loadingSides ?? 2,
+                systemBarbellFamily: item.systemBarbellFamily ?? null,
                 imageUrl: decoded ? null : (item.imageUrl ?? null),
                 imageData: decoded?.bytes,
                 imageMimeType: decoded?.mimeType ?? null,
@@ -962,6 +1026,7 @@ export async function POST(req: Request) {
               data: { preferredEquipmentId, isEquipmentMirror: false },
             });
           }
+          await ensureGymSystemProfiles(tx, userId, created.id);
           gymIdByName.set(gym.name, created.id);
         }
         const activeGymId = payload.profile?.activeGymName

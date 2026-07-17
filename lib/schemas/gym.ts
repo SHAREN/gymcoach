@@ -28,8 +28,21 @@ export const gymCreateSchema = z.object({
 });
 
 export const gymUpdateSchema = gymCreateSchema
-  .omit({ makeActive: true, inventoryMode: true })
-  .extend({ inventoryMode: z.nativeEnum(GymInventoryMode).optional() });
+  .omit({
+    makeActive: true,
+    inventoryMode: true,
+    dumbbellWeights: true,
+    plateWeights: true,
+    barWeights: true,
+    exerciseConfigs: true,
+  })
+  .extend({
+    inventoryMode: z.nativeEnum(GymInventoryMode).optional(),
+    dumbbellWeights: gymWeightListSchema.optional(),
+    plateWeights: gymWeightListSchema.optional(),
+    barWeights: gymWeightListSchema.optional(),
+    exerciseConfigs: z.array(gymExerciseConfigSchema).max(2000).optional(),
+  });
 
 export const gymWeightUpdateSchema = z.object({
   exerciseId: z.string().min(1),

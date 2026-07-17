@@ -342,10 +342,13 @@ describe('equipment-first REST domain', () => {
         nominalResistanceKg: 20,
       }),
     });
-    const supportedSnapshot = (
-      await db.set.findUniqueOrThrow({ where: { id: createdSet.id } })
-    ).equipmentLoadSnapshot;
-    if (!supportedSnapshot || typeof supportedSnapshot !== 'object' || Array.isArray(supportedSnapshot)) {
+    const supportedSnapshot = (await db.set.findUniqueOrThrow({ where: { id: createdSet.id } }))
+      .equipmentLoadSnapshot;
+    if (
+      !supportedSnapshot ||
+      typeof supportedSnapshot !== 'object' ||
+      Array.isArray(supportedSnapshot)
+    ) {
       throw new Error('Expected a frozen v2 equipment snapshot.');
     }
     for (const version of [1, 99]) {
@@ -381,21 +384,31 @@ describe('equipment-first REST domain', () => {
       ),
       { params: Promise.resolve({ id: benchStation.id }) },
     );
-    expect(transitionResponse.status).toBe(200);
+    expect(transitionResponse.status).toBe(409);
     expect(
       await db.gymEquipment.findUniqueOrThrow({ where: { id: benchStation.id } }),
-    ).toMatchObject({ loadType: 'SELECTORIZED', platePoolId: null });
+    ).toMatchObject({
+      loadType: 'PLATE_LOADED',
+      platePoolId: pool.id,
+      systemBarbellFamily: 'LARGE',
+    });
 
-    const smith = await db.gymEquipment.findFirstOrThrow({
-      where: { gymId: gym.id, name: 'Smith machine' },
+    const customEquipment = await db.gymEquipment.create({
+      data: {
+        gymId: gym.id,
+        name: 'Custom selector',
+        equipmentType: 'MACHINE',
+        loadType: 'SELECTORIZED',
+        weightOptions: [20, 30],
+      },
     });
     await expect(
       upsertOwnedGymEquipment(user.id, gym.id, {
-        equipmentId: smith.id,
-        name: smith.name,
-        equipmentType: smith.equipmentType,
+        equipmentId: customEquipment.id,
+        name: customEquipment.name,
+        equipmentType: customEquipment.equipmentType,
         loadType: 'FIXED',
-        weightOptions: [15, 25],
+        weightOptions: [20, 30],
         platePoolId: pool.id,
       }),
     ).rejects.toThrow('Only plate-loaded equipment may reference a plate pool.');

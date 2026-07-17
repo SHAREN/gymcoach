@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { EquipmentLoadType, EquipmentType, GymInventoryMode } from '@/lib/prisma-client';
 import type {
@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { SystemEquipmentProfiles } from '@/components/settings/system-equipment-profiles';
 
 interface Props {
   gymId: string;
@@ -59,7 +60,6 @@ export function GymInventoryManager({ gymId, onModeChanged }: Props) {
   const [loading, setLoading] = useState(true);
   const [equipmentDialog, setEquipmentDialog] = useState<GymEquipmentView | 'new' | null>(null);
   const [poolDialog, setPoolDialog] = useState<GymPlatePoolView | 'new' | null>(null);
-  const [coverageSearch, setCoverageSearch] = useState('');
 
   async function loadInventory() {
     setLoading(true);
@@ -117,15 +117,6 @@ export function GymInventoryManager({ gymId, onModeChanged }: Props) {
     await loadInventory();
   }
 
-  const filteredCoverage = useMemo(() => {
-    if (!inventory) return [];
-    const query = coverageSearch.trim().toLocaleLowerCase();
-    if (!query) return inventory.exerciseCoverage;
-    return inventory.exerciseCoverage.filter((item) =>
-      exerciseName(item.name).toLocaleLowerCase().includes(query),
-    );
-  }, [coverageSearch, exerciseName, inventory]);
-
   if (loading && !inventory) {
     return <p className="text-sm text-muted-foreground">{t('loading')}</p>;
   }
@@ -169,67 +160,6 @@ export function GymInventoryManager({ gymId, onModeChanged }: Props) {
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold">{t('plates.title')}</h3>
-            <p className="text-xs text-muted-foreground">{t('plates.description')}</p>
-          </div>
-          <Button type="button" size="sm" variant="outline" onClick={() => setPoolDialog('new')}>
-            <Plus className="size-4" />
-            <span className="ml-2">{t('plates.add')}</span>
-          </Button>
-        </div>
-        {inventory.platePools.length === 0 ? (
-          <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-            {t('plates.empty')}
-          </p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {inventory.platePools.map((pool) => (
-              <Card key={pool.id}>
-                <CardHeader className="space-y-1 pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold">{pool.name}</p>
-                      <p className="text-xs text-muted-foreground">{pool.compatibilityKey}</p>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('plates.edit')}
-                        onClick={() => setPoolDialog(pool)}
-                      >
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('plates.delete')}
-                        onClick={() => void removePool(pool)}
-                      >
-                        <Trash2 className="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex flex-wrap gap-1.5 pt-0">
-                  {pool.plates.map((plate) => (
-                    <Badge key={plate.id} variant="secondary">
-                      {plate.weightKg} kg
-                      {plate.quantity == null ? '' : ` x ${plate.quantity}`}
-                    </Badge>
-                  ))}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-3 border-t pt-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
             <h3 className="text-sm font-semibold">{t('equipment.title')}</h3>
             <p className="text-xs text-muted-foreground">{t('equipment.description')}</p>
           </div>
@@ -243,99 +173,130 @@ export function GymInventoryManager({ gymId, onModeChanged }: Props) {
             <span className="ml-2">{t('equipment.add')}</span>
           </Button>
         </div>
-        {inventory.equipment.length === 0 ? (
+        <SystemEquipmentProfiles gymId={gymId} inventory={inventory} onSaved={loadInventory} />
+        {inventory.equipment.filter((item) => item.systemBarbellFamily == null).length === 0 ? (
           <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-            {t('equipment.empty')}
+            {t('equipment.customEmpty')}
           </p>
         ) : (
           <div className="space-y-2">
-            {inventory.equipment.map((item) => (
-              <div key={item.id} className="rounded-md border p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-semibold">{item.name}</p>
-                      <Badge variant="outline">{item.loadType}</Badge>
+            {inventory.equipment
+              .filter((item) => item.systemBarbellFamily == null)
+              .map((item) => (
+                <div key={item.id} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold">{item.name}</p>
+                        <Badge variant="outline">{item.loadType}</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t(`equipmentTypes.${equipmentTypeMessageKeys[item.equipmentType]}`)}
+                        {item.loadType === 'SELECTORIZED'
+                          ? ` · ${t('equipment.multiplierSummary', {
+                              multiplier: item.selectedLoadMultiplier,
+                            })}`
+                          : ''}
+                        {item.loadType === 'PLATE_LOADED' && item.platePool
+                          ? ` · ${item.platePool.name}`
+                          : ''}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {item.exerciseLinks.map((exercise) => (
+                          <Badge key={exercise.id} variant="secondary">
+                            {exerciseName(exercise.name)}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t(`equipmentTypes.${equipmentTypeMessageKeys[item.equipmentType]}`)}
-                      {item.loadType === 'SELECTORIZED'
-                        ? ` · ${t('equipment.multiplierSummary', {
-                            multiplier: item.selectedLoadMultiplier,
-                          })}`
-                        : ''}
-                      {item.loadType === 'PLATE_LOADED' && item.platePool
-                        ? ` · ${item.platePool.name}`
-                        : ''}
-                    </p>
-                    <div className="flex flex-wrap gap-1">
-                      {item.exerciseLinks.map((exercise) => (
-                        <Badge key={exercise.id} variant="secondary">
-                          {exerciseName(exercise.name)}
-                        </Badge>
-                      ))}
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t('equipment.edit')}
+                        onClick={() => setEquipmentDialog(item)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t('equipment.delete')}
+                        onClick={() => void removeEquipment(item)}
+                      >
+                        <Trash2 className="size-4 text-destructive" />
+                      </Button>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t('equipment.edit')}
-                      onClick={() => setEquipmentDialog(item)}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t('equipment.delete')}
-                      onClick={() => void removeEquipment(item)}
-                    >
-                      <Trash2 className="size-4 text-destructive" />
-                    </Button>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </section>
 
       <section className="space-y-3 border-t pt-4">
-        <div>
-          <h3 className="text-sm font-semibold">{t('coverage.title')}</h3>
-          <p className="text-xs text-muted-foreground">{t('coverage.description')}</p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">{t('plates.title')}</h3>
+            <p className="text-xs text-muted-foreground">{t('plates.description')}</p>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={() => setPoolDialog('new')}>
+            <Plus className="size-4" />
+            <span className="ml-2">{t('plates.add')}</span>
+          </Button>
         </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            value={coverageSearch}
-            onChange={(event) => setCoverageSearch(event.target.value)}
-            placeholder={t('coverage.search')}
-            className="pl-9"
-          />
-        </div>
-        <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-          {filteredCoverage.map((exercise) => (
-            <div
-              key={exercise.id}
-              className="flex items-start justify-between gap-3 rounded-md border p-3"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{exerciseName(exercise.name)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {t(`coverage.sources.${exercise.availabilitySource}`)}
-                </p>
-              </div>
-              <Badge variant={exercise.isAvailable ? 'secondary' : 'outline'}>
-                {t(exercise.isAvailable ? 'coverage.available' : 'coverage.unavailable')}
-              </Badge>
-            </div>
-          ))}
-        </div>
+        {inventory.platePools.filter((pool) => pool.systemBarbellFamily == null).length === 0 ? (
+          <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+            {t('plates.empty')}
+          </p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {inventory.platePools
+              .filter((pool) => pool.systemBarbellFamily == null)
+              .map((pool) => (
+                <Card key={pool.id}>
+                  <CardHeader className="space-y-1 pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">{pool.name}</p>
+                        <p className="text-xs text-muted-foreground">{pool.compatibilityKey}</p>
+                      </div>
+                      <div className="flex gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t('plates.edit')}
+                          onClick={() => setPoolDialog(pool)}
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t('plates.delete')}
+                          onClick={() => void removePool(pool)}
+                        >
+                          <Trash2 className="size-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-1.5 pt-0">
+                    {pool.plates.map((plate) => (
+                      <Badge key={plate.id} variant="secondary">
+                        {plate.weightKg} kg
+                        {plate.quantity == null ? '' : ` x ${plate.quantity}`}
+                      </Badge>
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+          </div>
+        )}
       </section>
 
       <PlatePoolDialog

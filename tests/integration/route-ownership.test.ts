@@ -40,6 +40,51 @@ async function seed() {
   return { a, b, exercise, session, set };
 }
 
+async function createSystemBars(gymId: string) {
+  const [largePool, smallPool] = await Promise.all([
+    db.gymPlatePool.create({
+      data: {
+        gymId,
+        name: 'Large system plates',
+        compatibilityKey: 'large-system',
+        systemBarbellFamily: 'LARGE',
+      },
+    }),
+    db.gymPlatePool.create({
+      data: {
+        gymId,
+        name: 'Small system plates',
+        compatibilityKey: 'small-system',
+        systemBarbellFamily: 'SMALL',
+      },
+    }),
+  ]);
+  return Promise.all([
+    db.gymEquipment.create({
+      data: {
+        gymId,
+        name: '20 kg system bar',
+        equipmentType: 'BARBELL',
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 20,
+        platePoolId: largePool.id,
+        systemBarbellFamily: 'LARGE',
+      },
+    }),
+    db.gymEquipment.create({
+      data: {
+        gymId,
+        name: '6 kg system bar',
+        equipmentType: 'BARBELL',
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 6,
+        platePoolId: smallPool.id,
+        systemBarbellFamily: 'SMALL',
+      },
+    }),
+  ]);
+}
+
 beforeEach(() => {
   mockUserId.mockReset();
 });
@@ -158,6 +203,129 @@ describe('route ownership: PUT /api/sessions/[id]', () => {
 });
 
 describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
+  it('accepts a barbell preference for a legacy OTHER exercise inferred from its name', async () => {
+    const { a, exercise } = await seed();
+    await db.exercise.update({
+      where: { id: exercise.id },
+      data: { name: 'EZ-bar curl from an old backup', equipmentType: 'OTHER' },
+    });
+    const gym = await db.gym.create({ data: { userId: a.id, name: 'Legacy gym' } });
+    const [largeBar, smallBar] = await createSystemBars(gym.id);
+    actAs(a.id);
+
+    const partialResponse = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [{ gymId: gym.id, equipmentIds: [smallBar.id] }],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(partialResponse.status).toBe(400);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [
+          {
+            gymId: gym.id,
+            equipmentIds: [largeBar.id, smallBar.id],
+            preferredEquipmentId: smallBar.id,
+          },
+        ],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({
+      preferredEquipmentId: smallBar.id,
+      isEquipmentMirror: false,
+      systemProfileSupported: true,
+    });
+    expect(
+      await db.gymEquipmentExercise.count({
+        where: { exerciseId: exercise.id, equipmentId: { in: [largeBar.id, smallBar.id] } },
+      }),
+    ).toBe(2);
+
+    const removeResponse = await patchExerciseEquipment(
+      jsonReq('PATCH', { gyms: [{ gymId: gym.id, equipmentIds: [] }] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(removeResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: null, systemProfileSupported: false });
+    expect(
+      await db.gymEquipmentExercise.count({
+        where: { exerciseId: exercise.id, equipmentId: { in: [largeBar.id, smallBar.id] } },
+      }),
+    ).toBe(0);
+
+    await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'CABLE' } });
+    const wrongTypeResponse = await patchExerciseEquipment(
+      jsonReq('PATCH', {
+        gyms: [{ gymId: gym.id, equipmentIds: [largeBar.id, smallBar.id] }],
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(wrongTypeResponse.status).toBe(400);
+  });
+
+  it('enforces system-bar membership for the legacy equipmentIds payload', async () => {
+    const { a, exercise } = await seed();
+    await db.exercise.update({
+      where: { id: exercise.id },
+      data: { name: 'Barbell bench press', equipmentType: 'BARBELL' },
+    });
+    const gym = await db.gym.create({ data: { userId: a.id, name: 'Legacy payload gym' } });
+    const [largeBar, smallBar] = await createSystemBars(gym.id);
+    actAs(a.id);
+
+    const partialResponse = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [largeBar.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(partialResponse.status).toBe(400);
+
+    const response = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [largeBar.id, smallBar.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(response.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ systemProfileSupported: true });
+
+    const removeResponse = await patchExerciseEquipment(jsonReq('PATCH', { equipmentIds: [] }), {
+      params: Promise.resolve({ id: exercise.id }),
+    });
+    expect(removeResponse.status).toBe(200);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ systemProfileSupported: false });
+    expect(
+      await db.gymEquipmentExercise.count({
+        where: { exerciseId: exercise.id, equipmentId: { in: [largeBar.id, smallBar.id] } },
+      }),
+    ).toBe(0);
+
+    await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'CABLE' } });
+    const wrongTypeResponse = await patchExerciseEquipment(
+      jsonReq('PATCH', { equipmentIds: [largeBar.id, smallBar.id] }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(wrongTypeResponse.status).toBe(400);
+  });
+
   it('updates one gym preference without removing another gym links or frozen set facts', async () => {
     const { a, exercise, set } = await seed();
     await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'BARBELL' } });

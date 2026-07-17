@@ -1,4 +1,9 @@
-import type { EquipmentLoadType, EquipmentType, GymInventoryMode } from '@/lib/prisma-client';
+import type {
+  BarbellDiameterFamily,
+  EquipmentLoadType,
+  EquipmentType,
+  GymInventoryMode,
+} from '@/lib/prisma-client';
 import type { ResolvedEquipmentLoadProfile } from '@/lib/gym-loads';
 
 export interface GymInventoryExercise {
@@ -20,6 +25,7 @@ export interface GymPlatePoolView {
   id: string;
   name: string;
   compatibilityKey: string;
+  systemBarbellFamily: BarbellDiameterFamily | null;
   plates: GymPlateInventoryItemView[];
   equipment?: { id: string; name: string }[];
 }
@@ -39,6 +45,7 @@ export interface GymEquipmentView {
   baseLoadKg: number;
   platePoolId: string | null;
   loadingSides: number;
+  systemBarbellFamily: BarbellDiameterFamily | null;
   platePool: GymPlatePoolView | null;
   exerciseLinks: GymInventoryExercise[];
   preferredExerciseIds: string[];
@@ -74,7 +81,32 @@ export interface GymInventoryView {
   };
   platePools: GymPlatePoolView[];
   equipment: GymEquipmentView[];
+  systemProfiles: {
+    dumbbells: GymDumbbellsSystemProfileView;
+    barbell: GymBarbellSystemProfileView;
+  };
   exerciseCoverage: GymExerciseCoverageView[];
+}
+
+export interface GymDumbbellsSystemProfileView {
+  id: string;
+  kind: 'DUMBBELLS';
+  weightsKg: number[];
+  exerciseLinks: GymInventoryExercise[];
+}
+
+export interface GymBarbellFamilyView {
+  family: BarbellDiameterFamily;
+  pool: GymPlatePoolView;
+  bars: GymEquipmentView[];
+  loadingSides: number;
+}
+
+export interface GymBarbellSystemProfileView {
+  id: string;
+  kind: 'BARBELL';
+  exerciseLinks: GymInventoryExercise[];
+  families: [GymBarbellFamilyView, GymBarbellFamilyView];
 }
 
 export interface GymInventoryResponse {

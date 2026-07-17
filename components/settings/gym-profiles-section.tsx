@@ -80,9 +80,13 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive }: 
       const body = {
         name: draft.name.trim(),
         inventoryMode: draft.inventoryMode,
-        dumbbellWeights: draft.dumbbellWeights,
-        plateWeights: draft.plateWeights,
-        barWeights: draft.barWeights,
+        ...(draft.id
+          ? {}
+          : {
+              dumbbellWeights: draft.dumbbellWeights,
+              plateWeights: draft.plateWeights,
+              barWeights: draft.barWeights,
+            }),
         exerciseConfigs: [...draft.configs.entries()].flatMap(([exerciseId, config]) =>
           !config.isAvailable ||
           config.weightOptions.length > 0 ||
@@ -192,24 +196,6 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive }: 
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <WeightListField
-            id="gym-dumbbells"
-            label={t('dumbbells')}
-            values={draft.dumbbellWeights}
-            placeholder="10, 12, 14, 15, 16, 19"
-            onChange={(values) => setDraft((current) => ({ ...current, dumbbellWeights: values }))}
-          />
-          <WeightListField
-            id="gym-bars"
-            label={t('bars')}
-            values={draft.barWeights}
-            placeholder="20"
-            onChange={(values) => setDraft((current) => ({ ...current, barWeights: values }))}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">{t('sharedFreeWeightsHelp')}</p>
-
         {draft.id && (
           <GymInventoryManager
             key={draft.id}
@@ -268,48 +254,6 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive }: 
       </CardContent>
     </Card>
   );
-}
-
-function WeightListField({
-  id,
-  label,
-  values,
-  placeholder,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  values: number[];
-  placeholder: string;
-  onChange: (values: number[]) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <Label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </Label>
-      <Input
-        key={`${id}-${values.join(',')}`}
-        id={id}
-        defaultValue={values.join(', ')}
-        placeholder={placeholder}
-        inputMode="decimal"
-        onBlur={(event) => onChange(parseWeightList(event.target.value))}
-      />
-    </div>
-  );
-}
-
-function parseWeightList(raw: string): number[] {
-  return [
-    ...new Set(
-      raw
-        .split(/[;,]/)
-        .map((value) => Number(value.trim().replace(',', '.')))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .map((value) => Math.round(value * 100) / 100),
-    ),
-  ].sort((a, b) => a - b);
 }
 
 function draftFromGym(gym?: GymWithConfigs): Draft {

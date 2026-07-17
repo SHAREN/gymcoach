@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { reconcileLegacyExerciseConfigMirrors } from '@/lib/gym-equipment';
 import { exerciseEquipmentUpdateSchema } from '@/lib/schemas/exercise';
+import { resolveEquipmentType } from '@/lib/gym-loads';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -15,9 +16,10 @@ export async function PATCH(req: Request, props: Params) {
     const input = await parseJsonBody(req, exerciseEquipmentUpdateSchema);
     const exercise = await db.exercise.findFirst({
       where: { id, userId },
-      select: { id: true, equipmentType: true },
+      select: { id: true, name: true, equipmentType: true },
     });
     if (!exercise) throw new ApiError(404, 'Exercise not found.');
+    const resolvedExerciseType = resolveEquipmentType(exercise.equipmentType, exercise.name);
 
     if ('gyms' in input) {
       const selections = input.gyms.map((selection) => ({
@@ -43,13 +45,27 @@ export async function PATCH(req: Request, props: Params) {
       const requestedEquipment = requestedEquipmentIds.length
         ? await db.gymEquipment.findMany({
             where: { id: { in: requestedEquipmentIds }, gym: { userId } },
-            select: { id: true, gymId: true, equipmentType: true },
+            select: { id: true, gymId: true, equipmentType: true, systemBarbellFamily: true },
           })
         : [];
       if (requestedEquipment.length !== requestedEquipmentIds.length) {
         throw new ApiError(400, 'One or more equipment IDs do not belong to the trainee.');
       }
       const equipmentById = new Map(requestedEquipment.map((item) => [item.id, item]));
+      const managedBars = await db.gymEquipment.findMany({
+        where: {
+          gymId: { in: selections.map((selection) => selection.gymId) },
+          gym: { userId },
+          systemBarbellFamily: { not: null },
+        },
+        select: { id: true, gymId: true },
+      });
+      const managedBarIdsByGym = new Map<string, string[]>();
+      for (const bar of managedBars) {
+        const ids = managedBarIdsByGym.get(bar.gymId) ?? [];
+        ids.push(bar.id);
+        managedBarIdsByGym.set(bar.gymId, ids);
+      }
 
       for (const selection of selections) {
         if (
@@ -64,9 +80,25 @@ export async function PATCH(req: Request, props: Params) {
           if (!selection.equipmentIds.includes(selection.preferredEquipmentId) || !preferred) {
             throw new ApiError(400, 'Preferred equipment must remain linked to the exercise.');
           }
-          if (preferred.equipmentType !== exercise.equipmentType) {
+          if (preferred.equipmentType !== resolvedExerciseType) {
             throw new ApiError(400, 'Preferred equipment type must match the exercise type.');
           }
+        }
+        const systemBarIds = managedBarIdsByGym.get(selection.gymId) ?? [];
+        const selectedSystemBarIds = selection.equipmentIds.filter((equipmentId) =>
+          systemBarIds.includes(equipmentId),
+        );
+        if (selectedSystemBarIds.length > 0 && resolvedExerciseType !== 'BARBELL') {
+          throw new ApiError(400, 'System Barbell members support only barbell exercises.');
+        }
+        if (
+          selectedSystemBarIds.length > 0 &&
+          selectedSystemBarIds.length !== systemBarIds.length
+        ) {
+          throw new ApiError(
+            400,
+            'Select all system bars through the Barbell profile instead of editing one bar.',
+          );
         }
       }
 
@@ -105,6 +137,22 @@ export async function PATCH(req: Request, props: Params) {
               data: { preferredEquipmentId: null },
             });
           }
+          const systemBarIds = managedBarIdsByGym.get(selection.gymId) ?? [];
+          if (resolvedExerciseType === 'BARBELL' && systemBarIds.length > 0) {
+            const supportsSystemProfile = systemBarIds.every((equipmentId) =>
+              selection.equipmentIds.includes(equipmentId),
+            );
+            await tx.gymExerciseConfig.upsert({
+              where: { gymId_exerciseId: { gymId: selection.gymId, exerciseId: id } },
+              update: { systemProfileSupported: supportsSystemProfile },
+              create: {
+                gymId: selection.gymId,
+                exerciseId: id,
+                isAvailable: true,
+                systemProfileSupported: supportsSystemProfile,
+              },
+            });
+          }
           await reconcileLegacyExerciseConfigMirrors(tx, selection.gymId, [id]);
         }
       });
@@ -114,12 +162,29 @@ export async function PATCH(req: Request, props: Params) {
 
     const ownedEquipment = await db.gymEquipment.findMany({
       where: { gym: { userId } },
-      select: { id: true, gymId: true },
+      select: { id: true, gymId: true, systemBarbellFamily: true },
     });
     const ownedIds = new Set(ownedEquipment.map((item) => item.id));
     const requestedIds = [...new Set(input.equipmentIds)];
     if (requestedIds.some((equipmentId) => !ownedIds.has(equipmentId))) {
       throw new ApiError(400, 'One or more equipment IDs do not belong to the trainee.');
+    }
+    for (const gymId of new Set(ownedEquipment.map((item) => item.gymId))) {
+      const systemBarIds = ownedEquipment
+        .filter((item) => item.gymId === gymId && item.systemBarbellFamily != null)
+        .map((item) => item.id);
+      const selectedSystemBarIds = systemBarIds.filter((equipmentId) =>
+        requestedIds.includes(equipmentId),
+      );
+      if (selectedSystemBarIds.length > 0 && resolvedExerciseType !== 'BARBELL') {
+        throw new ApiError(400, 'System Barbell members support only barbell exercises.');
+      }
+      if (selectedSystemBarIds.length > 0 && selectedSystemBarIds.length !== systemBarIds.length) {
+        throw new ApiError(
+          400,
+          'Select all system bars through the Barbell profile instead of editing one bar.',
+        );
+      }
     }
 
     await db.$transaction(async (tx) => {
@@ -150,6 +215,24 @@ export async function PATCH(req: Request, props: Params) {
           },
           data: { preferredEquipmentId: null },
         });
+        const systemBarIds = ownedEquipment
+          .filter((item) => item.gymId === gymId && item.systemBarbellFamily != null)
+          .map((item) => item.id);
+        if (resolvedExerciseType === 'BARBELL' && systemBarIds.length > 0) {
+          const supportsSystemProfile = systemBarIds.every((equipmentId) =>
+            requestedIds.includes(equipmentId),
+          );
+          await tx.gymExerciseConfig.upsert({
+            where: { gymId_exerciseId: { gymId, exerciseId: id } },
+            update: { systemProfileSupported: supportsSystemProfile },
+            create: {
+              gymId,
+              exerciseId: id,
+              isAvailable: true,
+              systemProfileSupported: supportsSystemProfile,
+            },
+          });
+        }
         await reconcileLegacyExerciseConfigMirrors(tx, gymId, [id]);
       }
     });

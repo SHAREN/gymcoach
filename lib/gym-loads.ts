@@ -45,6 +45,7 @@ export interface ResolveExerciseInventoryInput {
   preferredEquipmentId?: string | null;
   legacyConfig?: {
     isAvailable: boolean;
+    systemProfileSupported?: boolean | null;
     weightOptions: number[];
     dumbbellWeights: number[];
     plateWeights: number[];
@@ -323,6 +324,36 @@ export function resolveExerciseInventory({
   }
 
   const equipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name);
+  if (
+    inventoryMode === 'EQUIPMENT_FIRST' &&
+    legacyConfig?.systemProfileSupported != null &&
+    (equipmentType === 'DUMBBELL' || equipmentType === 'BARBELL')
+  ) {
+    if (
+      equipmentType === 'DUMBBELL' &&
+      legacyConfig.systemProfileSupported &&
+      sharedDumbbellWeights.length > 0
+    ) {
+      const weights = uniquePositive(sharedDumbbellWeights);
+      return {
+        isAvailable: true,
+        source: 'shared-dumbbells',
+        equipment: [],
+        requiresEquipmentSelection: false,
+        weightOptions: weights,
+        constraints: { equipmentType, isAvailable: true, dumbbellWeights: weights },
+      };
+    }
+    const constraints = { equipmentType, isAvailable: false } satisfies GymLoadConstraints;
+    return {
+      isAvailable: false,
+      source: 'none',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: [],
+      constraints,
+    };
+  }
   if (equipmentType === 'DUMBBELL' && sharedDumbbellWeights.length > 0) {
     const weights = uniquePositive(sharedDumbbellWeights);
     return {

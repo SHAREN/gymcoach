@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { gymUpdateSchema } from '@/lib/schemas/gym';
 import { validateGymExerciseConfigs } from '@/lib/gym-data';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -20,20 +21,50 @@ export async function PUT(req: Request, props: Params) {
     const userId = await requireApiUserId(req);
     await requireOwnedGym(id, userId);
     const input = await parseJsonBody(req, gymUpdateSchema);
-    const exerciseConfigs = await validateGymExerciseConfigs(userId, input.exerciseConfigs);
+    const exerciseConfigs = input.exerciseConfigs
+      ? await validateGymExerciseConfigs(userId, input.exerciseConfigs)
+      : null;
 
     const updated = await db.$transaction(async (tx) => {
-      await tx.gymExerciseConfig.deleteMany({ where: { gymId: id } });
-      return tx.gym.update({
+      if (exerciseConfigs) {
+        const requestedIds = exerciseConfigs.map((config) => config.exerciseId);
+        await tx.gymExerciseConfig.deleteMany({
+          where: {
+            gymId: id,
+            isEquipmentMirror: false,
+            preferredEquipmentId: null,
+            systemProfileSupported: null,
+            ...(requestedIds.length > 0 ? { exerciseId: { notIn: requestedIds } } : {}),
+          },
+        });
+        for (const config of exerciseConfigs) {
+          await tx.gymExerciseConfig.upsert({
+            where: { gymId_exerciseId: { gymId: id, exerciseId: config.exerciseId } },
+            update: {
+              isAvailable: config.isAvailable,
+              weightOptions: config.weightOptions,
+              dumbbellWeights: config.dumbbellWeights,
+              plateWeights: config.plateWeights,
+              barWeights: config.barWeights,
+              isEquipmentMirror: false,
+            },
+            create: { gymId: id, ...config, isEquipmentMirror: false },
+          });
+        }
+      }
+      await tx.gym.update({
         where: { id },
         data: {
           name: input.name,
           ...(input.inventoryMode ? { inventoryMode: input.inventoryMode } : {}),
-          dumbbellWeights: input.dumbbellWeights,
-          plateWeights: input.plateWeights,
-          barWeights: input.barWeights,
-          exerciseConfigs: { createMany: { data: exerciseConfigs } },
+          ...(input.dumbbellWeights ? { dumbbellWeights: input.dumbbellWeights } : {}),
+          ...(input.plateWeights ? { plateWeights: input.plateWeights } : {}),
+          ...(input.barWeights ? { barWeights: input.barWeights } : {}),
         },
+      });
+      await ensureGymSystemProfiles(tx, userId, id);
+      return tx.gym.findUniqueOrThrow({
+        where: { id },
         include: {
           exerciseConfigs: true,
           platePools: { include: { plates: { orderBy: { weightKg: 'asc' } } } },

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EquipmentType } from '@/lib/prisma-client';
+import { BarbellDiameterFamily, EquipmentType } from '@/lib/prisma-client';
 import { GYM_EQUIPMENT_IMAGE_MIME_TYPES } from '@/lib/gym-equipment';
 import { databaseIdSchema } from '@/lib/schemas/database-id';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
@@ -20,6 +20,34 @@ export const gymPlateInventoryItemSchema = z.object({
   weightKg: z.coerce.number().min(0.1).max(500),
   quantity: z.coerce.number().int().min(0).max(1000).nullable(),
 });
+
+const strictPositiveWeightListSchema = z
+  .array(z.coerce.number().min(0.1).max(5000))
+  .max(200)
+  .superRefine((values, ctx) => {
+    const rounded = values.map((value) => Math.round(value * 100) / 100);
+    if (new Set(rounded).size !== rounded.length) {
+      ctx.addIssue({ code: 'custom', message: 'Duplicate weights are not allowed.' });
+    }
+  })
+  .transform((values) =>
+    values.map((value) => Math.round(value * 100) / 100).sort((a, b) => a - b),
+  );
+
+const strictPlateListSchema = z
+  .array(gymPlateInventoryItemSchema.strict())
+  .max(200)
+  .superRefine((plates, ctx) => {
+    const weights = plates.map((plate) => Math.round(plate.weightKg * 100) / 100);
+    if (new Set(weights).size !== weights.length) {
+      ctx.addIssue({ code: 'custom', message: 'Duplicate plate denominations are not allowed.' });
+    }
+  })
+  .transform((plates) =>
+    plates
+      .map((plate) => ({ ...plate, weightKg: Math.round(plate.weightKg * 100) / 100 }))
+      .sort((left, right) => left.weightKg - right.weightKg),
+  );
 
 export const gymPlatePoolInputSchema = z.object({
   poolId: databaseIdSchema.optional(),
@@ -123,6 +151,68 @@ export const gymInventoryModeUpdateSchema = z.object({
   inventoryMode: gymInventoryModeSchema,
 });
 
+export const gymDumbbellsSystemProfileInputSchema = z
+  .object({
+    weightsKg: strictPositiveWeightListSchema,
+    exerciseIds: z.array(databaseIdSchema).max(500),
+  })
+  .strict();
+
+const gymBarbellFamilyInputSchema = z
+  .object({
+    family: z.nativeEnum(BarbellDiameterFamily),
+    loadingSides: z.coerce.number().int().min(1).max(8),
+    bars: z
+      .array(
+        z
+          .object({
+            equipmentId: databaseIdSchema.optional(),
+            weightKg: z.coerce.number().min(0.1).max(5000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(50)
+      .superRefine((bars, ctx) => {
+        const ids = bars.flatMap((bar) => (bar.equipmentId ? [bar.equipmentId] : []));
+        if (new Set(ids).size !== ids.length) {
+          ctx.addIssue({ code: 'custom', message: 'A bar may appear only once.' });
+        }
+        const weights = bars.map((bar) => Math.round(bar.weightKg * 100) / 100);
+        if (new Set(weights).size !== weights.length) {
+          ctx.addIssue({ code: 'custom', message: 'Duplicate bar weights are not allowed.' });
+        }
+      })
+      .transform((bars) =>
+        bars
+          .map((bar) => ({ ...bar, weightKg: Math.round(bar.weightKg * 100) / 100 }))
+          .sort((left, right) => left.weightKg - right.weightKg),
+      ),
+    plates: strictPlateListSchema,
+  })
+  .strict();
+
+export const gymBarbellSystemProfileInputSchema = z
+  .object({
+    exerciseIds: z.array(databaseIdSchema).max(500),
+    families: z.array(gymBarbellFamilyInputSchema).length(2),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    const families = input.families.map((family) => family.family);
+    if (
+      new Set(families).size !== 2 ||
+      !families.includes('LARGE') ||
+      !families.includes('SMALL')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['families'],
+        message: 'Provide exactly one large and one small barbell family.',
+      });
+    }
+  });
+
 const maximumBase64Length = 7_100_000;
 
 export const gymEquipmentImageSchema = z
@@ -142,3 +232,5 @@ export type GymEquipmentInput = z.infer<typeof gymEquipmentInputSchema>;
 export type GymEquipmentUpsertInput = z.infer<typeof gymEquipmentUpsertSchema>;
 export type GymPlatePoolInput = z.infer<typeof gymPlatePoolInputSchema>;
 export type GymEquipmentImageInput = z.infer<typeof gymEquipmentImageSchema>;
+export type GymDumbbellsSystemProfileInput = z.infer<typeof gymDumbbellsSystemProfileInputSchema>;
+export type GymBarbellSystemProfileInput = z.infer<typeof gymBarbellSystemProfileInputSchema>;

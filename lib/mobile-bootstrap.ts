@@ -7,6 +7,7 @@ import {
   type LastPerformance,
 } from '@/lib/last-performance';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import {
   getReturnToTrainingRecommendations,
@@ -119,6 +120,10 @@ export function mergeMobileEquipmentReturnRecommendations(
 }
 
 export async function buildMobileBootstrap(userId: string) {
+  const ownedGymIds = await db.gym.findMany({ where: { userId }, select: { id: true } });
+  await db.$transaction(async (tx) => {
+    for (const gym of ownedGymIds) await ensureGymSystemProfiles(tx, userId, gym.id);
+  });
   const exerciseHistoryRowsPromise = db.$queryRaw<MobileExerciseHistoryRow[]>`
       WITH exercise_sessions AS (
         SELECT DISTINCT
@@ -219,6 +224,7 @@ export async function buildMobileBootstrap(userId: string) {
             baseLoadKg: true,
             platePoolId: true,
             loadingSides: true,
+            systemBarbellFamily: true,
             exerciseLinks: true,
             platePool: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
           },

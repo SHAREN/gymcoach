@@ -208,6 +208,11 @@ enum EquipmentLoadType {
   PLATE_LOADED
 }
 
+enum BarbellDiameterFamily {
+  LARGE
+  SMALL
+}
+
 enum MuscleGroup {
   CHEST
   BACK_WIDTH
@@ -378,27 +383,31 @@ model Gym {
 }
 
 model GymExerciseConfig {
-  id                String   @id @default(cuid())
-  gymId             String
-  gym               Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  exerciseId        String
-  exercise          Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
-  isAvailable       Boolean  @default(true)
+  id                     String        @id @default(cuid())
+  gymId                  String
+  gym                    Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  exerciseId             String
+  exercise               Exercise      @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  isAvailable            Boolean       @default(true)
   // Optional explicit machine/cable pin stack or other exercise-specific
   // loads. Empty means use the normal category increment.
-  weightOptions     Float[]  @default([])
+  weightOptions          Float[]       @default([])
   // Optional per-exercise overrides for the gym's shared free-weight inventory.
   // Empty means inherit the corresponding list from Gym.
-  dumbbellWeights   Float[]  @default([])
-  plateWeights      Float[]  @default([])
-  barWeights        Float[]  @default([])
+  dumbbellWeights        Float[]       @default([])
+  plateWeights           Float[]       @default([])
+  barWeights             Float[]       @default([])
   // True only for an availability-only compatibility row generated from
   // explicitly marked physical equipment links. Manual configs stay false.
-  isEquipmentMirror Boolean  @default(false)
+  isEquipmentMirror      Boolean       @default(false)
+  // Null belongs to backups and clients created before system free-weight
+  // profiles. True/false is the owner's explicit Dumbbells or Barbell profile
+  // membership for the matching exercise type.
+  systemProfileSupported Boolean?
   // One concrete default for this exercise in this gym. Alternative linked
   // equipment remains available for explicit workout selection.
-  preferredEquipmentId String?
-  preferredEquipment   GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
+  preferredEquipmentId   String?
+  preferredEquipment     GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
 
   @@unique([gymId, exerciseId])
   @@index([exerciseId])
@@ -429,6 +438,9 @@ model GymEquipment {
   // Number of equally loaded sleeves/sides. Two models normal barbell, Smith,
   // and common leg-press loading while still allowing single-sleeve machines.
   loadingSides           Int                    @default(2)
+  // Concrete bars managed by the non-removable Barbell aggregate. Other
+  // equipment, including custom plate-loaded stations, remains null.
+  systemBarbellFamily    BarbellDiameterFamily?
   // An external HTTPS image may be stored without fetching it server-side.
   imageUrl               String?
   // Uploaded images are stored in Postgres so Docker rebuilds do not lose them.
@@ -437,11 +449,12 @@ model GymEquipment {
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   exerciseLinks          GymEquipmentExercise[]
-  preferredForConfigs    GymExerciseConfig[]      @relation("PreferredGymEquipment")
+  preferredForConfigs    GymExerciseConfig[]    @relation("PreferredGymEquipment")
   performedSets          Set[]
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
+  @@index([gymId, systemBarbellFamily])
   @@index([platePoolId])
 }
 
@@ -449,18 +462,22 @@ model GymEquipment {
 // machine, barbell, and leg press can reuse the same pool; incompatible sleeve
 // standards use different pools.
 model GymPlatePool {
-  id               String                  @id @default(cuid())
-  gymId            String
-  gym              Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  name             String
-  compatibilityKey String
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
-  plates           GymPlateInventoryItem[]
-  equipment        GymEquipment[]
+  id                  String                  @id @default(cuid())
+  gymId               String
+  gym                 Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name                String
+  compatibilityKey    String
+  // Exactly one pool per family backs the system Barbell aggregate. Null pools
+  // stay ordinary custom compatibility groups.
+  systemBarbellFamily BarbellDiameterFamily?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  plates              GymPlateInventoryItem[]
+  equipment           GymEquipment[]
 
   @@unique([gymId, name])
   @@unique([gymId, compatibilityKey])
+  @@unique([gymId, systemBarbellFamily])
   @@index([gymId, updatedAt])
 }
 
