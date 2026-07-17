@@ -1,6 +1,6 @@
 ---
 name: verify-task
-description: Independently verify one implemented GymCoach Beads task against its acceptance criteria, focused Git diff, tests, repository gates, cross-platform contracts, deployment requirements, and secret-safety rules. Use when the user invokes verify-task with a TASK-ID after implementation reached REVIEW.
+description: Independently verify one implemented GymCoach Beads task, record immutable evidence, and move product work to verified awaiting integration without closing it. Use with a TASK-ID after implementation reaches REVIEW, either explicitly or through the Project Dispatcher.
 ---
 
 # Verify Task
@@ -46,7 +46,8 @@ tests, or branches. The Failure section below applies only after preflight has
 succeeded and verification has begun.
 
 The skill-specific verification lifecycle overrides any generic close
-suggestion printed by bd prime.
+suggestion printed by bd prime. Product work never closes from isolated
+verification.
 
 Move the task into VERIFY before running checks:
 
@@ -119,30 +120,69 @@ units, synchronization semantics, equipment constraints, or mirrored
 deterministic calculations.
 
 For training-methodology changes, verify NotebookLM evidence and the matching
-docs/ai-coach-principles.md update. For completed product changes, require
-evidence for any applicable canonical port 3030 deployment and public HTTPS
-health check before closing.
+docs/ai-coach-principles.md update. An isolated Android APK, temporary runtime,
+or task-branch artifact is verification evidence only; it is never final
+integration or closure evidence.
 
 ## Success
 
 Append verification evidence with:
 
-- base branch and reviewed commit or diff;
+- exact full verified base and verified commit;
 - acceptance-criterion results;
 - commands and exit results;
 - scope review;
 - test review;
 - secret and local-file review;
-- Android, training-science, or deployment evidence when applicable.
+- artifact impact: Android, web/runtime, or no-runtime-artifact;
+- installation/deployment requirements from the acceptance criteria;
+- Android or training-science evidence when applicable.
 
-Then:
+The working tree must be clean and the verified commit immutable before the
+transition.
+
+### Product Or Runtime-Affecting Work
+
+Remove VERIFY and move the task to VERIFIED / AWAITING_INTEGRATION:
 
 ```text
-bd update TASK-ID --append-notes "Verification evidence..." --remove-label stage:verify
-bd close TASK-ID --reason "Acceptance criteria and required verification passed"
+bd update TASK-ID --append-notes "Immutable verification evidence: verified-base FULL-SHA; verified-commit FULL-SHA; gates..." --remove-label stage:verify --add-label stage:verified --status in_progress
 ```
 
-Report the task ID, branch, checks, and concise result.
+Create a unique temporary sanitized evidence JSON containing only the verified
+base, verified commit, gate summary, and artifact impact. Mirror it without raw
+logs or private data:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID --evidence-file PATH
+```
+
+Delete only that exact temporary file. A GitHub partial failure does not roll
+back Beads or create a duplicate issue. Report the task as verified and awaiting
+integration. Do not call bd close.
+
+### Explicit No-Runtime-Artifact Exception
+
+Use this only when the acceptance criteria and independent scope review prove
+that the complete diff is pure harness/docs/infrastructure with no downstream
+runtime artifact. Create a no-runtime-artifact manifest whose changedPaths
+exactly match the verified Git diff, then validate and close through the same
+deterministic wrapper:
+
+```text
+node scripts/check-integration-evidence.mjs --manifest PATH
+node scripts/close-integrated-tasks.mjs --manifest PATH --dry-run
+node scripts/close-integrated-tasks.mjs --manifest PATH
+```
+
+The wrapper requires stage:verify, closes Beads only after the exception guard
+passes, and then closes the exact GitHub mirror. Do not use the exception for
+app, Android, Watch, backend, shared contract, package/runtime, deployment, or
+artifact-publishing changes. Dockerfile, Docker Compose, runtime build,
+deployment, CI publication, and artifact-publication paths are runtime-affecting
+for this guard and must be rejected. Treat release/build/runtime/service scripts,
+deployment/operations directories, and all checked-in GitHub workflow/action
+automation conservatively as runtime-affecting.
 
 ## Failure
 
@@ -153,5 +193,9 @@ to implementation:
 ```text
 bd update TASK-ID --append-notes "Verification failed: ..." --remove-label stage:verify --status in_progress
 ```
+
+Mirror the returned lifecycle state with
+node scripts/sync-beads-github.mjs --task TASK-ID. GitHub failure remains a
+separate partial failure and never changes the Beads verification result.
 
 Report that the task remains open and requires implementation changes.

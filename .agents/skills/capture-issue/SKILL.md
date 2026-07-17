@@ -1,6 +1,6 @@
 ---
 name: capture-issue
-description: Capture a new GymCoach bug, idea, feature request, chore, or research need in the Beads INBOX without interrupting active implementation. Use when the user says to add something to the queue, remember a problem for later, capture a voice or text report, or record an unrelated discovery.
+description: Capture a new GymCoach bug, idea, feature request, chore, or research need in the authoritative Beads INBOX and mirror it safely to GitHub without interrupting active implementation. Use for an ordinary implementation request routed automatically by AGENTS.md, when the user asks to add something to the queue or remember it for later, or when an unrelated discovery must be recorded.
 ---
 
 # Capture Issue
@@ -73,6 +73,18 @@ bd dep add NEW-ID POSSIBLE-ID --type relates-to
 
 Do not merge or delete probable duplicates automatically.
 
+9. Mirror the new or matched task after the Beads mutation succeeds:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
+
+The mirror is idempotent by exact Beads ID, persists the GitHub issue URL in
+external_ref, and must not receive raw notes, logs, private paths, credentials,
+tokens, device identifiers, or personal data. A GitHub failure does not roll
+back or duplicate the authoritative Beads task. Report it as a partial failure
+and leave the task available for a safe retry.
+
 ## Priority Rules
 
 - P0: data loss, critical vulnerability, or complete loss of a core function.
@@ -94,6 +106,12 @@ Area: android
 Priority: P2
 Stage: INBOX
 The active task was not changed.
+```
+
+If GitHub mirroring failed, append:
+
+```text
+GitHub mirror: partial failure; Beads remains authoritative and no duplicate task was created.
 ```
 
 For a suspected P0, append:

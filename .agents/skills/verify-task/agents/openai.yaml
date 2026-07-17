@@ -1,4 +1,4 @@
 interface:
   display_name: 'Verify Task'
-  short_description: 'Independently verify one implemented task'
-  default_prompt: 'Use $verify-task TASK-ID to review scope, run required checks, and record verification evidence.'
+  short_description: 'Verify work before guarded integration'
+  default_prompt: 'Use $verify-task TASK-ID to review scope, run required checks, and move verified product work to awaiting integration.'

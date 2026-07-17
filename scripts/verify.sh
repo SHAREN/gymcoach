@@ -38,6 +38,93 @@ step() { echo ""; echo "▶ $1"; }
 
 echo "GymCoach green-gate — node $(node -v 2>/dev/null || echo '??'), npm $(npm -v 2>/dev/null || echo '??')"
 
+step "Codex harness integrity"
+required_harness_files=(
+  "AGENTS.md"
+  "docs/CODEX_WORKFLOW.md"
+  ".codex/config.toml"
+  ".codex/hooks.json"
+  ".agents/skills/beads/SKILL.md"
+  ".agents/skills/beads/agents/openai.yaml"
+  ".agents/skills/capture-issue/SKILL.md"
+  ".agents/skills/capture-issue/agents/openai.yaml"
+  ".agents/skills/triage-inbox/SKILL.md"
+  ".agents/skills/triage-inbox/agents/openai.yaml"
+  ".agents/skills/next-task/SKILL.md"
+  ".agents/skills/next-task/agents/openai.yaml"
+  ".agents/skills/execute-task/SKILL.md"
+  ".agents/skills/execute-task/agents/openai.yaml"
+  ".agents/skills/verify-task/SKILL.md"
+  ".agents/skills/verify-task/agents/openai.yaml"
+  ".agents/skills/integrate-tasks/SKILL.md"
+  ".agents/skills/integrate-tasks/agents/openai.yaml"
+  ".agents/skills/playwright-cli/SKILL.md"
+  "scripts/check-integration-evidence.mjs"
+  "scripts/close-integrated-tasks.mjs"
+  "scripts/sync-beads-github.mjs"
+  "scripts/publish-integration-draft.mjs"
+  "scripts/test-integration-evidence.mjs"
+  "scripts/test-github-issue-mirror.mjs"
+  "scripts/test-guarded-closure.mjs"
+  "scripts/test-github-publication.mjs"
+  "scripts/fixtures/integration-evidence/task-branch-only.json"
+  "scripts/fixtures/integration-evidence/behavior-equivalent.json"
+  "scripts/fixtures/integration-evidence/no-runtime-artifact.json"
+  "scripts/fixtures/integration-evidence/android-integration.json"
+  "scripts/fixtures/github-mirror/issues.json"
+)
+for harness_file in "${required_harness_files[@]}"; do
+  [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
+done
+for playwright_reference in \
+  element-attributes playwright-tests request-mocking running-code \
+  session-management storage-state test-generation tracing video-recording; do
+  [ -f ".agents/skills/playwright-cli/references/${playwright_reference}.md" ] || \
+    fail "missing Playwright skill reference: ${playwright_reference}"
+done
+grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
+grep -q "stage:verified" docs/CODEX_WORKFLOW.md || fail "verified integration state"
+node <<'NODE' || fail "Codex harness configuration"
+const fs = require('fs');
+
+const config = fs.readFileSync('.codex/config.toml', 'utf8')
+  .replace(/\r\n/g, '\n')
+  .trim();
+if (config !== '[features]\nhooks = true\nmulti_agent = true') {
+  throw new Error('unexpected .codex/config.toml');
+}
+
+const hooks = JSON.parse(fs.readFileSync('.codex/hooks.json', 'utf8')).hooks;
+const expected = {
+  PostCompact: ['bd codex-hook PostCompact', 'manual|auto'],
+  PreCompact: ['bd codex-hook PreCompact', 'manual|auto'],
+  SessionStart: ['bd codex-hook SessionStart', 'startup|resume|clear|compact'],
+  UserPromptSubmit: ['bd codex-hook UserPromptSubmit', null],
+};
+for (const [event, [command, matcher]] of Object.entries(expected)) {
+  const groups = hooks?.[event];
+  if (!Array.isArray(groups) || groups.length !== 1) {
+    throw new Error(`missing hook event ${event}`);
+  }
+  if ((groups[0].matcher ?? null) !== matcher) {
+    throw new Error(`unexpected matcher for ${event}`);
+  }
+  const handlers = groups[0].hooks;
+  if (!Array.isArray(handlers) || handlers.length !== 1) {
+    throw new Error(`unexpected handlers for ${event}`);
+  }
+  const handler = handlers[0];
+  if (handler.type !== 'command' || handler.command !== command || handler.timeout !== 30) {
+    throw new Error(`unexpected command hook for ${event}`);
+  }
+}
+NODE
+
+node scripts/test-integration-evidence.mjs || fail "integration evidence regression tests"
+node scripts/test-github-issue-mirror.mjs || fail "GitHub issue mirror regression tests"
+node scripts/test-guarded-closure.mjs || fail "guarded closure mirror-only regression tests"
+node scripts/test-github-publication.mjs || fail "GitHub publication regression tests"
+
 step "prisma generate"
 npx prisma generate >/dev/null || fail "prisma generate"
 

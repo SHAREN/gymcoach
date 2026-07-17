@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "mode": "integration",
+  "authority": {
+    "rootTaskId": "gymcoach-nrh"
+  },
+  "integration": {
+    "head": "{{INTEGRATION_HEAD}}",
+    "branch": "codex/integration-root-request",
+    "requiredTaskIds": ["gymcoach-nrh"],
+    "combinedGate": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "command": "bash scripts/verify.sh",
+      "exitCode": 0
+    },
+    "review": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "result": "passed",
+      "reviewedBy": "independent integration verifier",
+      "reviewEvidence": "Combined diff and required gates reviewed."
+    }
+  },
+  "tasks": [
+    {
+      "id": "gymcoach-nrh",
+      "classification": "product",
+      "verified": {
+        "base": "{{BASE}}",
+        "commit": "{{TASK_COMMIT}}",
+        "gate": {
+          "head": "{{TASK_COMMIT}}",
+          "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+          "exitCode": 0
+        }
+      },
+      "integration": {
+        "method": "ancestor"
+      },
+      "affectsAndroid": true
+    }
+  ],
+  "delivery": {
+    "integrated": {
+      "required": true,
+      "status": "complete",
+      "head": "{{INTEGRATION_HEAD}}"
+    },
+    "published": {
+      "required": true,
+      "status": "pending"
+    },
+    "installed": {
+      "required": false,
+      "status": "not-authorized"
+    },
+    "deployed": {
+      "required": false,
+      "status": "not-authorized"
+    }
+  }
+}

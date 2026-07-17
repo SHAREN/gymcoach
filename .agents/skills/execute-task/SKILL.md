@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use only when the user invokes execute-task with a TASK-ID and wants that READY task implemented, tested, documented, and moved to REVIEW without being closed.
+description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use when invoked with a TASK-ID either explicitly by the user or automatically by the Project Dispatcher after the task reaches READY.
 ---
 
 # Execute Task
@@ -58,8 +58,10 @@ bd list --status in_progress,blocked --json
 Require this task to have no uncertain overlap with another active task's
 files, APIs, schemas, mobile contracts, training formulas, or deployment
 surface. If ordering is required, stop and return the task to triage so the
-dependency can be recorded. 6. Ensure the branch contains the Beads ID. If the worktree is clean and its
-current branch does not contain the ID, create the correct focused branch:
+dependency can be recorded.
+
+6. Ensure the branch contains the Beads ID. If the worktree is clean and its
+   current branch does not contain the ID, create the correct focused branch:
 
 ```text
 feat/TASK-ID-short-description
@@ -85,6 +87,13 @@ bd update TASK-ID --claim --remove-label stage:ready
 ```
 
 If claim reports another assignee, stop.
+
+After the successful claim, mirror the new lifecycle state. A mirror failure is
+partial and does not roll back Beads:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
 
 ## Implementation Rules
 
@@ -171,6 +180,16 @@ Then move the task to REVIEW:
 ```text
 bd update TASK-ID --append-notes "Implementation evidence..." --add-label stage:review --status in_progress
 ```
+
+Update the existing GitHub mirror after the Beads transition:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
+
+Do not send raw implementation logs, private paths, credentials, device
+identifiers, or personal data to GitHub. A partial mirror failure does not
+change REVIEW state and is retried separately.
 
 Report the branch, diff summary, checks, and task state. End by stating that the
 task is in REVIEW and has not been closed.

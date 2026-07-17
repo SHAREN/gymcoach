@@ -5,7 +5,7 @@ Git branches, and Git worktrees are execution environments, not backlog
 records.
 
 The generated beads skill provides generic CLI orientation only. For GymCoach,
-the five workflow skills and AGENTS.md are authoritative for all task
+the six workflow skills and AGENTS.md are authoritative for all task
 mutations.
 
 ## Daily Process
@@ -16,27 +16,35 @@ mutations.
 4. Each implementation uses a separate Codex task and Worktree.
 5. One task equals one branch and one focused diff.
 6. New discoveries become separate related tasks.
-7. Every task must pass independent verification before closing.
+7. Product verification moves work to awaiting integration, not DONE.
+8. Guarded integration is the only normal product close path.
+9. GitHub Issues mirror Beads state; they never become the task source of truth.
 
 ## Workflow States
 
 Use Beads standard statuses plus at most one workflow stage label:
 
-| Workflow state | Beads status | Stage label                                            |
-| -------------- | ------------ | ------------------------------------------------------ |
-| INBOX          | open         | stage:inbox                                            |
-| READY          | open         | stage:ready                                            |
-| IN_PROGRESS    | in_progress  | none                                                   |
-| REVIEW         | in_progress  | stage:review                                           |
-| VERIFY         | in_progress  | stage:verify                                           |
-| DONE           | closed       | none                                                   |
-| BLOCKED        | blocked      | preserve the prior stage only when it helps resumption |
+| Workflow state                  | Beads status | Stage label                                            |
+| ------------------------------- | ------------ | ------------------------------------------------------ |
+| INBOX                           | open         | stage:inbox                                            |
+| READY                           | open         | stage:ready                                            |
+| IN_PROGRESS                     | in_progress  | none                                                   |
+| REVIEW                          | in_progress  | stage:review                                           |
+| VERIFY                          | in_progress  | stage:verify                                           |
+| VERIFIED / AWAITING_INTEGRATION | in_progress  | stage:verified                                         |
+| DONE                            | closed       | none                                                   |
+| BLOCKED                         | blocked      | preserve the prior stage only when it helps resumption |
 
 The normal path is:
 
 ```text
-INBOX -> READY -> IN_PROGRESS -> REVIEW -> VERIFY -> DONE
-                         \-> BLOCKED
+INBOX -> READY -> IN_PROGRESS -> REVIEW -> VERIFY
+                         \-> BLOCKED          |
+                                              v
+                              VERIFIED / AWAITING_INTEGRATION
+                                              |
+                                              v
+                                   GUARDED INTEGRATION -> DONE
 ```
 
 Stage labels are mutually exclusive. Beads native status is authoritative for
@@ -51,6 +59,7 @@ stage:inbox
 stage:ready
 stage:review
 stage:verify
+stage:verified
 ```
 
 Type:
@@ -124,21 +133,37 @@ coordinator automatically:
 2. triages it to READY when the requirements are sufficiently clear;
 3. decomposes independent deliverables into linked tasks;
 4. records dependencies for overlapping or ordered work;
-5. creates a dedicated Codex task, Worktree, and branch for each READY task;
+5. creates a dedicated Codex task, Worktree, and branch for each READY child
+   task of the current root request;
 6. dispatches execute-task for each task;
 7. runs independent tasks concurrently and ordered tasks serially;
-8. dispatches a separate verify-task pass;
-9. integrates verified commits in dependency order into a local integration
-   branch and Worktree;
-10. reruns the applicable gates against the combined result.
+8. dispatches a separate verify-task pass, which leaves product work at
+   stage:verified;
+9. dispatches integrate-tasks to combine verified commits in dependency order
+   in a local integration branch and Worktree;
+10. reruns the applicable gates, validates final artifacts, and closes tasks
+    only through the deterministic guard.
 
 The coordinator asks the user only when a material decision or new authority
 is required. Questions, explanations, read-only reviews, and diagnostics do not
 enter the implementation lifecycle automatically.
 
-Automation does not include push, pull-request creation or merge, merging into
-main or master, remote Beads synchronization, production deployment, or service
-restart unless the user explicitly requests those actions.
+For work that continues beyond the current turn, the Codex coordinator creates
+or reuses one thread heartbeat. It rereads Beads and live task state on every
+run, avoids duplicate writers/verifiers, and stops when the root request is
+complete or needs new authority.
+
+Not-started dependency-ordered work remains `open + stage:ready`; the dependency
+graph keeps it out of bd ready. Native blocked is reserved for external/manual
+blockers or paused work. Before resuming a legacy `blocked + stage:ready` task,
+revalidate dependencies and the integration base, return it to open, and
+confirm readiness.
+
+The owner has authorized only post-integration GitHub publication: a verified
+dedicated codex/ or task branch may be pushed to SHAREN/gymcoach and exposed as
+a draft PR against main. Automation never pushes an unverified writer branch,
+auto-merges, merges main/master, synchronizes Beads remotely, deploys production,
+or restarts services.
 
 ## Built-In Codex Integration
 
@@ -206,6 +231,10 @@ a duplicate.
 
 Capture never edits product code.
 
+After the authoritative Beads create/comment succeeds, run the idempotent
+GitHub mirror for the exact task ID. GitHub failure is a partial failure: keep
+the Beads task, report the failure, and retry without creating another issue.
+
 ## Triage
 
 Invoke:
@@ -228,6 +257,10 @@ Move a task to stage:ready only when:
 - required product or training-science decisions are resolved.
 
 Triage never edits code and never starts implementation.
+
+Mirror each successful lifecycle transition to the existing GitHub issue. The
+mirror persists its URL in external_ref and synchronizes only sanitized state,
+classification, acceptance criteria, and structured evidence.
 
 ## Select the Next Task
 
@@ -281,7 +314,8 @@ fix/TASK-ID-short-description
 chore/TASK-ID-short-description
 ```
 
-When execution begins, claim the Beads task and remove stage:ready. During
+When execution begins, claim the Beads task, remove stage:ready, and update its
+single GitHub mirror. During
 implementation:
 
 - change only what the acceptance criteria require;
@@ -293,7 +327,8 @@ implementation:
 - link discovered work with discovered-from or relates-to as appropriate.
 
 After implementation, run the applicable checks, append concise evidence, and
-move the task to stage:review. The implementing task does not close itself.
+move the task to stage:review. Mirror the new state. The implementing task does
+not close itself.
 
 ## Verification
 
@@ -345,17 +380,146 @@ cd android
 
 Shared mobile contracts and mirrored deterministic logic require both web and
 Android checks. Training-methodology work also requires the NotebookLM and
-docs/ai-coach-principles.md rules. Product work is not DONE until any applicable
-APK publishing and canonical deployment gates in AGENTS.md have evidence.
+docs/ai-coach-principles.md rules.
 
-On success, append verification evidence, remove stage:verify, and close the
-task with a reason. On failure:
+On product success, record the exact verified base, exact verified commit, gate
+commands/results, scope, artifact impact, and any installation/deployment
+requirements. Remove stage:verify and add stage:verified. The task remains
+in_progress and the GitHub issue remains open as verified / awaiting integration.
+An isolated task APK or temporary runtime is not closure evidence.
+
+A pure harness/docs/infrastructure task may close from isolated verification
+only through an explicit no-runtime-artifact manifest. The deterministic guard
+must prove that its declared changed paths exactly match the verified Git diff
+and contain no product/runtime paths. This is the sole exception to integration.
+
+On failure:
 
 - do not fix the code automatically;
 - leave the task in in_progress;
 - remove stage:verify;
 - append exact findings and failed commands;
 - return the task to the implementer.
+
+Every verification transition updates the exact GitHub mirror with sanitized
+structured evidence only. A mirror failure does not change the Beads result.
+
+## Guarded Integration And Closure
+
+Invoke:
+
+```text
+$integrate-tasks ROOT-TASK-ID
+```
+
+Use one dedicated integration Worktree and preferably a branch named
+codex/integration-ROOT-TASK-ID. Read every stage:verified task, order commits by
+dependencies, record `authority.rootTaskId`, record the complete
+requiredTaskIds set, and preserve newer work. The guard rereads that Beads root
+and every transitive `blocks` dependency, then requires the reviewed manifest
+set to match the authoritative verified task set exactly. Context-only
+`relates-to` and `discovered-from` links do not become integration tasks. Each
+verified commit must be either:
+
+- an ancestor of the integration head; or
+- represented by explicit reviewed behavior-equivalent replacement commits.
+
+A cherry-pick changes commit identity and therefore uses a behavior-equivalent
+mapping unless the original verified commit is also integrated by ancestry.
+
+Run all combined gates. For Android work, build and publish a fresh APK from the
+integration head. Verify versionName, versionCode, file size, SHA-256, signing
+certificate, app-debug.apk, immutable hash-qualified APK, and latest.json.
+Before closure, a separate integration reviewer records a passed review against
+the exact integration head.
+
+Represent delivery facts separately:
+
+```text
+integrated
+published
+installed
+deployed
+```
+
+Optional unauthorized installation/deployment is not-authorized, not complete.
+If acceptance criteria require either stage, it remains required and pending and
+the guard rejects closure. These requirements are derived from the live Beads
+acceptance criteria for the root and blocking dependency graph, not from
+manifest-declared task booleans. Only direct delivery obligations count;
+conditional or hypothetical criteria, state-separation language, prohibitions,
+and unauthorized/optional statements do not require installation or deployment.
+
+Use a local integration manifest based on the checked-in fixtures, then run:
+
+```text
+node scripts/check-integration-evidence.mjs --manifest PATH
+node scripts/close-integrated-tasks.mjs --manifest PATH --dry-run
+node scripts/close-integrated-tasks.mjs --manifest PATH
+```
+
+The closure wrapper validates again, requires stage:verified, closes Beads, and
+only then closes the exact GitHub mirror with sanitized integration/artifact
+evidence. Root coordination tasks are closed last, after all computed mapped
+tasks and delivery gates pass. It reports GitHub partial failures without
+rolling back Beads.
+
+After a post-closure GitHub partial failure, retry only the mirror:
+
+```text
+node scripts/close-integrated-tasks.mjs --manifest PATH --mirror-only --dry-run
+node scripts/close-integrated-tasks.mjs --manifest PATH --mirror-only
+```
+
+The mirror-only dry-run executes the real retry's read-only issue planning,
+including exact Beads marker matching, external_ref validation/persistence
+planning, deterministic duplicate detection, label planning, and issue reuse.
+Per-task failures are isolated and reported together; a failure never prevents
+the remaining task mirrors from being checked.
+
+Legacy tasks closed before this state machine are not destructively rewritten.
+Integration audits must list them. Missing legacy commits or mappings are
+flagged and block the root request until resolved.
+
+## GitHub Issue Mirror
+
+Beads is authoritative. GitHub Issues in SHAREN/gymcoach are an idempotent
+mirror keyed by the exact Beads ID marker. Existing mirror issues #6 and #7 are
+detected from their exact Beads task lines and must never be duplicated.
+
+Single task update:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID --dry-run
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
+
+Backfill current open/in_progress/blocked tasks:
+
+```text
+node scripts/sync-beads-github.mjs --backfill --dry-run
+node scripts/sync-beads-github.mjs --backfill
+```
+
+The mirror preserves unrelated GitHub labels while replacing managed status,
+stage, type, priority, and area labels. It persists external_ref only after a
+unique issue succeeds. Exact-ID duplicates are an error. Raw notes/logs,
+credentials, private paths, device identifiers, browser state, and personal
+data are never sent. Partial failures are reported per task and safe to retry.
+
+## Draft PR Publication
+
+Only after guarded integration and independent integration verification:
+
+```text
+node scripts/publish-integration-draft.mjs --manifest PATH --dry-run
+node scripts/publish-integration-draft.mjs --manifest PATH
+```
+
+The command revalidates integration evidence, origin SHAREN/gymcoach, the
+dedicated codex/ or task branch, and default base main. It pushes only that
+verified branch and creates or updates a draft PR. It never auto-merges and does
+not imply installation or deployment.
 
 ## Messages During Active Work
 
@@ -421,8 +585,9 @@ They must not:
 - implement a GitHub issue that does not have a prepared READY Beads task;
 - override this workflow's separate verification pass.
 
-GitHub issues and pull requests may still be linked from Beads as external
-references, but Beads remains authoritative for task status and dependencies.
+The historical GitHub issue loop remains inactive. The current GitHub Issues
+integration is only the deterministic sanitized Beads mirror described above;
+it cannot create or select work independently.
 
 ## Manual Boundaries
 
@@ -434,6 +599,8 @@ references, but Beads remains authoritative for task status and dependencies.
   through /hooks plus a Codex restart.
 - Beads remote synchronization is explicit. This setup does not push
   refs/dolt/data automatically.
+- GitHub publication is limited to a verified dedicated branch and draft PR.
+  Automatic merge remains prohibited.
 - The owner must confirm the current milestone before milestone alignment can
   be a strict selection gate.
 - Production deployment remains subject to the authority and rollback rules in

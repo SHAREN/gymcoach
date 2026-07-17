@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "mode": "no-runtime-artifact",
+  "authority": {
+    "rootTaskId": "gymcoach-js4"
+  },
+  "tasks": [
+    {
+      "id": "gymcoach-js4",
+      "classification": "no-runtime-artifact",
+      "verified": {
+        "base": "{{BASE}}",
+        "commit": "{{TASK_COMMIT}}",
+        "gate": {
+          "head": "{{TASK_COMMIT}}",
+          "command": "node scripts/test-integration-evidence.mjs",
+          "exitCode": 0
+        }
+      },
+      "noRuntimeArtifact": {
+        "reason": "Pure repository harness and documentation change with no downstream runtime artifact.",
+        "reviewedBy": "independent verifier",
+        "changedPaths": ["docs/workflow.md"]
+      }
+    }
+  ],
+  "delivery": {
+    "integrated": {
+      "required": false,
+      "status": "not-required"
+    },
+    "published": {
+      "required": false,
+      "status": "not-required"
+    },
+    "installed": {
+      "required": false,
+      "status": "not-required"
+    },
+    "deployed": {
+      "required": false,
+      "status": "not-required"
+    }
+  }
+}
