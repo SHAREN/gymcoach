@@ -191,6 +191,9 @@ interface GymCoachDao {
     @Query("SELECT * FROM watch_peers WHERE deviceId = :deviceId")
     suspend fun getWatchPeer(deviceId: String): WatchPeerEntity?
 
+    @Query("SELECT * FROM watch_peers WHERE sessionId = :sessionId ORDER BY updatedAtEpochMs DESC LIMIT 1")
+    suspend fun getLatestWatchPeerForSession(sessionId: String): WatchPeerEntity?
+
     @Query("SELECT * FROM watch_peers ORDER BY updatedAtEpochMs DESC LIMIT 1")
     fun observeLatestWatchPeer(): Flow<WatchPeerEntity?>
 
