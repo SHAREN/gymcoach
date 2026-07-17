@@ -108,6 +108,35 @@ fun resolveExerciseInventory(
         )
     }
 
+    if (
+        gym.inventoryMode == "EQUIPMENT_FIRST" &&
+        exerciseConfig?.systemProfileSupported != null &&
+        (equipmentType == "DUMBBELL" || equipmentType == "BARBELL")
+    ) {
+        if (
+            equipmentType == "DUMBBELL" &&
+            exerciseConfig.systemProfileSupported == true &&
+            gym.dumbbellWeights.isNotEmpty()
+        ) {
+            val weights = uniquePositive(gym.dumbbellWeights)
+            val constraints = LoadConstraints(
+                equipmentType = equipmentType,
+                isAvailable = true,
+                dumbbellWeights = weights,
+            )
+            return ExerciseInventory(
+                true,
+                "shared-dumbbells",
+                emptyList(),
+                false,
+                weights,
+                constraints,
+            )
+        }
+        val constraints = LoadConstraints(equipmentType = equipmentType, isAvailable = false)
+        return ExerciseInventory(false, "none", emptyList(), false, emptyList(), constraints)
+    }
+
     if (equipmentType == "DUMBBELL" && gym.dumbbellWeights.isNotEmpty()) {
         val weights = uniquePositive(gym.dumbbellWeights)
         val constraints = LoadConstraints(

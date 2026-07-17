@@ -149,6 +149,7 @@ data class GymEquipmentDto(
     val baseLoadKg: Double = 0.0,
     val platePoolId: String? = null,
     val loadingSides: Int = 2,
+    val systemBarbellFamily: String? = null,
     val exerciseLinks: List<GymEquipmentExerciseDto> = emptyList(),
     val platePool: GymPlatePoolDto? = null,
 )
@@ -165,6 +166,7 @@ data class GymPlatePoolDto(
     val gymId: String,
     val name: String,
     val compatibilityKey: String,
+    val systemBarbellFamily: String? = null,
     val plates: List<GymPlateInventoryItemDto> = emptyList(),
 )
 
@@ -183,6 +185,7 @@ data class GymExerciseConfigDto(
     val exerciseId: String,
     val preferredEquipmentId: String? = null,
     val isAvailable: Boolean = true,
+    val systemProfileSupported: Boolean? = null,
     val weightOptions: List<Double> = emptyList(),
     val dumbbellWeights: List<Double> = emptyList(),
     val plateWeights: List<Double> = emptyList(),

@@ -326,12 +326,130 @@ class AutoregulationTest {
                 name = "Olymp",
                 inventoryMode = "EQUIPMENT_FIRST",
                 dumbbellWeights = listOf(10.0, 12.5, 15.0),
+                exerciseConfigs = listOf(
+                    GymExerciseConfigDto(
+                        gymId = "gym_1",
+                        exerciseId = exercise.exerciseId,
+                        systemProfileSupported = true,
+                    ),
+                ),
             ),
         )
 
         assertTrue(inventory.isAvailable)
         assertEquals("shared-dumbbells", inventory.source)
         assertEquals(listOf(10.0, 12.5, 15.0), inventory.weightOptions)
+    }
+
+    @Test
+    fun equipmentFirstDumbbellProfilePersistsAnExplicitRemoval() {
+        val exercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS")
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_1",
+                name = "Olymp",
+                inventoryMode = "EQUIPMENT_FIRST",
+                dumbbellWeights = listOf(10.0, 12.5, 15.0),
+                exerciseConfigs = listOf(
+                    GymExerciseConfigDto(
+                        gymId = "gym_1",
+                        exerciseId = exercise.exerciseId,
+                        systemProfileSupported = false,
+                    ),
+                ),
+            ),
+        )
+
+        assertFalse(inventory.isAvailable)
+        assertEquals("none", inventory.source)
+        assertTrue(inventory.weightOptions.isEmpty())
+    }
+
+    @Test
+    fun olderBootstrapWithoutSystemMetadataKeepsSharedDumbbellCompatibility() {
+        val exercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS")
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_1",
+                name = "Olymp",
+                inventoryMode = "EQUIPMENT_FIRST",
+                dumbbellWeights = listOf(10.0, 12.5),
+            ),
+        )
+
+        assertTrue(inventory.isAvailable)
+        assertEquals(listOf(10.0, 12.5), inventory.weightOptions)
+    }
+
+    @Test
+    fun largeAndSmallBarbellPoolsNeverMixAttainableLoads() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "QUADS",
+            equipmentType = "BARBELL",
+        )
+        val largePool = GymPlatePoolDto(
+            id = "large_pool",
+            gymId = "gym_1",
+            name = "Large plates",
+            compatibilityKey = "legacy-default",
+            systemBarbellFamily = "LARGE",
+            plates = listOf(GymPlateInventoryItemDto(weightKg = 10.0, quantity = 2)),
+        )
+        val smallPool = GymPlatePoolDto(
+            id = "small_pool",
+            gymId = "gym_1",
+            name = "Small plates",
+            compatibilityKey = "small_diameter",
+            systemBarbellFamily = "SMALL",
+            plates = listOf(GymPlateInventoryItemDto(weightKg = 3.5, quantity = 2)),
+        )
+        val gym = GymDto(
+            id = "gym_1",
+            name = "Olymp",
+            inventoryMode = "EQUIPMENT_FIRST",
+            platePools = listOf(largePool, smallPool),
+            equipment = listOf(
+                GymEquipmentDto(
+                    id = "large_12",
+                    gymId = "gym_1",
+                    name = "Large 12 kg bar",
+                    equipmentType = "BARBELL",
+                    loadType = "PLATE_LOADED",
+                    baseLoadKg = 12.0,
+                    platePoolId = largePool.id,
+                    loadingSides = 2,
+                    systemBarbellFamily = "LARGE",
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+                GymEquipmentDto(
+                    id = "small_6",
+                    gymId = "gym_1",
+                    name = "Small 6 kg bar",
+                    equipmentType = "BARBELL",
+                    loadType = "PLATE_LOADED",
+                    baseLoadKg = 6.0,
+                    platePoolId = smallPool.id,
+                    loadingSides = 2,
+                    systemBarbellFamily = "SMALL",
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+            ),
+        )
+
+        val large = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "large_12")
+        val small = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "small_6")
+
+        assertEquals(listOf(12.0, 32.0), large.weightOptions)
+        assertEquals(listOf(6.0, 13.0), small.weightOptions)
+        assertTrue(19.0 !in large.weightOptions)
+        assertTrue(19.0 !in small.weightOptions)
     }
 
     private fun programExercise(
