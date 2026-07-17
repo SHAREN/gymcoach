@@ -178,9 +178,11 @@ class GymCoachRepository(
         }
         accountStore.configureServerUrls(candidateServerUrl, candidateFallbackServerUrl)
         endpointResolver.recordSelectedEndpoint(loginResult.activeServerUrl)
-        accountStore.setAccessToken(response.accessToken)
         accountStore.userId = response.user.id
         accountStore.userEmail = response.user.email
+        // Persist the token last. SecureAccountStore commits it synchronously, which also
+        // makes the preceding account and endpoint preference updates durable before login returns.
+        accountStore.setAccessToken(response.accessToken)
         persistBootstrap(loginResult.bootstrap)
         runCatching { refreshProgress() }
         schedulePeriodicSync()
