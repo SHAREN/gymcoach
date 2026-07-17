@@ -122,6 +122,9 @@
     <string name="choose_set_count">Number of sets</string>
     <string name="apply_set_recommendation">Apply the recommendation to this set</string>
     <string name="set_update_error">The set could not be updated. Your previous values were kept.</string>
+    <string name="set_save_error">The set could not be saved. Your entries were kept.</string>
+    <string name="set_delete_error">The set could not be deleted. Try again.</string>
+    <string name="rest_start_error">The set was saved, but rest could not start.</string>
     <string name="set_weight_description">Set %1$d weight</string>
     <string name="set_reps_description">Set %1$d repetitions</string>
     <string name="set_rir_description">Set %1$d RIR</string>
