@@ -1,5 +1,6 @@
 package org.sharteman.gymcoach.data.security
 
+import android.app.Application
 import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -10,7 +11,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.sharteman.gymcoach.GymCoachApplication
 
 /**
  * Phase methods invoked separately by scripts/verify-android-auth-upgrade.ps1.
@@ -24,7 +24,7 @@ class SecureAccountUpgradeTest {
     @Test
     fun verifyFreshInstallRequiresAuthentication() {
         assertNull(SecureAccountStore(context).getAccessToken())
-        assertFalse((context.applicationContext as GymCoachApplication).repository.isLoggedIn)
+        assertFalse(accountPreferences().contains(KEY_TOKEN))
     }
 
     @Test
@@ -35,6 +35,10 @@ class SecureAccountUpgradeTest {
         store.userId = TEST_USER_ID
         store.userEmail = TEST_EMAIL
         store.setAccessToken(TEST_TOKEN)
+        assertTrue(
+            "The baseline fixture could not flush its encrypted account state.",
+            accountPreferences().edit().putBoolean(KEY_FIXTURE_READY, true).commit(),
+        )
 
         assertTrue(
             "The seed phase could not read its encrypted access token.",
@@ -60,7 +64,7 @@ class SecureAccountUpgradeTest {
         )
         assertEquals(TEST_USER_ID, restored.userId)
         assertEquals(TEST_EMAIL, restored.userEmail)
-        assertTrue((context.applicationContext as GymCoachApplication).repository.isLoggedIn)
+        assertEquals(Application::class.java, context.applicationContext.javaClass)
     }
 
     @Test
@@ -96,6 +100,7 @@ class SecureAccountUpgradeTest {
         const val PREFERENCES_NAME = "gymcoach-account"
         const val KEY_ALIAS = "gymcoach-mobile-token"
         const val KEY_TOKEN = "access-token"
+        const val KEY_FIXTURE_READY = "auth-upgrade-fixture-ready"
         const val TEST_TOKEN = "upgrade-regression-sentinel"
         const val TEST_USER_ID = "upgrade-regression-user"
         const val TEST_EMAIL = "upgrade-regression@example.invalid"

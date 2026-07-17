@@ -93,15 +93,27 @@ class SecureAccountStore(context: Context) : AccountStore {
     }
 
     override fun setAccessToken(token: String) {
-        preferences.edit().putString(KEY_TOKEN, encrypt(token)).apply()
+        check(preferences.edit().putString(KEY_TOKEN, encrypt(token)).commit()) {
+            "Failed to persist encrypted account state."
+        }
     }
 
     override fun clearAccessToken() {
-        preferences.edit().remove(KEY_TOKEN).apply()
+        check(preferences.edit().remove(KEY_TOKEN).commit()) {
+            "Failed to clear encrypted account state."
+        }
     }
 
     override fun clearAccount() {
-        preferences.edit().remove(KEY_TOKEN).remove(KEY_USER_ID).remove(KEY_EMAIL).apply()
+        check(
+            preferences.edit()
+                .remove(KEY_TOKEN)
+                .remove(KEY_USER_ID)
+                .remove(KEY_EMAIL)
+                .commit(),
+        ) {
+            "Failed to clear account state."
+        }
     }
 
     override fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) {

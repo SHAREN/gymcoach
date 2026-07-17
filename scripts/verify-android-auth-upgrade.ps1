@@ -1,3 +1,12 @@
+<#
+Build the dedicated test APK before running this harness:
+  cd android
+  .\gradlew.bat -I ..\scripts\android-auth-upgrade-runner.init.gradle :app:assembleDebugAndroidTest
+
+The init script substitutes a plain Application only for this cross-version storage test, so a
+synthetic sentinel is not sent to the production synchronization path. Revoked-session behavior
+remains covered by the normal repository tests and runner.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -94,7 +103,7 @@ function Invoke-InstrumentationPhase {
     $result = Invoke-Checked -FilePath $adb -Arguments @(
         '-s', $Serial, 'shell', 'am', 'instrument', '-w', '-r',
         '-e', 'class', $className,
-        'org.sharteman.gymcoach.test/androidx.test.runner.AndroidJUnitRunner'
+        'org.sharteman.gymcoach.test/org.sharteman.gymcoach.data.security.AuthUpgradeTestRunner'
     )
     if (-not ($result -match '^OK \(1 test\)$')) {
         throw (
@@ -134,10 +143,12 @@ if ($upgrade.CertificateSha256 -ne $baseline.CertificateSha256) {
     throw 'Baseline and upgrade APK signing certificates differ.'
 }
 
-# Initial uninstall is preparation only. No clear/uninstall occurs between the two phases.
+# Initial uninstall and clear create a deterministic baseline before the account is seeded.
+# No clear or uninstall occurs between the seed and upgrade verification phases.
 & $adb -s $Serial uninstall 'org.sharteman.gymcoach' *> $null
 & $adb -s $Serial uninstall 'org.sharteman.gymcoach.test' *> $null
 Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $BaselineApk) | Out-Null
+Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
 Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $TestApk) | Out-Null
 Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
 Invoke-InstrumentationPhase -MethodName 'seedEncryptedAccountForUpgrade'
