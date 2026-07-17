@@ -257,6 +257,53 @@ describe('POST /api/import/gymcoach - confirm integrity', () => {
     expect(await db.set.count({ where: { session: { userId: user.id } } })).toBe(2);
   });
 
+  it.each([
+    ['valid row before malformed sibling', false],
+    ['malformed row before valid sibling', true],
+  ])('writes nothing for a reused count-1 source ID with a %s', async (_, malformedFirst) => {
+    const user = await seedUser(`gymcoach-atomic-malformed-${malformedFirst}@test.dev`);
+    actAs(user.id);
+    const valid = nativeRow({
+      session_id: 'ambiguous-source',
+      session_date: '2026-03-02',
+      session_started_at: '2026-03-02T09:00:00Z',
+      session_finished_at: '2026-03-02T10:00:00Z',
+      session_set_count: '1',
+    });
+    const malformed = nativeRow({
+      session_id: 'ambiguous-source',
+      session_date: '2026-03-02',
+      session_started_at: '2026-02-30T09:00:00Z',
+      session_finished_at: '2026-03-02T10:00:00Z',
+      session_set_count: '1',
+    });
+    const csv = nativeCsv(...(malformedFirst ? [malformed, valid] : [valid, malformed]));
+
+    const response = await postImport(importReq({ csv, mode: 'confirm' }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      mode: 'confirm',
+      createdSessions: 0,
+      createdSets: 0,
+      createdExercises: 0,
+      duplicatesSkipped: 0,
+      errorCount: 2,
+    });
+    expect(body.errors.map((error: { line: number }) => error.line)).toEqual([2, 3]);
+    const malformedLine = malformedFirst ? 2 : 3;
+    const validLine = malformedFirst ? 3 : 2;
+    expect(
+      body.errors.find((error: { line: number }) => error.line === malformedLine)?.reason,
+    ).toMatch(/startedAtIso/);
+    expect(body.errors.find((error: { line: number }) => error.line === validLine)?.reason).toMatch(
+      /Source session skipped/,
+    );
+    expect(await db.session.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.set.count({ where: { session: { userId: user.id } } })).toBe(0);
+    expect(await db.exercise.count({ where: { userId: user.id } })).toBe(0);
+  });
+
   it('serializes concurrent confirms and creates exactly one copy', async () => {
     const user = await seedUser('gymcoach-concurrent@test.dev');
     actAs(user.id);

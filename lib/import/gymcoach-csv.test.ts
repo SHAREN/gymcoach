@@ -276,6 +276,40 @@ describe('parseGymcoachCsv - strict values and atomic sessions', () => {
     expect(parsed.errors.map((error) => error.line)).toEqual([2, 3]);
   });
 
+  it.each([
+    ['valid row before malformed sibling', false],
+    ['malformed row before valid sibling', true],
+  ])('atomically rejects a reused count-1 source ID with a %s', (_, malformedFirst) => {
+    const valid = row({
+      session_id: 'ambiguous-source',
+      session_date: '2026-03-02',
+      session_started_at: '2026-03-02T09:00:00Z',
+      session_finished_at: '2026-03-02T10:00:00Z',
+      session_set_count: '1',
+    });
+    const malformed = row({
+      session_id: 'ambiguous-source',
+      session_date: '2026-03-02',
+      session_started_at: '2026-02-30T09:00:00Z',
+      session_finished_at: '2026-03-02T10:00:00Z',
+      session_set_count: '1',
+    });
+    const parsed = parseGymcoachCsv(
+      csv(...(malformedFirst ? [malformed, valid] : [valid, malformed])),
+    );
+
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.errors.map((error) => error.line)).toEqual([2, 3]);
+    const malformedLine = malformedFirst ? 2 : 3;
+    const validLine = malformedFirst ? 3 : 2;
+    expect(parsed.errors.find((error) => error.line === malformedLine)?.reason).toMatch(
+      /startedAtIso/,
+    );
+    expect(parsed.errors.find((error) => error.line === validLine)?.reason).toMatch(
+      /Source session skipped/,
+    );
+  });
+
   it('rejects inconsistent reused session metadata', () => {
     const parsed = parseGymcoachCsv(
       csv(

@@ -90,8 +90,10 @@ interface HeaderMap {
   maxHr: number;
 }
 
+const sourceSessionIdSchema = z.string().trim().min(1).max(120);
+
 const rowSchema = z.object({
-  sourceSessionId: z.string().trim().min(1).max(120),
+  sourceSessionId: sourceSessionIdSchema,
   dateKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   timeZone: z.string().trim().min(1).max(100),
   sourceSetCount: z.number().int().min(1).max(GYMCOACH_CSV_MAX_ROWS),
@@ -299,12 +301,18 @@ export function parseGymcoachCsv(text: string): GymcoachCsvParseResult {
 
   const candidates: GymcoachCsvRow[] = [];
   const errorByLine = new Map<number, string>();
+  const sourceSessionIdByLine = new Map<number, string>();
   const addError = (line: number, reason: string) => {
     if (!errorByLine.has(line)) errorByLine.set(line, reason);
   };
 
   for (const record of dataRecords) {
     const get = (index: number) => record.fields[index];
+    const sourceSessionIdValue = stripFormulaGuard(get(map.sourceSessionId) ?? '');
+    const sourceSessionId = sourceSessionIdSchema.safeParse(sourceSessionIdValue);
+    if (sourceSessionId.success) {
+      sourceSessionIdByLine.set(record.line, sourceSessionId.data);
+    }
     const notesValue = stripFormulaGuard(get(map.notes) ?? '');
     const usesBodyweight = parseBoolean(get(map.usesBodyweight));
     const isWarmup = parseBoolean(get(map.isWarmup), { optional: true });
@@ -322,7 +330,7 @@ export function parseGymcoachCsv(text: string): GymcoachCsvParseResult {
       continue;
     }
     const parsed = rowSchema.safeParse({
-      sourceSessionId: stripFormulaGuard(get(map.sourceSessionId) ?? ''),
+      sourceSessionId: sourceSessionIdValue,
       dateKey: parseDateKey(get(map.sessionDate)),
       timeZone: parseTimeZone(get(map.timeZone)),
       sourceSetCount: parseNumber(get(map.sourceSetCount)),
@@ -434,12 +442,16 @@ export function parseGymcoachCsv(text: string): GymcoachCsvParseResult {
     }
   }
 
-  // A source session is atomic. If any of its parsed rows is invalid, reject
-  // every remaining row from that source session so confirm can never create a
-  // fragment from the valid subset.
-  for (const rows of sessions.values()) {
-    if (!rows.some((row) => errorByLine.has(row.line))) continue;
-    for (const row of rows) {
+  // A source session is atomic. Track a schema-valid source ID before the rest
+  // of row validation so even a row that never becomes a candidate can
+  // quarantine every parsed sibling with the same identity.
+  const invalidSourceSessionIds = new Set<string>();
+  for (const line of errorByLine.keys()) {
+    const sourceSessionId = sourceSessionIdByLine.get(line);
+    if (sourceSessionId) invalidSourceSessionIds.add(sourceSessionId);
+  }
+  for (const row of candidates) {
+    if (invalidSourceSessionIds.has(row.sourceSessionId)) {
       addError(row.line, 'Source session skipped because one or more rows are invalid.');
     }
   }
