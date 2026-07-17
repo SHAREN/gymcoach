@@ -63,15 +63,18 @@ required_harness_files=(
   "scripts/close-integrated-tasks.mjs"
   "scripts/sync-beads-github.mjs"
   "scripts/publish-integration-draft.mjs"
+  "scripts/cleanup-obsolete-worktree.mjs"
   "scripts/test-integration-evidence.mjs"
   "scripts/test-github-issue-mirror.mjs"
   "scripts/test-guarded-closure.mjs"
   "scripts/test-github-publication.mjs"
+  "scripts/test-worktree-cleanup.mjs"
   "scripts/fixtures/integration-evidence/task-branch-only.json"
   "scripts/fixtures/integration-evidence/behavior-equivalent.json"
   "scripts/fixtures/integration-evidence/no-runtime-artifact.json"
   "scripts/fixtures/integration-evidence/android-integration.json"
   "scripts/fixtures/github-mirror/issues.json"
+  "scripts/fixtures/worktree-cleanup/registered-worktree.json"
 )
 for harness_file in "${required_harness_files[@]}"; do
   [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
@@ -84,6 +87,7 @@ for playwright_reference in \
 done
 grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
 grep -q "stage:verified" docs/CODEX_WORKFLOW.md || fail "verified integration state"
+grep -q "Automatic Worktree cleanup" AGENTS.md || fail "automatic Worktree cleanup policy"
 node <<'NODE' || fail "Codex harness configuration"
 const fs = require('fs');
 
@@ -124,6 +128,7 @@ node scripts/test-integration-evidence.mjs || fail "integration evidence regress
 node scripts/test-github-issue-mirror.mjs || fail "GitHub issue mirror regression tests"
 node scripts/test-guarded-closure.mjs || fail "guarded closure mirror-only regression tests"
 node scripts/test-github-publication.mjs || fail "GitHub publication regression tests"
+node scripts/test-worktree-cleanup.mjs || fail "Worktree cleanup regression tests"
 
 step "prisma generate"
 npx prisma generate >/dev/null || fail "prisma generate"

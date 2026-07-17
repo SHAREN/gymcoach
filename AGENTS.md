@@ -130,6 +130,11 @@ For every implementation request, the coordinating Codex task must:
 10. Close product tasks only through the deterministic integration closure
     guard. Report the root request with integrated, published, installed, and
     deployed states separately.
+11. After an implementation, verifier, or integration Worktree is no longer
+    needed and every Codex thread using it is inactive, the preserved Project
+    Dispatcher captures a fresh complete live thread snapshot, runs the
+    repository cleanup guard in planning mode, and applies only the eligible
+    removals. A task never removes its own current Worktree.
 
 The coordinating task owns decomposition, dispatch, dependency management,
 progress monitoring, and final integration. It must not edit implementation
@@ -164,6 +169,38 @@ If Codex cannot programmatically create the required Codex task or Worktree,
 leave the Beads task READY and report the exact missing manual action. Never
 fall back to implementing multiple tasks in one Worktree.
 
+## Automatic Worktree cleanup
+
+- Cleanup is dispatcher or heartbeat lifecycle work. Session hooks and the
+  implementation, verifier, and integration tasks themselves must not remove
+  their current Worktree.
+- For each explicit cleanup candidate, obtain a fresh complete snapshot from
+  real Codex thread tooling. Local SQLite files, timestamps, archived flags,
+  rollout files, and Beads notes do not prove that a Codex thread is inactive.
+- Run `node scripts/cleanup-obsolete-worktree.mjs --manifest PATH` first. Run
+  the same command with `--apply` only when the deterministic plan says the
+  candidate is removable.
+- The guard rereads authoritative Beads status and stage, validates every live
+  thread mapped to the resolved path, checks clean Git status including
+  untracked files, confirms the expected branch and immutable HEAD belong to
+  the same Git common directory, and checks durable ref reachability.
+- Preserve dispatcher, primary, current-execution, current-source, current-
+  integration, owner-preserved, Git-locked, main/master, active-thread, dirty,
+  REVIEW, and VERIFY Worktrees. Preserve an implementation Worktree until its
+  task is closed or `stage:verified`, and preserve an integration Worktree
+  until the root is closed. `worktree:preserve` is an explicit owner hold.
+- Before removing a clean Worktree whose immutable HEAD is otherwise
+  unreachable, create and verify a full-SHA archive ref under
+  `refs/codex/worktree-archive/TASK-ID/`. Do not delete its branch.
+- Remove a registered candidate only with non-forced `git worktree remove`,
+  then verify that Git registration and the directory are gone and report the
+  measured reclaimed bytes. If a residual directory remains, handle it in a
+  separate guarded residual pass only after registration is absent, prior
+  cleanup evidence matches, and exact real-path containment is proven.
+- Report Windows locks and cleanup failures without `--force`, permission
+  changes, retry loops, or recursive fallback deletion. One blocked candidate
+  must not authorize changes to another Worktree.
+
 ## Development task workflow
 
 - Beads is the source of truth for project tasks. Follow
@@ -189,8 +226,9 @@ fall back to implementing multiple tasks in one Worktree.
   verification may be delegated in parallel.
 - The Project Dispatcher is code-read-only but acts as the default coordinator.
   It may capture, triage, select, decompose, create child Worktree tasks,
-  dispatch work, monitor results, and integrate verified commits. It must not
-  edit product code or claim an implementation task itself.
+  dispatch work, monitor results, integrate verified commits, and clean only
+  obsolete inactive Worktrees through the deterministic cleanup guard. It must
+  not edit product code or claim an implementation task itself.
 - One task must produce one focused diff.
 - Do not expand task scope. Capture unrelated findings as separate linked
   tasks.

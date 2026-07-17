@@ -19,6 +19,8 @@ mutations.
 7. Product verification moves work to awaiting integration, not DONE.
 8. Guarded integration is the only normal product close path.
 9. GitHub Issues mirror Beads state; they never become the task source of truth.
+10. The Dispatcher removes obsolete inactive task Worktrees through the
+    deterministic cleanup guard after their lifecycle use ends.
 
 ## Workflow States
 
@@ -142,7 +144,10 @@ coordinator automatically:
 9. dispatches integrate-tasks to combine verified commits in dependency order
    in a local integration branch and Worktree;
 10. reruns the applicable gates, validates final artifacts, and closes tasks
-    only through the deterministic guard.
+    only through the deterministic guard;
+11. after implementation, verifier, and integration threads become inactive
+    and their Worktrees are no longer needed, plans and applies repository-
+    guarded Worktree cleanup without touching preserved or active work.
 
 The coordinator asks the user only when a material decision or new authority
 is required. Questions, explanations, read-only reviews, and diagnostics do not
@@ -150,7 +155,8 @@ enter the implementation lifecycle automatically.
 
 For work that continues beyond the current turn, the Codex coordinator creates
 or reuses one thread heartbeat. It rereads Beads and live task state on every
-run, avoids duplicate writers/verifiers, and stops when the root request is
+run, avoids duplicate writers/verifiers, performs eligible Worktree cleanup
+from a fresh complete live thread snapshot, and stops when the root request is
 complete or needs new authority.
 
 Not-started dependency-ordered work remains `open + stage:ready`; the dependency
@@ -180,6 +186,61 @@ The repository integrates the workflow directly with Codex:
 Project-local configuration and hooks load only for a trusted checkout. Review
 them with /hooks after changes. A new Codex task or application restart may be
 required after changing skill or hook files.
+
+## Automatic Worktree Cleanup
+
+The preserved Project Dispatcher owns cleanup after an implementation,
+verifier, or integration thread is no longer running and the Worktree is no
+longer needed. A child task records cleanup eligibility at handoff but never
+self-removes. Hooks do not run cleanup because they do not have an authoritative
+complete view of live Codex thread state.
+
+For every explicit candidate, the Dispatcher captures a fresh project-complete
+snapshot from `codex_app.list_threads` or equivalent live thread tooling and
+creates a temporary local manifest based on
+`scripts/fixtures/worktree-cleanup/registered-worktree.json`. The manifest
+records the exact candidate, owning thread, managed root, current source,
+current integration Worktrees, owner-preserved paths, expected branch, and full
+HEAD. It is planning input, not durable project state, and must not contain
+private logs or secrets.
+
+Always plan before mutation:
+
+```text
+node scripts/cleanup-obsolete-worktree.mjs --manifest PATH
+node scripts/cleanup-obsolete-worktree.mjs --manifest PATH --apply
+```
+
+The guard fails closed unless all of the following hold:
+
+- the thread snapshot is fresh, complete for the project, and supplied by real
+  Codex thread tooling;
+- the owning thread exists at the exact resolved candidate path and every
+  thread mapped to that path is inactive;
+- Beads status and its single stage label are compatible with the candidate
+  role: implementation is closed or `stage:verified`, verifier has completed
+  its success/failure lifecycle, and integration is closed;
+- the Worktree is registered under the same Git common directory, is unlocked,
+  is not main/master or the primary/current Worktree, and has no staged,
+  unstaged, conflicted, or untracked changes;
+- the live branch and immutable HEAD match the dispatcher-recorded values;
+- the path is not the dispatcher, current source, current integration,
+  owner-preserved, current execution, or a `worktree:preserve` path.
+
+If the immutable HEAD has no durable head, remote, tag, or existing archive ref,
+create and verify
+`refs/codex/worktree-archive/TASK-ID/FULL-SHA` before removal. Never delete the
+branch. Remove an eligible registered Worktree only with non-forced
+`git worktree remove`, then verify de-registration, path absence, and measured
+reclaimed bytes.
+
+If Git removed the registration but Windows left a locked residual directory,
+stop and report it. A later residual-mode pass may remove only that exact
+unregistered path after matching prior clean-removal evidence and proving its
+real path is a strict descendant of the allowed managed root. Never use
+`--force`, permission changes, retry loops, junction-following, or a recursive
+fallback after Git failure. Missing, stale, ambiguous, dirty, active, or locked
+evidence always preserves the Worktree.
 
 ## Safe Parallel Task Execution
 
@@ -328,7 +389,10 @@ implementation:
 
 After implementation, run the applicable checks, append concise evidence, and
 move the task to stage:review. Mirror the new state. The implementing task does
-not close itself.
+not close itself and does not remove its current Worktree. REVIEW and VERIFY
+Worktrees remain protected. The Dispatcher considers the implementation
+Worktree for cleanup only after a later verified/closed state and inactive
+thread snapshot prove it is no longer needed.
 
 ## Verification
 
@@ -403,6 +467,13 @@ On failure:
 
 Every verification transition updates the exact GitHub mirror with sanitized
 structured evidence only. A mirror failure does not change the Beads result.
+
+After the verifier thread becomes inactive, the Dispatcher may clean its clean
+verifier Worktree whether verification returned an exact failure to the writer
+or moved the task to `stage:verified`. Verification failure never makes the
+implementation Worktree obsolete. A successful implementation Worktree is
+eligible only after `stage:verified` or guarded closure and the same live-thread
+and Git safety checks pass.
 
 ## Guarded Integration And Closure
 
@@ -480,6 +551,13 @@ the remaining task mirrors from being checked.
 Legacy tasks closed before this state machine are not destructively rewritten.
 Integration audits must list them. Missing legacy commits or mappings are
 flagged and block the root request until resolved.
+
+The integration Worktree remains protected while it is the current source or
+current integration Worktree. Only after guarded closure, any authorized draft
+publication, an explicit `noLongerNeeded` decision, and an inactive integration
+thread may the Dispatcher plan and apply its cleanup. Publication, installation,
+and deployment remain independent facts and do not authorize cleanup by
+themselves.
 
 ## GitHub Issue Mirror
 
@@ -601,6 +679,9 @@ it cannot create or select work independently.
   refs/dolt/data automatically.
 - GitHub publication is limited to a verified dedicated branch and draft PR.
   Automatic merge remains prohibited.
+- Automatic Worktree cleanup is limited to explicit candidates that pass the
+  repository guard. Windows locks or missing live-thread evidence require a
+  report and preservation, not force deletion.
 - The owner must confirm the current milestone before milestone alignment can
   be a strict selection gate.
 - Production deployment remains subject to the authority and rollback rules in

@@ -161,6 +161,13 @@ Delete only that exact temporary file. A GitHub partial failure does not roll
 back Beads or create a duplicate issue. Report the task as verified and awaiting
 integration. Do not call bd close.
 
+Do not remove the verifier or implementation Worktree from the active verifier
+thread. After this thread becomes inactive, the Project Dispatcher may plan
+cleanup of the clean verifier Worktree. The implementation Worktree becomes a
+cleanup candidate only at `stage:verified` or closed and remains protected if
+any thread still uses it, it is dirty, owner-preserved, or it is the current
+source/integration Worktree.
+
 ### Explicit No-Runtime-Artifact Exception
 
 Use this only when the acceptance criteria and independent scope review prove
@@ -197,5 +204,11 @@ bd update TASK-ID --append-notes "Verification failed: ..." --remove-label stage
 Mirror the returned lifecycle state with
 node scripts/sync-beads-github.mjs --task TASK-ID. GitHub failure remains a
 separate partial failure and never changes the Beads verification result.
+
+Verification failure makes only the inactive verifier Worktree potentially
+obsolete. Preserve the implementation Worktree for the sole writer's
+correction. Cleanup is performed later by the Dispatcher through a dry-run and
+explicit `--apply` of `scripts/cleanup-obsolete-worktree.mjs`; the guard must
+use fresh complete real Codex thread state and must not force Windows locks.
 
 Report that the task remains open and requires implementation changes.

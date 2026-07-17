@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "mode": "registered",
+  "observedAt": "{{OBSERVED_AT}}",
+  "completeForProject": true,
+  "threadSource": "codex_app.list_threads",
+  "allowedWorktreeRoot": "{{ALLOWED_ROOT}}",
+  "currentSourceWorktree": "{{CURRENT_SOURCE_PATH}}",
+  "currentIntegrationWorktrees": [],
+  "ownerPreservedWorktrees": [],
+  "candidate": {
+    "path": "{{CANDIDATE_PATH}}",
+    "role": "verifier",
+    "taskId": "gymcoach-example",
+    "threadId": "thread-example",
+    "noLongerNeeded": true,
+    "expectedHead": "{{CANDIDATE_HEAD}}",
+    "expectedBranch": "{{CANDIDATE_BRANCH}}"
+  },
+  "threads": [
+    {
+      "id": "thread-example",
+      "status": "idle",
+      "cwd": "{{CANDIDATE_PATH}}"
+    }
+  ]
+}

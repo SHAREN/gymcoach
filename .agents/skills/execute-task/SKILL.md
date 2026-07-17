@@ -191,5 +191,14 @@ Do not send raw implementation logs, private paths, credentials, device
 identifiers, or personal data to GitHub. A partial mirror failure does not
 change REVIEW state and is retried separately.
 
+Do not remove or unregister the current implementation Worktree. REVIEW and
+VERIFY require it to remain available. The Project Dispatcher may consider it
+for automatic cleanup only after the task later reaches `stage:verified` or
+closed, the implementation thread is inactive, and
+`scripts/cleanup-obsolete-worktree.mjs` validates fresh complete Codex thread
+state, authoritative Beads state, clean Git status, expected branch/HEAD,
+reachability, preserved roles, and exact path containment. The task itself only
+signals later eligibility; it never self-deletes.
+
 Report the branch, diff summary, checks, and task state. End by stating that the
 task is in REVIEW and has not been closed.

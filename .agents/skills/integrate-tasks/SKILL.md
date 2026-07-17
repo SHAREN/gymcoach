@@ -170,3 +170,19 @@ Report:
 - integrated, published, installed, and deployed states separately;
 - guarded Beads closures and GitHub mirror results;
 - draft PR URL only if publication was authorized and succeeded.
+
+Keep the integration Worktree while it remains the current source or current
+integration line. After guarded closure, any authorized draft publication, and
+an explicit no-longer-needed decision, let the preserved Project Dispatcher
+capture a fresh complete live Codex thread snapshot and run:
+
+```text
+node scripts/cleanup-obsolete-worktree.mjs --manifest PATH
+node scripts/cleanup-obsolete-worktree.mjs --manifest PATH --apply
+```
+
+Never self-remove from the integration thread. The cleanup guard must preserve
+active, dirty, owner-preserved, REVIEW/VERIFY, current source/integration,
+Git-locked, and main/master Worktrees; archive an otherwise unreachable full
+immutable HEAD before non-forced `git worktree remove`; and report Windows
+residual locks without unsafe fallback deletion.
