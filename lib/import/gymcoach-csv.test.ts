@@ -195,6 +195,59 @@ describe('parseGymcoachCsv - strict values and atomic sessions', () => {
     expect(parsed.errors.map((error) => error.line)).toEqual([2, 3, 4]);
   });
 
+  it.each([
+    ['a non-leap February 29', '2026-02-29T09:00:00Z', '2026-03-01', '2026-03-01T10:00:00Z'],
+    ['February 30', '2026-02-30T09:00:00Z', '2026-03-02', '2026-03-02T10:00:00Z'],
+    ['April 31', '2026-04-31T09:00:00Z', '2026-05-01', '2026-05-01T10:00:00Z'],
+    ['hour 24', '2026-05-02T24:00:00Z', '2026-05-03', '2026-05-03T01:00:00Z'],
+    ['minute 60', '2026-05-02T09:60:00Z', '2026-05-02', '2026-05-02T11:00:00Z'],
+    ['second 60', '2026-05-02T09:13:60Z', '2026-05-02', '2026-05-02T11:00:00Z'],
+  ])('rejects impossible timestamp components: %s', (_, startedAt, dateKey, finishedAt) => {
+    const parsed = parseGymcoachCsv(
+      csv(
+        row({
+          session_date: dateKey,
+          session_started_at: startedAt,
+          session_finished_at: finishedAt,
+        }),
+      ),
+    );
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.errors).toEqual([
+      expect.objectContaining({ line: 2, reason: expect.stringMatching(/startedAtIso/) }),
+    ]);
+  });
+
+  it.each([
+    [
+      'UTC leap day',
+      'UTC',
+      '2024-02-29T09:13:00Z',
+      '2024-02-29T10:05:00Z',
+      '2024-02-29T09:13:00.000Z',
+    ],
+    [
+      'explicit offset leap day',
+      'Asia/Yekaterinburg',
+      '2024-02-29T09:13:00+05:00',
+      '2024-02-29T10:05:00+05:00',
+      '2024-02-29T04:13:00.000Z',
+    ],
+  ])('accepts a valid %s timestamp', (_, timeZone, startedAt, finishedAt, expectedStartedAt) => {
+    const parsed = parseGymcoachCsv(
+      csv(
+        row({
+          session_date: '2024-02-29',
+          session_timezone: timeZone,
+          session_started_at: startedAt,
+          session_finished_at: finishedAt,
+        }),
+      ),
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]?.startedAtIso).toBe(expectedStartedAt);
+  });
+
   it('rejects a local date/timezone mismatch and invalid timezone', () => {
     const parsed = parseGymcoachCsv(
       csv(
