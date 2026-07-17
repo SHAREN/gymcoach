@@ -30,6 +30,9 @@ describe('HISTORY_CSV_HEADERS', () => {
       'distance_m',
       'avg_hr',
       'max_hr',
+      'session_timezone',
+      'session_set_count',
+      'exercise_category',
     ]);
   });
 });
@@ -65,5 +68,11 @@ describe('csvEscape', () => {
   it('does not touch formula characters inside the value', () => {
     expect(csvEscape('weighted dips +20kg')).toBe('weighted dips +20kg');
     expect(csvEscape('a=b')).toBe('a=b');
+  });
+
+  it('doubles a legitimate guard-looking apostrophe for reversible import', () => {
+    expect(csvEscape("'=SUM(A1)")).toBe("''=SUM(A1)");
+    expect(csvEscape("'@literal")).toBe("''@literal");
+    expect(csvEscape("''=literal")).toBe("'''=literal");
   });
 });
