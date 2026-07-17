@@ -1,10 +1,24 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionExerciseMenu } from './session-exercise-menu';
 
 vi.mock('@/components/shared/use-exercise-name', () => ({
   useExerciseName: () => (name: string) => name,
 }));
+
+Element.prototype.hasPointerCapture = vi.fn(() => false);
+Element.prototype.setPointerCapture = vi.fn();
+Element.prototype.releasePointerCapture = vi.fn();
+Element.prototype.scrollIntoView = vi.fn();
+vi.stubGlobal(
+  'ResizeObserver',
+  class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
 
 const bench = {
   id: 'bench',
@@ -100,13 +114,98 @@ describe('SessionExerciseMenu', () => {
     });
   });
 
-  it('filters replacement choices to the current primary muscle group', () => {
+  it('defaults replacement to the current muscle and all equipment', () => {
     renderMenu();
 
     fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
 
+    expect(screen.getByRole('combobox', { name: 'Muscle group' })).toHaveTextContent('Chest');
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'All equipment',
+    );
     expect(screen.getByRole('button', { name: /Incline Press/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Cable Row/ })).not.toBeInTheDocument();
+  });
+
+  it('changes, clears and composes replacement filters with search', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderMenu();
+
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'All muscles' }));
+    await user.click(screen.getByRole('combobox', { name: 'Equipment type' }));
+    await user.click(screen.getByRole('option', { name: 'Cable stack' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search exercises' }), 'row');
+
+    expect(screen.getByRole('button', { name: /Cable Row/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Incline Press/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Bench Press/ })).not.toBeInTheDocument();
+
+    await user.clear(screen.getByRole('searchbox', { name: 'Search exercises' }));
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+
+    expect(screen.getByRole('button', { name: /Incline Press/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cable Row/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Bench Press/ })).not.toBeInTheDocument();
+  });
+
+  it('resets replacement filters after leaving and reopening the picker', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderMenu();
+
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'All muscles' }));
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+
+    expect(screen.getByRole('combobox', { name: 'Muscle group' })).toHaveTextContent('Chest');
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'All equipment',
+    );
+  });
+
+  it('shows a compact accessible trained-day count for replacement choices', () => {
+    renderMenu({
+      trainingDatesByExercise: {
+        incline: [
+          '2026-07-01T08:00:00.000Z',
+          '2026-07-01T18:00:00.000Z',
+          '2026-07-03T08:00:00.000Z',
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+
+    expect(
+      screen.getByRole('button', { name: /Incline Press Chest Training days: 2/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('Training days: 2')).not.toBeInTheDocument();
+  });
+
+  it('keeps the logged-set replacement confirmation before updating the exercise', async () => {
+    renderMenu({ loggedSetCount: 1 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    fireEvent.click(screen.getByRole('button', { name: /Incline Press/ }));
+
+    expect(
+      screen.getByText(
+        'Sets already logged in this session stay attached to the original exercise. Replace it for the remaining work?',
+      ),
+    ).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+
+    const replaceButtons = screen.getAllByRole('button', { name: 'Replace' });
+    fireEvent.click(replaceButtons.at(-1)!);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe('/api/program-exercises/pe-bench');
+    expect(JSON.parse(init?.body as string)).toMatchObject({ exerciseId: 'incline' });
   });
 
   it('links the current exercise with its next neighbor atomically', async () => {

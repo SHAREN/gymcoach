@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Building2, CalendarCheck2, Plus, Search } from 'lucide-react';
-import type { Exercise, MuscleGroup } from '@/lib/prisma-client';
+import { Building2, Plus, Search } from 'lucide-react';
+import type { EquipmentType, Exercise, MuscleGroup } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,9 +19,13 @@ import {
 import { ExerciseFormDialog } from '@/components/exercises/exercise-form-dialog';
 import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
+import { ExerciseFilters } from '@/components/exercises/exercise-filters';
+import { ExerciseTrainingDays } from '@/components/exercises/exercise-training-days';
+import { useExerciseTrainingDays } from '@/components/exercises/use-exercise-training-days';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
-import { getDateKeyInTimeZone } from '@/lib/history-calendar';
+import { filterExercises } from '@/lib/exercise-filters';
+import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
 
 interface ExercisesViewProps {
   exercises: Exercise[];
@@ -31,7 +35,7 @@ interface ExercisesViewProps {
     exerciseConfigs: Array<{ exerciseId: string; isAvailable: boolean }>;
   }>;
   activeGymId: string | null;
-  trainingDatesByExercise?: Record<string, string[]>;
+  trainingDatesByExercise?: TrainingDatesByExercise;
   equipmentChoices?: ExerciseEquipmentChoice[];
 }
 
@@ -49,7 +53,8 @@ export function ExercisesView({
   const exerciseName = useExerciseName();
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [timeZone, setTimeZone] = useState('UTC');
+  const [selectedMuscleGroup, setSelectedMuscleGroup] = useState<MuscleGroup | null>(null);
+  const [selectedEquipmentType, setSelectedEquipmentType] = useState<EquipmentType | null>(null);
   const [selectedGymId, setSelectedGymId] = useState(() =>
     activeGymId && gyms.some((gym) => gym.id === activeGymId) ? activeGymId : ALL_GYMS,
   );
@@ -58,37 +63,30 @@ export function ExercisesView({
 
   // Gym availability follows the same rule as session load constraints and
   // program generation: an exercise is available unless that gym explicitly
-  // marks it unavailable. The name query narrows the selected gym locally.
+  // marks it unavailable. Name, muscle and equipment filters then compose
+  // locally without changing the selected gym.
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
     const unavailableIds = new Set(
       selectedGym?.exerciseConfigs
         .filter((config) => !config.isAvailable)
         .map((config) => config.exerciseId) ?? [],
     );
-    return exercises.filter((exercise) => {
-      if (unavailableIds.has(exercise.id)) return false;
-      if (!q) return true;
-      return (
-        exercise.name.toLowerCase().includes(q) ||
-        exerciseName(exercise.name).toLowerCase().includes(q)
-      );
-    });
-  }, [exerciseName, exercises, query, selectedGym]);
+    return filterExercises(
+      exercises,
+      {
+        query,
+        muscleGroup: selectedMuscleGroup,
+        equipmentType: selectedEquipmentType,
+        unavailableExerciseIds: unavailableIds,
+      },
+      exerciseName,
+    );
+  }, [exerciseName, exercises, query, selectedEquipmentType, selectedGym, selectedMuscleGroup]);
 
   const grouped = useMemo(() => groupByMuscle(filtered), [filtered]);
-  const trainedDaysByExercise = useMemo(() => {
-    return Object.fromEntries(
-      Object.entries(trainingDatesByExercise).map(([exerciseId, dates]) => [
-        exerciseId,
-        new Set(dates.map((date) => getDateKeyInTimeZone(new Date(date), timeZone))).size,
-      ]),
-    );
-  }, [timeZone, trainingDatesByExercise]);
-
-  useEffect(() => {
-    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-  }, []);
+  const trainedDaysByExercise = useExerciseTrainingDays(trainingDatesByExercise);
+  const hasNameOrExerciseFilter =
+    query.trim().length > 0 || selectedMuscleGroup !== null || selectedEquipmentType !== null;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -128,6 +126,16 @@ export function ExercisesView({
               </Select>
             </div>
           )}
+          <ExerciseFilters
+            muscleGroup={selectedMuscleGroup}
+            equipmentType={selectedEquipmentType}
+            onMuscleGroupChange={setSelectedMuscleGroup}
+            onEquipmentTypeChange={setSelectedEquipmentType}
+            onReset={() => {
+              setSelectedMuscleGroup(null);
+              setSelectedEquipmentType(null);
+            }}
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -152,10 +160,12 @@ export function ExercisesView({
       ) : filtered.length === 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>{query.trim() ? t('noMatchTitle') : t('noGymExercisesTitle')}</CardTitle>
+            <CardTitle>
+              {hasNameOrExerciseFilter ? t('noMatchTitle') : t('noGymExercisesTitle')}
+            </CardTitle>
             <CardDescription>
-              {query.trim()
-                ? t('noMatchDescription', { query: query.trim() })
+              {hasNameOrExerciseFilter
+                ? t('noFilteredDescription')
                 : t('noGymExercisesDescription', { gym: selectedGym?.name ?? '' })}
             </CardDescription>
           </CardHeader>
@@ -193,7 +203,6 @@ export function ExercisesView({
 }
 
 function ExerciseRow({ exercise, trainedDays }: { exercise: Exercise; trainedDays: number }) {
-  const t = useTranslations('exercises');
   const exerciseName = useExerciseName();
   const displayName = exerciseName(exercise.name);
 
@@ -212,8 +221,7 @@ function ExerciseRow({ exercise, trainedDays }: { exercise: Exercise; trainedDay
         >
           <p className="truncate text-sm font-semibold">{displayName}</p>
           <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarCheck2 className="size-3.5 shrink-0" />
-            <span>{t('trainedDays', { count: trainedDays })}</span>
+            <ExerciseTrainingDays count={trainedDays} />
           </p>
         </Link>
       </CardContent>

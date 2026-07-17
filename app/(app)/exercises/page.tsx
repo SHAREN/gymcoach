@@ -1,10 +1,11 @@
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { ExercisesView } from '@/components/exercises/exercises-view';
+import { getFinishedExerciseTrainingDates } from '@/lib/exercise-usage';
 
 export default async function ExercisesPage() {
   const session = await requireSession();
-  const [exercises, gyms, user, exerciseSessions, equipment] = await Promise.all([
+  const [exercises, gyms, user, trainingDatesByExercise, equipment] = await Promise.all([
     db.exercise.findMany({
       where: { userId: session.userId },
       orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
@@ -24,19 +25,7 @@ export default async function ExercisesPage() {
       where: { id: session.userId },
       select: { activeGymId: true },
     }),
-    db.set.findMany({
-      where: {
-        session: {
-          userId: session.userId,
-          finishedAt: { not: null },
-        },
-      },
-      distinct: ['exerciseId', 'sessionId'],
-      select: {
-        exerciseId: true,
-        session: { select: { startedAt: true } },
-      },
-    }),
+    getFinishedExerciseTrainingDates(session.userId),
     db.gymEquipment.findMany({
       where: { gym: { userId: session.userId } },
       orderBy: [{ gym: { name: 'asc' } }, { name: 'asc' }],
@@ -63,11 +52,6 @@ export default async function ExercisesPage() {
       },
     }),
   ]);
-  const trainingDatesByExercise: Record<string, string[]> = {};
-  for (const item of exerciseSessions) {
-    (trainingDatesByExercise[item.exerciseId] ??= []).push(item.session.startedAt.toISOString());
-  }
-
   return (
     <main className="flex-1 px-4 py-6">
       <ExercisesView
