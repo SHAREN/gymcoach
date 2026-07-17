@@ -24,6 +24,11 @@ This is the only normal product-task closure path.
 codex/integration-ROOT-TASK-ID
 ```
 
+Require the Project Dispatcher to record the exact integration
+task/role/thread/host/resolved-path-hash Worktree binding on the root Beads task
+from real thread creation state before integration begins. Do not fabricate a
+missing thread or host identity for cleanup.
+
 Never integrate directly on main/master, never write in a task Worktree, and
 never use a stale whole-file copy to resolve a conflict.
 
@@ -131,6 +136,12 @@ The wrapper closes mapped verified tasks in dependency order and closes any
 root coordination task last. It never limits closure checks to task IDs supplied
 only by the manifest.
 
+It preplans the complete ordered closure before mutation. If the exact guarded
+note was appended and all stages removed but `bd close` failed, the next retry
+may classify only that exact allowed pre-close state as close-only, without
+appending the note again. Duplicate/missing notes, remaining stages, unexpected
+statuses, or any other partial state fail closed before further mutation.
+
 Retry only the failed mirror after Beads is already closed:
 
 ```text
@@ -185,4 +196,10 @@ Never self-remove from the integration thread. The cleanup guard must preserve
 active, dirty, owner-preserved, REVIEW/VERIFY, current source/integration,
 Git-locked, and main/master Worktrees; archive an otherwise unreachable full
 immutable HEAD before non-forced `git worktree remove`; and report Windows
-residual locks without unsafe fallback deletion.
+residual locks without unsafe fallback deletion. Supply only a raw unfiltered
+`codex_app.list_threads` response below its limit with no unavailable hosts,
+and bind the derived task role to the exact Beads task/thread/host/path-hash
+marker. Never substitute `wait_threads`, caller-declared flattened state, or a
+manifest role. A residual pass accepts only the immutable Git receipt ref
+created by the registered removal pass and revalidates identity, age, intent,
+and current commit reachability.

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, opendir, readFile, realpath, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -10,6 +11,10 @@ const KNOWN_THREAD_STATES = new Set([...INACTIVE_THREAD_STATES, 'active', 'runni
 const PROTECTED_STAGES = new Set(['stage:review', 'stage:verify']);
 const ROLES = new Set(['dispatcher', 'implementation', 'integration', 'verifier']);
 const MAX_THREAD_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
+const MAX_RESIDUAL_RECEIPT_AGE_MS = 24 * 60 * 60 * 1000;
+const LIST_THREADS_SCHEMA_VERSION = 2;
+const LIST_THREADS_MAX_LIMIT = 50;
+const RECEIPT_SCHEMA_VERSION = 2;
 const ZERO_COMMIT = '0'.repeat(40);
 
 export class WorktreeCleanupError extends Error {
@@ -45,10 +50,11 @@ function requireCommit(value, label) {
   return commit;
 }
 
-function run(command, args, { cwd, allowFailure = false } = {}) {
+function run(command, args, { cwd, allowFailure = false, input } = {}) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: 'utf8',
+    input,
     windowsHide: true,
   });
   if ((result.error || result.status !== 0) && !allowFailure) {
@@ -89,6 +95,18 @@ export function normalizePathForComparison(value) {
   return windowsStyle || process.platform === 'win32'
     ? withoutTrailing.toLowerCase()
     : withoutTrailing;
+}
+
+export function worktreePathSha256(value) {
+  return createHash('sha256')
+    .update(`gymcoach-worktree-path-v1\0${normalizePathForComparison(value)}`)
+    .digest('hex');
+}
+
+function gitCommonDirectorySha256(value) {
+  return createHash('sha256')
+    .update(`gymcoach-git-common-directory-v1\0${normalizePathForComparison(value)}`)
+    .digest('hex');
 }
 
 function pathsEqual(left, right) {
@@ -234,6 +252,10 @@ async function collectGitState(repo, manifest) {
     mode === 'residual',
   );
   const worktrees = listWorktrees(repo);
+  const repositoryCommonDirectory = await resolveGitPath(
+    repo,
+    runGit(repo, ['rev-parse', '--git-common-dir']).stdout.trim(),
+  );
   const registeredEntry = worktrees.find((entry) =>
     pathsEqual(entry.path, candidate.candidatePath),
   );
@@ -247,6 +269,29 @@ async function collectGitState(repo, manifest) {
     fail('residual cleanup requires Git registration to be absent');
   }
   if (mode === 'residual') {
+    const { receipt, receiptRef } = loadCleanupReceipt(
+      repo,
+      manifest.previousRegisteredCleanupRef,
+      manifest.candidate?.taskId,
+    );
+    const receiptHead = requireCommit(receipt.head, 'cleanup receipt head');
+    const commit = runGit(repo, ['cat-file', '-e', `${receiptHead}^{commit}`], {
+      allowFailure: true,
+    });
+    if (commit.status !== 0) fail('cleanup receipt head is not a Git commit in this repository');
+    const durableRefs = durableRefsContaining(repo, receiptHead);
+    let receiptReachabilityVerified = false;
+    if (receipt.reachability?.kind === 'archive') {
+      const archived = runGit(repo, ['rev-parse', '--verify', receipt.reachability.ref], {
+        allowFailure: true,
+      });
+      receiptReachabilityVerified =
+        archived.status === 0 && archived.stdout.trim().toLowerCase() === receiptHead;
+    } else if (receipt.reachability?.kind === 'durable-ref') {
+      receiptReachabilityVerified =
+        Array.isArray(receipt.reachability.refs) &&
+        receipt.reachability.refs.some((ref) => durableRefs.includes(ref));
+    }
     return {
       allowedRoot,
       candidatePath: candidate.candidatePath,
@@ -255,6 +300,11 @@ async function collectGitState(repo, manifest) {
       isMainWorktree: false,
       isSymbolicLink: candidate.isSymbolicLink,
       currentExecution: pathsEqual(candidate.candidatePath, process.cwd()),
+      receipt,
+      receiptRef,
+      durableRefs,
+      receiptReachabilityVerified,
+      commonDirectory: repositoryCommonDirectory,
     };
   }
 
@@ -281,10 +331,6 @@ async function collectGitState(repo, manifest) {
     candidate.candidatePath,
     runGit(candidate.candidatePath, ['rev-parse', '--git-common-dir']).stdout.trim(),
   );
-  const repositoryCommonDirectory = await resolveGitPath(
-    repo,
-    runGit(repo, ['rev-parse', '--git-common-dir']).stdout.trim(),
-  );
   if (!pathsEqual(candidateCommonDirectory, repositoryCommonDirectory)) {
     fail('candidate Worktree belongs to a different Git common directory');
   }
@@ -310,6 +356,7 @@ async function collectGitState(repo, manifest) {
     branchHead,
     clean: status.trim() === '',
     durableRefs: durableRefsContaining(repo, head),
+    commonDirectory: repositoryCommonDirectory,
   };
 }
 
@@ -318,48 +365,140 @@ function validatePathArray(value, label) {
   return value.map((entry, index) => requireString(entry, `${label}[${index}]`));
 }
 
-function validateThreadSnapshot(manifest, candidatePath, now) {
-  const observedAt = Date.parse(requireString(manifest.observedAt, 'observedAt'));
-  if (!Number.isFinite(observedAt)) fail('observedAt must be an ISO timestamp');
+function requireExactKeys(value, expectedKeys, label) {
+  const keys = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+    fail(`${label} must preserve the exact raw list_threads envelope`);
+  }
+}
+
+function requireFiniteNumber(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    fail(`${label} must be a finite number`);
+  }
+  return value;
+}
+
+function validateThreadSnapshot(manifest, candidatePath, executorPath, now) {
+  const snapshot = manifest.threadSnapshot;
+  if (!snapshot || typeof snapshot !== 'object') {
+    fail('threadSnapshot must contain raw codex_app.list_threads provenance');
+  }
+  const observedAt = Date.parse(requireString(snapshot.capturedAt, 'threadSnapshot.capturedAt'));
+  if (!Number.isFinite(observedAt)) fail('threadSnapshot.capturedAt must be an ISO timestamp');
   const age = now - observedAt;
   if (age < -60_000 || age > MAX_THREAD_SNAPSHOT_AGE_MS) {
-    fail('Codex thread snapshot is stale or from the future');
+    fail('Codex list_threads snapshot is stale or from the future');
   }
-  requireBoolean(manifest.completeForProject, 'completeForProject');
-  if (manifest.completeForProject !== true) {
-    fail('Codex thread snapshot must be complete for the project');
+  if (snapshot.tool !== 'codex_app.list_threads') {
+    fail('only raw codex_app.list_threads output is valid cleanup evidence');
   }
-  if (
-    manifest.threadSource !== 'codex_app.list_threads' &&
-    manifest.threadSource !== 'codex_app.wait_threads'
-  ) {
-    fail('threadSource must be a live Codex thread tool');
+  const request = snapshot.request;
+  if (!request || typeof request !== 'object') fail('threadSnapshot.request is required');
+  requireExactKeys(request, ['limit', 'query'], 'threadSnapshot.request');
+  if (request.limit !== LIST_THREADS_MAX_LIMIT || request.query !== null) {
+    fail('list_threads must be unfiltered and requested at the maximum supported limit');
   }
-  if (!Array.isArray(manifest.threads) || manifest.threads.length === 0) {
-    fail('threads must contain the fresh complete Codex thread snapshot');
+  const response = snapshot.response;
+  if (!response || typeof response !== 'object') fail('threadSnapshot.response is required');
+  requireExactKeys(
+    response,
+    ['query', 'schemaVersion', 'threads', 'unavailableHosts'],
+    'threadSnapshot.response',
+  );
+  if (response.schemaVersion !== LIST_THREADS_SCHEMA_VERSION || response.query !== null) {
+    fail('list_threads response schema/query does not prove an unfiltered snapshot');
+  }
+  if (!Array.isArray(response.unavailableHosts)) {
+    fail('list_threads unavailableHosts must be preserved');
+  }
+  if (response.unavailableHosts.length > 0) {
+    fail('list_threads snapshot is incomplete because at least one host was unavailable');
+  }
+  if (!Array.isArray(response.threads) || response.threads.length === 0) {
+    fail('list_threads response must contain project thread evidence');
+  }
+  if (response.threads.length >= request.limit) {
+    fail('list_threads result reached its limit and may be truncated');
   }
   const seenIds = new Set();
-  const threads = manifest.threads.map((thread, index) => {
-    if (!thread || typeof thread !== 'object') fail(`threads[${index}] must be an object`);
-    const id = requireString(thread.id, `threads[${index}].id`);
-    if (seenIds.has(id)) fail(`duplicate Codex thread id ${id}`);
-    seenIds.add(id);
-    const status = requireString(thread.status, `threads[${index}].status`);
+  const threads = response.threads.map((thread, index) => {
+    if (!thread || typeof thread !== 'object') {
+      fail(`threadSnapshot.response.threads[${index}] must be an object`);
+    }
+    const id = requireString(thread.id, `threadSnapshot.response.threads[${index}].id`);
+    const hostId = requireString(thread.hostId, `threadSnapshot.response.threads[${index}].hostId`);
+    const identity = `${hostId}:${id}`;
+    if (seenIds.has(identity)) fail(`duplicate Codex thread identity ${identity}`);
+    seenIds.add(identity);
+    const status = requireString(thread.status, `threadSnapshot.response.threads[${index}].status`);
     if (!KNOWN_THREAD_STATES.has(status)) fail(`unknown Codex thread status ${status}`);
+    if (typeof thread.hasUnreadTurn !== 'boolean') {
+      fail(`threadSnapshot.response.threads[${index}].hasUnreadTurn must be boolean`);
+    }
+    requireFiniteNumber(thread.createdAt, `threadSnapshot.response.threads[${index}].createdAt`);
+    requireFiniteNumber(thread.updatedAt, `threadSnapshot.response.threads[${index}].updatedAt`);
     return {
       id,
+      hostId,
       status,
-      cwd: requireString(thread.cwd, `threads[${index}].cwd`),
+      cwd: requireString(thread.cwd, `threadSnapshot.response.threads[${index}].cwd`),
     };
   });
   const candidateThreadId = requireString(manifest.candidate?.threadId, 'candidate.threadId');
-  const ownerThread = threads.find((thread) => thread.id === candidateThreadId);
-  if (!ownerThread) fail('candidate.threadId is absent from the complete Codex thread snapshot');
+  const candidateHostId = requireString(manifest.candidate?.hostId, 'candidate.hostId');
+  const ownerThread = threads.find(
+    (thread) => thread.id === candidateThreadId && thread.hostId === candidateHostId,
+  );
+  if (!ownerThread) {
+    fail('candidate thread/host is absent from the complete list_threads snapshot');
+  }
   if (!pathsEqual(ownerThread.cwd, candidatePath)) {
     fail('owning Codex thread cwd must match candidate.path');
   }
+  const capturedBy = snapshot.capturedBy;
+  if (!capturedBy || typeof capturedBy !== 'object') {
+    fail('threadSnapshot.capturedBy is required');
+  }
+  requireExactKeys(capturedBy, ['hostId', 'threadId'], 'threadSnapshot.capturedBy');
+  const executorThread = threads.find(
+    (thread) =>
+      thread.id === requireString(capturedBy.threadId, 'threadSnapshot.capturedBy.threadId') &&
+      thread.hostId === requireString(capturedBy.hostId, 'threadSnapshot.capturedBy.hostId'),
+  );
+  if (!executorThread || !pathsEqual(executorThread.cwd, executorPath)) {
+    fail('list_threads snapshot does not contain the cleanup executor at its live path');
+  }
+  if (!['active', 'running'].includes(executorThread.status)) {
+    fail('cleanup executor must be active in the list_threads snapshot');
+  }
   const pathThreads = threads.filter((thread) => pathsEqual(thread.cwd, candidatePath));
   return { ownerThread, pathThreads };
+}
+
+function validateAuthoritativeRoleBinding(task, candidate, candidatePath, ownerThread) {
+  const taskId = requireString(task.id, 'Beads task id');
+  if (taskId !== requireString(candidate.taskId, 'candidate.taskId')) {
+    fail('candidate.taskId does not match the authoritative Beads task');
+  }
+  const pattern =
+    /^Codex worktree binding v1: task=([a-z0-9]+(?:[.-][a-z0-9]+)*); role=(implementation|integration|verifier); thread=([^;\s]+); host=([^;\s]+); path-sha256=([0-9a-f]{64})$/gm;
+  const matches = [...String(task.notes ?? '').matchAll(pattern)].filter(
+    (match) =>
+      match[1] === taskId &&
+      match[3] === ownerThread.id &&
+      match[4] === ownerThread.hostId &&
+      match[5] === worktreePathSha256(candidatePath),
+  );
+  if (matches.length !== 1) {
+    fail('authoritative Beads notes must contain exactly one matching Worktree role binding');
+  }
+  const authoritativeRole = matches[0][2];
+  if (requireString(candidate.role, 'candidate.role') !== authoritativeRole) {
+    fail(`candidate.role does not match authoritative ${authoritativeRole} Worktree binding`);
+  }
+  return authoritativeRole;
 }
 
 function archiveRefFor(taskId, head) {
@@ -368,6 +507,82 @@ function archiveRefFor(taskId, head) {
     fail('candidate.taskId is not a safe Beads ID');
   }
   return `refs/codex/worktree-archive/${safeTaskId}/${head}`;
+}
+
+function cleanupIntentDigest(manifest, candidatePath, allowedRoot) {
+  const candidate = manifest.candidate;
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        taskId: requireString(candidate.taskId, 'candidate.taskId'),
+        role: requireString(candidate.role, 'candidate.role'),
+        threadId: requireString(candidate.threadId, 'candidate.threadId'),
+        hostId: requireString(candidate.hostId, 'candidate.hostId'),
+        path: normalizePathForComparison(candidatePath),
+        allowedRoot: normalizePathForComparison(allowedRoot),
+        expectedHead: requireCommit(candidate.expectedHead, 'candidate.expectedHead'),
+        expectedBranch: candidate.expectedBranch ?? null,
+      }),
+    )
+    .digest('hex');
+}
+
+function receiptRefFor(taskId, receiptId) {
+  const safeTaskId = requireString(taskId, 'candidate.taskId');
+  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(safeTaskId)) {
+    fail('candidate.taskId is not a safe Beads ID');
+  }
+  if (!/^[0-9a-f]{64}$/.test(receiptId)) fail('cleanup receipt id must be SHA-256');
+  return `refs/codex/worktree-cleanup-receipts/${safeTaskId}/${receiptId}`;
+}
+
+function persistCleanupReceipt(repo, receipt) {
+  const contents = `${JSON.stringify(receipt, null, 2)}\n`;
+  const receiptId = createHash('sha256').update(contents).digest('hex');
+  const receiptRef = receiptRefFor(receipt.taskId, receiptId);
+  const objectId = runGit(repo, ['hash-object', '-w', '--stdin'], {
+    input: contents,
+  }).stdout.trim();
+  if (!/^[0-9a-f]{40,64}$/.test(objectId)) fail('cleanup receipt Git blob was not created');
+  const existing = runGit(repo, ['rev-parse', '--verify', receiptRef], { allowFailure: true });
+  if (existing.status === 0) {
+    if (existing.stdout.trim() !== objectId) {
+      fail('existing cleanup receipt ref points at a different Git object');
+    }
+  } else {
+    runGit(repo, ['update-ref', receiptRef, objectId, ZERO_COMMIT]);
+  }
+  if (runGit(repo, ['cat-file', '-t', receiptRef]).stdout.trim() !== 'blob') {
+    fail('cleanup receipt ref must point to a Git blob');
+  }
+  if (runGit(repo, ['cat-file', '-p', receiptRef]).stdout !== contents) {
+    fail('cleanup receipt Git blob does not match the registered-pass receipt');
+  }
+  return receiptRef;
+}
+
+function loadCleanupReceipt(repo, receiptRef, taskId) {
+  const safeTaskId = requireString(taskId, 'candidate.taskId');
+  const match = requireString(receiptRef, 'previousRegisteredCleanupRef').match(
+    /^refs\/codex\/worktree-cleanup-receipts\/([a-z0-9]+(?:[.-][a-z0-9]+)*)\/([0-9a-f]{64})$/,
+  );
+  if (!match || match[1] !== safeTaskId) {
+    fail('previousRegisteredCleanupRef is not the exact task receipt namespace');
+  }
+  if (runGit(repo, ['cat-file', '-t', receiptRef]).stdout.trim() !== 'blob') {
+    fail('previousRegisteredCleanupRef must point to a Git blob');
+  }
+  const contents = runGit(repo, ['cat-file', '-p', receiptRef]).stdout;
+  if (createHash('sha256').update(contents).digest('hex') !== match[2]) {
+    fail('previousRegisteredCleanupRef digest does not match its Git blob');
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(contents);
+  } catch {
+    fail('previousRegisteredCleanupRef does not contain JSON');
+  }
+  return { receipt, receiptRef };
 }
 
 function candidateIsListed(candidatePath, paths) {
@@ -392,45 +607,153 @@ function validateExpectedGitIdentity(candidate, gitState) {
   }
 }
 
-function validateResidualReceipt(manifest, gitState) {
-  const receipt = manifest.previousRegisteredCleanup;
+function validateResidualReceipt(manifest, gitState, now) {
+  const receipt = gitState.receipt;
   if (!receipt || typeof receipt !== 'object') {
-    fail('residual cleanup requires previousRegisteredCleanup evidence');
+    fail('residual cleanup requires a Git-stored registered-pass receipt');
+  }
+  requireExactKeys(
+    receipt,
+    [
+      'allowedWorktreeRoot',
+      'branch',
+      'commonDirectorySha256',
+      'head',
+      'hostId',
+      'intentSha256',
+      'kind',
+      'path',
+      'pathSha256',
+      'producer',
+      'reachability',
+      'registeredRemoval',
+      'removedAt',
+      'residualObserved',
+      'role',
+      'schemaVersion',
+      'taskId',
+      'threadId',
+    ],
+    'cleanup receipt',
+  );
+  if (
+    receipt.schemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    receipt.kind !== 'registered-worktree-removal' ||
+    receipt.producer !== 'scripts/cleanup-obsolete-worktree.mjs'
+  ) {
+    fail('cleanup receipt schema or producer is invalid');
+  }
+  const removedAt = Date.parse(requireString(receipt.removedAt, 'cleanup receipt removedAt'));
+  if (!Number.isFinite(removedAt)) fail('cleanup receipt removedAt must be an ISO timestamp');
+  const age = now - removedAt;
+  if (age < -60_000 || age > MAX_RESIDUAL_RECEIPT_AGE_MS) {
+    fail('cleanup receipt is stale or from the future');
   }
   if (!pathsEqual(receipt.path, gitState.candidatePath)) {
-    fail('previousRegisteredCleanup.path must match candidate.path');
+    fail('cleanup receipt path must match candidate.path');
+  }
+  if (receipt.pathSha256 !== worktreePathSha256(gitState.candidatePath)) {
+    fail('cleanup receipt path hash does not match candidate.path');
+  }
+  if (!pathsEqual(receipt.allowedWorktreeRoot, gitState.allowedRoot)) {
+    fail('cleanup receipt allowed root does not match the current resolved root');
+  }
+  if (receipt.commonDirectorySha256 !== gitCommonDirectorySha256(gitState.commonDirectory)) {
+    fail('cleanup receipt Git common-directory identity does not match this repository');
+  }
+  if (requireString(receipt.taskId, 'cleanup receipt taskId') !== manifest.candidate.taskId) {
+    fail('cleanup receipt taskId must match candidate.taskId');
   }
   if (
-    requireString(receipt.taskId, 'previousRegisteredCleanup.taskId') !== manifest.candidate.taskId
+    requireString(receipt.threadId, 'cleanup receipt threadId') !== manifest.candidate.threadId ||
+    requireString(receipt.hostId, 'cleanup receipt hostId') !== manifest.candidate.hostId ||
+    requireString(receipt.role, 'cleanup receipt role') !== manifest.candidate.role
   ) {
-    fail('previousRegisteredCleanup.taskId must match candidate.taskId');
+    fail('cleanup receipt thread/host/role does not match the candidate');
+  }
+  const receiptHead = requireCommit(receipt.head, 'cleanup receipt head');
+  if (receiptHead !== requireCommit(manifest.candidate.expectedHead, 'candidate.expectedHead')) {
+    fail('cleanup receipt head does not match candidate.expectedHead');
+  }
+  if (!Object.hasOwn(manifest.candidate, 'expectedBranch')) {
+    fail('residual candidate.expectedBranch must be supplied');
+  }
+  if ((receipt.branch ?? null) !== (manifest.candidate.expectedBranch ?? null)) {
+    fail('cleanup receipt branch does not match candidate.expectedBranch');
   }
   if (
-    requireString(receipt.threadId, 'previousRegisteredCleanup.threadId') !==
-    manifest.candidate.threadId
+    receipt.intentSha256 !==
+    cleanupIntentDigest(manifest, gitState.candidatePath, gitState.allowedRoot)
   ) {
-    fail('previousRegisteredCleanup.threadId must match candidate.threadId');
+    fail('cleanup receipt does not match the registered cleanup intent');
   }
-  requireCommit(receipt.head, 'previousRegisteredCleanup.head');
-  if (receipt.clean !== true || receipt.registrationRemoved !== true) {
-    fail('residual cleanup requires clean and registrationRemoved evidence');
+  const removal = receipt.registeredRemoval;
+  if (removal && typeof removal === 'object') {
+    requireExactKeys(
+      removal,
+      ['clean', 'command', 'force', 'registrationRemoved'],
+      'cleanup receipt registeredRemoval',
+    );
   }
-  if (receipt.commitReachable !== true) {
-    fail('residual cleanup requires archived or otherwise reachable commit evidence');
+  if (
+    !removal ||
+    typeof removal !== 'object' ||
+    removal.command !== 'git worktree remove' ||
+    removal.force !== false ||
+    removal.clean !== true ||
+    removal.registrationRemoved !== true ||
+    receipt.residualObserved !== true
+  ) {
+    fail('cleanup receipt does not prove the clean non-forced registered removal pass');
+  }
+  if (!receipt.reachability || typeof receipt.reachability !== 'object') {
+    fail('cleanup receipt reachability evidence is required');
+  }
+  if (receipt.reachability.kind === 'archive') {
+    requireExactKeys(receipt.reachability, ['kind', 'ref'], 'cleanup receipt reachability');
+    if (receipt.reachability.ref !== archiveRefFor(receipt.taskId, receiptHead)) {
+      fail('cleanup receipt archive ref does not match task/head identity');
+    }
+  } else if (receipt.reachability.kind === 'durable-ref') {
+    requireExactKeys(receipt.reachability, ['kind', 'refs'], 'cleanup receipt reachability');
+    if (
+      !Array.isArray(receipt.reachability.refs) ||
+      receipt.reachability.refs.length === 0 ||
+      (receipt.branch !== null &&
+        !receipt.reachability.refs.includes(`refs/heads/${receipt.branch}`))
+    ) {
+      fail('cleanup receipt durable-ref evidence is incomplete');
+    }
+  } else {
+    fail('cleanup receipt reachability kind is invalid');
+  }
+  if (!gitState.receiptReachabilityVerified) {
+    fail('cleanup receipt head is not currently reachable from its recorded durable evidence');
   }
   return receipt;
 }
 
-export function planWorktreeCleanup({ manifest, task, gitState, now = Date.now() }) {
-  if (manifest?.schemaVersion !== 1) fail('schemaVersion must be 1');
+export function planWorktreeCleanup({
+  manifest,
+  task,
+  gitState,
+  executorPath = process.cwd(),
+  now = Date.now(),
+}) {
+  if (manifest?.schemaVersion !== 2) fail('schemaVersion must be 2');
   const mode = manifest.mode ?? 'registered';
   if (!['registered', 'residual'].includes(mode)) fail('mode must be registered or residual');
   const candidate = manifest.candidate;
   if (!candidate || typeof candidate !== 'object') fail('candidate is required');
-  const role = requireString(candidate.role, 'candidate.role');
+  let role = requireString(candidate.role, 'candidate.role');
   if (!ROLES.has(role)) fail('candidate.role is invalid');
   requireBoolean(candidate.noLongerNeeded, 'candidate.noLongerNeeded');
-  const { pathThreads } = validateThreadSnapshot(manifest, gitState.candidatePath, now);
+  const { ownerThread, pathThreads } = validateThreadSnapshot(
+    manifest,
+    gitState.candidatePath,
+    executorPath,
+    now,
+  );
   const currentSourceWorktree = requireString(
     manifest.currentSourceWorktree,
     'currentSourceWorktree',
@@ -471,6 +794,7 @@ export function planWorktreeCleanup({ manifest, task, gitState, now = Date.now()
 
   if (role !== 'dispatcher') {
     if (!task || typeof task !== 'object') fail('authoritative Beads task is required');
+    role = validateAuthoritativeRoleBinding(task, candidate, gitState.candidatePath, ownerThread);
     const status = requireString(task.status, 'Beads task status');
     if (!['blocked', 'closed', 'in_progress', 'open'].includes(status)) {
       fail(`unexpected Beads task status ${status}`);
@@ -501,7 +825,7 @@ export function planWorktreeCleanup({ manifest, task, gitState, now = Date.now()
   if (mode === 'registered') {
     validateExpectedGitIdentity(candidate, gitState);
   } else {
-    validateResidualReceipt(manifest, gitState);
+    validateResidualReceipt(manifest, gitState, now);
     if (gitState.absent) {
       return { action: 'already-removed', mode, reasons: [] };
     }
@@ -518,7 +842,7 @@ export function planWorktreeCleanup({ manifest, task, gitState, now = Date.now()
     mode,
     archiveRef,
     durableRefs: mode === 'registered' ? gitState.durableRefs : undefined,
-    head: mode === 'registered' ? gitState.head : manifest.previousRegisteredCleanup.head,
+    head: mode === 'registered' ? gitState.head : gitState.receipt.head,
   };
 }
 
@@ -570,9 +894,45 @@ async function removeResidualDirectory(candidatePath) {
   }
 }
 
+function buildRegisteredCleanupReceipt({ manifest, gitState, plan, now, residualObserved }) {
+  return {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    kind: 'registered-worktree-removal',
+    producer: 'scripts/cleanup-obsolete-worktree.mjs',
+    taskId: manifest.candidate.taskId,
+    role: manifest.candidate.role,
+    threadId: manifest.candidate.threadId,
+    hostId: manifest.candidate.hostId,
+    path: gitState.candidatePath,
+    pathSha256: worktreePathSha256(gitState.candidatePath),
+    allowedWorktreeRoot: gitState.allowedRoot,
+    commonDirectorySha256: gitCommonDirectorySha256(gitState.commonDirectory),
+    head: plan.head,
+    branch: gitState.branch ?? null,
+    intentSha256: cleanupIntentDigest(manifest, gitState.candidatePath, gitState.allowedRoot),
+    reachability: plan.archiveRef
+      ? { kind: 'archive', ref: plan.archiveRef }
+      : { kind: 'durable-ref', refs: plan.durableRefs },
+    registeredRemoval: {
+      command: 'git worktree remove',
+      force: false,
+      clean: true,
+      registrationRemoved: true,
+    },
+    residualObserved,
+    removedAt: new Date(now).toISOString(),
+  };
+}
+
 export async function executeWorktreeCleanup(
   manifest,
-  { repo = process.cwd(), dryRun = true, now = Date.now(), adapters = {} } = {},
+  {
+    repo = process.cwd(),
+    dryRun = true,
+    executorPath = process.cwd(),
+    now = Date.now(),
+    adapters = {},
+  } = {},
 ) {
   const repository = path.resolve(repo);
   const collectState = adapters.collectGitState ?? collectGitState;
@@ -584,6 +944,7 @@ export async function executeWorktreeCleanup(
   const exists = adapters.pathExists ?? pathExists;
   const getFreeBytes = adapters.freeBytesAt ?? freeBytesAt;
   const getDirectoryBytes = adapters.directoryBytes ?? directoryBytes;
+  const storeReceipt = adapters.persistCleanupReceipt ?? persistCleanupReceipt;
 
   const gitState = await collectState(repository, manifest);
   const role = manifest.candidate?.role;
@@ -591,7 +952,7 @@ export async function executeWorktreeCleanup(
     role === 'dispatcher'
       ? { status: 'open', labels: [] }
       : await readTask(requireString(manifest.candidate?.taskId, 'candidate.taskId'), repository);
-  const plan = planWorktreeCleanup({ manifest, task, gitState, now });
+  const plan = planWorktreeCleanup({ manifest, task, gitState, executorPath, now });
   if (plan.action === 'preserve' || plan.action === 'already-removed' || dryRun) {
     return { ...plan, dryRun };
   }
@@ -601,29 +962,35 @@ export async function executeWorktreeCleanup(
   const freeBytesBefore = await getFreeBytes(parent);
   if (plan.action === 'remove-worktree') {
     if (plan.archiveRef) await doArchive(repository, plan.archiveRef, plan.head);
-    await doRemoveWorktree(repository, gitState.candidatePath);
+    let removalError;
+    try {
+      await doRemoveWorktree(repository, gitState.candidatePath);
+    } catch (error) {
+      removalError = error;
+    }
     const stillRegistered = getWorktrees(repository).some((entry) =>
       pathsEqual(entry.path, gitState.candidatePath),
     );
-    if (stillRegistered) fail('git worktree remove returned success but registration remains');
-    const receipt = {
-      schemaVersion: 1,
-      path: gitState.candidatePath,
-      taskId: manifest.candidate.taskId,
-      threadId: manifest.candidate.threadId,
-      head: plan.head,
-      branch: gitState.branch ?? null,
-      clean: true,
-      registrationRemoved: true,
-      commitReachable: plan.archiveRef !== undefined || plan.durableRefs.length > 0,
-      archiveRef: plan.archiveRef ?? null,
-      removedAt: new Date(now).toISOString(),
-    };
-    if (await exists(gitState.candidatePath)) {
+    if (stillRegistered) {
+      if (removalError) throw removalError;
+      fail('git worktree remove returned success but registration remains');
+    }
+    if (removalError) throw removalError;
+    const residualObserved = await exists(gitState.candidatePath);
+    const receipt = buildRegisteredCleanupReceipt({
+      manifest,
+      gitState,
+      plan,
+      now,
+      residualObserved,
+    });
+    if (residualObserved) {
+      const receiptRef = await storeReceipt(repository, receipt);
       return {
         status: 'residual-remains',
         action: plan.action,
         receipt,
+        receiptRef,
         measuredBytesBefore: measuredBytesBefore.toString(),
         error:
           'Git registration was removed but a residual directory remains; use guarded residual mode after Windows locks clear.',
@@ -652,7 +1019,8 @@ export async function executeWorktreeCleanup(
   return {
     status: 'removed',
     action: plan.action,
-    receipt: manifest.previousRegisteredCleanup,
+    receipt: gitState.receipt,
+    receiptRef: gitState.receiptRef,
     measuredReclaimedBytes: measuredBytesBefore.toString(),
     freeBytesBefore: freeBytesBefore.toString(),
     freeBytesAfter: freeBytesAfter.toString(),

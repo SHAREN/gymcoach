@@ -3,7 +3,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { closureExecutionPlan, mirrorClosureTasks } from './close-integrated-tasks.mjs';
+import {
+  buildClosureNote,
+  closureExecutionPlan,
+  executeBeadsClosure,
+  mirrorClosureTasks,
+  planBeadsClosure,
+} from './close-integrated-tasks.mjs';
 import { mirrorTaskById } from './sync-beads-github.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -242,5 +248,118 @@ assert.deepEqual(batchExternalRefs, [
     dryRun: true,
   },
 ]);
+
+const retryEvidence = {
+  mode: 'integration',
+  head: 'b'.repeat(40),
+  closureTaskIds: ['gymcoach-child', 'gymcoach-root'],
+  coordinatorTaskIds: ['gymcoach-root'],
+  alreadyGuardedTaskIds: [],
+  delivery: {
+    integrated: { status: true },
+    published: { status: false },
+    installed: { status: false },
+    deployed: { status: false },
+  },
+};
+const retryTasks = new Map([
+  [
+    'gymcoach-child',
+    {
+      id: 'gymcoach-child',
+      status: 'in_progress',
+      labels: ['stage:verified', 'area:infrastructure'],
+      notes: '',
+    },
+  ],
+  [
+    'gymcoach-root',
+    {
+      id: 'gymcoach-root',
+      status: 'open',
+      labels: ['area:infrastructure'],
+      notes: '',
+    },
+  ],
+]);
+const mutationLog = [];
+let failFirstChildClose = true;
+const retryAdapters = {
+  readTask(_repo, taskId) {
+    return structuredClone(retryTasks.get(taskId));
+  },
+  updateTask(_repo, action) {
+    mutationLog.push(`update:${action.taskId}`);
+    const issue = retryTasks.get(action.taskId);
+    issue.labels = issue.labels.filter((label) => !action.stageLabels.includes(label));
+    issue.notes = [issue.notes, action.note].filter(Boolean).join('\n');
+  },
+  closeTask(_repo, action) {
+    mutationLog.push(`close:${action.taskId}`);
+    if (action.taskId === 'gymcoach-child' && failFirstChildClose) {
+      failFirstChildClose = false;
+      throw new Error('synthetic close failure');
+    }
+    retryTasks.get(action.taskId).status = 'closed';
+  },
+};
+
+assert.deepEqual(
+  planBeadsClosure({ evidence: retryEvidence, repo: root, adapters: retryAdapters }).map(
+    ({ taskId, action }) => ({ taskId, action }),
+  ),
+  [
+    { taskId: 'gymcoach-child', action: 'update-and-close' },
+    { taskId: 'gymcoach-root', action: 'update-and-close' },
+  ],
+);
+await assert.rejects(
+  () => executeBeadsClosure({ evidence: retryEvidence, repo: root, adapters: retryAdapters }),
+  /synthetic close failure/,
+);
+assert.deepEqual(mutationLog, ['update:gymcoach-child', 'close:gymcoach-child']);
+assert.equal(retryTasks.get('gymcoach-child').status, 'in_progress');
+assert.deepEqual(retryTasks.get('gymcoach-child').labels, ['area:infrastructure']);
+assert.equal(
+  retryTasks.get('gymcoach-child').notes,
+  buildClosureNote(retryEvidence, 'gymcoach-child'),
+);
+
+assert.deepEqual(
+  planBeadsClosure({ evidence: retryEvidence, repo: root, adapters: retryAdapters }).map(
+    ({ taskId, action }) => ({ taskId, action }),
+  ),
+  [
+    { taskId: 'gymcoach-child', action: 'close-only' },
+    { taskId: 'gymcoach-root', action: 'update-and-close' },
+  ],
+);
+await executeBeadsClosure({ evidence: retryEvidence, repo: root, adapters: retryAdapters });
+assert.deepEqual(mutationLog, [
+  'update:gymcoach-child',
+  'close:gymcoach-child',
+  'close:gymcoach-child',
+  'update:gymcoach-root',
+  'close:gymcoach-root',
+]);
+assert.equal(retryTasks.get('gymcoach-child').status, 'closed');
+assert.equal(retryTasks.get('gymcoach-root').status, 'closed');
+assert.equal(
+  retryTasks.get('gymcoach-child').notes,
+  buildClosureNote(retryEvidence, 'gymcoach-child'),
+);
+
+const stranded = structuredClone(retryTasks.get('gymcoach-child'));
+stranded.status = 'in_progress';
+stranded.notes = '';
+assert.throws(
+  () =>
+    planBeadsClosure({
+      evidence: { ...retryEvidence, closureTaskIds: ['gymcoach-child'] },
+      repo: root,
+      adapters: { readTask: () => stranded },
+    }),
+  /must be in_progress with only stage:verified/,
+);
 
 console.log('Guarded closure and mirror-only retry regression tests passed.');

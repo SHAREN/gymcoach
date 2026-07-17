@@ -49,6 +49,10 @@ bd dep list TASK-ID
    - git rev-parse --git-dir differs from git rev-parse --git-common-dir after
      path normalization, proving this is a linked worktree;
    - the current Codex task is dedicated to this Beads task.
+   - the Project Dispatcher recorded the exact implementation
+     task/role/thread/host/resolved-path-hash Worktree binding in Beads notes
+     from real thread creation state. If it is missing, report the coordination
+     gap; do not invent an identity for later cleanup.
 5. Inspect other active work:
 
 ```text
@@ -196,9 +200,13 @@ VERIFY require it to remain available. The Project Dispatcher may consider it
 for automatic cleanup only after the task later reaches `stage:verified` or
 closed, the implementation thread is inactive, and
 `scripts/cleanup-obsolete-worktree.mjs` validates fresh complete Codex thread
-state, authoritative Beads state, clean Git status, expected branch/HEAD,
-reachability, preserved roles, and exact path containment. The task itself only
-signals later eligibility; it never self-deletes.
+state from the raw unfiltered `codex_app.list_threads` envelope, the exact
+machine-readable Beads task/role/thread/host/path-hash binding, clean Git status,
+expected branch/HEAD, reachability, preserved roles, and exact path containment.
+Reject wait-only, filtered, capped, unavailable-host, or flattened snapshots.
+The task itself only signals later eligibility; it never self-deletes. A later
+residual cleanup accepts only the immutable Git receipt ref produced by the
+successful registered pass, never caller-supplied inline receipt data.
 
 Report the branch, diff summary, checks, and task state. End by stating that the
 task is in REVIEW and has not been closed.

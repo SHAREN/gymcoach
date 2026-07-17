@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import {
   normalizePathForComparison,
   planWorktreeCleanup,
   WorktreeCleanupError,
+  worktreePathSha256,
   worktreeRemoveArgs,
 } from './cleanup-obsolete-worktree.mjs';
 
@@ -29,6 +31,28 @@ function git(repo, ...args) {
   return result.stdout.trim();
 }
 
+function storeReceipt(repo, receipt) {
+  const contents = `${JSON.stringify(receipt, null, 2)}\n`;
+  const receiptId = createHash('sha256').update(contents).digest('hex');
+  const receiptRef = `refs/codex/worktree-cleanup-receipts/gymcoach-example/${receiptId}`;
+  const blob = spawnSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {
+    input: contents,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(blob.status, 0, blob.stderr || blob.stdout);
+  git(repo, 'update-ref', receiptRef, blob.stdout.trim());
+  return receiptRef;
+}
+
+function setCandidatePath(cleanupManifest, worktree) {
+  cleanupManifest.candidate.path = worktree;
+  const owner = cleanupManifest.threadSnapshot.response.threads.find(
+    (thread) => thread.id === cleanupManifest.candidate.threadId,
+  );
+  owner.cwd = worktree;
+}
+
 async function exists(value) {
   try {
     await lstat(value);
@@ -39,17 +63,65 @@ async function exists(value) {
   }
 }
 
-function task(status = 'closed', labels = []) {
-  return { id: 'gymcoach-example', status, labels };
+function worktreeBinding({
+  role = 'verifier',
+  threadId = 'thread-example',
+  hostId = 'local',
+  worktreePath = candidatePath,
+} = {}) {
+  return `Codex worktree binding v1: task=gymcoach-example; role=${role}; thread=${threadId}; host=${hostId}; path-sha256=${worktreePathSha256(worktreePath)}`;
+}
+
+function task(status = 'closed', labels = [], bindingOptions = {}) {
+  return {
+    id: 'gymcoach-example',
+    status,
+    labels,
+    notes: worktreeBinding(bindingOptions),
+  };
+}
+
+function rawThread({ id, status, cwd, hostId = 'local', createdAt = 1, updatedAt = 2 }) {
+  return { id, hostId, status, hasUnreadTurn: false, cwd, createdAt, updatedAt };
+}
+
+function threadSnapshot(overrides = {}) {
+  return {
+    capturedAt: new Date(now).toISOString(),
+    tool: 'codex_app.list_threads',
+    request: { limit: 50, query: null },
+    capturedBy: { threadId: 'thread-dispatcher', hostId: 'local' },
+    response: {
+      schemaVersion: 2,
+      query: null,
+      threads: [
+        rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+        rawThread({ id: 'thread-example', status: 'idle', cwd: candidatePath }),
+      ],
+      unavailableHosts: [],
+    },
+    ...overrides,
+  };
+}
+
+function snapshotWithThreads(threads, responseOverrides = {}, snapshotOverrides = {}) {
+  return threadSnapshot({
+    response: {
+      schemaVersion: 2,
+      query: null,
+      threads,
+      unavailableHosts: [],
+      ...responseOverrides,
+    },
+    ...snapshotOverrides,
+  });
 }
 
 function manifest(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'registered',
-    observedAt: new Date(now).toISOString(),
-    completeForProject: true,
-    threadSource: 'codex_app.list_threads',
+    threadSnapshot: threadSnapshot(),
     allowedWorktreeRoot: path.dirname(candidatePath),
     currentSourceWorktree: currentSourcePath,
     currentIntegrationWorktrees: [],
@@ -59,11 +131,11 @@ function manifest(overrides = {}) {
       role: 'verifier',
       taskId: 'gymcoach-example',
       threadId: 'thread-example',
+      hostId: 'local',
       noLongerNeeded: true,
       expectedHead: head,
       expectedBranch: 'chore/gymcoach-example',
     },
-    threads: [{ id: 'thread-example', status: 'idle', cwd: candidatePath }],
     ...overrides,
   };
 }
@@ -84,6 +156,7 @@ function gitState(overrides = {}) {
     branchHead: head,
     clean: true,
     durableRefs: ['refs/heads/chore/gymcoach-example'],
+    commonDirectory: path.join(os.tmpdir(), 'GymCoach Repository', '.git'),
     ...overrides,
   };
 }
@@ -93,6 +166,7 @@ function plan(options = {}) {
     manifest: options.manifest ?? manifest(),
     task: options.task ?? task(),
     gitState: options.gitState ?? gitState(),
+    executorPath: currentSourcePath,
     now,
   });
 }
@@ -135,7 +209,10 @@ assertPreserved(
 assertPreserved(
   plan({
     manifest: manifest({
-      threads: [{ id: 'thread-example', status: 'active', cwd: candidatePath }],
+      threadSnapshot: snapshotWithThreads([
+        rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+        rawThread({ id: 'thread-example', status: 'active', cwd: candidatePath }),
+      ]),
     }),
   }),
   /is active/,
@@ -143,10 +220,11 @@ assertPreserved(
 assertPreserved(
   plan({
     manifest: manifest({
-      threads: [
-        { id: 'thread-example', status: 'idle', cwd: candidatePath },
-        { id: 'thread-second', status: 'waiting', cwd: candidatePath },
-      ],
+      threadSnapshot: snapshotWithThreads([
+        rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+        rawThread({ id: 'thread-example', status: 'idle', cwd: candidatePath }),
+        rawThread({ id: 'thread-second', status: 'waiting', cwd: candidatePath }),
+      ]),
     }),
   }),
   /thread-second is waiting/,
@@ -185,7 +263,7 @@ assertPreserved(
     manifest: manifest({
       candidate: { ...manifest().candidate, role: 'implementation' },
     }),
-    task: task('in_progress'),
+    task: task('in_progress', [], { role: 'implementation' }),
   }),
   /not closed or stage:verified/,
 );
@@ -194,22 +272,59 @@ assert.equal(
     manifest: manifest({
       candidate: { ...manifest().candidate, role: 'implementation' },
     }),
-    task: task('in_progress', ['stage:verified']),
+    task: task('in_progress', ['stage:verified'], { role: 'implementation' }),
   }).action,
   'remove-worktree',
 );
 assert.equal(plan({ task: task('in_progress') }).action, 'remove-worktree');
+assert.throws(
+  () => plan({ task: task('in_progress', [], { role: 'implementation' }) }),
+  /candidate\.role does not match authoritative implementation/,
+);
+assert.throws(
+  () =>
+    plan({
+      task: {
+        ...task('in_progress'),
+        notes: `${worktreeBinding()}\n${worktreeBinding()}`,
+      },
+    }),
+  /exactly one matching Worktree role binding/,
+);
+assert.throws(
+  () =>
+    plan({
+      task: task('in_progress', [], { hostId: 'remote-host' }),
+    }),
+  /exactly one matching Worktree role binding/,
+);
+assert.throws(
+  () =>
+    plan({
+      task: task('in_progress', [], { worktreePath: `${candidatePath}-other` }),
+    }),
+  /exactly one matching Worktree role binding/,
+);
+assert.equal(
+  plan({
+    task: {
+      ...task('in_progress'),
+      notes: `${worktreeBinding({ threadId: 'thread-old', worktreePath: `${candidatePath}-old` })}\n${worktreeBinding()}`,
+    },
+  }).action,
+  'remove-worktree',
+);
 assertPreserved(
   plan({
     manifest: manifest({ candidate: { ...manifest().candidate, role: 'integration' } }),
-    task: task('in_progress'),
+    task: task('in_progress', [], { role: 'integration' }),
   }),
   /integration root is not closed/,
 );
 assert.equal(
   plan({
     manifest: manifest({ candidate: { ...manifest().candidate, role: 'integration' } }),
-    task: task('closed'),
+    task: task('closed', [], { role: 'integration' }),
   }).action,
   'remove-worktree',
 );
@@ -223,22 +338,114 @@ assertPreserved(
 );
 
 assert.throws(
-  () => plan({ manifest: manifest({ observedAt: '2026-07-18T11:00:00.000Z' }) }),
-  /snapshot is stale/,
-);
-assert.throws(
-  () => plan({ manifest: manifest({ completeForProject: false }) }),
-  /complete for the project/,
-);
-assert.throws(
-  () => plan({ manifest: manifest({ threads: [] }) }),
-  /fresh complete Codex thread snapshot/,
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: threadSnapshot({ capturedAt: '2026-07-18T11:00:00.000Z' }),
+      }),
+    }),
+  /list_threads snapshot is stale/,
 );
 assert.throws(
   () =>
     plan({
       manifest: manifest({
-        threads: [{ id: 'thread-example', status: 'unknown', cwd: candidatePath }],
+        threadSnapshot: undefined,
+        observedAt: new Date(now).toISOString(),
+        completeForProject: true,
+        threadSource: 'codex_app.list_threads',
+        threads: [rawThread({ id: 'thread-example', status: 'idle', cwd: candidatePath })],
+      }),
+    }),
+  /raw codex_app\.list_threads provenance/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: threadSnapshot({ tool: 'codex_app.wait_threads' }),
+      }),
+    }),
+  /only raw codex_app\.list_threads/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: threadSnapshot({ request: { limit: 50, query: 'gymcoach' } }),
+      }),
+    }),
+  /unfiltered/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: threadSnapshot({ request: { limit: 10, query: null } }),
+      }),
+    }),
+  /maximum supported limit/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: snapshotWithThreads(
+          Array.from({ length: 50 }, (_, index) =>
+            rawThread({
+              id: index === 0 ? 'thread-dispatcher' : `thread-${index}`,
+              status: index === 0 ? 'active' : 'idle',
+              cwd: index === 1 ? candidatePath : currentSourcePath,
+            }),
+          ),
+        ),
+      }),
+    }),
+  /may be truncated/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: snapshotWithThreads(
+          [
+            rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+            rawThread({ id: 'thread-example', status: 'idle', cwd: candidatePath }),
+          ],
+          { unavailableHosts: ['remote-host'] },
+        ),
+      }),
+    }),
+  /host was unavailable/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: snapshotWithThreads([
+          rawThread({ id: 'thread-example', status: 'idle', cwd: candidatePath }),
+        ]),
+      }),
+    }),
+  /cleanup executor/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        candidate: { ...manifest().candidate, hostId: 'remote-host' },
+      }),
+    }),
+  /candidate thread\/host is absent/,
+);
+assert.throws(
+  () =>
+    plan({
+      manifest: manifest({
+        threadSnapshot: snapshotWithThreads([
+          rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+          rawThread({ id: 'thread-example', status: 'unknown', cwd: candidatePath }),
+        ]),
       }),
     }),
   /unknown Codex thread status/,
@@ -247,10 +454,13 @@ assert.throws(
   () =>
     plan({
       manifest: manifest({
-        threads: [{ id: 'thread-other', status: 'idle', cwd: candidatePath }],
+        threadSnapshot: snapshotWithThreads([
+          rawThread({ id: 'thread-dispatcher', status: 'active', cwd: currentSourcePath }),
+          rawThread({ id: 'thread-other', status: 'idle', cwd: candidatePath }),
+        ]),
       }),
     }),
-  /candidate.threadId is absent/,
+  /candidate thread\/host is absent/,
 );
 assert.throws(
   () => plan({ gitState: gitState({ head: '2'.repeat(40) }) }),
@@ -274,66 +484,46 @@ const detachedPlan = plan({
 });
 assert.equal(detachedPlan.archiveRef, `refs/codex/worktree-archive/gymcoach-example/${head}`);
 
-const residualReceipt = {
-  schemaVersion: 1,
-  path: candidatePath,
-  taskId: 'gymcoach-example',
-  threadId: 'thread-example',
-  head,
-  branch: null,
-  clean: true,
-  registrationRemoved: true,
-  commitReachable: true,
-  archiveRef: null,
-  removedAt: new Date(now).toISOString(),
-};
-const residualManifest = manifest({
+const invalidResidualManifest = manifest({
   mode: 'residual',
   candidate: {
     path: candidatePath,
     role: 'verifier',
     taskId: 'gymcoach-example',
     threadId: 'thread-example',
+    hostId: 'local',
     noLongerNeeded: true,
+    expectedHead: head,
+    expectedBranch: 'chore/gymcoach-example',
   },
-  previousRegisteredCleanup: residualReceipt,
+  previousRegisteredCleanup: {
+    path: candidatePath,
+    taskId: 'gymcoach-example',
+    threadId: 'thread-example',
+    head,
+    clean: true,
+    registrationRemoved: true,
+  },
 });
-const residualState = {
-  allowedRoot: path.dirname(candidatePath),
-  candidatePath,
-  registered: false,
-  absent: false,
-  isMainWorktree: false,
-  isSymbolicLink: false,
-  currentExecution: false,
-};
-assert.equal(
-  planWorktreeCleanup({
-    manifest: residualManifest,
-    task: task(),
-    gitState: residualState,
-    now,
-  }).action,
-  'remove-residual',
-);
 assert.throws(
   () =>
     planWorktreeCleanup({
-      manifest: { ...residualManifest, previousRegisteredCleanup: undefined },
+      manifest: invalidResidualManifest,
       task: task(),
-      gitState: residualState,
+      gitState: {
+        allowedRoot: path.dirname(candidatePath),
+        candidatePath,
+        registered: false,
+        absent: false,
+        isMainWorktree: false,
+        isSymbolicLink: false,
+        currentExecution: false,
+        commonDirectory: gitState().commonDirectory,
+      },
+      executorPath: currentSourcePath,
       now,
     }),
-  /previousRegisteredCleanup/,
-);
-assert.equal(
-  planWorktreeCleanup({
-    manifest: residualManifest,
-    task: task(),
-    gitState: { ...residualState, absent: true },
-    now,
-  }).action,
-  'already-removed',
+  /Git-stored registered-pass receipt/,
 );
 
 async function createRepository() {
@@ -353,11 +543,23 @@ async function createRepository() {
 
 function realManifest({ repo, managedRoot, worktree, worktreeHead, branch, mode = 'registered' }) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode,
-    observedAt: new Date().toISOString(),
-    completeForProject: true,
-    threadSource: 'codex_app.list_threads',
+    threadSnapshot: {
+      capturedAt: new Date().toISOString(),
+      tool: 'codex_app.list_threads',
+      request: { limit: 50, query: null },
+      capturedBy: { threadId: 'thread-dispatcher', hostId: 'local' },
+      response: {
+        schemaVersion: 2,
+        query: null,
+        threads: [
+          rawThread({ id: 'thread-dispatcher', status: 'active', cwd: repo }),
+          rawThread({ id: 'thread-example', status: 'idle', cwd: worktree }),
+        ],
+        unavailableHosts: [],
+      },
+    },
     allowedWorktreeRoot: managedRoot,
     currentSourceWorktree: repo,
     currentIntegrationWorktrees: [],
@@ -367,12 +569,58 @@ function realManifest({ repo, managedRoot, worktree, worktreeHead, branch, mode 
       role: 'verifier',
       taskId: 'gymcoach-example',
       threadId: 'thread-example',
+      hostId: 'local',
       noLongerNeeded: true,
-      ...(mode === 'registered'
-        ? { expectedHead: worktreeHead, expectedBranch: branch ?? null }
-        : {}),
+      expectedHead: worktreeHead,
+      expectedBranch: branch ?? null,
     },
-    threads: [{ id: 'thread-example', status: 'idle', cwd: worktree }],
+  };
+}
+
+function realTask(worktree, status = 'closed', role = 'verifier') {
+  return task(status, [], { role, worktreePath: worktree });
+}
+
+async function produceRegisteredResidual(state, name) {
+  const worktree = path.join(state.managedRoot, name);
+  const branch = `chore/gymcoach-example-${name.replaceAll(' ', '-')}`;
+  git(state.repo, 'worktree', 'add', '-b', branch, worktree, 'HEAD');
+  const worktreeHead = git(worktree, 'rev-parse', 'HEAD');
+  const registeredManifest = realManifest({ ...state, worktree, worktreeHead, branch });
+  const registeredResult = await executeWorktreeCleanup(registeredManifest, {
+    repo: state.repo,
+    dryRun: false,
+    executorPath: state.repo,
+    adapters: {
+      readBeadsTask: () => realTask(worktree),
+      async removeRegisteredWorktree(repo, candidate) {
+        git(repo, 'worktree', 'remove', '--', candidate);
+        await mkdir(candidate);
+        await writeFile(path.join(candidate, 'locked-build-cache.bin'), Buffer.alloc(4096, 7));
+      },
+    },
+  });
+  assert.equal(registeredResult.status, 'residual-remains');
+  assert.match(
+    registeredResult.receiptRef,
+    /^refs\/codex\/worktree-cleanup-receipts\/gymcoach-example\/[0-9a-f]{64}$/,
+  );
+  assert.equal(git(state.repo, 'cat-file', '-t', registeredResult.receiptRef), 'blob');
+  const residualManifest = realManifest({
+    ...state,
+    worktree,
+    worktreeHead,
+    branch,
+    mode: 'residual',
+  });
+  residualManifest.previousRegisteredCleanupRef = registeredResult.receiptRef;
+  return {
+    worktree,
+    branch,
+    worktreeHead,
+    receipt: registeredResult.receipt,
+    receiptRef: registeredResult.receiptRef,
+    residualManifest,
   };
 }
 
@@ -390,7 +638,8 @@ async function testRegisteredRemoval() {
     const dirtyPlan = await executeWorktreeCleanup(cleanupManifest, {
       repo: state.repo,
       dryRun: true,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(worktree) },
     });
     assertPreserved(dirtyPlan, /dirty/);
     await rm(untrackedPath, { force: false });
@@ -399,7 +648,8 @@ async function testRegisteredRemoval() {
     const lockedPlan = await executeWorktreeCleanup(cleanupManifest, {
       repo: state.repo,
       dryRun: true,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(worktree) },
     });
     assertPreserved(lockedPlan, /locked/);
     git(state.repo, 'worktree', 'unlock', worktree);
@@ -407,7 +657,8 @@ async function testRegisteredRemoval() {
     const dryRun = await executeWorktreeCleanup(cleanupManifest, {
       repo: state.repo,
       dryRun: true,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(worktree) },
     });
     assert.equal(dryRun.action, 'remove-worktree');
     assert.equal(await exists(worktree), true);
@@ -415,10 +666,12 @@ async function testRegisteredRemoval() {
     const result = await executeWorktreeCleanup(cleanupManifest, {
       repo: state.repo,
       dryRun: false,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(worktree) },
     });
     assert.equal(result.status, 'removed');
-    assert.equal(result.receipt.archiveRef, null);
+    assert.equal(result.receipt.reachability.kind, 'durable-ref');
+    assert.ok(result.receipt.reachability.refs.includes(`refs/heads/${branch}`));
     assert.ok(BigInt(result.measuredReclaimedBytes) > 0n);
     assert.equal(await exists(worktree), false);
     assert.doesNotMatch(git(state.repo, 'worktree', 'list', '--porcelain'), /branch worktree/);
@@ -445,10 +698,11 @@ async function testUnreachableCommitArchive() {
     const result = await executeWorktreeCleanup(cleanupManifest, {
       repo: state.repo,
       dryRun: false,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(worktree) },
     });
     const expectedRef = `refs/codex/worktree-archive/gymcoach-example/${worktreeHead}`;
-    assert.equal(result.receipt.archiveRef, expectedRef);
+    assert.deepEqual(result.receipt.reachability, { kind: 'archive', ref: expectedRef });
     assert.equal(git(state.repo, 'rev-parse', expectedRef), worktreeHead);
     assert.equal(await exists(worktree), false);
   } finally {
@@ -459,90 +713,155 @@ async function testUnreachableCommitArchive() {
 async function testResidualRemovalAndContainment() {
   const state = await createRepository();
   try {
-    const residual = path.join(state.managedRoot, 'residual worktree');
-    await mkdir(residual);
-    await writeFile(path.join(residual, 'locked-build-cache.bin'), Buffer.alloc(4096, 7));
-    const cleanupManifest = realManifest({
-      ...state,
-      worktree: residual,
-      mode: 'residual',
-    });
-    cleanupManifest.previousRegisteredCleanup = {
-      ...residualReceipt,
-      path: residual,
-      removedAt: new Date().toISOString(),
+    const residualState = await produceRegisteredResidual(state, 'residual worktree');
+
+    const inlineReceipt = structuredClone(residualState.residualManifest);
+    delete inlineReceipt.previousRegisteredCleanupRef;
+    inlineReceipt.previousRegisteredCleanup = residualState.receipt;
+    await assert.rejects(
+      () =>
+        executeWorktreeCleanup(inlineReceipt, {
+          repo: state.repo,
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(residualState.worktree) },
+        }),
+      /previousRegisteredCleanupRef/,
+    );
+
+    const staleReceipt = structuredClone(residualState.receipt);
+    staleReceipt.removedAt = '2026-07-16T00:00:00.000Z';
+    const staleManifest = structuredClone(residualState.residualManifest);
+    staleManifest.previousRegisteredCleanupRef = storeReceipt(state.repo, staleReceipt);
+    await assert.rejects(
+      () =>
+        executeWorktreeCleanup(staleManifest, {
+          repo: state.repo,
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(residualState.worktree) },
+        }),
+      /receipt is stale/,
+    );
+
+    const nonexistentCommitReceipt = structuredClone(residualState.receipt);
+    nonexistentCommitReceipt.head = 'f'.repeat(40);
+    const nonexistentCommitManifest = structuredClone(residualState.residualManifest);
+    nonexistentCommitManifest.candidate.expectedHead = nonexistentCommitReceipt.head;
+    nonexistentCommitManifest.previousRegisteredCleanupRef = storeReceipt(
+      state.repo,
+      nonexistentCommitReceipt,
+    );
+    await assert.rejects(
+      () =>
+        executeWorktreeCleanup(nonexistentCommitManifest, {
+          repo: state.repo,
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(residualState.worktree) },
+        }),
+      /head is not a Git commit/,
+    );
+
+    const wrongArchiveReceipt = structuredClone(residualState.receipt);
+    wrongArchiveReceipt.reachability = {
+      kind: 'archive',
+      ref: `refs/codex/worktree-archive/gymcoach-example/${residualState.worktreeHead}`,
     };
-    const result = await executeWorktreeCleanup(cleanupManifest, {
+    const wrongArchiveManifest = structuredClone(residualState.residualManifest);
+    wrongArchiveManifest.previousRegisteredCleanupRef = storeReceipt(
+      state.repo,
+      wrongArchiveReceipt,
+    );
+    await assert.rejects(
+      () =>
+        executeWorktreeCleanup(wrongArchiveManifest, {
+          repo: state.repo,
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(residualState.worktree) },
+        }),
+      /not currently reachable from its recorded durable evidence/,
+    );
+
+    const wrongBranchReceipt = structuredClone(residualState.receipt);
+    wrongBranchReceipt.branch = 'chore/other';
+    const wrongBranchManifest = structuredClone(residualState.residualManifest);
+    wrongBranchManifest.previousRegisteredCleanupRef = storeReceipt(state.repo, wrongBranchReceipt);
+    await assert.rejects(
+      () =>
+        executeWorktreeCleanup(wrongBranchManifest, {
+          repo: state.repo,
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(residualState.worktree) },
+        }),
+      /branch does not match/,
+    );
+
+    const result = await executeWorktreeCleanup(residualState.residualManifest, {
       repo: state.repo,
       dryRun: false,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(residualState.worktree) },
     });
     assert.equal(result.status, 'removed');
     assert.ok(BigInt(result.measuredReclaimedBytes) >= 4096n);
-    assert.equal(await exists(residual), false);
+    assert.equal(result.receiptRef, residualState.receiptRef);
+    assert.equal(await exists(residualState.worktree), false);
 
-    const repeated = await executeWorktreeCleanup(cleanupManifest, {
+    const repeated = await executeWorktreeCleanup(residualState.residualManifest, {
       repo: state.repo,
       dryRun: false,
-      adapters: { readBeadsTask: () => task() },
+      executorPath: state.repo,
+      adapters: { readBeadsTask: () => realTask(residualState.worktree) },
     });
     assert.equal(repeated.action, 'already-removed');
 
+    const nestedState = await produceRegisteredResidual(state, 'nested escape residual');
     const nestedEscapeTarget = path.join(state.container, 'nested escape target');
-    const nestedResidual = path.join(state.managedRoot, 'nested escape residual');
-    const nestedEscapeLink = path.join(nestedResidual, 'escape link');
+    const nestedEscapeLink = path.join(nestedState.worktree, 'escape link');
     await mkdir(nestedEscapeTarget);
-    await mkdir(nestedResidual);
     try {
       await symlink(
         nestedEscapeTarget,
         nestedEscapeLink,
         process.platform === 'win32' ? 'junction' : 'dir',
       );
-      const nestedManifest = structuredClone(cleanupManifest);
-      nestedManifest.candidate.path = nestedResidual;
-      nestedManifest.threads[0].cwd = nestedResidual;
-      nestedManifest.previousRegisteredCleanup.path = nestedResidual;
       await assert.rejects(
         () =>
-          executeWorktreeCleanup(nestedManifest, {
+          executeWorktreeCleanup(nestedState.residualManifest, {
             repo: state.repo,
             dryRun: false,
-            adapters: { readBeadsTask: () => task() },
+            executorPath: state.repo,
+            adapters: { readBeadsTask: () => realTask(nestedState.worktree) },
           }),
         /symbolic link or junction/,
       );
       assert.equal(await exists(nestedEscapeTarget), true);
       await rm(nestedEscapeLink, { force: false });
-      await rm(nestedResidual, { recursive: true, force: false, maxRetries: 0 });
+      await rm(nestedState.worktree, { recursive: true, force: false, maxRetries: 0 });
     } catch (error) {
       if (!['EACCES', 'EPERM'].includes(error?.code)) throw error;
     }
 
-    const equalRoot = structuredClone(cleanupManifest);
-    equalRoot.candidate.path = state.managedRoot;
-    equalRoot.threads[0].cwd = state.managedRoot;
-    equalRoot.previousRegisteredCleanup.path = state.managedRoot;
+    const equalRoot = structuredClone(residualState.residualManifest);
+    setCandidatePath(equalRoot, state.managedRoot);
     await assert.rejects(
       () =>
         executeWorktreeCleanup(equalRoot, {
           repo: state.repo,
-          adapters: { readBeadsTask: () => task() },
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(state.managedRoot) },
         }),
       /strict descendant/,
     );
 
     const outside = path.join(state.container, 'outside root');
     await mkdir(outside);
-    const outsideManifest = structuredClone(cleanupManifest);
-    outsideManifest.candidate.path = outside;
-    outsideManifest.threads[0].cwd = outside;
-    outsideManifest.previousRegisteredCleanup.path = outside;
+    const outsideManifest = structuredClone(residualState.residualManifest);
+    setCandidatePath(outsideManifest, outside);
     await assert.rejects(
       () =>
         executeWorktreeCleanup(outsideManifest, {
           repo: state.repo,
-          adapters: { readBeadsTask: () => task() },
+          executorPath: state.repo,
+          adapters: { readBeadsTask: () => realTask(outside) },
         }),
       /strict descendant/,
     );
@@ -552,15 +871,14 @@ async function testResidualRemovalAndContainment() {
     await mkdir(escapeTarget);
     try {
       await symlink(escapeTarget, escapeLink, process.platform === 'win32' ? 'junction' : 'dir');
-      const escapeManifest = structuredClone(cleanupManifest);
-      escapeManifest.candidate.path = escapeLink;
-      escapeManifest.threads[0].cwd = escapeLink;
-      escapeManifest.previousRegisteredCleanup.path = escapeLink;
+      const escapeManifest = structuredClone(residualState.residualManifest);
+      setCandidatePath(escapeManifest, escapeLink);
       await assert.rejects(
         () =>
           executeWorktreeCleanup(escapeManifest, {
             repo: state.repo,
-            adapters: { readBeadsTask: () => task() },
+            executorPath: state.repo,
+            adapters: { readBeadsTask: () => realTask(escapeLink) },
           }),
         /strict descendant/,
       );
@@ -579,6 +897,7 @@ async function testFailuresNeverForceDelete() {
       executeWorktreeCleanup(manifest(), {
         repo: root,
         dryRun: false,
+        executorPath: currentSourcePath,
         now,
         adapters: {
           collectGitState: () => gitState(),
@@ -603,6 +922,7 @@ async function testFailuresNeverForceDelete() {
       executeWorktreeCleanup(detachedManifest, {
         repo: root,
         dryRun: false,
+        executorPath: currentSourcePath,
         now,
         adapters: {
           collectGitState: () =>

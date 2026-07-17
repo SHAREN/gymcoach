@@ -136,13 +136,15 @@ coordinator automatically:
 3. decomposes independent deliverables into linked tasks;
 4. records dependencies for overlapping or ordered work;
 5. creates a dedicated Codex task, Worktree, and branch for each READY child
-   task of the current root request;
+   task of the current root request and records its exact implementation
+   thread/host/resolved-path binding in Beads;
 6. dispatches execute-task for each task;
 7. runs independent tasks concurrently and ordered tasks serially;
-8. dispatches a separate verify-task pass, which leaves product work at
-   stage:verified;
+8. records the verifier Worktree binding and dispatches a separate verify-task
+   pass, which leaves product work at stage:verified;
 9. dispatches integrate-tasks to combine verified commits in dependency order
-   in a local integration branch and Worktree;
+   in a local integration branch and Worktree, recording its binding on the root
+   task;
 10. reruns the applicable gates, validates final artifacts, and closes tasks
     only through the deterministic guard;
 11. after implementation, verifier, and integration threads become inactive
@@ -195,14 +197,20 @@ longer needed. A child task records cleanup eligibility at handoff but never
 self-removes. Hooks do not run cleanup because they do not have an authoritative
 complete view of live Codex thread state.
 
-For every explicit candidate, the Dispatcher captures a fresh project-complete
-snapshot from `codex_app.list_threads` or equivalent live thread tooling and
-creates a temporary local manifest based on
+For every explicit candidate, the Dispatcher preserves the raw unfiltered
+`codex_app.list_threads` envelope requested with exactly `limit: 50` and
+`query: null`, then creates a temporary local manifest based on
 `scripts/fixtures/worktree-cleanup/registered-worktree.json`. The manifest
 records the exact candidate, owning thread, managed root, current source,
 current integration Worktrees, owner-preserved paths, expected branch, and full
 HEAD. It is planning input, not durable project state, and must not contain
-private logs or secrets.
+private logs or secrets. `wait_threads`, a filtered query, a response containing
+50 threads, flattened caller-declared thread fields, unavailable hosts, or a
+missing active cleanup-executor thread is incomplete evidence and fails closed.
+The binding marker is appended by the Dispatcher only from the real thread
+creation/listing result and the resolved Worktree path; implementation,
+verification, and integration agents must not invent a missing thread or host
+identity at cleanup time.
 
 Always plan before mutation:
 
@@ -213,10 +221,16 @@ node scripts/cleanup-obsolete-worktree.mjs --manifest PATH --apply
 
 The guard fails closed unless all of the following hold:
 
-- the thread snapshot is fresh, complete for the project, and supplied by real
-  Codex thread tooling;
+- the raw thread snapshot is fresh, unfiltered, below the tool limit, has no
+  unavailable hosts, and is supplied by `codex_app.list_threads` with its
+  request and response provenance intact;
 - the owning thread exists at the exact resolved candidate path and every
   thread mapped to that path is inactive;
+- Beads notes contain one exact machine-readable `Codex worktree binding v1`
+  marker in the form `Codex worktree binding v1: task=TASK-ID; role=ROLE;
+thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, binding the task, derived
+  role, thread, host, and resolved path SHA-256; a caller-declared role cannot
+  override or replace this ownership evidence;
 - Beads status and its single stage label are compatible with the candidate
   role: implementation is closed or `stage:verified`, verifier has completed
   its success/failure lifecycle, and integration is closed;
@@ -235,9 +249,15 @@ branch. Remove an eligible registered Worktree only with non-forced
 reclaimed bytes.
 
 If Git removed the registration but Windows left a locked residual directory,
-stop and report it. A later residual-mode pass may remove only that exact
-unregistered path after matching prior clean-removal evidence and proving its
-real path is a strict descendant of the allowed managed root. Never use
+stop and report it. The registered pass first stores an immutable canonical
+receipt blob at
+`refs/codex/worktree-cleanup-receipts/TASK-ID/RECEIPT-SHA256`. A later
+residual-mode pass accepts only that Git ref, not inline receipt JSON, and
+revalidates the receipt schema and age; task/role/thread/host/path, common Git
+directory, branch, immutable HEAD and original removal intent; and current
+archive or durable-ref reachability. Only then may it remove that exact
+unregistered path after proving its real path is a strict descendant of the
+allowed managed root. Never use
 `--force`, permission changes, retry loops, junction-following, or a recursive
 fallback after Git failure. Missing, stale, ambiguous, dirty, active, or locked
 evidence always preserves the Worktree.
@@ -534,6 +554,15 @@ only then closes the exact GitHub mirror with sanitized integration/artifact
 evidence. Root coordination tasks are closed last, after all computed mapped
 tasks and delivery gates pass. It reports GitHub partial failures without
 rolling back Beads.
+
+Before the first mutation, the wrapper plans every task in computed closure
+order as `skip`, `close-only`, or `update-and-close`. If an update appended the
+exact deterministic guarded note and removed all stages but the following
+`bd close` failed, retry accepts only that exact stage-less task with its
+allowed pre-close status and performs `close-only`; it never appends the note a
+second time. Missing, duplicate, mismatched, or stage-bearing partial evidence
+fails closed, so later dependency/root actions cannot hide an earlier partial
+failure.
 
 After a post-closure GitHub partial failure, retry only the mirror:
 

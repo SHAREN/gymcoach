@@ -111,7 +111,8 @@ For every implementation request, the coordinating Codex task must:
 5. Record the local integration base before dispatch. For every READY child task
    belonging to the current root request, automatically create a dedicated Codex
    task, Git Worktree, and task branch, then dispatch execute-task with the Beads
-   task ID.
+   task ID. After the real thread and resolved path exist, append its exact
+   implementation `Codex worktree binding v1` marker to the Beads task.
 6. Run independent tasks concurrently when their files, APIs, schemas, shared
    contracts, training formulas, deployment surfaces, and required ordering do
    not overlap.
@@ -120,13 +121,14 @@ For every implementation request, the coordinating Codex task must:
 8. Run verify-task as a separate pass for every implementation. Failed
    verification returns the task to its single write-owning implementation
    agent. Successful product verification records immutable base/commit
-   evidence and moves the task to `stage:verified`; it does not close it.
+   evidence and moves the task to `stage:verified`; it does not close it. Record
+   the verifier thread/host/resolved-path binding before dispatching the pass.
 9. Dispatch integrate-tasks after all required tasks are verified. Integrate
    their commits in dependency order into a dedicated integration Worktree,
-   record conflict-resolution mappings, and rerun the combined gates. The
-   integration guard rereads the authoritative Beads root and transitive
-   blocking dependencies; manifest task lists and delivery booleans are never
-   accepted as their own authority.
+   record its integration binding on the root task, record conflict-resolution
+   mappings, and rerun the combined gates. The integration guard rereads the
+   authoritative Beads root and transitive blocking dependencies; manifest task
+   lists and delivery booleans are never accepted as their own authority.
 10. Close product tasks only through the deterministic integration closure
     guard. Report the root request with integrated, published, installed, and
     deployed states separately.
@@ -174,16 +176,23 @@ fall back to implementing multiple tasks in one Worktree.
 - Cleanup is dispatcher or heartbeat lifecycle work. Session hooks and the
   implementation, verifier, and integration tasks themselves must not remove
   their current Worktree.
-- For each explicit cleanup candidate, obtain a fresh complete snapshot from
-  real Codex thread tooling. Local SQLite files, timestamps, archived flags,
-  rollout files, and Beads notes do not prove that a Codex thread is inactive.
+- For each explicit cleanup candidate, preserve the raw unfiltered
+  `codex_app.list_threads` response requested with `limit: 50` and `query:
+null`. Reject `wait_threads`, filtered queries, responses at the limit,
+  truncated/flattened data, unavailable hosts, or a missing active cleanup-
+  executor thread. Local SQLite files, timestamps, archived flags, rollout
+  files, and prose notes do not prove that a Codex thread is inactive.
 - Run `node scripts/cleanup-obsolete-worktree.mjs --manifest PATH` first. Run
   the same command with `--apply` only when the deterministic plan says the
   candidate is removable.
-- The guard rereads authoritative Beads status and stage, validates every live
-  thread mapped to the resolved path, checks clean Git status including
-  untracked files, confirms the expected branch and immutable HEAD belong to
-  the same Git common directory, and checks durable ref reachability.
+- The guard rereads authoritative Beads status and stage, requires the exact
+  machine-readable task/role/thread/host/path-hash Worktree binding recorded in
+  Beads notes as `Codex worktree binding v1: task=TASK-ID; role=ROLE;
+thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
+  that binding instead of trusting the manifest, validates every live thread
+  mapped to the resolved path, checks clean Git status including untracked
+  files, confirms the expected branch and immutable HEAD belong to the same Git
+  common directory, and checks durable ref reachability.
 - Preserve dispatcher, primary, current-execution, current-source, current-
   integration, owner-preserved, Git-locked, main/master, active-thread, dirty,
   REVIEW, and VERIFY Worktrees. Preserve an implementation Worktree until its
@@ -194,9 +203,13 @@ fall back to implementing multiple tasks in one Worktree.
   `refs/codex/worktree-archive/TASK-ID/`. Do not delete its branch.
 - Remove a registered candidate only with non-forced `git worktree remove`,
   then verify that Git registration and the directory are gone and report the
-  measured reclaimed bytes. If a residual directory remains, handle it in a
-  separate guarded residual pass only after registration is absent, prior
-  cleanup evidence matches, and exact real-path containment is proven.
+  measured reclaimed bytes. If a residual directory remains, persist the
+  registered pass as an immutable canonical Git-blob receipt under
+  `refs/codex/worktree-cleanup-receipts/TASK-ID/RECEIPT-SHA256`. A separate
+  residual pass accepts only that ref and must revalidate its schema, age,
+  task/role/thread/host/path/common-directory/branch/HEAD identity, original
+  removal intent, and current archive or durable-ref reachability before exact
+  real-path containment and deletion are considered.
 - Report Windows locks and cleanup failures without `--force`, permission
   changes, retry loops, or recursive fallback deletion. One blocked candidate
   must not authorize changes to another Worktree.
@@ -240,6 +253,11 @@ fall back to implementing multiple tasks in one Worktree.
   acceptance criteria. Pure harness/docs work may use only the explicit
   deterministic no-runtime-artifact exception; Docker, runtime build,
   deployment, and artifact-publication files are not eligible for it.
+- Guarded closure plans every dependency-first/root-last action before mutation.
+  If the exact guarded note was appended and every stage removed but `bd close`
+  failed, the only accepted retry state is the matching stage-less task with
+  its allowed pre-close status; retry closes it without appending the note
+  again. Any other partial state fails closed.
 - Do not expose, copy, log, or commit secrets, tokens, environment variables,
   private keys, or personal data. Task descriptions and verification notes are
   not exceptions.

@@ -48,40 +48,125 @@ function parseArguments(argv) {
   return options;
 }
 
-function requireTaskStage(repo, taskId, expectedLabel) {
-  const issue = readTask(repo, taskId);
-  if (!issue || issue.status !== 'in_progress' || !issue.labels?.includes(expectedLabel)) {
-    fail(`${taskId} must be in_progress with ${expectedLabel} before guarded closure`);
-  }
-}
-
 function readTask(repo, taskId) {
   return JSON.parse(runBd(repo, ['show', taskId, '--json'], { capture: true }))[0];
 }
 
-function requireCoordinatorState(repo, taskId) {
-  const issue = readTask(repo, taskId);
-  if (!issue || !['open', 'in_progress', 'blocked'].includes(issue.status)) {
-    fail(`${taskId} must remain open, in_progress, or blocked before root coordination closure`);
+const IMPLEMENTATION_STAGES = new Set(['stage:review', 'stage:verify', 'stage:verified']);
+
+export function buildClosureNote(evidence, taskId) {
+  if (evidence.mode === 'integration') {
+    return `${evidence.coordinatorTaskIds.includes(taskId) ? 'Guarded integration root coordination closure' : 'Guarded integration closure'}: head ${evidence.head}; integrated=${evidence.delivery.integrated.status}; published=${evidence.delivery.published.status}; installed=${evidence.delivery.installed.status}; deployed=${evidence.delivery.deployed.status}.`;
   }
-  if (
-    issue.labels?.some((label) =>
-      ['stage:review', 'stage:verify', 'stage:verified'].includes(label),
-    )
-  ) {
-    fail(`${taskId} has an implementation stage and must be verified as a mapped task`);
-  }
+  return `Immutable verification evidence: verified-commit ${evidence.head}. Guarded no-runtime-artifact closure at verified commit ${evidence.head}.`;
 }
 
-function requireClosedTask(repo, taskId) {
+export function buildClosureReason(evidence) {
+  return evidence.mode === 'integration'
+    ? 'Integrated evidence and required artifact gates passed'
+    : 'Explicit no-runtime-artifact exception passed isolated verification';
+}
+
+function exactNoteCount(notes, expectedNote) {
+  return String(notes ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line === expectedNote).length;
+}
+
+function allowedOpenStatuses(evidence, taskId) {
+  return evidence.coordinatorTaskIds.includes(taskId)
+    ? new Set(['open', 'in_progress', 'blocked'])
+    : new Set(['in_progress']);
+}
+
+function taskStageLabels(issue) {
+  return issue.labels?.filter((label) => label.startsWith('stage:')) ?? [];
+}
+
+export function planClosureTaskAction({ evidence, taskId, issue }) {
+  if (!issue) fail(`${taskId} is absent from authoritative Beads state`);
+  const expectedNote = buildClosureNote(evidence, taskId);
+  const noteCount = exactNoteCount(issue.notes, expectedNote);
+  const stageLabels = taskStageLabels(issue);
+  const alreadyGuarded = new Set(evidence.alreadyGuardedTaskIds).has(taskId);
+
+  if (alreadyGuarded || issue.status === 'closed') {
+    if (issue.status !== 'closed' || noteCount !== 1 || stageLabels.length > 0) {
+      fail(`${taskId} must have exactly one matching guarded closure note before it is skipped`);
+    }
+    return { taskId, action: 'skip', note: expectedNote, reason: buildClosureReason(evidence) };
+  }
+
+  if (!allowedOpenStatuses(evidence, taskId).has(issue.status)) {
+    fail(`${taskId} has invalid status ${issue.status} before guarded closure`);
+  }
+  if (noteCount > 1) {
+    fail(`${taskId} has duplicate matching guarded closure notes`);
+  }
+  if (noteCount === 1) {
+    if (stageLabels.length > 0) {
+      fail(`${taskId} has a guarded closure note but still has stage labels`);
+    }
+    return {
+      taskId,
+      action: 'close-only',
+      note: expectedNote,
+      reason: buildClosureReason(evidence),
+    };
+  }
+
+  if (evidence.coordinatorTaskIds.includes(taskId)) {
+    if (stageLabels.some((label) => IMPLEMENTATION_STAGES.has(label))) {
+      fail(`${taskId} has an implementation stage and must be verified as a mapped task`);
+    }
+  } else {
+    const expectedLabel = evidence.mode === 'integration' ? 'stage:verified' : 'stage:verify';
+    if (stageLabels.length !== 1 || stageLabels[0] !== expectedLabel) {
+      fail(`${taskId} must be in_progress with only ${expectedLabel} before guarded closure`);
+    }
+  }
+  return {
+    taskId,
+    action: 'update-and-close',
+    note: expectedNote,
+    reason: buildClosureReason(evidence),
+    stageLabels,
+  };
+}
+
+export function planBeadsClosure({ evidence, repo, adapters = {} }) {
+  const read = adapters.readTask ?? readTask;
+  return evidence.closureTaskIds.map((taskId) =>
+    planClosureTaskAction({ evidence, taskId, issue: read(repo, taskId) }),
+  );
+}
+
+export async function executeBeadsClosure({ evidence, repo, adapters = {} }) {
+  const plan = planBeadsClosure({ evidence, repo, adapters });
+  const updateTask =
+    adapters.updateTask ??
+    ((taskRepo, action) => {
+      const updateArgs = ['update', action.taskId, '--append-notes', action.note];
+      for (const label of action.stageLabels) updateArgs.push('--remove-label', label);
+      runBd(taskRepo, updateArgs);
+    });
+  const closeTask =
+    adapters.closeTask ??
+    ((taskRepo, action) => runBd(taskRepo, ['close', action.taskId, '--reason', action.reason]));
+
+  for (const action of plan) {
+    if (action.action === 'skip') continue;
+    if (action.action === 'update-and-close') await updateTask(repo, action);
+    await closeTask(repo, action);
+  }
+  return plan;
+}
+
+function requireClosedTask(repo, taskId, evidence) {
   const issue = readTask(repo, taskId);
-  if (
-    !issue ||
-    issue.status !== 'closed' ||
-    !/Guarded (?:integration(?: root coordination)?|no-runtime-artifact) closure/.test(
-      issue.notes ?? '',
-    )
-  ) {
+  planClosureTaskAction({ evidence, taskId, issue });
+  if (issue.status !== 'closed') {
     fail(`${taskId} must already have a guarded Beads closure for mirror-only retry`);
   }
 }
@@ -150,48 +235,17 @@ async function main(argv) {
   const manifestPath = path.resolve(repo, options.manifest);
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   const evidence = await validateIntegrationEvidence(manifest, { repo });
-  const expectedLabel = evidence.mode === 'integration' ? 'stage:verified' : 'stage:verify';
-  const alreadyGuarded = new Set(evidence.alreadyGuardedTaskIds);
-  for (const taskId of evidence.closureTaskIds) {
-    if (options.mirrorOnly) {
-      requireClosedTask(repo, taskId);
-    } else if (alreadyGuarded.has(taskId)) {
-      requireClosedTask(repo, taskId);
-    } else if (evidence.coordinatorTaskIds.includes(taskId)) {
-      requireCoordinatorState(repo, taskId);
-    } else {
-      requireTaskStage(repo, taskId, expectedLabel);
-    }
+  if (options.mirrorOnly) {
+    for (const taskId of evidence.closureTaskIds) requireClosedTask(repo, taskId, evidence);
+  } else {
+    planBeadsClosure({ evidence, repo });
   }
   if (!executionPlan.mutateBeads && !executionPlan.runMirrors) {
     console.log(`Guarded closure dry-run passed for ${evidence.closureTaskIds.join(', ')}`);
     return;
   }
   if (executionPlan.mutateBeads) {
-    for (const taskId of evidence.closureTaskIds) {
-      if (alreadyGuarded.has(taskId)) {
-        continue;
-      }
-      const note =
-        evidence.mode === 'integration'
-          ? `${evidence.coordinatorTaskIds.includes(taskId) ? 'Guarded integration root coordination closure' : 'Guarded integration closure'}: head ${evidence.head}; integrated=${evidence.delivery.integrated.status}; published=${evidence.delivery.published.status}; installed=${evidence.delivery.installed.status}; deployed=${evidence.delivery.deployed.status}.`
-          : `Immutable verification evidence: verified-commit ${evidence.head}. Guarded no-runtime-artifact closure at verified commit ${evidence.head}.`;
-      const issue = readTask(repo, taskId);
-      const stageLabels = issue.labels?.filter((label) => label.startsWith('stage:')) ?? [];
-      const updateArgs = ['update', taskId, '--append-notes', note];
-      for (const label of stageLabels) {
-        updateArgs.push('--remove-label', label);
-      }
-      runBd(repo, updateArgs);
-      runBd(repo, [
-        'close',
-        taskId,
-        '--reason',
-        evidence.mode === 'integration'
-          ? 'Integrated evidence and required artifact gates passed'
-          : 'Explicit no-runtime-artifact exception passed isolated verification',
-      ]);
-    }
+    await executeBeadsClosure({ evidence, repo });
   }
   if (executionPlan.runMirrors) {
     await mirrorClosureTasks({

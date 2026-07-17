@@ -40,6 +40,9 @@ bd dep list TASK-ID
    - stage:review is present;
    - acceptance criteria are non-empty;
    - the current worktree and branch belong to this task.
+   - the Project Dispatcher recorded the exact verifier
+     task/role/thread/host/resolved-path-hash Worktree binding in Beads notes
+     from real thread creation state; never invent a missing identity.
 
 If any precondition fails, stop without changing labels, notes, status, code,
 tests, or branches. The Failure section below applies only after preflight has
@@ -166,7 +169,11 @@ thread. After this thread becomes inactive, the Project Dispatcher may plan
 cleanup of the clean verifier Worktree. The implementation Worktree becomes a
 cleanup candidate only at `stage:verified` or closed and remains protected if
 any thread still uses it, it is dirty, owner-preserved, or it is the current
-source/integration Worktree.
+source/integration Worktree. Cleanup requires the raw unfiltered
+`codex_app.list_threads` envelope with no unavailable hosts or tool-limit
+ambiguity and an exact Beads task/role/thread/host/path-hash binding; a manifest
+role or `wait_threads` result is never authoritative. A locked residual pass
+may use only the immutable Git receipt ref created by the registered pass.
 
 ### Explicit No-Runtime-Artifact Exception
 
@@ -191,6 +198,11 @@ for this guard and must be rejected. Treat release/build/runtime/service scripts
 deployment/operations directories, and all checked-in GitHub workflow/action
 automation conservatively as runtime-affecting.
 
+The wrapper preplans every closure action. If its exact deterministic note and
+stage removal succeeded but `bd close` failed, retry accepts only that matching
+stage-less pre-close task and performs close-only without duplicating the note;
+any other partial mutation remains rejected.
+
 ## Failure
 
 Do not modify code or tests. Append an exact finding list that includes file
@@ -209,6 +221,8 @@ Verification failure makes only the inactive verifier Worktree potentially
 obsolete. Preserve the implementation Worktree for the sole writer's
 correction. Cleanup is performed later by the Dispatcher through a dry-run and
 explicit `--apply` of `scripts/cleanup-obsolete-worktree.mjs`; the guard must
-use fresh complete real Codex thread state and must not force Windows locks.
+use the raw complete unfiltered `codex_app.list_threads` response, reconcile
+role ownership through the exact Beads Worktree binding, and must not force
+Windows locks or accept fabricated inline residual receipts.
 
 Report that the task remains open and requires implementation changes.
