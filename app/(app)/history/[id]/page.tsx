@@ -20,12 +20,14 @@ import {
 import { formatWeight } from '@/lib/units';
 import { DeleteSessionButton } from '@/components/history/delete-session-button';
 import { ActivityTrackChart } from '@/components/history/activity-track-chart';
+import { TrackDecoupling } from '@/components/history/track-decoupling';
 import { getExerciseDisplayName } from '@/i18n/exercise-names';
 import { getTrainingDisplayName } from '@/i18n/training-names';
 import { buildHistoryHref, parseMonthKey } from '@/lib/history-calendar';
 import { HistoryStrengthSetEditor } from '@/components/history/history-strength-set-editor';
 import { resolveExerciseInventory } from '@/lib/gym-loads';
 import { frozenSetLoadConstraints, frozenSetLoadSnapshotVersion } from '@/lib/set-equipment';
+import type { TrackPoint } from '@/lib/import/track';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -40,6 +42,12 @@ export default async function HistorySessionPage(props: Params) {
   const format = await getFormatter();
   const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
   const auth = await requireSession();
+  const decouplingCopy = {
+    title: detail('decoupling.title'),
+    comparison: detail('decoupling.comparison'),
+    description: detail('decoupling.description'),
+    limitations: detail('decoupling.limitations'),
+  };
 
   const [session, user] = await Promise.all([
     db.session.findUnique({
@@ -420,14 +428,20 @@ export default async function HistorySessionPage(props: Params) {
                         </table>
                       ) : null}
                       {isCardio &&
-                        entry.sets.map((s) =>
-                          Array.isArray(s.track) && s.track.length > 0 ? (
-                            <ActivityTrackChart
-                              key={`track-${s.id}`}
-                              track={s.track as { t: number; d?: number; hr?: number }[]}
-                            />
-                          ) : null,
-                        )}
+                        entry.sets.map((s) => {
+                          if (!Array.isArray(s.track) || s.track.length === 0) return null;
+                          const track = s.track as unknown as TrackPoint[];
+                          return (
+                            <div key={`track-${s.id}`}>
+                              <ActivityTrackChart track={track} />
+                              <TrackDecoupling
+                                track={track}
+                                locale={locale}
+                                copy={decouplingCopy}
+                              />
+                            </div>
+                          );
+                        })}
                       {!isCardio && session.finishedAt && (
                         <HistoryStrengthSetEditor
                           sessionId={session.id}

@@ -52,6 +52,14 @@ export const history = {
     heartRateChart: 'Heart rate over time',
     heartRate: 'HR',
     chartMinutes: '{value} min',
+    decoupling: {
+      title: 'Pace / heart-rate change estimate',
+      comparison: 'Second half compared with first',
+      description:
+        'Compares the heart-rate cost relative to speed in two equal elapsed-time halves. Positive means the recorded cost was higher in the second half; negative means lower.',
+      limitations:
+        'Use only for a continuous, steady, mostly level aerobic effort. Intervals, hills, pauses, heat, hydration, stress, medication and sensor error can change this estimate. It does not prove aerobic fitness or that the effort was steady.',
+    },
     editor: {
       load: 'Load ({unit})',
       reps: 'Reps',

@@ -558,6 +558,73 @@ requires the explicit `REPLACE` or `CLEAR` equipment snapshot action; merely
 resending an unchanged equipment ID does not refresh history from current gym
 configuration.
 
+### 5.10 Imported-track pace / heart-rate change estimate
+
+Implementation: `lib/cardio.ts` and
+`components/history/track-decoupling.tsx`.
+
+Source-backed principles:
+
+- during prolonged aerobic exercise, heart rate can rise while external effort
+  remains similar;
+- speed or distance is an external-load observation and heart rate is an
+  internal-load observation;
+- their relationship can be affected by heat, humidity, hydration, terrain,
+  stress, medication, illness and sensor error;
+- heart rate lags rapid changes in high-intensity interval work, so a simple
+  halves comparison is not appropriate evidence for intervals;
+- timestamp, cumulative-distance and heart-rate data can describe an observed
+  change, but cannot prove its cause, workout quality, pacing quality, fatigue
+  or aerobic fitness.
+
+GymCoach exposes an optional descriptive estimate only when the stored track
+passes conservative data-quality gates. The current deterministic calculation
+uses the whole valid stored span and splits it at the exact elapsed-time
+midpoint:
+
+```text
+halfMeanSpeed = halfDistance / halfElapsedTime
+halfMeanHr = trapezoidal time-weighted mean of interpolated HR samples
+halfHrCost = halfMeanHr / halfMeanSpeed
+changePct = (secondHalfHrCost / firstHalfHrCost - 1) * 100
+```
+
+A positive value means recorded heart-rate cost relative to speed was higher in
+the second half. A negative value means it was lower. The sign and magnitude do
+not create an automatic `steady`, `faded`, `improved`, good-fitness or
+poor-fitness classification. GymCoach does not use a 5 percent verdict.
+
+The midpoint distance and heart rate are linearly interpolated. Heart rate is
+integrated over time with the trapezoidal rule so clustered samples do not
+receive extra weight. These formula choices are engineering heuristics, not a
+universal physiological standard.
+
+Current engineering validity gates:
+
+- the stored analysis span is at least 20 minutes;
+- timestamps are finite, within the existing 24-hour track bound and strictly
+  increasing in stored order; duplicate or out-of-order timestamps invalidate
+  the estimate rather than being sorted;
+- distance and heart rate both cover the first and last timestamps;
+- consecutive usable distance or heart-rate observations are no more than 120
+  seconds apart;
+- cumulative distance is finite, nonnegative, within the existing 1000 km
+  storage bound and never decreases or resets;
+- a cumulative-distance plateau longer than 30 seconds invalidates the
+  estimate as a likely pause or missing movement signal;
+- each equal-time half has positive elapsed time and positive distance;
+- recorded HR uses the existing sanitized track range of 40 to 250 bpm. This
+  is a storage-quality bound, not a diagnosis or individual physiological zone.
+
+The 20-minute minimum, 120-second maximum gap, 30-second stationary allowance,
+linear interpolation, time weighting and exact formula are all engineering
+heuristics. Missing endpoint coverage, long gaps, invalid values, distance
+resets and degenerate spans return no estimate. The UI states that the readout
+should be considered only for a known continuous, steady, mostly level aerobic
+effort and lists intervals, hills, pauses, heat, hydration, stress, medication
+and sensor error as limitations. Track fields alone do not establish that those
+applicability conditions were met.
+
 ## 6. LLM coach contract
 
 The LLM is an interpreter and planner around validated GymCoach data. It is not
@@ -803,3 +870,25 @@ and load increments. They do not define a universal cable ratio, plate sleeve
 standard, shared-pool schema, or exact cross-machine conversion. Universal
 compatible plate pools, nullable quantities, per-machine multipliers, and the
 attainable-load algorithm are therefore documented engineering heuristics.
+
+A tenth review on 2026-07-17 used the same `ИИ тренер` notebook with eight
+sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`. Four separate
+questions covered source-backed interpretation of pace-relative heart-rate
+change, edge cases and confounders, translation into a sampling-robust product
+rule, and an adversarial review of every numerical gate. A supplemental citation
+audit challenged claims about 15, 20 and 30 minute durations, 5 bpm stability,
+a 5 percent decoupling threshold, sample gaps and HR rejection bounds.
+
+Source-backed findings were that cardiovascular drift can occur during
+prolonged aerobic exercise, external pace and internal HR do not fully describe
+psychophysiological stress, intervals violate the simple steady-load
+interpretation, and environment, hydration, stress, medication and sensor
+quality can alter the observation. Track data alone cannot establish cause,
+fitness, fatigue, workout quality or steady effort. The notebook did not support
+a 5 percent decoupling verdict or any exact software coverage threshold.
+
+Equal elapsed-time halves, midpoint interpolation, trapezoidal HR weighting,
+the HR-cost ratio, the 20-minute minimum, 120-second sample-gap limit, 30-second
+stationary allowance and the unavailable-data gates are therefore documented
+engineering heuristics. The existing 40 to 250 bpm stored-track range remains a
+data-sanitization boundary rather than a source-backed physiological rule.
