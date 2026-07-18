@@ -392,7 +392,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 13 with coaching profile, coach note, system profiles and earlier fields', async () => {
+  it('exports version 14 with exercise load profiles and all earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -400,7 +400,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(13);
+    expect(dump.version).toBe(14);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -427,6 +427,11 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const pullup = dump.exercises.find((e: { name: string }) => e.name === 'Pull-up');
     expect(pullup.usesBodyweight).toBe(true);
     expect(pullup.equipmentType).toBe('BODYWEIGHT');
+    expect(pullup.loadProfile).toMatchObject({
+      version: 1,
+      classification: 'UNCLASSIFIED',
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+    });
     expect(dump.gyms).toHaveLength(1);
     const exportedGym = dump.gyms[0];
     expect(exportedGym).toMatchObject({
@@ -1111,6 +1116,14 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     // v2 fields default to their pre-#168 values.
     const squat = await db.exercise.findFirst({ where: { userId: user.id } });
     expect(squat?.usesBodyweight).toBe(false);
+    expect(squat?.loadProfile).toMatchObject({
+      classification: 'LEGACY_PRIMARY_ONLY',
+      primaryMuscles: {
+        state: 'KNOWN',
+        entries: [expect.objectContaining({ muscleGroup: 'QUADS' })],
+      },
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+    });
     const pe = await db.programExercise.findFirst({
       where: { workout: { program: { userId: user.id } } },
     });

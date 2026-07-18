@@ -4,6 +4,24 @@ import { validateProgramDesign } from '@/lib/program-design-validation';
 import type { ProgramDesignContext } from '@/lib/program-design-context';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
 import { emptyCoachingProfile } from '@/lib/schemas/coaching-profile';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
+
+const emptyTrainingLoad = () => aggregateTrainingLoad([]);
+const benchLoadProfile = reviewedExerciseLoadProfile({
+  primaryMuscles: ['CHEST'],
+  secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+  movementPatterns: ['HORIZONTAL_PUSH'],
+  fatigueTags: ['SYSTEMIC_COMPOUND'],
+  jointStress: ['SHOULDER', 'ELBOW'],
+});
+const directTricepsLoadProfile = reviewedExerciseLoadProfile({
+  primaryMuscles: ['TRICEPS'],
+  secondaryMuscles: [],
+  movementPatterns: ['ELBOW_EXTENSION'],
+  fatigueTags: [],
+  jointStress: ['ELBOW'],
+});
 
 function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignContext {
   return {
@@ -79,6 +97,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       currentWeek: { weekStart: '2026-07-13', sessions: [] },
       previousWeek: null,
       actualHardSetsByMuscle: { currentWeek: {}, previousWeek: {} },
+      trainingLoad: { currentWeek: emptyTrainingLoad(), previousWeek: null },
       adherence: { sessionsLogged: 0, expectedSessions: 6, rate: 0 },
       rirAdherence: {
         setsWithRir: 0,
@@ -116,6 +135,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         id: 'bench',
         name: 'Bench press',
         muscleGroup: 'CHEST',
+        loadProfile: benchLoadProfile,
         category: 'COMPOUND',
         equipmentType: 'BARBELL',
         usesBodyweight: false,
@@ -136,6 +156,13 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         id: 'fly',
         name: 'Machine fly',
         muscleGroup: 'CHEST',
+        loadProfile: reviewedExerciseLoadProfile({
+          primaryMuscles: ['CHEST'],
+          secondaryMuscles: [],
+          movementPatterns: ['HORIZONTAL_PUSH'],
+          fatigueTags: [],
+          jointStress: ['SHOULDER'],
+        }),
         category: 'ISOLATION',
         equipmentType: 'MACHINE',
         usesBodyweight: false,
@@ -145,6 +172,27 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         isAllowedByProfile: true,
         limitationReasons: [],
         availabilitySource: 'none',
+        requiresEquipmentSelection: false,
+        equipmentOptions: [],
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
+      {
+        id: 'pushdown',
+        name: 'Triceps pushdown',
+        muscleGroup: 'TRICEPS',
+        loadProfile: directTricepsLoadProfile,
+        category: 'ISOLATION',
+        equipmentType: 'CABLE',
+        usesBodyweight: false,
+        defaultRestSec: 60,
+        notes: null,
+        isAvailableInActiveGym: true,
+        isAllowedByProfile: true,
+        limitationReasons: [],
+        availabilitySource: 'legacy-config',
         requiresEquipmentSelection: false,
         equipmentOptions: [],
         weightOptions: [],
@@ -223,7 +271,17 @@ describe('program-design validation', () => {
         source: null,
         personalVolumeTargets: {},
         targetVolumeByMuscle: {
-          CHEST: { weeklySets: 6, frequency: 2, maxSetsInOneWorkout: 3 },
+          CHEST: {
+            weeklySets: 6,
+            directSets: 6,
+            indirectSets: 0,
+            equivalentSets: 6,
+            frequency: 2,
+            maxSetsInOneWorkout: 3,
+            maxEquivalentSetsInOneWorkout: 3,
+            algorithmVersion: 'test',
+            confidence: 'LOW',
+          },
         },
       },
     });
@@ -247,6 +305,75 @@ describe('program-design validation', () => {
     expect(result.valid).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toContain(
       'volume-increase-during-under-recovery',
+    );
+  });
+
+  it('explains pressing overlap when direct arm work exceeds existing policy', () => {
+    const result = validateProgramDesign(
+      {
+        name: 'Overlap draft',
+        phase: 'Hypertrophy',
+        workouts: [
+          {
+            name: 'Push A',
+            exercises: [
+              {
+                name: 'Bench press',
+                muscleGroup: 'CHEST',
+                category: 'COMPOUND',
+                equipmentType: 'BARBELL',
+                targetSets: 8,
+                targetRepsMin: 6,
+                targetRepsMax: 10,
+                targetRIR: 2,
+                restSec: 120,
+              },
+              {
+                name: 'Triceps pushdown',
+                muscleGroup: 'TRICEPS',
+                category: 'ISOLATION',
+                equipmentType: 'CABLE',
+                targetSets: 9,
+                targetRepsMin: 10,
+                targetRepsMax: 15,
+                targetRIR: 2,
+                restSec: 60,
+              },
+            ],
+          },
+          {
+            name: 'Arms B',
+            exercises: [
+              {
+                name: 'Triceps pushdown',
+                muscleGroup: 'TRICEPS',
+                category: 'ISOLATION',
+                equipmentType: 'CABLE',
+                targetSets: 8,
+                targetRepsMin: 10,
+                targetRepsMax: 15,
+                targetRIR: 2,
+                restSec: 60,
+              },
+            ],
+          },
+        ],
+      },
+      context(),
+    );
+
+    expect(result.weeklyLoadByMuscle.TRICEPS).toMatchObject({
+      directSets: 17,
+      indirectSets: 8,
+      equivalentSets: 21,
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'high-weekly-volume',
+          message: expect.stringContaining('17 direct and 8 indirect'),
+        }),
+      ]),
     );
   });
 

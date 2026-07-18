@@ -1,6 +1,8 @@
 import { db } from '@/lib/db';
 import { isoWeekStart } from '@/lib/stats';
-import type { Prisma } from '@/lib/prisma-client';
+import { MuscleGroup, type Prisma } from '@/lib/prisma-client';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
+import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 export const MCP_HISTORY_SUMMARY_DAYS = 56;
 export const MCP_HISTORY_BASELINE_DAYS = 42;
@@ -27,6 +29,7 @@ const historySessionInclude = {
           category: true,
           equipmentType: true,
           usesBodyweight: true,
+          loadProfile: true,
         },
       },
     },
@@ -62,6 +65,8 @@ interface PeriodSummary {
   setsAtRir0To4: number;
   rirCoveragePct: number | null;
   directSetsByPrimaryMuscle: Record<string, MuscleSetSummary>;
+  loadByMuscle: ReturnType<typeof aggregateTrainingLoad>['muscles'];
+  loadProfileMetadata: Omit<ReturnType<typeof aggregateTrainingLoad>, 'muscles'>;
 }
 
 export async function buildMcpTrainingHistorySummary(userId: string, now = new Date()) {
@@ -239,9 +244,9 @@ export function summarizeMcpTrainingHistory(
     recentSessions: returnedRecentSessions.reverse().map(serializeTrainingSession),
     dataQuality: {
       ...summarizePeriod(ordered),
-      indirectSetAccounting: 'unavailable',
+      indirectSetAccounting: 'available-from-explicit-profiles',
       indirectSetReason:
-        'Exercises currently store one primary muscle and no exercise-specific secondary-muscle contribution. Do not invent indirect set totals.',
+        'Indirect sets are counted only from explicit secondary-muscle entries. Unknown participation remains unknown and receives no coefficient.',
       rirRule:
         'setsAtRir0To4 counts regular working sets only when recorded RIR is 0-4. Missing RIR stays missing and is not assumed to be hard or easy.',
     },
@@ -254,7 +259,8 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
     {
       exerciseId: string;
       exerciseName: string;
-      muscleGroup: string;
+      muscleGroup: MuscleGroup;
+      loadProfile: unknown;
       category: string;
       equipmentType: string;
       usesBodyweight: boolean;
@@ -269,6 +275,7 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
         exerciseId: set.exercise.id,
         exerciseName: set.exercise.name,
         muscleGroup: set.exercise.muscleGroup,
+        loadProfile: set.exercise.loadProfile,
         category: set.exercise.category,
         equipmentType: set.exercise.equipmentType,
         usesBodyweight: set.exercise.usesBodyweight,
@@ -300,6 +307,7 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
       exerciseId: exercise.exerciseId,
       exerciseName: exercise.exerciseName,
       muscleGroup: exercise.muscleGroup,
+      loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
       category: exercise.category,
       equipmentType: exercise.equipmentType,
       usesBodyweight: exercise.usesBodyweight,
@@ -319,7 +327,40 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
 }
 
 function summarizePeriod(sessions: McpHistorySessionRow[]): PeriodSummary {
-  const directSetsByPrimaryMuscle: Record<string, MuscleSetSummary> = {};
+  const load = aggregateTrainingLoad(
+    sessions.flatMap((session) =>
+      session.sets
+        .filter((set) => set.exercise.category !== 'CARDIO')
+        .map((set) => ({
+          setId: set.id,
+          exerciseId: set.exerciseId,
+          legacyMuscleGroup: set.exercise.muscleGroup,
+          loadProfile: set.exercise.loadProfile,
+          isWarmup: set.isWarmup,
+          isDropSet: set.isDropSet,
+          rir: set.rir,
+          historyReliability: 'UNKNOWN' as const,
+        })),
+    ),
+  );
+  const directSetsByPrimaryMuscle: Record<string, MuscleSetSummary> = Object.fromEntries(
+    Object.entries(load.muscles).flatMap(([muscle, row]) =>
+      row.directSets > 0
+        ? [
+            [
+              muscle,
+              {
+                workingSets: row.directSets,
+                regularWorkingSets: row.directSetBreakdown.regular,
+                dropSets: row.directSetBreakdown.drop,
+                setsWithRir: row.directSetBreakdown.setsWithRir,
+                setsAtRir0To4: row.directSetBreakdown.setsAtRir0To4,
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
   let workingSets = 0;
   let regularWorkingSets = 0;
   let dropSets = 0;
@@ -329,31 +370,17 @@ function summarizePeriod(sessions: McpHistorySessionRow[]): PeriodSummary {
     for (const set of session.sets) {
       if (set.isWarmup || set.exercise.category === 'CARDIO') continue;
       workingSets += 1;
-      const muscle = set.exercise.muscleGroup;
-      const row = directSetsByPrimaryMuscle[muscle] ?? {
-        workingSets: 0,
-        regularWorkingSets: 0,
-        dropSets: 0,
-        setsWithRir: 0,
-        setsAtRir0To4: 0,
-      };
-      row.workingSets += 1;
       if (set.isDropSet) {
         dropSets += 1;
-        row.dropSets += 1;
       } else {
         regularWorkingSets += 1;
-        row.regularWorkingSets += 1;
         if (set.rir != null) {
           setsWithRir += 1;
-          row.setsWithRir += 1;
           if (set.rir <= 4) {
             setsAtRir0To4 += 1;
-            row.setsAtRir0To4 += 1;
           }
         }
       }
-      directSetsByPrimaryMuscle[muscle] = row;
     }
   }
   return {
@@ -366,6 +393,20 @@ function summarizePeriod(sessions: McpHistorySessionRow[]): PeriodSummary {
     rirCoveragePct:
       regularWorkingSets > 0 ? round((setsWithRir / regularWorkingSets) * 100, 1) : null,
     directSetsByPrimaryMuscle,
+    loadByMuscle: load.muscles,
+    loadProfileMetadata: {
+      version: load.version,
+      algorithmVersion: load.algorithmVersion,
+      confidence: load.confidence,
+      qualifyingSetCount: load.qualifyingSetCount,
+      deduplicatedSetCount: load.deduplicatedSetCount,
+      unclassifiedSetCount: load.unclassifiedSetCount,
+      unknownSecondaryParticipationSetCount: load.unknownSecondaryParticipationSetCount,
+      movementPatterns: load.movementPatterns,
+      fatigueTags: load.fatigueTags,
+      jointStress: load.jointStress,
+      equivalentSetsHeuristic: load.equivalentSetsHeuristic,
+    },
   };
 }
 

@@ -31,6 +31,11 @@ import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { resolveEquipmentType } from '@/lib/gym-loads';
 import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import {
+  exerciseLoadProfileSchema,
+  legacyPrimaryExerciseLoadProfile,
+  normalizeExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -50,7 +55,7 @@ import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/c
 //   profile). email/createdAt ride along for
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
-//   usesBodyweight.
+//   usesBodyweight and the versioned load profile.
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / SessionExercise / Set: all user content incl durable exercise
 //   membership, durationSec, distanceM, avgHr.
@@ -64,7 +69,7 @@ import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/c
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 13;
+const VERSION = 14;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -209,6 +214,7 @@ export async function GET(req: Request) {
         notes: e.notes,
         usesBodyweight: e.usesBodyweight,
         equipmentType: e.equipmentType,
+        loadProfile: normalizeExerciseLoadProfile(e.loadProfile, e.muscleGroup),
       })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
@@ -421,6 +427,9 @@ const importSchema = z.object({
         usesBodyweight: z.boolean().optional(),
         // v3; absent in older backups.
         equipmentType: z.nativeEnum(EquipmentType).optional(),
+        // v14; absent in older backups, which retain their legacy primary
+        // muscle as low-confidence migration evidence.
+        loadProfile: exerciseLoadProfileSchema.optional(),
       }),
     )
     .max(2000),
@@ -901,6 +910,7 @@ export async function POST(req: Request) {
               notes: e.notes ?? null,
               usesBodyweight: e.usesBodyweight ?? false,
               equipmentType: e.equipmentType ?? 'OTHER',
+              loadProfile: e.loadProfile ?? legacyPrimaryExerciseLoadProfile(e.muscleGroup),
             },
           });
           exerciseIdByName.set(e.name, created.id);

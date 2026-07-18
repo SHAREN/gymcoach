@@ -117,7 +117,48 @@ data class ExerciseDto(
     val notes: String? = null,
     val usesBodyweight: Boolean = false,
     val equipmentType: String = "OTHER",
+    val loadProfile: ExerciseLoadProfileDto? = null,
     val trainingDates: List<String> = emptyList(),
+)
+
+@Serializable
+data class ExerciseLoadProfileDto(
+    val version: Int,
+    val algorithmVersion: String,
+    val classification: String,
+    val provenance: String,
+    val confidence: String,
+    val primaryMuscles: MuscleLoadDimensionDto,
+    val secondaryMuscles: MuscleLoadDimensionDto,
+    val movementPatterns: TaggedLoadDimensionDto,
+    val fatigueTags: TaggedLoadDimensionDto,
+    val jointStress: TaggedLoadDimensionDto,
+)
+
+@Serializable
+data class MuscleLoadDimensionDto(
+    val state: String,
+    val entries: List<MuscleLoadEntryDto> = emptyList(),
+)
+
+@Serializable
+data class MuscleLoadEntryDto(
+    val muscleGroup: String,
+    val provenance: String,
+    val confidence: String,
+)
+
+@Serializable
+data class TaggedLoadDimensionDto(
+    val state: String,
+    val entries: List<TaggedLoadEntryDto> = emptyList(),
+)
+
+@Serializable
+data class TaggedLoadEntryDto(
+    val value: String,
+    val provenance: String,
+    val confidence: String,
 )
 
 @Serializable

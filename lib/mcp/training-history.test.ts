@@ -4,6 +4,8 @@ import {
   summarizeMcpTrainingHistory,
   type McpHistorySessionRow,
 } from './training-history';
+import { MuscleGroup } from '@/lib/prisma-client';
+import { legacyPrimaryExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 const NOW = new Date('2026-07-13T12:00:00.000Z');
 
@@ -59,6 +61,7 @@ function session(
         id: `${id}-exercise-${index}`,
         name: set.category === 'CARDIO' ? 'Running' : 'Bench press',
         muscleGroup: (set.muscleGroup ?? 'CHEST') as never,
+        loadProfile: legacyPrimaryExerciseLoadProfile((set.muscleGroup ?? 'CHEST') as MuscleGroup),
         category: (set.category ?? 'COMPOUND') as never,
         equipmentType: set.category === 'CARDIO' ? 'CARDIO' : 'BARBELL',
         usesBodyweight: false,
@@ -120,7 +123,15 @@ describe('MCP training history summary', () => {
       regularWorkingSets: 6,
       dropSets: 1,
     });
-    expect(summary.dataQuality.indirectSetAccounting).toBe('unavailable');
+    expect(summary.dataQuality.indirectSetAccounting).toBe('available-from-explicit-profiles');
+    expect(summary.dataQuality.loadProfileMetadata).toMatchObject({
+      algorithmVersion: '2026-07-18-multi-muscle-v1',
+      unknownSecondaryParticipationSetCount: 7,
+      equivalentSetsHeuristic: {
+        classification: 'ENGINEERING_HEURISTIC',
+        coefficients: { primary: 1, secondary: 0.5 },
+      },
+    });
     expect(summary.recentSessionDetails).toEqual({
       knownStrengthSessionsInCoverage: 3,
       returned: 3,

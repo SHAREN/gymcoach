@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MuscleGroup, ExerciseCategory, EquipmentType } from '@/lib/prisma-client';
 import { databaseIdSchema } from '@/lib/schemas/database-id';
+import { exerciseLoadProfileSchema } from '@/lib/schemas/exercise-load-profile';
 
 export const muscleGroupValues = Object.values(MuscleGroup) as [MuscleGroup, ...MuscleGroup[]];
 export const exerciseCategoryValues = Object.values(ExerciseCategory) as [
@@ -22,6 +23,7 @@ export const exerciseInputSchema = z.object({
   // tonnage includes User.bodyweight.
   usesBodyweight: z.coerce.boolean().default(false),
   equipmentType: z.enum(equipmentTypeValues).default('OTHER'),
+  loadProfile: exerciseLoadProfileSchema.optional(),
 });
 
 export type ExerciseInput = z.infer<typeof exerciseInputSchema>;

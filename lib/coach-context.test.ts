@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CoachPayload } from '@/lib/coach';
 import { summarizeCoachPayload } from './coach-context';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
 import { emptyCoachingProfile } from '@/lib/schemas/coaching-profile';
 
 // summarizeCoachPayload only reshapes the payload buildCoachPayload already
@@ -22,6 +23,7 @@ function emptyPayload(): CoachPayload {
     },
     weekCurrent: { weekStart: '2026-06-08T00:00:00.000Z', sessions: [] },
     weekPrevious: null,
+    trainingLoad: { currentWeek: aggregateTrainingLoad([]), previousWeek: null },
     activeProgram: null,
     latestReadiness: null,
     goals: [],

@@ -16,6 +16,7 @@ const squat: Exercise = {
   notes: null,
   usesBodyweight: false,
   equipmentType: 'BARBELL',
+  loadProfile: {},
   createdAt: new Date(),
 };
 

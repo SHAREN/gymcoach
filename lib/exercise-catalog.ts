@@ -1,4 +1,6 @@
 import { MuscleGroup, ExerciseCategory, type PrismaClient } from '@/prisma/generated/client';
+import { catalogExerciseLoadProfile } from '@/lib/exercise-load-catalog';
+import type { ExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 // ============================================================
 // Default exercise catalog
@@ -6,7 +8,7 @@ import { MuscleGroup, ExerciseCategory, type PrismaClient } from '@/prisma/gener
 // Seeded per user: at registration (so a new account is not empty) and by the
 // demo seed. Generic, evidence-informed technique cues, no personal data.
 
-export interface CatalogExercise {
+interface CatalogExerciseBase {
   name: string;
   muscleGroup: MuscleGroup;
   category: ExerciseCategory;
@@ -15,7 +17,11 @@ export interface CatalogExercise {
   notes?: string;
 }
 
-export const EXERCISE_CATALOG: CatalogExercise[] = [
+export interface CatalogExercise extends CatalogExerciseBase {
+  loadProfile: ExerciseLoadProfile;
+}
+
+const BASE_EXERCISE_CATALOG: CatalogExerciseBase[] = [
   // Chest
   {
     name: 'Barbell bench press',
@@ -464,6 +470,11 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     notes: 'Light on the feet, elbows close, turn from the wrists. Log the time.',
   },
 ];
+
+export const EXERCISE_CATALOG: CatalogExercise[] = BASE_EXERCISE_CATALOG.map((exercise) => ({
+  ...exercise,
+  loadProfile: catalogExerciseLoadProfile(exercise.name, exercise.muscleGroup, exercise.category),
+}));
 
 // Upserts the default catalog for a user. Returns a name -> exercise id map so
 // callers can wire up a starter program. Idempotent (safe to re-run).

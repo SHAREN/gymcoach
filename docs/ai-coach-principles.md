@@ -120,7 +120,7 @@ Use available data from these groups:
 - active program targets: sets, reps, RIR, rest and autoregulation mode;
 - completed weight, reps, RIR, timestamps, warm-up and drop-set flags;
 - actual recovery time between attempts and session RPE when recorded;
-- recent exercise and primary-muscle history;
+- recent exercise history and versioned direct-versus-indirect muscle load;
 - readiness, sleep, soreness, stress and coach notes when present;
 - active gym and available dumbbells, plates, bars and machines;
 - supersets and actual recovery time between attempts;
@@ -453,7 +453,8 @@ server-built `ProgramDesignContext`. It includes:
 - active-gym physical inventory, free weights and exercise availability;
 - personal per-muscle volume targets when configured;
 - rolling 56-day history plus exact recent sessions and recorded missingness;
-- current and previous weekly hard sets by primary muscle;
+- current and previous weekly direct sets, explicit indirect sets and visible
+  equivalent-set heuristic metadata by muscle;
 - session adherence, duration and working-set density;
 - per-exercise e1RM trends and stalled-lift signals;
 - actual RIR minus programmed RIR, excluding warm-ups and drop sets;
@@ -472,11 +473,12 @@ subjective monitoring, not a universal numerical formula.
 The current post-block checklist uses an engineering heuristic: two or more
 worsening items place program design in `reduce_load`; one item places it in
 `watch`. The checklist does not diagnose overtraining. A `reduce_load` state
-blocks an increase in total primary-muscle sets relative to the source program.
+blocks an increase in total overlap-adjusted equivalent sets relative to the
+source program. The equivalent-set arithmetic is an engineering heuristic.
 
 Program validation currently checks required answers, unavailable equipment,
-compound failure and drop-set warnings, weekly and per-session primary-muscle
-volume, frequency distribution, available weekday assignments, estimated
+compound failure and drop-set warnings, weekly and per-session direct and
+indirect muscle volume, frequency distribution, available weekday assignments, estimated
 session duration, active-gym state, the medical-clearance gate, named limitation
 constraints, and attempts to raise volume during under-recovery. Maximum session
 duration is a hard product feasibility limit without a hidden tolerance.
@@ -491,8 +493,10 @@ and session records. They are persisted by the web and Android APIs, included in
 backups, used by native next-set calculation where applicable, and exposed in
 exact recent sessions inside the rolling shared context when recorded. They are
 not converted into a session-RPE training impulse metric. Structured life-stress
-ratings, movement-pattern overlap and lumbar-fatigue load remain unavailable.
-Prompts and agents MUST NOT imply that unavailable metrics were calculated.
+ratings remain unavailable. Movement-pattern, fatigue and joint-stress tags are
+descriptive overlap context only. No universal axial, lumbar or joint-stress
+threshold is calculated. Prompts and agents MUST NOT imply that unavailable
+metrics or thresholds were calculated.
 
 ### 5.6 Exercise progress chart metrics and time display
 
@@ -572,6 +576,12 @@ structured coaching profile. Its field states, timestamps and hard named
 exercise constraints are shared with web program design; missing values remain
 missing and medical-clearance status blocks generation.
 
+Context schema version 6 adds the shared exercise-load profile and aggregation
+contract. It exposes direct sets, explicit indirect sets, equivalent-set
+heuristic metadata, movement patterns, fatigue tags, joint-stress tags,
+classification confidence and unknown participation. Direct and indirect set
+counts remain authoritative and separate.
+
 The 56/7/42/28-day windows, the 12-session cap, the ratio calculations and the
 RIR 0-4 bucket are engineering heuristics. The returned ratios have no alarm
 threshold and MUST NOT be described as validated acute-workload, fatigue or
@@ -581,10 +591,10 @@ silently classified as hard or easy.
 
 Warm-ups and cardio are excluded from strength-set totals. Drop sets remain
 visible but are separated from ordinary working sets and excluded from the RIR
-coverage denominator. The current exercise schema stores one primary muscle
-and no exercise-specific secondary-muscle contribution. Until that data exists,
-MCP indirect-set accounting is explicitly unavailable; agents MUST NOT apply a
-fractional or one-to-one overlap coefficient on their own.
+coverage denominator. MCP indirect-set accounting uses only explicit reviewed
+secondary-muscle entries. An `UNKNOWN` secondary dimension is not zero and
+receives no coefficient. Agents MUST use the returned versioned heuristic
+metadata instead of applying a different fractional or one-to-one coefficient.
 
 `get_training_history` returns paginated exact session and set records for an
 optional program and date range. It exposes recorded RIR, recovery time,
@@ -670,6 +680,60 @@ requires the explicit `REPLACE` or `CLEAR` equipment snapshot action; merely
 resending an unchanged equipment ID does not refresh history from current gym
 configuration.
 
+### 5.10 Multi-muscle load profiles and set accounting
+
+Implementations: `lib/schemas/exercise-load-profile.ts`,
+`lib/exercise-load-catalog.ts` and `lib/training-load-aggregation.ts`.
+
+Source-backed principles:
+
+- hard-set counts are generally more useful than raw tonnage for comparative
+  hypertrophy-volume accounting;
+- compound exercises train agonists and synergists;
+- comparative research often counts direct and indirect work one-to-one while
+  also acknowledging that synergist stimulus is highly variable and often
+  lower than primary-muscle stimulus.
+
+GymCoach therefore stores a versioned `ExerciseLoadProfile` with explicit
+primary muscles, secondary muscles, movement patterns, fatigue tags and
+joint-stress tags. Every dimension is `KNOWN` or `UNKNOWN`; an empty known list
+is distinct from unknown participation. Each profile and classified entry has
+bounded provenance and confidence. Existing rows keep their stable exercise IDs,
+legacy muscle field, program links, equipment links and preferences. Reviewed
+catalog entries are updated in place. Legacy/custom rows retain explicit
+`LEGACY_PRIMARY_ONLY` or `UNCLASSIFIED` state instead of inventing secondary
+participation.
+
+Completed qualifying working sets are aggregated once by the shared service.
+For every muscle it reports raw `directSets` and `indirectSets` plus separate
+regular, drop-set, RIR-present, RIR-missing and history-reliability breakdowns.
+Warm-ups and cardio remain excluded from strength load. A repeated set ID is
+counted once. Multiple primary or secondary muscles are not normalized to a
+sum of one because the counts describe participation roles, not proportions of
+a fixed resource.
+
+The optional `equivalentSets` value uses engineering heuristic version
+`2026-07-18-equivalent-sets-v1`: primary contribution `1.0` and explicit
+secondary contribution `0.5`. The coefficient, owner-requested provenance and
+low confidence are visible in every aggregate. It never replaces the raw
+direct/indirect counts and is never applied to an `UNKNOWN` secondary
+dimension. Sensitivity tests cover secondary coefficients `0`, `0.5` and `1.0`.
+These values are not established physiology.
+
+Effort and range-of-motion coefficients are not derived from missing RIR,
+technique notes or exercise names. Missing, unknown or unreliable modifiers
+remain neutral at `1.0` only for arithmetic continuity and lower aggregate
+confidence; the metadata records that they were not applied. A reliable
+explicit modifier must carry its own provenance and confidence. This task does
+not define RIR calibration, ROM scoring, personalized volume landmarks or
+universal fatigue, axial, lumbar or joint-stress thresholds.
+
+Coach payloads, program-design context, source-program volume, draft validation,
+MCP history and Android exercise DTOs consume this same versioned contract.
+Existing session and weekly soft policies may evaluate the visible
+overlap-adjusted heuristic and must explain the direct/indirect breakdown that
+triggered a warning. No consumer may reimplement a hidden overlap formula.
+
 ## 6. LLM coach contract
 
 The LLM is an interpreter and planner around validated GymCoach data. It is not
@@ -732,10 +796,12 @@ consider gradual interpolation by exercise complexity and time away, but MUST
 retain conservative ceilings and calibration. Such a change is not current
 behavior and requires NotebookLM review, tests and an update to this document.
 
-The current model primarily uses the exercise's primary muscle group. Secondary
-muscles, movement patterns, range of motion, technique quality, age, injury
-history and reliability of self-reported RIR are not yet modeled deeply. The
-coach MUST NOT imply that these unmodeled factors were calculated.
+The current model stores reviewed primary and secondary muscles plus movement,
+fatigue and joint-stress tags. These tags describe overlap; they do not quantify
+technique, range of motion, individual anatomy, injury risk or universal
+fatigue. Effort and range-of-motion coefficients remain unknown unless a
+reliable explicit source supplies them. The coach MUST NOT imply that an
+unknown modifier or a universal fatigue threshold was calculated.
 
 RIR adherence is less reliable for trainees who are unfamiliar with RPE/RIR.
 The current context records training-experience level but does not yet model a
@@ -985,3 +1051,22 @@ The adversarial review also corrected an overstatement about a 20 kg fallback:
 the direction of the physical loading error depends on the implementation, but
 using any fallback instead of a known 10 kg bar corrupts the loading instruction
 and historical record.
+
+A thirteenth review recorded for task `gymcoach-tnz` used the same `ИИ тренер`
+notebook, its eight current sources and conversation
+`c5d0e231-94f4-4b10-a11b-f2954b962943`. Separate questions covered
+source-backed comparative volume accounting, synergist and classification edge
+cases, deterministic GymCoach translation and an adversarial challenge to
+numeric coefficients, followed by a synthesis query.
+
+Source-backed findings were that hard-set counts are more useful than raw
+tonnage for comparative hypertrophy volume; compound exercises train agonists
+and synergists; and research commonly counts direct and indirect work one-to-one
+for comparative evidence while acknowledging highly variable and often lower
+synergist stimulus. The sources do not establish a universal secondary `0.5`
+coefficient, effort or ROM multiplier, confidence tier, fatigue coefficient or
+validator threshold. Those remain engineering heuristics. GymCoach therefore
+keeps direct and indirect counts separate, makes optional equivalent-set
+metadata visible and versioned, applies no coefficient to unknown participation,
+and uses movement, fatigue and joint tags as descriptive inputs rather than
+universal safety or recovery scores.

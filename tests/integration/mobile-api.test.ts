@@ -330,7 +330,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       profile: {
         email: seeded.user.email,
         activeGymId: seeded.gym.id,
@@ -346,6 +346,11 @@ describe('Android mobile API', () => {
       exerciseId: seeded.exercise.id,
       targetSets: 3,
       targetRIR: 2,
+    });
+    expect(body.catalog[0].loadProfile).toMatchObject({
+      version: 1,
+      classification: 'UNCLASSIFIED',
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
     });
     expect(body.gyms[0]).toMatchObject({
       inventoryMode: 'EQUIPMENT_FIRST',
@@ -430,7 +435,7 @@ describe('Android mobile API', () => {
       (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
     ).recommendation;
 
-    expect(body.calculationVersion).toBe('2026-07-16-return-history-v2');
+    expect(body.calculationVersion).toBe('2026-07-18-multi-muscle-load-v1');
     expect(recommendation).toMatchObject({
       mode: 'muscle-reintro',
       historyBasis: 'long-term-exact',

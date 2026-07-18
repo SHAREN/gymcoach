@@ -10,7 +10,7 @@ import type {
   ProgramHealthStatus,
   TrainingExperience,
 } from '@/lib/schemas/program-design';
-import type { Prisma } from '@/lib/prisma-client';
+import { MuscleGroup, type Prisma } from '@/lib/prisma-client';
 import {
   resolveExerciseInventory,
   type EquipmentLoadProfile,
@@ -23,6 +23,14 @@ import {
   type CoachingLimitation,
   type CoachingProfile,
 } from '@/lib/schemas/coaching-profile';
+import {
+  aggregateTrainingLoad,
+  type TrainingLoadAggregation,
+} from '@/lib/training-load-aggregation';
+import {
+  normalizeExerciseLoadProfile,
+  type ExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
 
 const sourceProgramInclude = {
   workouts: {
@@ -135,7 +143,17 @@ export interface ProgramDesignContext {
     source: SourceProgram | null;
     targetVolumeByMuscle: Record<
       string,
-      { weeklySets: number; frequency: number; maxSetsInOneWorkout: number }
+      {
+        weeklySets: number;
+        directSets: number;
+        indirectSets: number;
+        equivalentSets: number;
+        frequency: number;
+        maxSetsInOneWorkout: number;
+        maxEquivalentSetsInOneWorkout: number;
+        algorithmVersion: string;
+        confidence: string;
+      }
     >;
     personalVolumeTargets: Record<
       string,
@@ -149,6 +167,10 @@ export interface ProgramDesignContext {
     actualHardSetsByMuscle: {
       currentWeek: Record<string, number>;
       previousWeek: Record<string, number>;
+    };
+    trainingLoad: {
+      currentWeek: TrainingLoadAggregation;
+      previousWeek: TrainingLoadAggregation | null;
     };
     adherence: {
       sessionsLogged: number;
@@ -238,7 +260,8 @@ interface SourceProgram {
       order: number;
       exerciseId: string;
       exerciseName: string;
-      muscleGroup: string;
+      muscleGroup: MuscleGroup;
+      loadProfile: ExerciseLoadProfile;
       category: string;
       equipmentType: string;
       usesBodyweight: boolean;
@@ -301,7 +324,8 @@ interface ActiveGymSummary {
 interface AvailableExercise {
   id: string;
   name: string;
-  muscleGroup: string;
+  muscleGroup: MuscleGroup;
+  loadProfile: ExerciseLoadProfile;
   category: string;
   equipmentType: string;
   usesBodyweight: boolean;
@@ -364,6 +388,7 @@ export async function buildProgramDesignContext({
       usesBodyweight: true,
       defaultRestSec: true,
       notes: true,
+      loadProfile: true,
     },
   });
 
@@ -435,6 +460,7 @@ export async function buildProgramDesignContext({
       id: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
+      loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
       category: exercise.category,
       equipmentType: exercise.equipmentType,
       usesBodyweight: exercise.usesBodyweight,
@@ -500,8 +526,10 @@ export async function buildProgramDesignContext({
   });
 
   const targetVolumeByMuscle = source ? targetVolume(source) : {};
-  const currentHardSets = hardSetsByMuscle(coach.weekCurrent);
-  const previousHardSets = coach.weekPrevious ? hardSetsByMuscle(coach.weekPrevious) : {};
+  const currentHardSets = hardSetsFromTrainingLoad(coach.trainingLoad.currentWeek);
+  const previousHardSets = coach.trainingLoad.previousWeek
+    ? hardSetsFromTrainingLoad(coach.trainingLoad.previousWeek)
+    : {};
   const sessionsLogged =
     coach.weekCurrent.sessions.length + (coach.weekPrevious?.sessions.length ?? 0);
   const expectedSessions = resolvedWeeklyFrequency ? resolvedWeeklyFrequency * 2 : null;
@@ -606,6 +634,7 @@ export async function buildProgramDesignContext({
         currentWeek: currentHardSets,
         previousWeek: previousHardSets,
       },
+      trainingLoad: coach.trainingLoad,
       adherence: {
         sessionsLogged,
         expectedSessions,
@@ -625,7 +654,7 @@ export async function buildProgramDesignContext({
       returnToTraining,
       unavailableMetrics: [
         'Life stress is only available when the trainee reports it in notes or the post-block checklist.',
-        'Movement-pattern overlap and lumbar-fatigue load are not modeled yet.',
+        'Effort and range-of-motion coefficients remain unknown unless a reliable explicit source supplies them.',
       ],
     },
     goals: coach.goals,
@@ -662,6 +691,7 @@ function mapSourceProgram(program: SourceProgramRow): SourceProgram {
         exerciseId: pe.exerciseId,
         exerciseName: pe.exercise.name,
         muscleGroup: pe.exercise.muscleGroup,
+        loadProfile: normalizeExerciseLoadProfile(pe.exercise.loadProfile, pe.exercise.muscleGroup),
         category: pe.exercise.category,
         equipmentType: pe.exercise.equipmentType,
         usesBodyweight: pe.exercise.usesBodyweight,
@@ -746,36 +776,54 @@ function toEquipmentLoadProfile(item: ActiveGymRow['equipment'][number]): Equipm
 function targetVolume(source: SourceProgram) {
   const result: ProgramDesignContext['program']['targetVolumeByMuscle'] = {};
   for (const workout of source.workouts) {
-    const seen = new Set<string>();
-    const sessionSets = new Map<string, number>();
-    for (const exercise of workout.exercises) {
-      const muscle = exercise.muscleGroup;
-      const row = result[muscle] ?? { weeklySets: 0, frequency: 0, maxSetsInOneWorkout: 0 };
-      const totalSets = exercise.targetSets + exercise.targetDropSets;
-      row.weeklySets += totalSets;
-      result[muscle] = row;
-      seen.add(muscle);
-      sessionSets.set(muscle, (sessionSets.get(muscle) ?? 0) + totalSets);
-    }
-    for (const muscle of seen) result[muscle]!.frequency += 1;
-    for (const [muscle, sets] of sessionSets) {
-      result[muscle]!.maxSetsInOneWorkout = Math.max(result[muscle]!.maxSetsInOneWorkout, sets);
+    const sessionLoad = aggregateTrainingLoad(
+      workout.exercises.flatMap((exercise) =>
+        Array.from({ length: exercise.targetSets + exercise.targetDropSets }, (_, index) => ({
+          setId: `${workout.id}:${exercise.id}:${index}`,
+          exerciseId: exercise.exerciseId,
+          legacyMuscleGroup: exercise.muscleGroup,
+          loadProfile: exercise.loadProfile,
+          isWarmup: false,
+          isDropSet: index >= exercise.targetSets,
+          rir: exercise.targetRIR,
+          historyReliability: 'UNKNOWN' as const,
+        })),
+      ),
+    );
+    for (const [muscle, sessionRow] of Object.entries(sessionLoad.muscles)) {
+      const row = (result[muscle] ??= {
+        weeklySets: 0,
+        directSets: 0,
+        indirectSets: 0,
+        equivalentSets: 0,
+        frequency: 0,
+        maxSetsInOneWorkout: 0,
+        maxEquivalentSetsInOneWorkout: 0,
+        algorithmVersion: sessionLoad.algorithmVersion,
+        confidence: sessionRow.confidence,
+      });
+      row.weeklySets += sessionRow.directSets;
+      row.directSets += sessionRow.directSets;
+      row.indirectSets += sessionRow.indirectSets;
+      row.equivalentSets = round(row.equivalentSets + sessionRow.equivalentSets, 2);
+      row.frequency += 1;
+      row.maxSetsInOneWorkout = Math.max(row.maxSetsInOneWorkout, sessionRow.directSets);
+      row.maxEquivalentSetsInOneWorkout = Math.max(
+        row.maxEquivalentSetsInOneWorkout,
+        sessionRow.equivalentSets,
+      );
     }
   }
   return result;
 }
 
-function hardSetsByMuscle(week: CoachPayload['weekCurrent']): Record<string, number> {
-  const result: Record<string, number> = {};
-  for (const session of week.sessions) {
-    for (const exercise of session.exercises) {
-      const count = exercise.sets.filter(
-        (set) => !set.isWarmup && (set.rir == null || set.rir <= 4),
-      ).length;
-      result[exercise.muscleGroup] = (result[exercise.muscleGroup] ?? 0) + count;
-    }
-  }
-  return result;
+function hardSetsFromTrainingLoad(load: TrainingLoadAggregation): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(load.muscles).map(([muscle, row]) => [
+      muscle,
+      row.directSetBreakdown.setsAtRir0To4,
+    ]),
+  );
 }
 
 function calculateRirAdherence(

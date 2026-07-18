@@ -25,6 +25,15 @@ import { COACH_SYSTEM_PROMPT } from '@/lib/prompts/coach-system-prompt';
 import { exerciseRecords, type ExerciseRecord } from '@/lib/records';
 import { getLlmProvider } from '@/lib/llm';
 import { normalizeCoachingProfile, type CoachingProfile } from '@/lib/schemas/coaching-profile';
+import { MuscleGroup } from '@/lib/prisma-client';
+import {
+  aggregateTrainingLoad,
+  type TrainingLoadAggregation,
+} from '@/lib/training-load-aggregation';
+import {
+  normalizeExerciseLoadProfile,
+  type ExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
 
 // ============================================================
 // Structured payload sent to the coach
@@ -53,6 +62,10 @@ export interface CoachPayload {
   };
   weekCurrent: WeekSummary;
   weekPrevious: WeekSummary | null;
+  trainingLoad: {
+    currentWeek: TrainingLoadAggregation;
+    previousWeek: TrainingLoadAggregation | null;
+  };
   activeProgram: ProgramSummary | null;
   // Latest pre-session readiness / soreness check-in (issue #38), when the user
   // filled one in recently. Input signal for recovery-anchored auto-regulation;
@@ -232,9 +245,12 @@ interface WeekSummary {
     totalVolume: number;
     workingSetCount: number;
     exercises: Array<{
+      exerciseId: string;
       exerciseName: string;
-      muscleGroup: string;
+      muscleGroup: MuscleGroup;
+      loadProfile: ExerciseLoadProfile;
       sets: Array<{
+        setId: string;
         setNumber: number;
         weight: number;
         reps: number;
@@ -466,6 +482,11 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
     },
     weekCurrent: currentWeek,
     weekPrevious: previousWeek.sessions.length === 0 ? null : previousWeek,
+    trainingLoad: {
+      currentWeek: aggregateWeekTrainingLoad(currentWeek),
+      previousWeek:
+        previousWeek.sessions.length === 0 ? null : aggregateWeekTrainingLoad(previousWeek),
+    },
     activeProgram,
     latestReadiness,
     goals,
@@ -505,7 +526,13 @@ async function weekSummary(
         orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }],
         include: {
           exercise: {
-            select: { name: true, muscleGroup: true, usesBodyweight: true },
+            select: {
+              id: true,
+              name: true,
+              muscleGroup: true,
+              usesBodyweight: true,
+              loadProfile: true,
+            },
           },
         },
       },
@@ -518,8 +545,10 @@ async function weekSummary(
       const setsByExo = new Map<
         string,
         {
+          exerciseId: string;
           exerciseName: string;
-          muscleGroup: string;
+          muscleGroup: MuscleGroup;
+          loadProfile: ExerciseLoadProfile;
           usesBodyweight: boolean;
           sets: WeekSummary['sessions'][number]['exercises'][number]['sets'];
         }
@@ -534,14 +563,20 @@ async function weekSummary(
         let entry = setsByExo.get(key);
         if (!entry) {
           entry = {
+            exerciseId: set.exercise.id,
             exerciseName: set.exercise.name,
             muscleGroup: set.exercise.muscleGroup,
+            loadProfile: normalizeExerciseLoadProfile(
+              set.exercise.loadProfile,
+              set.exercise.muscleGroup,
+            ),
             usesBodyweight: set.exercise.usesBodyweight,
             sets: [],
           };
           setsByExo.set(key, entry);
         }
         entry.sets.push({
+          setId: set.id,
           setNumber: set.setNumber,
           weight: set.weight,
           reps: set.reps,
@@ -557,8 +592,10 @@ async function weekSummary(
           bodyweight,
         );
         return {
+          exerciseId: e.exerciseId,
           exerciseName: e.exerciseName,
           muscleGroup: e.muscleGroup,
+          loadProfile: e.loadProfile,
           sets: e.sets,
           bestE1RM: +best1RM(eff).toFixed(1),
           volume: totalVolume(eff),
@@ -583,6 +620,25 @@ async function weekSummary(
       };
     }),
   };
+}
+
+function aggregateWeekTrainingLoad(week: WeekSummary): TrainingLoadAggregation {
+  return aggregateTrainingLoad(
+    week.sessions.flatMap((session) =>
+      session.exercises.flatMap((exercise) =>
+        exercise.sets.map((set) => ({
+          setId: set.setId,
+          exerciseId: exercise.exerciseId,
+          legacyMuscleGroup: exercise.muscleGroup,
+          loadProfile: exercise.loadProfile,
+          isWarmup: set.isWarmup,
+          isDropSet: set.isDropSet,
+          rir: set.rir,
+          historyReliability: 'UNKNOWN' as const,
+        })),
+      ),
+    ),
+  );
 }
 
 async function fetchActiveProgram(userId: string): Promise<ProgramSummary | null> {

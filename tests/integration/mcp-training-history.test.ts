@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { createGymCoachMcpServer } from '@/lib/mcp/server';
 import { isoWeekStart } from '@/lib/stats';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 const servers: Array<ReturnType<typeof createGymCoachMcpServer>> = [];
 const clients: Client[] = [];
@@ -55,6 +56,13 @@ async function createLegacyProgramFixture(email: string) {
       muscleGroup: 'BACK_THICKNESS',
       category: 'COMPOUND',
       equipmentType: 'CABLE',
+      loadProfile: reviewedExerciseLoadProfile({
+        primaryMuscles: ['BACK_THICKNESS'],
+        secondaryMuscles: ['BICEPS', 'SHOULDERS_REAR'],
+        movementPatterns: ['HORIZONTAL_PULL', 'ROW'],
+        fatigueTags: ['GRIP'],
+        jointStress: ['SHOULDER', 'ELBOW'],
+      }),
     },
   });
   await db.programExercise.create({
@@ -210,10 +218,17 @@ describe('GymCoach MCP training history', () => {
       trainingHistory: {
         recentSessionDetails: { knownStrengthSessionsInCoverage: number; returned: number };
         recentSessions: Array<{ sessionId: string }>;
-        dataQuality: { indirectSetAccounting: string; rirCoveragePct: number | null };
+        dataQuality: {
+          indirectSetAccounting: string;
+          rirCoveragePct: number | null;
+          loadByMuscle: Record<
+            string,
+            { directSets: number; indirectSets: number; equivalentSets: number }
+          >;
+        };
       };
     };
-    expect(context.contextSchemaVersion).toBe(5);
+    expect(context.contextSchemaVersion).toBe(6);
     expect(context.coach.weekCurrent.sessions).toEqual([]);
     expect(context.coach.weekPrevious).toBeNull();
     expect(context.trainingHistory.recentSessionDetails).toEqual({
@@ -226,8 +241,12 @@ describe('GymCoach MCP training history', () => {
       '550e8400-e29b-41d4-a716-446655440011',
     ]);
     expect(context.trainingHistory.dataQuality).toMatchObject({
-      indirectSetAccounting: 'unavailable',
+      indirectSetAccounting: 'available-from-explicit-profiles',
       rirCoveragePct: 50,
+      loadByMuscle: {
+        BACK_THICKNESS: { directSets: 4, indirectSets: 0, equivalentSets: 4 },
+        BICEPS: { directSets: 0, indirectSets: 4, equivalentSets: 2 },
+      },
     });
   });
 

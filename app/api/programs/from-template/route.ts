@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { defaultIntraSetConfig } from '@/lib/intra-set-autoregulation';
+import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
 
 export async function POST(req: Request) {
   try {
@@ -56,6 +57,11 @@ export async function POST(req: Request) {
               category: exercise.category,
               defaultRestSec: exercise.restSec,
               notes: exercise.notes ?? null,
+              loadProfile: defaultExerciseLoadProfile(
+                exercise.name,
+                exercise.muscleGroup,
+                exercise.category,
+              ),
             },
           });
 

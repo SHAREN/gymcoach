@@ -19,6 +19,7 @@ const compoundExo: Exercise = {
   notes: null,
   usesBodyweight: false,
   equipmentType: 'BARBELL',
+  loadProfile: {},
   createdAt: new Date(),
 };
 
@@ -32,6 +33,7 @@ const isolationExo: Exercise = {
   notes: null,
   usesBodyweight: false,
   equipmentType: 'DUMBBELL',
+  loadProfile: {},
   createdAt: new Date(),
 };
 

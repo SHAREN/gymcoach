@@ -181,6 +181,10 @@ model Exercise {
   usesBodyweight     Boolean                @default(false)
   // Determines which saved-gym inventory constrains suggested loads.
   equipmentType      EquipmentType          @default(OTHER)
+  // Versioned multi-muscle, movement, fatigue and joint-load classification.
+  // The JSON default is explicit UNCLASSIFIED so legacy/custom writers cannot
+  // silently turn missing participation into zero contribution.
+  loadProfile        Json                   @default("{\"version\":1,\"algorithmVersion\":\"2026-07-18-multi-muscle-v1\",\"classification\":\"UNCLASSIFIED\",\"provenance\":\"UNCLASSIFIED\",\"confidence\":\"UNKNOWN\",\"primaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"secondaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"movementPatterns\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"fatigueTags\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"jointStress\":{\"state\":\"UNKNOWN\",\"entries\":[]}}")
   createdAt          DateTime               @default(now())
   programExercises   ProgramExercise[]
   sets               Set[]

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { buildProgramDesignContext } from '@/lib/program-design-context';
 import { applyCoachingProfilePatch } from '@/lib/schemas/coaching-profile';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 import { Prisma } from '@/lib/prisma-client';
 
 describe('buildProgramDesignContext', () => {
@@ -21,6 +22,13 @@ describe('buildProgramDesignContext', () => {
         muscleGroup: 'CHEST',
         category: 'COMPOUND',
         equipmentType: 'BARBELL',
+        loadProfile: reviewedExerciseLoadProfile({
+          primaryMuscles: ['CHEST'],
+          secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+          movementPatterns: ['HORIZONTAL_PUSH'],
+          fatigueTags: ['SYSTEMIC_COMPOUND'],
+          jointStress: ['SHOULDER', 'ELBOW', 'WRIST'],
+        }),
       },
     });
     const gym = await db.gym.create({

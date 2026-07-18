@@ -3,6 +3,7 @@ import { getLlmProvider, LlmError } from '@/lib/llm';
 import { PROGRAM_GEN_SYSTEM_PROMPT } from '@/lib/prompts/program-system-prompt';
 import { parseGeneratedProgram, type GeneratedProgram } from '@/lib/schemas/program-generation';
 import { defaultIntraSetConfig } from '@/lib/intra-set-autoregulation';
+import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
 import { buildProgramDesignContext } from '@/lib/program-design-context';
 import {
   validateProgramDesign,
@@ -144,6 +145,7 @@ export async function buildProgramFromGenerated(
               category: ex.category,
               equipmentType: ex.equipmentType ?? 'OTHER',
               defaultRestSec: ex.restSec,
+              loadProfile: defaultExerciseLoadProfile(ex.name, ex.muscleGroup, ex.category),
             },
           }));
 

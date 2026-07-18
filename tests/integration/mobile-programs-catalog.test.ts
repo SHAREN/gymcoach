@@ -28,6 +28,7 @@ import {
   DELETE as deleteExercise,
   PUT as updateExercise,
 } from '@/app/api/mobile/exercises/[id]/route';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 function request(url: string, method = 'GET', token?: string, body?: unknown): Request {
   return new Request(url, {
@@ -168,7 +169,23 @@ describe('Android programs and exercise catalog API', () => {
       }),
     );
     expect(exerciseResponse.status).toBe(201);
-    const exercise = (await exerciseResponse.json()) as { id: string };
+    const exercise = (await exerciseResponse.json()) as {
+      id: string;
+      loadProfile: { classification: string };
+    };
+    expect(exercise.loadProfile.classification).toBe('UNCLASSIFIED');
+    await db.exercise.update({
+      where: { id: exercise.id },
+      data: {
+        loadProfile: reviewedExerciseLoadProfile({
+          primaryMuscles: ['CHEST'],
+          secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+          movementPatterns: ['HORIZONTAL_PUSH'],
+          fatigueTags: ['SYSTEMIC_COMPOUND'],
+          jointStress: ['SHOULDER', 'ELBOW'],
+        }),
+      },
+    });
 
     const programResponse = await createProgram(
       request('http://test/api/mobile/programs', 'POST', token, {
@@ -304,6 +321,14 @@ describe('Android programs and exercise catalog API', () => {
         )
       ).status,
     ).toBe(200);
+    expect(await db.exercise.findUnique({ where: { id: exercise.id } })).toMatchObject({
+      loadProfile: {
+        classification: 'REVIEWED',
+        secondaryMuscles: {
+          entries: expect.arrayContaining([expect.objectContaining({ muscleGroup: 'TRICEPS' })]),
+        },
+      },
+    });
 
     expect(
       (await listPrograms(request('http://test/api/mobile/programs', 'GET', token))).status,

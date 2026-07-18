@@ -20,11 +20,28 @@ describe('seedExerciseCatalog', () => {
 
     const count1 = await db.exercise.count({ where: { userId: user.id } });
     expect(count1).toBe(EXERCISE_CATALOG.length);
+    const benchBefore = await db.exercise.findUnique({
+      where: { userId_name: { userId: user.id, name: 'Barbell bench press' } },
+    });
+    expect(benchBefore?.loadProfile).toMatchObject({
+      classification: 'REVIEWED',
+      secondaryMuscles: {
+        state: 'KNOWN',
+        entries: expect.arrayContaining([
+          expect.objectContaining({ muscleGroup: 'TRICEPS' }),
+          expect.objectContaining({ muscleGroup: 'SHOULDERS_FRONT' }),
+        ]),
+      },
+    });
 
     // Running again must not create duplicates (upsert on userId+name).
     await seedExerciseCatalog(db, user.id);
     const count2 = await db.exercise.count({ where: { userId: user.id } });
     expect(count2).toBe(EXERCISE_CATALOG.length);
+    const benchAfter = await db.exercise.findUnique({
+      where: { userId_name: { userId: user.id, name: 'Barbell bench press' } },
+    });
+    expect(benchAfter?.id).toBe(benchBefore?.id);
   });
 });
 
@@ -87,6 +104,55 @@ describe('buildProgramFromGenerated', () => {
 
     const names = program?.workouts[0]?.exercises.map((pe) => pe.exercise.name).sort();
     expect(names).toEqual(['Barbell bench press', 'Brand New Cable Thing']);
+    const newExercise = program?.workouts[0]?.exercises.find(
+      (pe) => pe.exercise.name === 'Brand New Cable Thing',
+    )?.exercise;
+    expect(newExercise?.loadProfile).toMatchObject({
+      classification: 'UNCLASSIFIED',
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+    });
+  });
+
+  it('classifies system deadlift aliases while preserving the legacy field', async () => {
+    const user = await makeUser('deadlift-profile@test.dev');
+    const programId = await buildProgramFromGenerated(user.id, {
+      name: 'Deadlift block',
+      phase: 'Strength',
+      workouts: [
+        {
+          name: 'Pull',
+          exercises: [
+            {
+              name: 'Deadlift',
+              muscleGroup: 'BACK_THICKNESS',
+              category: 'COMPOUND',
+              targetSets: 3,
+              targetRepsMin: 3,
+              targetRepsMax: 5,
+              targetRIR: 2,
+              restSec: 180,
+            },
+          ],
+        },
+      ],
+    });
+    const exercise = await db.exercise.findFirst({
+      where: { userId: user.id, programExercises: { some: { workout: { programId } } } },
+    });
+
+    expect(exercise).toMatchObject({ muscleGroup: 'BACK_THICKNESS' });
+    expect(exercise?.loadProfile).toMatchObject({
+      classification: 'REVIEWED',
+      movementPatterns: {
+        entries: expect.arrayContaining([expect.objectContaining({ value: 'HIP_HINGE' })]),
+      },
+      fatigueTags: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({ value: 'AXIAL_LOAD' }),
+          expect.objectContaining({ value: 'LUMBAR_ISOMETRIC' }),
+        ]),
+      },
+    });
   });
 
   it('creates an inactive next mesocycle linked to its source program', async () => {
