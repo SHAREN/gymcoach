@@ -154,11 +154,16 @@ current turn, create or reuse one heartbeat for the coordinating task. Every
 cycle must run `scripts/harness-status.ps1` first and reconstruct state from
 current read-only Beads, Git, OS, and Codex sources. Prompt history is never an
 operational source of truth. Incomplete Codex thread discovery suppresses new
-writer/verifier creation, and a durable queued reservation is treated as
-creation-pending or unresolved until explicit recovery. Perform at most one safe
-transition per cycle and stop after the root request completes or needs new
-authority. Never hardcode a task ID, thread ID, Worktree path, port owner,
-full-gate owner, blocker, or stale branch HEAD in the heartbeat prompt.
+writer/verifier creation. A structurally valid unfiltered snapshot that reaches
+the 50-thread tool limit may use a separate fresh, exact, under-limit query for
+the relevant Beads task to reconcile only that writer/verifier decision;
+missing, stale, capped, malformed, ambiguous, or unavailable scoped evidence
+still fails closed and never authorizes Worktree cleanup. A durable queued
+reservation is treated as creation-pending or unresolved until explicit
+recovery. Perform at most one safe transition per cycle and stop after the root
+request completes or needs new authority. Never hardcode a task ID, thread ID,
+Worktree path, port owner, full-gate owner, blocker, or stale branch HEAD in the
+heartbeat prompt.
 
 Dependency-ordered tasks that have not started remain `open + stage:ready` with
 blocking dependencies. Native `blocked` is reserved for external/manual blockers

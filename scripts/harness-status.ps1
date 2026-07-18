@@ -2,6 +2,7 @@
 param(
     [string]$FixturePath,
     [string]$ThreadSnapshotPath,
+    [string[]]$TaskThreadSnapshotPath,
     [string]$RepositoryRoot
 )
 
@@ -344,6 +345,19 @@ $threads = if ($ThreadSnapshotPath) {
     }
 } else {
     Get-LocalCodexThreadSnapshot
+}
+
+$taskThreadSnapshots = @(
+    foreach ($path in @($TaskThreadSnapshotPath)) {
+        if (-not $path) {
+            continue
+        }
+        Get-Content -Raw -Encoding utf8 -LiteralPath (Resolve-Path -LiteralPath $path).Path |
+            ConvertFrom-Json -Depth 100
+    }
+)
+if ($taskThreadSnapshots.Count -gt 0) {
+    $threads['taskSnapshots'] = $taskThreadSnapshots
 }
 
 $snapshot = [ordered]@{

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyHarnessSnapshot } from './harness-status-core.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = path.join(root, 'scripts/harness-status.ps1');
@@ -30,6 +31,25 @@ function findPowerShell() {
 }
 
 const pwsh = findPowerShell();
+
+const taskSnapshotArrayBinding = run(pwsh, [
+  '-NoLogo',
+  '-NoProfile',
+  '-ExecutionPolicy',
+  'Bypass',
+  '-File',
+  scriptPath,
+  '-FixturePath',
+  path.join(fixtureRoot, 'complete.json'),
+  '-TaskThreadSnapshotPath',
+  'scope-one.json',
+  'scope-two.json',
+]);
+assert.equal(
+  taskSnapshotArrayBinding.status,
+  0,
+  taskSnapshotArrayBinding.stderr || taskSnapshotArrayBinding.stdout,
+);
 
 function gitStatus() {
   const result = run('git', ['status', '--porcelain=v1', '--untracked-files=all']);
@@ -63,6 +83,10 @@ function ids(items) {
 
 function actionKeys(status) {
   return status.proposedActions.map((item) => item.key);
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 const statusBefore = gitStatus();
@@ -137,13 +161,59 @@ assert.ok(actionKeys(queued).includes('wait-verifier:gymcoach-review-idle'));
 assert.ok(!actionKeys(queued).includes('start-verifier:gymcoach-review-idle'));
 assert.ok(actionKeys(queued).includes('wait-verifier:gymcoach-vbo'));
 assert.ok(!actionKeys(queued).includes('start-verifier:gymcoach-vbo'));
+assert.ok(actionKeys(queued).includes('wait-writer:gymcoach-cf1'));
+assert.ok(actionKeys(queued).includes('wait-writer:gymcoach-cf2'));
+assert.ok(!actionKeys(queued).includes('start-writer:gymcoach-cf1'));
+assert.ok(!actionKeys(queued).includes('start-writer:gymcoach-cf2'));
+assert.ok(actionKeys(queued).includes('wait-writer:gymcoach-bf1'));
+assert.ok(actionKeys(queued).includes('wait-writer:gymcoach-bf2'));
+assert.ok(!actionKeys(queued).includes('start-writer:gymcoach-bf1'));
+assert.ok(!actionKeys(queued).includes('start-writer:gymcoach-bf2'));
+assert.equal(queued.codexThreads.evidenceAmbiguous, true);
+assert.equal(queued.sourceHealth.sources.codexThreads.ok, false);
 assert.ok(
   queued.codexThreads.items.some(
     (thread) =>
       thread.clientThreadId === 'client-new-thread:11111111-2222-3333-4444-555555555555' &&
-      thread.state === 'queued-or-orphaned',
+      thread.taskId === 'gymcoach-queued' &&
+      thread.role === 'implementation' &&
+      thread.state === 'creating' &&
+      thread.durableReservation === true,
   ),
 );
+assert.equal(
+  queued.codexThreads.items.filter(
+    (thread) => thread.clientThreadId === 'client-new-thread:11111111-2222-3333-4444-555555555555',
+  ).length,
+  1,
+);
+for (const taskId of ['gymcoach-cf1', 'gymcoach-cf2']) {
+  assert.ok(
+    queued.codexThreads.items.some(
+      (thread) =>
+        thread.clientThreadId === 'client-new-thread:99999999-2222-3333-4444-555555555555' &&
+        thread.taskId === taskId &&
+        thread.role === 'implementation' &&
+        thread.state === 'reservation-conflict' &&
+        thread.durableReservation === true &&
+        thread.reservationConflict === true,
+    ),
+  );
+}
+for (const taskId of ['gymcoach-bf1', 'gymcoach-bf2']) {
+  assert.ok(
+    queued.codexThreads.items.some(
+      (thread) =>
+        thread.threadId === 'thread-binding-conflict' &&
+        thread.hostId === 'local' &&
+        thread.taskId === taskId &&
+        thread.role === 'implementation' &&
+        thread.state === 'binding-conflict' &&
+        thread.durableBinding === true &&
+        thread.bindingConflict === true,
+    ),
+  );
+}
 assert.ok(
   queued.codexThreads.items.some(
     (thread) =>
@@ -212,6 +282,149 @@ assert.match(invalidThreads.codexThreads.problems.join('\n'), /invalid createdAt
 assert.match(invalidThreads.codexThreads.problems.join('\n'), /invalid updatedAt/);
 assert.match(invalidThreads.codexThreads.problems.join('\n'), /invalid hasUnreadTurn/);
 assert.match(invalidThreads.codexThreads.problems.join('\n'), /duplicates local\/thread-duplicate/);
+
+const overLimitScoped = runFixture('over-limit-scoped.json');
+assert.equal(overLimitScoped.codexThreads.complete, false);
+assert.equal(overLimitScoped.codexThreads.taskScopedReconciliationAvailable, true);
+assert.ok(overLimitScoped.codexThreads.reconciledTaskIds.includes('gymcoach-scr'));
+assert.ok(overLimitScoped.codexThreads.reconciledTaskIds.includes('gymcoach-srv'));
+assert.ok(actionKeys(overLimitScoped).includes('inspect-thread-source'));
+assert.ok(actionKeys(overLimitScoped).includes('start-writer:gymcoach-scr'));
+assert.ok(actionKeys(overLimitScoped).includes('start-verifier:gymcoach-srv'));
+assert.ok(actionKeys(overLimitScoped).includes('start-writer:gymcoach-ina'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-bsa'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-sca'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-verifier:gymcoach-sva'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-dur'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-qrd'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-verifier:gymcoach-orv'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-cf1'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-cf2'));
+assert.ok(!actionKeys(overLimitScoped).includes('start-writer:gymcoach-cf1'));
+assert.ok(!actionKeys(overLimitScoped).includes('start-writer:gymcoach-cf2'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-bf1'));
+assert.ok(actionKeys(overLimitScoped).includes('wait-writer:gymcoach-bf2'));
+assert.ok(!actionKeys(overLimitScoped).includes('start-writer:gymcoach-bf1'));
+assert.ok(!actionKeys(overLimitScoped).includes('start-writer:gymcoach-bf2'));
+assert.ok(!actionKeys(overLimitScoped).includes('start-writer:gymcoach-msg'));
+assert.ok(
+  overLimitScoped.codexThreads.items.some(
+    (thread) =>
+      thread.clientThreadId === 'client-new-thread:11111111-2222-3333-4444-555555555555' &&
+      thread.taskId === 'gymcoach-qrd' &&
+      thread.role === 'implementation' &&
+      thread.state === 'setting-up' &&
+      thread.durableReservation === true,
+  ),
+);
+assert.equal(overLimitScoped.sourceHealth.creationRecommendationsSuppressed, false);
+assert.deepEqual(overLimitScoped.sourceHealth.suppressedCreationTaskIds, ['gymcoach-msg']);
+
+const overLimitFixture = JSON.parse(
+  await readFile(path.join(fixtureRoot, 'over-limit-scoped.json'), 'utf8'),
+);
+
+const underLimit = clone(overLimitFixture);
+underLimit.threads.snapshot.response.threads.pop();
+underLimit.threads.taskSnapshots = [];
+const underLimitStatus = classifyHarnessSnapshot(underLimit);
+assert.equal(underLimitStatus.codexThreads.complete, true);
+assert.ok(actionKeys(underLimitStatus).includes('start-writer:gymcoach-msg'));
+
+const cappedWithoutScopes = clone(overLimitFixture);
+cappedWithoutScopes.threads.taskSnapshots = [];
+const cappedWithoutScopesStatus = classifyHarnessSnapshot(cappedWithoutScopes);
+assert.equal(cappedWithoutScopesStatus.codexThreads.complete, false);
+assert.ok(!actionKeys(cappedWithoutScopesStatus).includes('start-writer:gymcoach-scr'));
+assert.ok(!actionKeys(cappedWithoutScopesStatus).includes('start-verifier:gymcoach-srv'));
+
+function scopedVariant(taskId, mutate) {
+  const fixture = clone(overLimitFixture);
+  const snapshot = fixture.threads.taskSnapshots.find(
+    (candidate) => candidate.request.query === taskId,
+  );
+  assert.ok(snapshot, `missing task snapshot ${taskId}`);
+  mutate(snapshot, fixture);
+  return classifyHarnessSnapshot(fixture);
+}
+
+const wrongQuery = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.request.query = 'gymcoach-wrong-query';
+  snapshot.response.query = 'gymcoach-wrong-query';
+});
+assert.ok(!actionKeys(wrongQuery).includes('start-writer:gymcoach-scr'));
+
+const staleScope = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.capturedAt = '2026-07-18T15:40:00.000Z';
+});
+assert.ok(!actionKeys(staleScope).includes('start-writer:gymcoach-scr'));
+
+const predatingScope = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.capturedAt = '2026-07-18T15:59:00.000Z';
+});
+assert.ok(!actionKeys(predatingScope).includes('start-writer:gymcoach-scr'));
+
+const cappedScope = scopedVariant('gymcoach-scr', (snapshot, fixture) => {
+  snapshot.response.threads = clone(fixture.threads.snapshot.response.threads);
+});
+assert.ok(!actionKeys(cappedScope).includes('start-writer:gymcoach-scr'));
+
+const unavailableScope = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.response.unavailableHosts = ['remote'];
+});
+assert.ok(!actionKeys(unavailableScope).includes('start-writer:gymcoach-scr'));
+
+const malformedScope = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.response.threads = [
+    {
+      hostId: 'local',
+      status: 'active',
+      cwd: 'D:/GymCoach/Worktrees/gymcoach-scr',
+      createdAt: 1,
+      updatedAt: 2,
+      hasUnreadTurn: false,
+    },
+  ];
+});
+assert.ok(!actionKeys(malformedScope).includes('start-writer:gymcoach-scr'));
+
+const duplicateScope = scopedVariant('gymcoach-scr', (snapshot) => {
+  const duplicate = {
+    id: 'thread-duplicate-scoped',
+    hostId: 'local',
+    status: 'completed',
+    cwd: 'D:/GymCoach/Worktrees/gymcoach-scr',
+    gitBranch: 'chore/gymcoach-scr-history',
+    agentRole: 'implementation',
+    createdAt: 1,
+    updatedAt: 2,
+    hasUnreadTurn: false,
+  };
+  snapshot.response.threads = [duplicate, clone(duplicate)];
+});
+assert.ok(!actionKeys(duplicateScope).includes('start-writer:gymcoach-scr'));
+
+const unknownActiveRole = scopedVariant('gymcoach-scr', (snapshot) => {
+  snapshot.response.threads = [
+    {
+      id: 'thread-unknown-active-role',
+      hostId: 'local',
+      status: 'active',
+      cwd: 'D:/GymCoach/Worktrees/gymcoach-scr',
+      gitBranch: 'chore/gymcoach-scr-history',
+      createdAt: 1,
+      updatedAt: 2,
+      hasUnreadTurn: false,
+    },
+  ];
+});
+assert.ok(!actionKeys(unknownActiveRole).includes('start-writer:gymcoach-scr'));
+
+const invalidGlobalBaseline = clone(overLimitFixture);
+invalidGlobalBaseline.threads.snapshot.response.unavailableHosts = ['remote'];
+const invalidGlobalBaselineStatus = classifyHarnessSnapshot(invalidGlobalBaseline);
+assert.equal(invalidGlobalBaselineStatus.codexThreads.taskScopedReconciliationAvailable, false);
+assert.ok(!actionKeys(invalidGlobalBaselineStatus).includes('start-writer:gymcoach-scr'));
 
 assert.equal(gitStatus(), statusBefore, 'fixture tests must not mutate the repository');
 process.stdout.write('Harness status fixture regression tests passed.\n');

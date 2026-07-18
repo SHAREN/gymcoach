@@ -290,61 +290,74 @@ function snapshotAgeIsValid(capturedAt, observedAt) {
   return age >= -60_000 && age <= THREAD_SNAPSHOT_MAX_AGE_MS;
 }
 
-function normalizeRawThreadSnapshot(rawSnapshot, observedAt) {
-  const problems = [];
+function normalizeRawThreadSnapshot(rawSnapshot, observedAt, expectedQuery = null) {
+  const structuralProblems = [];
   const request = rawSnapshot?.request;
   const response = rawSnapshot?.response;
+  const scopedTaskId = expectedQuery === null ? null : asString(expectedQuery);
+  const source = scopedTaskId ? 'codex_app.list_threads:task-scope' : 'codex_app.list_threads';
   if (rawSnapshot?.tool !== 'codex_app.list_threads') {
-    problems.push('Codex thread snapshot is not from codex_app.list_threads.');
+    structuralProblems.push('Codex thread snapshot is not from codex_app.list_threads.');
   }
-  if (request?.limit !== 50 || request?.query !== null) {
-    problems.push('Codex thread snapshot must be unfiltered with limit 50 and query null.');
+  if (request?.limit !== 50) {
+    structuralProblems.push('Codex thread snapshot must use limit 50.');
+  }
+  if (scopedTaskId) {
+    if (asString(request?.query) !== scopedTaskId) {
+      structuralProblems.push(
+        `Task-scoped Codex thread snapshot query must exactly equal ${scopedTaskId}.`,
+      );
+    }
+  } else if (request?.query !== null) {
+    structuralProblems.push('Global Codex thread snapshot must be unfiltered with query null.');
   }
   if (!snapshotAgeIsValid(rawSnapshot?.capturedAt, observedAt)) {
-    problems.push('Codex thread snapshot is stale, future-dated, or missing a valid capture time.');
+    structuralProblems.push(
+      'Codex thread snapshot is stale, future-dated, or missing a valid capture time.',
+    );
   }
   if (!Array.isArray(response?.threads)) {
-    problems.push('Codex thread snapshot has no thread array.');
+    structuralProblems.push('Codex thread snapshot has no thread array.');
   }
-  if (response?.schemaVersion !== 2 || response?.query !== null) {
-    problems.push('Codex thread snapshot schema or query provenance is incomplete.');
+  if (
+    response?.schemaVersion !== 2 ||
+    (scopedTaskId ? asString(response?.query) !== scopedTaskId : response?.query !== null)
+  ) {
+    structuralProblems.push('Codex thread snapshot schema or query provenance is incomplete.');
   }
   if (!Array.isArray(response?.unavailableHosts) || response.unavailableHosts.length > 0) {
-    problems.push('Codex thread discovery has unavailable or unreported hosts.');
-  }
-  if (Array.isArray(response?.threads) && response.threads.length >= 50) {
-    problems.push('Codex thread discovery reached its limit and may be truncated.');
+    structuralProblems.push('Codex thread discovery has unavailable or unreported hosts.');
   }
 
   const identities = new Set();
   for (const [index, thread] of asArray(response?.threads).entries()) {
     if (!thread || typeof thread !== 'object' || Array.isArray(thread)) {
-      problems.push(`Codex thread ${index} is not an object.`);
+      structuralProblems.push(`Codex thread ${index} is not an object.`);
       continue;
     }
     const id = asString(thread.id);
     const hostId = asString(thread.hostId);
     const status = normalizedState(thread.status);
     const cwd = asString(thread.cwd);
-    if (!id) problems.push(`Codex thread ${index} has no id.`);
-    if (!hostId) problems.push(`Codex thread ${index} has no hostId.`);
+    if (!id) structuralProblems.push(`Codex thread ${index} has no id.`);
+    if (!hostId) structuralProblems.push(`Codex thread ${index} has no hostId.`);
     if (!KNOWN_THREAD_STATES.has(status)) {
-      problems.push(`Codex thread ${index} has unknown status ${status || '(missing)'}.`);
+      structuralProblems.push(`Codex thread ${index} has unknown status ${status || '(missing)'}.`);
     }
-    if (!cwd) problems.push(`Codex thread ${index} has no cwd.`);
+    if (!cwd) structuralProblems.push(`Codex thread ${index} has no cwd.`);
     if (typeof thread.createdAt !== 'number' || !Number.isFinite(thread.createdAt)) {
-      problems.push(`Codex thread ${index} has invalid createdAt.`);
+      structuralProblems.push(`Codex thread ${index} has invalid createdAt.`);
     }
     if (typeof thread.updatedAt !== 'number' || !Number.isFinite(thread.updatedAt)) {
-      problems.push(`Codex thread ${index} has invalid updatedAt.`);
+      structuralProblems.push(`Codex thread ${index} has invalid updatedAt.`);
     }
     if (typeof thread.hasUnreadTurn !== 'boolean') {
-      problems.push(`Codex thread ${index} has invalid hasUnreadTurn.`);
+      structuralProblems.push(`Codex thread ${index} has invalid hasUnreadTurn.`);
     }
     if (id && hostId) {
       const identity = `${hostId}\0${id}`;
       if (identities.has(identity)) {
-        problems.push(`Codex thread ${index} duplicates ${hostId}/${id}.`);
+        structuralProblems.push(`Codex thread ${index} duplicates ${hostId}/${id}.`);
       }
       identities.add(identity);
     }
@@ -359,11 +372,20 @@ function normalizeRawThreadSnapshot(rawSnapshot, observedAt) {
     gitBranch: asString(thread?.gitBranch) || null,
     agentRole: asString(thread?.agentRole) || null,
     updatedAt: thread?.updatedAt ?? null,
-    source: 'codex_app.list_threads',
+    source,
   }));
+  const reachedLimit = Array.isArray(response?.threads) && response.threads.length >= 50;
+  const problems = [...structuralProblems];
+  if (reachedLimit) {
+    problems.push('Codex thread discovery reached its limit and may be truncated.');
+  }
   return {
-    source: 'codex_app.list_threads',
-    complete: problems.length === 0,
+    source,
+    query: scopedTaskId,
+    capturedAt: asString(rawSnapshot?.capturedAt) || null,
+    complete: structuralProblems.length === 0 && !reachedLimit,
+    structurallyValid: structuralProblems.length === 0,
+    reachedLimit,
     problems,
     items,
   };
@@ -382,6 +404,10 @@ function normalizeThreadInput(threadInput, observedAt) {
   return {
     source: asString(threadInput?.source) || 'unavailable',
     complete: threadInput?.complete === true,
+    structurallyValid: false,
+    reachedLimit: false,
+    query: null,
+    capturedAt: null,
     problems,
     items: asArray(threadInput?.items).map((thread) => ({
       threadId: asString(thread?.threadId ?? thread?.id) || null,
@@ -409,31 +435,90 @@ function taskIdFromBranch(branch) {
   );
 }
 
-function classifyThreads(threadInput, threadEvidence, worktrees, observedAt) {
+function classifyThreads(threadInput, threadEvidence, worktrees, tasks, observedAt) {
   const normalized = normalizeThreadInput(threadInput, observedAt);
-  const bindingsByThread = new Map(
-    threadEvidence.bindings
-      .filter((binding) => binding.threadId)
-      .map((binding) => [binding.threadId, binding]),
-  );
+  const knownTaskIds = new Set(tasks.map((task) => asString(task?.id)).filter(Boolean));
+  const evidenceProblems = [];
+  const bindingsByThread = new Map();
+  const bindingsByClientThread = new Map();
+  const addBinding = (map, key, binding) => {
+    const group = map.get(key) ?? [];
+    group.push(binding);
+    map.set(key, group);
+  };
+  for (const binding of threadEvidence.bindings) {
+    if (binding.threadId && binding.hostId) {
+      addBinding(bindingsByThread, `${binding.hostId}\0${binding.threadId}`, binding);
+    }
+    if (binding.clientThreadId) {
+      addBinding(bindingsByClientThread, binding.clientThreadId, binding);
+    }
+  }
+  const bindingOwnerCount = (bindings) =>
+    new Set(bindings.map((binding) => `${binding.taskId}\0${binding.role}`)).size;
+  for (const [identity, bindings] of [...bindingsByThread, ...bindingsByClientThread]) {
+    if (bindingOwnerCount(bindings) > 1) {
+      evidenceProblems.push(
+        `Durable thread identity ${identity.replace('\0', '/')} has conflicting task or role bindings.`,
+      );
+    }
+  }
+  const reservationsByClientThread = new Map();
+  for (const reservation of threadEvidence.reservations) {
+    const group = reservationsByClientThread.get(reservation.clientThreadId) ?? [];
+    group.push(reservation);
+    reservationsByClientThread.set(reservation.clientThreadId, group);
+  }
+  for (const [clientThreadId, reservations] of reservationsByClientThread) {
+    if (reservations.length > 1) {
+      evidenceProblems.push(
+        `Durable client thread ${clientThreadId} has conflicting task or role reservations.`,
+      );
+    }
+  }
   const worktreesByPath = new Map(
     worktrees.map((worktree) => [normalizePath(worktree.path), worktree]),
   );
-  const items = normalized.items.map((thread) => {
-    const binding = thread.threadId ? bindingsByThread.get(thread.threadId) : undefined;
+  const classifyItem = (thread, scopedTaskId = null) => {
+    const bindingCandidates = [
+      ...(thread.threadId && thread.hostId
+        ? (bindingsByThread.get(`${thread.hostId}\0${thread.threadId}`) ?? [])
+        : []),
+      ...(thread.clientThreadId ? (bindingsByClientThread.get(thread.clientThreadId) ?? []) : []),
+    ].filter(
+      (binding, index, bindings) =>
+        bindings.findIndex(
+          (candidate) =>
+            candidate.taskId === binding.taskId &&
+            candidate.role === binding.role &&
+            candidate.threadId === binding.threadId &&
+            candidate.clientThreadId === binding.clientThreadId &&
+            candidate.hostId === binding.hostId,
+        ) === index,
+    );
+    const bindingConflict = bindingOwnerCount(bindingCandidates) > 1;
+    const binding =
+      bindingCandidates.length > 0 && !bindingConflict ? bindingCandidates[0] : undefined;
+    const reservationGroup = thread.clientThreadId
+      ? (reservationsByClientThread.get(thread.clientThreadId) ?? [])
+      : [];
+    const reservation = reservationGroup.length === 1 ? reservationGroup[0] : undefined;
     const worktree = thread.cwd ? worktreesByPath.get(normalizePath(thread.cwd)) : undefined;
     const role = KNOWN_ROLES.has(asString(binding?.role))
       ? binding.role
-      : KNOWN_ROLES.has(asString(thread.agentRole))
-        ? asString(thread.agentRole)
-        : null;
-    const taskId =
+      : KNOWN_ROLES.has(asString(reservation?.role))
+        ? reservation.role
+        : KNOWN_ROLES.has(asString(thread.agentRole))
+          ? asString(thread.agentRole)
+          : null;
+    const inferredTaskId =
       asString(binding?.taskId) ||
+      asString(reservation?.taskId) ||
       taskIdFromBranch(thread.gitBranch) ||
       taskIdFromBranch(worktree?.branch) ||
       null;
     return {
-      taskId,
+      taskId: inferredTaskId || scopedTaskId,
       role,
       threadId: thread.threadId,
       clientThreadId: thread.clientThreadId,
@@ -442,45 +527,144 @@ function classifyThreads(threadInput, threadEvidence, worktrees, observedAt) {
       cwd: thread.cwd,
       gitBranch: thread.gitBranch || asString(worktree?.branch) || null,
       source: thread.source,
-      durableBinding: Boolean(binding),
+      durableBinding: bindingCandidates.length > 0,
+      bindingConflict,
+      durableReservation: reservationGroup.length > 0,
+      reservationConflict: reservationGroup.length > 1,
+    };
+  };
+  const items = normalized.items.map((thread) => classifyItem(thread));
+
+  const rawTaskSnapshots = asArray(threadInput?.taskSnapshots);
+  const taskSnapshotCounts = new Map();
+  const taskReconciliations = rawTaskSnapshots.map((entry, index) => {
+    const rawSnapshot = entry?.snapshot ?? entry;
+    const taskId = asString(rawSnapshot?.request?.query);
+    const scoped = normalizeRawThreadSnapshot(rawSnapshot, observedAt, taskId || '(missing)');
+    const scopeProblems = [...scoped.problems];
+    if (!taskId) {
+      scopeProblems.push(`Task-scoped Codex thread snapshot ${index} has no exact task query.`);
+    } else if (!knownTaskIds.has(taskId)) {
+      scopeProblems.push(
+        `Task-scoped Codex thread snapshot query ${taskId} is not a current Beads task.`,
+      );
+    }
+    const globalCapturedAt = Date.parse(normalized.capturedAt ?? '');
+    const scopedCapturedAt = Date.parse(scoped.capturedAt ?? '');
+    if (
+      Number.isFinite(globalCapturedAt) &&
+      Number.isFinite(scopedCapturedAt) &&
+      scopedCapturedAt < globalCapturedAt
+    ) {
+      scopeProblems.push('Task-scoped Codex thread snapshot predates the global baseline.');
+    }
+    taskSnapshotCounts.set(taskId, (taskSnapshotCounts.get(taskId) ?? 0) + 1);
+
+    const scopedItems = scoped.items.map((thread) => classifyItem(thread, taskId || null));
+    for (const [threadIndex, item] of scopedItems.entries()) {
+      if (item.taskId && item.taskId !== taskId) {
+        scopeProblems.push(
+          `Task-scoped Codex thread ${threadIndex} maps to ${item.taskId}, not ${taskId}.`,
+        );
+      }
+      if (!item.role && ACTIVE_THREAD_STATES.has(item.state)) {
+        scopeProblems.push(
+          `Active task-scoped Codex thread ${threadIndex} has no provable implementation/verifier role.`,
+        );
+      }
+      if (item.bindingConflict || item.reservationConflict) {
+        scopeProblems.push(
+          `Task-scoped Codex thread ${threadIndex} has ambiguous durable ownership.`,
+        );
+      }
+    }
+    items.push(...scopedItems);
+    return {
+      taskId: taskId || null,
+      complete: scoped.structurallyValid && !scoped.reachedLimit && scopeProblems.length === 0,
+      itemCount: scoped.items.length,
+      problems: scopeProblems,
     };
   });
+
+  for (const reconciliation of taskReconciliations) {
+    if (reconciliation.taskId && taskSnapshotCounts.get(reconciliation.taskId) > 1) {
+      reconciliation.complete = false;
+      reconciliation.problems.push(
+        `Multiple task-scoped Codex thread snapshots were supplied for ${reconciliation.taskId}.`,
+      );
+    }
+    if (!normalized.structurallyValid || !normalized.reachedLimit) {
+      reconciliation.complete = false;
+      reconciliation.problems.push(
+        'Task-scoped reconciliation requires a structurally valid global snapshot that reached limit 50.',
+      );
+    }
+  }
 
   for (const binding of threadEvidence.bindings) {
     const represented = items.some(
       (item) =>
-        (binding.threadId && item.threadId === binding.threadId) ||
-        (binding.clientThreadId && item.clientThreadId === binding.clientThreadId),
+        item.taskId === binding.taskId &&
+        item.role === binding.role &&
+        item.durableBinding === true &&
+        ((binding.threadId &&
+          item.threadId === binding.threadId &&
+          (!binding.hostId || item.hostId === binding.hostId)) ||
+          (binding.clientThreadId && item.clientThreadId === binding.clientThreadId)),
     );
     if (represented) continue;
+    const bindingConflict =
+      (binding.threadId &&
+        binding.hostId &&
+        bindingOwnerCount(bindingsByThread.get(`${binding.hostId}\0${binding.threadId}`) ?? []) >
+          1) ||
+      (binding.clientThreadId &&
+        bindingOwnerCount(bindingsByClientThread.get(binding.clientThreadId) ?? []) > 1);
     items.push({
       taskId: binding.taskId,
       role: binding.role,
       threadId: binding.threadId,
       clientThreadId: binding.clientThreadId,
       hostId: binding.hostId,
-      state: 'bound-or-orphaned',
+      state: bindingConflict ? 'binding-conflict' : 'bound-or-orphaned',
       cwd: binding.worktree,
       gitBranch: null,
       source: 'beads-binding',
       durableBinding: true,
+      bindingConflict: Boolean(bindingConflict),
+      durableReservation: false,
+      reservationConflict: false,
     });
   }
 
-  const representedClientIds = new Set(items.map((item) => item.clientThreadId).filter(Boolean));
   for (const reservation of threadEvidence.reservations) {
-    if (representedClientIds.has(reservation.clientThreadId)) continue;
+    if (
+      items.some(
+        (item) =>
+          item.clientThreadId === reservation.clientThreadId &&
+          item.taskId === reservation.taskId &&
+          item.role === reservation.role &&
+          item.durableReservation === true,
+      )
+    ) {
+      continue;
+    }
+    const conflict = (reservationsByClientThread.get(reservation.clientThreadId) ?? []).length > 1;
     items.push({
       taskId: reservation.taskId,
       role: reservation.role,
       threadId: null,
       clientThreadId: reservation.clientThreadId,
       hostId: null,
-      state: 'queued-or-orphaned',
+      state: conflict ? 'reservation-conflict' : 'queued-or-orphaned',
       cwd: null,
       gitBranch: null,
       source: 'beads-reservation',
       durableBinding: false,
+      bindingConflict: false,
+      durableReservation: true,
+      reservationConflict: conflict,
     });
   }
 
@@ -497,7 +681,26 @@ function classifyThreads(threadInput, threadEvidence, worktrees, observedAt) {
       `${right.taskId ?? '~'}:${right.role ?? '~'}:${right.threadId ?? right.clientThreadId ?? '~'}`,
     ),
   );
-  return { ...normalized, items: relevantItems };
+  const reconciledTaskIds = taskReconciliations
+    .filter((reconciliation) => reconciliation.complete && reconciliation.taskId)
+    .map((reconciliation) => reconciliation.taskId)
+    .sort(compareStrings);
+  const scopedProblems = taskReconciliations.flatMap((reconciliation) =>
+    reconciliation.problems.map(
+      (problem) => `Task scope ${reconciliation.taskId ?? '(missing)'}: ${problem}`,
+    ),
+  );
+  return {
+    ...normalized,
+    taskScopedReconciliationAvailable: normalized.structurallyValid && normalized.reachedLimit,
+    reconciledTaskIds,
+    taskReconciliations: taskReconciliations.sort((left, right) =>
+      compareStrings(left.taskId ?? '~', right.taskId ?? '~'),
+    ),
+    evidenceAmbiguous: evidenceProblems.length > 0,
+    problems: [...normalized.problems, ...evidenceProblems, ...scopedProblems],
+    items: relevantItems,
+  };
 }
 
 function classifyFullGateOwner(tasks, beadsHealthy) {
@@ -581,8 +784,13 @@ function threadRepresentsRole(codexThreads, taskId, role) {
       thread.role === role &&
       (thread.source === 'beads-reservation' ||
         thread.durableBinding === true ||
+        thread.durableReservation === true ||
         ACTIVE_THREAD_STATES.has(thread.state)),
   );
+}
+
+function threadDiscoveryCompleteForTask(codexThreads, taskId) {
+  return codexThreads.complete || codexThreads.reconciledTaskIds.includes(taskId);
 }
 
 function action(key, type, taskId, transition, reason) {
@@ -591,8 +799,6 @@ function action(key, type, taskId, transition, reason) {
 
 function proposedActions(taskGroups, codexThreads, fullGateOwner, sourceHealth) {
   const actions = [];
-  const canRecommendCreation =
-    sourceHealth.sources.beads.ok === true && codexThreads.complete === true;
 
   if (!codexThreads.complete) {
     actions.push(
@@ -601,7 +807,9 @@ function proposedActions(taskGroups, codexThreads, fullGateOwner, sourceHealth) 
         'inspect-thread-source',
         null,
         false,
-        'Thread discovery is incomplete. Do not retry create_thread; inspect durable reservations and obtain a fresh complete snapshot.',
+        codexThreads.taskScopedReconciliationAvailable
+          ? 'Global thread discovery reached limit 50. Use exact task-scoped reconciliation for each writer/verifier candidate before creation.'
+          : 'Thread discovery is incomplete. Do not retry create_thread; inspect durable reservations and obtain a fresh complete snapshot.',
       ),
     );
   }
@@ -617,14 +825,19 @@ function proposedActions(taskGroups, codexThreads, fullGateOwner, sourceHealth) 
           'An active, queued, or unresolved verifier identity already represents this task.',
         ),
       );
-    } else if (canRecommendCreation) {
+    } else if (
+      sourceHealth.sources.beads.ok === true &&
+      threadDiscoveryCompleteForTask(codexThreads, task.id)
+    ) {
       actions.push(
         action(
           `start-verifier:${task.id}`,
           'start-verifier',
           task.id,
           true,
-          'REVIEW is ready and complete thread discovery shows no verifier identity.',
+          codexThreads.complete
+            ? 'REVIEW is ready and complete global thread discovery shows no verifier identity.'
+            : 'REVIEW is ready and exact task-scoped reconciliation shows no verifier identity.',
         ),
       );
     }
@@ -641,14 +854,19 @@ function proposedActions(taskGroups, codexThreads, fullGateOwner, sourceHealth) 
           'An active, queued, or unresolved writer identity already represents this task.',
         ),
       );
-    } else if (canRecommendCreation) {
+    } else if (
+      sourceHealth.sources.beads.ok === true &&
+      threadDiscoveryCompleteForTask(codexThreads, task.id)
+    ) {
       actions.push(
         action(
           `start-writer:${task.id}`,
           'start-writer',
           task.id,
           true,
-          'READY is blocker-free and complete thread discovery shows no writer identity.',
+          codexThreads.complete
+            ? 'READY is blocker-free and complete global thread discovery shows no writer identity.'
+            : 'READY is blocker-free and exact task-scoped reconciliation shows no writer identity.',
         ),
       );
     }
@@ -739,7 +957,7 @@ function proposedActions(taskGroups, codexThreads, fullGateOwner, sourceHealth) 
   );
 }
 
-function normalizeSourceHealth(input, codexThreads) {
+function normalizeSourceHealth(input, codexThreads, taskGroups) {
   const sourceNames = ['beads', 'git', 'disks', 'ports'];
   const sources = {};
   const problems = [];
@@ -752,15 +970,45 @@ function normalizeSourceHealth(input, codexThreads) {
     if (!sources[name].ok) problems.push(sources[name].detail ?? `${name} source failed.`);
   }
   sources.codexThreads = {
-    ok: codexThreads.items.length > 0 || codexThreads.problems.length === 0,
+    ok:
+      (codexThreads.structurallyValid || codexThreads.complete) && !codexThreads.evidenceAmbiguous,
     complete: codexThreads.complete,
     source: codexThreads.source,
+    taskScopedReconciliationAvailable: codexThreads.taskScopedReconciliationAvailable,
+    reconciledTaskIds: codexThreads.reconciledTaskIds,
     detail: codexThreads.problems[0] ?? null,
   };
   problems.push(...codexThreads.problems);
+  const creationCandidates = [
+    ...taskGroups.reviewTasks.map((task) => ({ task, role: 'verifier' })),
+    ...taskGroups.readyTasks.map((task) => ({ task, role: 'implementation' })),
+  ];
+  const unresolvedCreationTaskIds = creationCandidates
+    .filter(
+      ({ task, role }) =>
+        !threadRepresentsRole(codexThreads, task.id, role) &&
+        !threadDiscoveryCompleteForTask(codexThreads, task.id),
+    )
+    .map(({ task }) => task.id)
+    .sort(compareStrings);
+  const startableCreationTaskIds = creationCandidates
+    .filter(
+      ({ task, role }) =>
+        !threadRepresentsRole(codexThreads, task.id, role) &&
+        threadDiscoveryCompleteForTask(codexThreads, task.id),
+    )
+    .map(({ task }) => task.id)
+    .sort(compareStrings);
+  const threadCoverageHealthy = codexThreads.complete || unresolvedCreationTaskIds.length === 0;
   return {
-    ok: sourceNames.every((name) => sources[name].ok) && codexThreads.complete,
-    creationRecommendationsSuppressed: sources.beads.ok !== true || codexThreads.complete !== true,
+    ok:
+      sourceNames.every((name) => sources[name].ok) &&
+      sources.codexThreads.ok &&
+      threadCoverageHealthy,
+    creationRecommendationsSuppressed:
+      sources.beads.ok !== true ||
+      (unresolvedCreationTaskIds.length > 0 && startableCreationTaskIds.length === 0),
+    suppressedCreationTaskIds: unresolvedCreationTaskIds,
     sources,
     problems: [...new Set(problems.filter(Boolean))],
   };
@@ -769,16 +1017,21 @@ function normalizeSourceHealth(input, codexThreads) {
 export function classifyHarnessSnapshot(snapshot) {
   const observedAt = asString(snapshot?.observedAt) || new Date(0).toISOString();
   const tasks = asArray(snapshot?.tasks);
+  const taskGroups = classifyTasks(tasks);
   const worktrees = normalizeWorktrees(snapshot?.worktrees);
   const threadEvidence = parseThreadEvidence(tasks);
   const codexThreads = classifyThreads(
     snapshot?.threads ?? {},
     threadEvidence,
     worktrees,
+    tasks,
     observedAt,
   );
-  const sourceHealth = normalizeSourceHealth(snapshot?.sourceHealth ?? {}, codexThreads);
-  const taskGroups = classifyTasks(tasks);
+  const sourceHealth = normalizeSourceHealth(
+    snapshot?.sourceHealth ?? {},
+    codexThreads,
+    taskGroups,
+  );
   const fullGateOwner = classifyFullGateOwner(tasks, sourceHealth.sources.beads.ok);
   const disks = normalizeDisks(snapshot?.disks);
   const ports = normalizePorts(snapshot?.ports);

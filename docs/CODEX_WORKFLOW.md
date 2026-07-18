@@ -123,7 +123,12 @@ and port state, Codex identities, durable queued reservations, full-gate
 ownership, source health, and idempotent safe actions. Prompt history is never
 operational state. Incomplete thread discovery suppresses writer/verifier
 creation, and a durable `clientThreadId` reservation remains creation-pending or
-unresolved until explicit recovery.
+unresolved until explicit recovery. If the fresh unfiltered list reaches its
+50-thread tool limit, the Dispatcher may reconcile only an exact READY or REVIEW
+task through a separate fresh under-limit query for that Beads ID. Missing,
+stale, capped, malformed, ambiguous, or unavailable task evidence remains
+fail-closed. This bounded task query does not satisfy Worktree cleanup, which
+still requires a complete unfiltered snapshot below the limit.
 
 Perform at most one safe transition per cycle through the workflow skills:
 

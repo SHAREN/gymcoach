@@ -51,8 +51,16 @@
   ],
   "codexThreads": {
     "source": "codex_app.list_threads",
+    "query": null,
+    "capturedAt": "2026-01-01T00:00:00.000Z",
     "complete": true,
+    "structurallyValid": true,
+    "reachedLimit": false,
     "problems": [],
+    "taskScopedReconciliationAvailable": false,
+    "reconciledTaskIds": [],
+    "taskReconciliations": [],
+    "evidenceAmbiguous": false,
     "items": [
       {
         "taskId": "gymcoach-example-implementation",
@@ -64,7 +72,10 @@
         "cwd": "D:/GymCoach/Worktrees/example",
         "gitBranch": "chore/gymcoach-example-implementation",
         "source": "codex_app.list_threads",
-        "durableBinding": true
+        "durableBinding": true,
+        "bindingConflict": false,
+        "durableReservation": false,
+        "reservationConflict": false
       }
     ]
   },
@@ -109,6 +120,7 @@
   "sourceHealth": {
     "ok": true,
     "creationRecommendationsSuppressed": false,
+    "suppressedCreationTaskIds": [],
     "sources": {
       "beads": { "ok": true, "detail": "Queried with bd --readonly." },
       "git": { "ok": true, "detail": "Read from git worktree list." },
@@ -118,6 +130,8 @@
         "ok": true,
         "complete": true,
         "source": "codex_app.list_threads",
+        "taskScopedReconciliationAvailable": false,
+        "reconciledTaskIds": [],
         "detail": null
       }
     },
@@ -129,7 +143,7 @@
       "type": "start-verifier",
       "taskId": "gymcoach-example-review",
       "transition": true,
-      "reason": "REVIEW is ready and complete thread discovery shows no verifier identity."
+      "reason": "REVIEW is ready and complete global thread discovery shows no verifier identity."
     }
   ]
 }
