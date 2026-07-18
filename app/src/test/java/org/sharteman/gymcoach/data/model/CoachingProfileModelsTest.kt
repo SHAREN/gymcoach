@@ -68,4 +68,37 @@ class CoachingProfileModelsTest {
 
         assertEquals("NO_SIGNIFICANT_ISSUES", profile.coachingProfile?.healthStatus?.value)
     }
+
+    @Test
+    fun `decodes additive exercise load profile and keeps legacy exercise compatible`() {
+        val exercise = json.decodeFromString<ExerciseDto>(
+            """
+            {
+              "id":"bench-1",
+              "name":"Barbell bench press",
+              "muscleGroup":"CHEST",
+              "category":"COMPOUND",
+              "loadProfile":{
+                "version":1,
+                "algorithmVersion":"2026-07-18-multi-muscle-v1",
+                "classification":"REVIEWED",
+                "provenance":"SYSTEM_CATALOG_REVIEW",
+                "confidence":"MEDIUM",
+                "primaryMuscles":{"state":"KNOWN","entries":[{"muscleGroup":"CHEST","provenance":"SYSTEM_CATALOG_REVIEW","confidence":"MEDIUM"}]},
+                "secondaryMuscles":{"state":"KNOWN","entries":[{"muscleGroup":"TRICEPS","provenance":"SYSTEM_CATALOG_REVIEW","confidence":"MEDIUM"}]},
+                "movementPatterns":{"state":"KNOWN","entries":[{"value":"HORIZONTAL_PUSH","provenance":"SYSTEM_CATALOG_REVIEW","confidence":"MEDIUM"}]},
+                "fatigueTags":{"state":"KNOWN","entries":[]},
+                "jointStress":{"state":"KNOWN","entries":[{"value":"SHOULDER","provenance":"SYSTEM_CATALOG_REVIEW","confidence":"MEDIUM"}]}
+              }
+            }
+            """.trimIndent(),
+        )
+        val legacy = json.decodeFromString<ExerciseDto>(
+            """{"id":"legacy","name":"Legacy curl","muscleGroup":"BICEPS","category":"ISOLATION"}""",
+        )
+
+        assertEquals("2026-07-18-multi-muscle-v1", exercise.loadProfile?.algorithmVersion)
+        assertEquals("TRICEPS", exercise.loadProfile?.secondaryMuscles?.entries?.single()?.muscleGroup)
+        assertNull(legacy.loadProfile)
+    }
 }
