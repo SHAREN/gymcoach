@@ -1,6 +1,7 @@
 package org.sharteman.gymcoach.ui
 
 import androidx.annotation.StringRes
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -37,12 +38,16 @@ import androidx.compose.material.icons.outlined.SportsGymnastics
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,6 +73,9 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -77,7 +86,9 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import coil.request.ImageRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.media.ExerciseMediaAsset
 import org.sharteman.gymcoach.data.media.ExerciseMediaCatalog
@@ -86,6 +97,7 @@ import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySetDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.MobileProgressPointDto
+import org.sharteman.gymcoach.data.programs.ExerciseInput
 import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.formatSetTableMetric
 import org.sharteman.gymcoach.training.roundWeight
@@ -114,22 +126,27 @@ fun ExerciseDetailsDialog(
     onOpenProgress: ((String) -> Unit)?,
     onOpenHistory: ((String, String) -> Unit)?,
     onDismiss: () -> Unit,
-    onEdit: (() -> Unit)? = null,
+    editableUserId: String? = null,
+    onUpdateExercise: (suspend (ExerciseDto, ExerciseInput) -> ExerciseDto)? = null,
+    onExerciseUpdated: (ExerciseDto) -> Unit = {},
     onDelete: (() -> Unit)? = null,
     @StringRes backLabelRes: Int = R.string.back_to_workout,
     showCloseAction: Boolean = true,
 ) {
     val context = LocalContext.current
-    val media = remember(context, exercise.name) {
-        runCatching { ExerciseMediaCatalog.load(context).resolve(exercise.name) }.getOrNull()
+    var editedExercise by remember(exercise.id) { mutableStateOf<ExerciseDto?>(null) }
+    val currentExercise = editedExercise ?: exercise
+    val media = remember(context, currentExercise.name) {
+        runCatching { ExerciseMediaCatalog.load(context).resolve(currentExercise.name) }.getOrNull()
     }
     val effectiveHistory = remember(history, fallbackPerformance) {
         if (history.isNotEmpty()) history else fallbackPerformance?.let(::fallbackHistory).orEmpty()
     }
     val backLabel = stringResource(backLabelRes)
     val openTrainingSessionLabel = stringResource(R.string.open_training_session)
-    val displayName = exerciseDisplayName(exercise.name)
+    val displayName = exerciseDisplayName(currentExercise.name)
     var techniqueOpen by rememberSaveable(exercise.id) { mutableStateOf(false) }
+    var editorOpen by rememberSaveable(exercise.id) { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -158,9 +175,11 @@ fun ExerciseDetailsDialog(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    onEdit?.let { edit ->
+                    onUpdateExercise?.takeIf {
+                        currentExercise.userId != null && currentExercise.userId == editableUserId
+                    }?.let {
                         IconButton(
-                            onClick = edit,
+                            onClick = { editorOpen = true },
                             modifier = Modifier.testTag("exercise-detail-edit"),
                         ) {
                             Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
@@ -198,9 +217,9 @@ fun ExerciseDetailsDialog(
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.Bold,
                                 )
-                                if (displayName != exercise.name) {
+                                if (displayName != currentExercise.name) {
                                     Text(
-                                        exercise.name,
+                                        currentExercise.name,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -210,9 +229,9 @@ fun ExerciseDetailsDialog(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    DetailChip(muscleGroupDisplayName(exercise.muscleGroup))
-                                    DetailChip(exerciseCategoryDisplayName(exercise.category))
-                                    DetailChip(equipmentTypeDisplayName(exercise.equipmentType))
+                                    DetailChip(muscleGroupDisplayName(currentExercise.muscleGroup))
+                                    DetailChip(exerciseCategoryDisplayName(currentExercise.category))
+                                    DetailChip(equipmentTypeDisplayName(currentExercise.equipmentType))
                                 }
                             }
                             OutlinedButton(onClick = { techniqueOpen = true }) {
@@ -235,17 +254,17 @@ fun ExerciseDetailsDialog(
                             )
                             DetailValueRow(
                                 stringResource(R.string.muscle_group),
-                                muscleGroupDisplayName(exercise.muscleGroup),
+                                muscleGroupDisplayName(currentExercise.muscleGroup),
                             )
                             DetailValueRow(
                                 stringResource(R.string.equipment),
-                                equipmentTypeDisplayName(exercise.equipmentType),
+                                equipmentTypeDisplayName(currentExercise.equipmentType),
                             )
                             DetailValueRow(
                                 stringResource(R.string.default_rest),
-                                stringResource(R.string.seconds_value, exercise.defaultRestSec),
+                                stringResource(R.string.seconds_value, currentExercise.defaultRestSec),
                             )
-                            exercise.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                            currentExercise.notes?.takeIf { it.isNotBlank() }?.let { notes ->
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
@@ -260,7 +279,7 @@ fun ExerciseDetailsDialog(
                             }
                         }
                     }
-                    if (exercise.category != "CARDIO") item {
+                    if (currentExercise.category != "CARDIO") item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -282,7 +301,7 @@ fun ExerciseDetailsDialog(
                                 }
                                 onOpenProgress?.let { openProgress ->
                                     OutlinedButton(
-                                        onClick = { openProgress(exercise.id) },
+                                        onClick = { openProgress(currentExercise.id) },
                                         modifier = Modifier.testTag("exercise-open-full-progress"),
                                     ) {
                                         Text(stringResource(R.string.open_full_chart))
@@ -293,7 +312,7 @@ fun ExerciseDetailsDialog(
                                 history = effectiveHistory,
                                 progressPoints = progressPoints,
                                 unit = unit,
-                                usesBodyweight = exercise.usesBodyweight,
+                                usesBodyweight = currentExercise.usesBodyweight,
                                 bodyweightKg = bodyweightKg,
                             )
                         }
@@ -320,7 +339,7 @@ fun ExerciseDetailsDialog(
                                                 set.distanceM != null ||
                                                 set.avgHr != null ||
                                                 set.maxHr != null
-                                        } || (session.sets.isEmpty() && exercise.category == "CARDIO"),
+                                        } || (session.sets.isEmpty() && currentExercise.category == "CARDIO"),
                                         openLabel = openTrainingSessionLabel,
                                         onOpen = onOpenHistory?.takeUnless { session.localOnly }?.let { openHistory ->
                                             { openHistory(session.sessionId, session.startedAt) }
@@ -338,11 +357,273 @@ fun ExerciseDetailsDialog(
 
     if (techniqueOpen) {
         ExerciseTechniqueDialog(
-            exercise = exercise,
+            exercise = currentExercise,
             media = media,
             serverUrl = serverUrl,
             onDismiss = { techniqueOpen = false },
         )
+    }
+
+    if (
+        editorOpen &&
+        onUpdateExercise != null &&
+        currentExercise.userId != null &&
+        currentExercise.userId == editableUserId
+    ) {
+        ExerciseEditorDialog(
+            exercise = currentExercise,
+            onDismiss = { editorOpen = false },
+            onSave = { input -> onUpdateExercise(currentExercise, input) },
+            onSaved = { updated ->
+                editedExercise = updated
+                onExerciseUpdated(updated)
+                editorOpen = false
+            },
+        )
+    }
+}
+
+private val exerciseEditorMuscleGroups = listOf(
+    "CHEST", "BACK_WIDTH", "BACK_THICKNESS", "SHOULDERS_FRONT", "SHOULDERS_LATERAL",
+    "SHOULDERS_REAR", "BICEPS", "TRICEPS", "FOREARMS", "QUADS", "HAMSTRINGS",
+    "GLUTES", "CALVES", "ABS", "LOWER_BACK", "OTHER",
+)
+private val exerciseEditorCategories = listOf("COMPOUND", "ISOLATION", "CARDIO")
+private val exerciseEditorEquipmentTypes =
+    listOf("DUMBBELL", "BARBELL", "MACHINE", "CABLE", "BODYWEIGHT", "CARDIO", "OTHER")
+
+@Composable
+internal fun ExerciseEditorDialog(
+    exercise: ExerciseDto?,
+    onDismiss: () -> Unit,
+    onSave: suspend (ExerciseInput) -> ExerciseDto,
+    onSaved: (ExerciseDto) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable(exercise?.id) { mutableStateOf(exercise?.name.orEmpty()) }
+    var muscle by rememberSaveable(exercise?.id) {
+        mutableStateOf(exercise?.muscleGroup ?: exerciseEditorMuscleGroups.first())
+    }
+    var category by rememberSaveable(exercise?.id) {
+        mutableStateOf(exercise?.category ?: exerciseEditorCategories.first())
+    }
+    var equipment by rememberSaveable(exercise?.id) {
+        mutableStateOf(exercise?.equipmentType ?: exerciseEditorEquipmentTypes.last())
+    }
+    var rest by rememberSaveable(exercise?.id) {
+        mutableStateOf((exercise?.defaultRestSec ?: 90).toString())
+    }
+    var notes by rememberSaveable(exercise?.id) { mutableStateOf(exercise?.notes.orEmpty()) }
+    var bodyweight by rememberSaveable(exercise?.id) {
+        mutableStateOf(exercise?.usesBodyweight ?: false)
+    }
+    var saving by remember { mutableStateOf(false) }
+    var saveFailed by rememberSaveable(exercise?.id) { mutableStateOf(false) }
+    val restValue = rest.toIntOrNull()
+    val nameInvalid = name.isBlank()
+    val restInvalid = restValue !in 15..600
+    val valid = !nameInvalid && !restInvalid
+
+    fun save() {
+        if (!valid || saving) return
+        val input = ExerciseInput(
+            name = name.trim(),
+            muscleGroup = muscle,
+            category = category,
+            defaultRestSec = requireNotNull(restValue),
+            notes = notes.trim().ifBlank { null },
+            usesBodyweight = bodyweight,
+            equipmentType = equipment,
+        )
+        saving = true
+        saveFailed = false
+        scope.launch {
+            try {
+                onSaved(onSave(input))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                saveFailed = true
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    BackHandler(enabled = !saving) { onDismiss() }
+
+    Dialog(onDismissRequest = { if (!saving) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().testTag("exercise-editor"),
+        ) {
+            LazyColumn(
+                contentPadding = PaddingValues(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item {
+                    Text(
+                        stringResource(if (exercise == null) R.string.exercise_create else R.string.exercise_edit),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it.take(120); saveFailed = false },
+                        label = { Text(stringResource(R.string.exercise_name)) },
+                        modifier = Modifier.fillMaxWidth().testTag("exercise-editor-name"),
+                        enabled = !saving,
+                        isError = nameInvalid,
+                        supportingText = if (nameInvalid) {
+                            { Text(stringResource(R.string.exercise_name_required)) }
+                        } else null,
+                    )
+                }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_muscle_group),
+                        muscle,
+                        exerciseEditorMuscleGroups,
+                        ::muscleGroupDisplayName,
+                        enabled = !saving,
+                        testTag = "exercise-editor-muscle",
+                    ) { muscle = it; saveFailed = false }
+                }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_category),
+                        category,
+                        exerciseEditorCategories,
+                        ::exerciseCategoryDisplayName,
+                        enabled = !saving,
+                        testTag = "exercise-editor-category",
+                    ) { category = it; saveFailed = false }
+                }
+                item {
+                    EnumPicker(
+                        stringResource(R.string.exercise_equipment_type),
+                        equipment,
+                        exerciseEditorEquipmentTypes,
+                        ::equipmentTypeDisplayName,
+                        enabled = !saving,
+                        testTag = "exercise-editor-equipment",
+                    ) { equipment = it; saveFailed = false }
+                }
+                item {
+                    OutlinedTextField(
+                        value = rest,
+                        onValueChange = { rest = it.filter(Char::isDigit).take(3); saveFailed = false },
+                        label = { Text(stringResource(R.string.exercise_default_rest)) },
+                        modifier = Modifier.fillMaxWidth().testTag("exercise-editor-rest"),
+                        enabled = !saving,
+                        isError = restInvalid,
+                        supportingText = if (restInvalid) {
+                            { Text(stringResource(R.string.exercise_rest_range)) }
+                        } else null,
+                    )
+                }
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = bodyweight,
+                            onCheckedChange = { bodyweight = it; saveFailed = false },
+                            enabled = !saving,
+                        )
+                        Text(stringResource(R.string.exercise_bodyweight))
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it.take(2000); saveFailed = false },
+                        label = { Text(stringResource(R.string.program_notes)) },
+                        modifier = Modifier.fillMaxWidth().testTag("exercise-editor-notes"),
+                        enabled = !saving,
+                        minLines = 3,
+                    )
+                }
+                if (saveFailed) item {
+                    val message = stringResource(R.string.exercise_update_error)
+                    Text(
+                        message,
+                        modifier = Modifier
+                            .testTag("exercise-editor-error")
+                            .semantics {
+                                liveRegion = LiveRegionMode.Assertive
+                                error(message)
+                            },
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(
+                            onClick = onDismiss,
+                            enabled = !saving,
+                            modifier = Modifier.testTag("exercise-editor-cancel"),
+                        ) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            enabled = valid && !saving,
+                            onClick = ::save,
+                            modifier = Modifier.testTag("exercise-editor-save"),
+                        ) {
+                            if (saving) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(
+                                stringResource(
+                                    when {
+                                        saving -> R.string.saving
+                                        saveFailed -> R.string.retry
+                                        else -> R.string.save
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnumPicker(
+    label: String,
+    value: String,
+    values: List<String>,
+    displayValue: (String) -> String,
+    enabled: Boolean,
+    testTag: String,
+    onValue: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        OutlinedButton(
+            onClick = { open = true },
+            modifier = Modifier.fillMaxWidth().testTag(testTag),
+            enabled = enabled,
+        ) {
+            Text(displayValue(value))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            values.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(displayValue(option)) },
+                    onClick = { open = false; onValue(option) },
+                )
+            }
+        }
     }
 }
 

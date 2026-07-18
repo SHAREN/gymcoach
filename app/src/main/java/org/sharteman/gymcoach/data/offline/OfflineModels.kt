@@ -11,6 +11,7 @@ import org.sharteman.gymcoach.data.programs.ProgramCountsDto
 import org.sharteman.gymcoach.data.programs.ProgramExerciseInput
 import org.sharteman.gymcoach.data.programs.ProgramInput
 import org.sharteman.gymcoach.data.programs.WorkoutInput
+import org.sharteman.gymcoach.data.programs.withGeneralMetadata
 
 const val OFFLINE_DOMAIN_CATALOG = "CATALOG"
 const val OFFLINE_DOMAIN_HISTORY = "HISTORY"
@@ -22,6 +23,7 @@ const val OFFLINE_STATUS_BLOCKED = "BLOCKED"
 data class CatalogSnapshot(
     val programs: List<ManagedProgramDto> = emptyList(),
     val exercises: List<ExerciseDto> = emptyList(),
+    val exerciseEditReceipts: Map<String, ExerciseInput> = emptyMap(),
 )
 
 @Serializable
@@ -132,6 +134,7 @@ data class CreateExerciseMutation(
     override val operationId: String,
     val exerciseId: String,
     val input: ExerciseInput,
+    val ownerUserId: String? = null,
     override val domain: String = OFFLINE_DOMAIN_CATALOG,
 ) : OfflineMutation
 
@@ -141,6 +144,7 @@ data class UpdateExerciseMutation(
     override val operationId: String,
     val exerciseId: String,
     val input: ExerciseInput,
+    val expected: ExerciseInput? = null,
     override val domain: String = OFFLINE_DOMAIN_CATALOG,
 ) : OfflineMutation
 
@@ -265,16 +269,15 @@ fun applyCatalogMutation(base: CatalogSnapshot, mutation: OfflineMutation): Cata
     )
     is CreateExerciseMutation -> base.copy(
         exercises = base.exercises.filterNot { it.id == mutation.exerciseId } +
-            mutation.input.toDto(mutation.exerciseId),
+            mutation.input.toDto(mutation.exerciseId).copy(userId = mutation.ownerUserId),
     )
     is UpdateExerciseMutation -> {
         val current = base.exercises.firstOrNull { it.id == mutation.exerciseId }
-        val updated = mutation.input.toDto(mutation.exerciseId).copy(
-            userId = current?.userId,
-            trainingDates = current?.trainingDates.orEmpty(),
-        )
+        val updated = current?.withGeneralMetadata(mutation.input)
+            ?: mutation.input.toDto(mutation.exerciseId)
         base.copy(
             exercises = base.exercises.map { if (it.id == mutation.exerciseId) updated else it },
+            exerciseEditReceipts = base.exerciseEditReceipts + (mutation.exerciseId to mutation.input),
             programs = base.programs.map { program ->
                 program.copy(
                     workouts = program.workouts.map { workout ->
@@ -288,7 +291,10 @@ fun applyCatalogMutation(base: CatalogSnapshot, mutation: OfflineMutation): Cata
             },
         )
     }
-    is DeleteExerciseMutation -> base.copy(exercises = base.exercises.filterNot { it.id == mutation.exerciseId })
+    is DeleteExerciseMutation -> base.copy(
+        exercises = base.exercises.filterNot { it.id == mutation.exerciseId },
+        exerciseEditReceipts = base.exerciseEditReceipts - mutation.exerciseId,
+    )
     is DeleteHistorySessionMutation -> base
 }
 
