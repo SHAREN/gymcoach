@@ -95,6 +95,55 @@ const equipmentChoices: ExerciseEquipmentChoice[] = [
   },
 ];
 
+function crossTypeEquipmentChoices(): ExerciseEquipmentChoice[] {
+  return [
+    ...equipmentChoices,
+    {
+      id: 'dumbbells',
+      name: 'Adjustable dumbbells',
+      gymId: 'active-gym',
+      gymName: 'Zulu active gym',
+      equipmentType: 'DUMBBELL',
+      exerciseIds: [],
+      loadType: 'FIXED',
+      weightOptions: [5, 10, 20],
+    },
+    {
+      id: 'cable',
+      name: 'Cable stack',
+      gymId: 'active-gym',
+      gymName: 'Zulu active gym',
+      equipmentType: 'CABLE',
+      exerciseIds: [],
+      loadType: 'SELECTORIZED',
+      weightOptions: [10, 20],
+      selectedLoadMultiplier: 0.5,
+    },
+    {
+      id: 'crossover',
+      name: 'Crossover',
+      gymId: 'active-gym',
+      gymName: 'Zulu active gym',
+      equipmentType: 'CABLE',
+      exerciseIds: [],
+      loadType: 'SELECTORIZED',
+      weightOptions: [5, 10, 15],
+      selectedLoadMultiplier: 1,
+    },
+    {
+      id: 'machine',
+      name: 'Chest press machine',
+      gymId: 'active-gym',
+      gymName: 'Zulu active gym',
+      equipmentType: 'MACHINE',
+      exerciseIds: [],
+      loadType: 'SELECTORIZED',
+      weightOptions: [10, 20, 30],
+      selectedLoadMultiplier: 1,
+    },
+  ];
+}
+
 function renderDetail({
   activeGymId = 'active-gym',
   choices = equipmentChoices,
@@ -268,69 +317,21 @@ describe('ExerciseDetailEquipment', () => {
     expect(screen.getByText('Small diameter 6 kg bar')).toBeInTheDocument();
   });
 
-  it('switches the broad type only through an explicit preferred-item action and Save', async () => {
-    const choices: ExerciseEquipmentChoice[] = [
-      ...equipmentChoices,
-      {
-        id: 'dumbbells',
-        name: 'Adjustable dumbbells',
-        gymId: 'active-gym',
-        gymName: 'Zulu active gym',
-        equipmentType: 'DUMBBELL',
-        exerciseIds: [],
-        loadType: 'FIXED',
-        weightOptions: [5, 10, 20],
-      },
-      {
-        id: 'cable',
-        name: 'Cable stack',
-        gymId: 'active-gym',
-        gymName: 'Zulu active gym',
-        equipmentType: 'CABLE',
-        exerciseIds: [],
-        loadType: 'SELECTORIZED',
-        weightOptions: [10, 20],
-        selectedLoadMultiplier: 0.5,
-      },
-      {
-        id: 'crossover',
-        name: 'Crossover',
-        gymId: 'active-gym',
-        gymName: 'Zulu active gym',
-        equipmentType: 'CABLE',
-        exerciseIds: [],
-        loadType: 'SELECTORIZED',
-        weightOptions: [5, 10, 15],
-        selectedLoadMultiplier: 1,
-      },
-      {
-        id: 'machine',
-        name: 'Chest press machine',
-        gymId: 'active-gym',
-        gymName: 'Zulu active gym',
-        equipmentType: 'MACHINE',
-        exerciseIds: [],
-        loadType: 'SELECTORIZED',
-        weightOptions: [10, 20, 30],
-        selectedLoadMultiplier: 1,
-      },
-    ];
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ...exercise, equipmentType: 'CABLE' }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  it('stages broad type changes only through explicit preferred-item actions and resets on Cancel', async () => {
+    const choices = crossTypeEquipmentChoices();
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderDetail({ choices });
 
-    await user.click(screen.getByTestId('exercise-equipment-information-trigger'));
+    const informationTrigger = screen.getByTestId('exercise-equipment-information-trigger');
+    await user.click(informationTrigger);
     expect(
       screen.getByText('Equipment changes apply only after you choose Save.'),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole('switch', { name: 'Adjustable dumbbells' }));
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Barbell');
     await user.click(
       screen.getByRole('button', {
         name: 'Use Adjustable dumbbells by default and change the exercise type to Dumbbells',
@@ -339,6 +340,7 @@ describe('ExerciseDetailEquipment', () => {
     expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Dumbbells');
 
     await user.click(screen.getByRole('switch', { name: 'Cable stack' }));
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Dumbbells');
     await user.click(
       screen.getByRole('button', {
         name: 'Use Cable stack by default and change the exercise type to Cable stack',
@@ -349,6 +351,9 @@ describe('ExerciseDetailEquipment', () => {
     );
 
     await user.click(screen.getByRole('switch', { name: 'Chest press machine' }));
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'Cable stack',
+    );
     await user.click(
       screen.getByRole('button', {
         name: 'Use Chest press machine by default and change the exercise type to Machine',
@@ -357,6 +362,7 @@ describe('ExerciseDetailEquipment', () => {
     expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Machine');
 
     await user.click(screen.getByRole('switch', { name: 'Crossover' }));
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Machine');
     await user.click(
       screen.getByRole('button', {
         name: 'Use Crossover by default and change the exercise type to Cable stack',
@@ -364,14 +370,34 @@ describe('ExerciseDetailEquipment', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(informationTrigger).toHaveFocus());
 
     await user.click(screen.getByTestId('exercise-equipment-badge-trigger'));
     expect(screen.getByRole('switch', { name: 'Crossover' })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Barbell');
+  });
+
+  it('saves the explicitly preferred item and its broad type together', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...exercise, equipmentType: 'CABLE' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup({ delay: null });
+    renderDetail({ choices: crossTypeEquipmentChoices() });
+
+    await user.click(screen.getByTestId('exercise-equipment-badge-trigger'));
     await user.click(screen.getByRole('switch', { name: 'Crossover' }));
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Barbell');
     await user.click(
       screen.getByRole('button', {
         name: 'Use Crossover by default and change the exercise type to Cable stack',
       }),
+    );
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'Cable stack',
     );
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
