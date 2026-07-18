@@ -26,7 +26,7 @@ interface SettingsDataSource {
     suspend fun load(): SettingsSnapshot
     suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto
     suspend fun createGym(input: SettingsGymInput): SettingsGymDto
-    suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto
+    suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto
     suspend fun activateGym(id: String)
     suspend fun deleteGym(id: String)
     suspend fun loadGymInventory(gymId: String): SettingsGymInventoryDto
@@ -34,6 +34,14 @@ interface SettingsDataSource {
         gymId: String,
         equipmentId: String?,
         input: SettingsGymEquipmentInput,
+    )
+    suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    )
+    suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
     )
     suspend fun deleteGymEquipment(equipmentId: String)
     suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String)
@@ -68,7 +76,9 @@ class SettingsApi(
         val profile = request<SettingsProfileDto>("GET", "/api/profile")
         val gyms = request<SettingsGymListDto>("GET", "/api/gyms")
         val exercises = request<List<ExerciseDto>>("GET", "/api/mobile/exercises")
-        val inventories = gyms.gyms.associate { gym -> gym.id to loadGymInventory(gym.id) }
+        val inventories = gyms.gyms.associate { gym ->
+            gym.id to loadGymInventory(gym.id).normalizeSystemProfiles(gym, exercises)
+        }
         return SettingsSnapshot(profile, gyms, exercises, inventories)
     }
 
@@ -78,8 +88,8 @@ class SettingsApi(
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto =
         request("POST", "/api/gyms", json.encodeToString(input))
 
-    override suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto =
-        request("PUT", "/api/gyms/$id", json.encodeToString(input.copy(makeActive = false)))
+    override suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto =
+        request("PUT", "/api/gyms/$id", json.encodeToString(input))
 
     override suspend fun activateGym(id: String) {
         request<JsonObject>("POST", "/api/gyms/$id/activate", "{}")
@@ -99,6 +109,28 @@ class SettingsApi(
     ) {
         val path = equipmentId?.let { "/api/gym-equipment/$it" } ?: "/api/gyms/$gymId/equipment"
         request<JsonObject>(if (equipmentId == null) "POST" else "PUT", path, json.encodeToString(input))
+    }
+
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) {
+        request<JsonObject>(
+            "PUT",
+            "/api/gyms/$gymId/system-profiles/dumbbells",
+            json.encodeToString(input),
+        )
+    }
+
+    override suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
+    ) {
+        request<JsonObject>(
+            "PUT",
+            "/api/gyms/$gymId/system-profiles/barbell",
+            json.encodeToString(input),
+        )
     }
 
     override suspend fun deleteGymEquipment(equipmentId: String) {

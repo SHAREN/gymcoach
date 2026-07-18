@@ -113,7 +113,7 @@ private abstract class SettingsDataSourceStub : SettingsDataSource {
     override suspend fun load(): SettingsSnapshot = unsupported()
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto = unsupported()
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto = unsupported()
-    override suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto = unsupported()
+    override suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto = unsupported()
     override suspend fun activateGym(id: String) = unsupported<Unit>()
     override suspend fun deleteGym(id: String) = unsupported<Unit>()
     override suspend fun loadGymInventory(gymId: String): SettingsGymInventoryDto = unsupported()
@@ -121,6 +121,14 @@ private abstract class SettingsDataSourceStub : SettingsDataSource {
         gymId: String,
         equipmentId: String?,
         input: SettingsGymEquipmentInput,
+    ) = unsupported<Unit>()
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) = unsupported<Unit>()
+    override suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
     ) = unsupported<Unit>()
     override suspend fun deleteGymEquipment(equipmentId: String) = unsupported<Unit>()
     override suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String) =

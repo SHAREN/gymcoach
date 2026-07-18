@@ -56,6 +56,7 @@ import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
+import org.sharteman.gymcoach.data.settings.customEquipment
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 @Composable
@@ -76,6 +77,7 @@ internal fun GymEquipmentSection(
     onClearImage: () -> Unit,
 ) {
     val inventory = gymId?.let { snapshot?.gymInventories?.get(it) }
+    val customEquipment = inventory?.customEquipment().orEmpty()
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("settings-equipment-section"),
         shape = RoundedCornerShape(14.dp),
@@ -111,14 +113,14 @@ internal fun GymEquipmentSection(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else if (inventory?.equipment.isNullOrEmpty()) {
+            } else if (customEquipment.isEmpty()) {
                 Text(
                     stringResource(R.string.settings_equipment_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                inventory?.equipment.orEmpty().forEach { item ->
+                customEquipment.forEach { item ->
                     EquipmentCard(
                         item = item,
                         imageAuthorization = imageAuthorization,
