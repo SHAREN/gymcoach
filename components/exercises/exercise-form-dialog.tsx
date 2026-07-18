@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
@@ -41,6 +41,7 @@ import {
   exerciseCategoryMessageKeys,
   muscleGroupMessageKeys,
 } from '@/i18n/enum-keys';
+import { resolveEquipmentType } from '@/lib/gym-loads';
 
 interface Props {
   open: boolean;
@@ -49,6 +50,7 @@ interface Props {
   exercise?: Exercise;
   equipmentChoices?: ExerciseEquipmentChoice[];
   activeGymId?: string | null;
+  focusSection?: 'equipment';
 }
 
 const DEFAULT_VALUES: ExerciseInput = {
@@ -68,6 +70,7 @@ export function ExerciseFormDialog({
   exercise,
   equipmentChoices = [],
   activeGymId = null,
+  focusSection,
 }: Props) {
   const t = useTranslations('exercises');
   const common = useTranslations('common');
@@ -80,6 +83,10 @@ export function ExerciseFormDialog({
   const [preferredEquipmentByGym, setPreferredEquipmentByGym] = useState<
     Record<string, string | null>
   >({});
+  const equipmentTypeTriggerRef = useRef<HTMLButtonElement>(null);
+  const watchedName = form.watch('name');
+  const watchedEquipmentType = form.watch('equipmentType');
+  const resolvedEquipmentType = resolveEquipmentType(watchedEquipmentType, watchedName);
 
   useEffect(() => {
     if (open) {
@@ -144,16 +151,16 @@ export function ExerciseFormDialog({
       if (checked) next.add(item.id);
       else next.delete(item.id);
       setPreferredEquipmentByGym((preferences) => {
-        if (
-          checked &&
-          !preferences[item.gymId] &&
-          item.equipmentType === form.getValues('equipmentType')
-        ) {
+        if (checked && !preferences[item.gymId] && item.equipmentType === resolvedEquipmentType) {
           return { ...preferences, [item.gymId]: item.id };
         }
         if (!checked && preferences[item.gymId] === item.id) {
           const replacement = equipmentChoices.find(
-            (choice) => choice.gymId === item.gymId && choice.id !== item.id && next.has(choice.id),
+            (choice) =>
+              choice.gymId === item.gymId &&
+              choice.id !== item.id &&
+              choice.equipmentType === resolvedEquipmentType &&
+              next.has(choice.id),
           );
           return { ...preferences, [item.gymId]: replacement?.id ?? null };
         }
@@ -164,6 +171,7 @@ export function ExerciseFormDialog({
   }
 
   async function onSubmit(values: ExerciseInput) {
+    const resolvedValuesType = resolveEquipmentType(values.equipmentType, values.name);
     const url = mode === 'edit' && exercise ? `/api/exercises/${exercise.id}` : '/api/exercises';
     const method = mode === 'edit' ? 'PUT' : 'POST';
     const res = await fetch(url, {
@@ -182,7 +190,11 @@ export function ExerciseFormDialog({
       body: JSON.stringify({
         gyms: groupedEquipment.map((group) => {
           const selectedIds = group.items
-            .filter((item) => equipmentIds.has(item.id))
+            .filter(
+              (item) =>
+                equipmentIds.has(item.id) &&
+                (resolvedValuesType === 'BARBELL' || item.systemBarbellFamily == null),
+            )
             .map((item) => item.id);
           const preferredId = preferredEquipmentByGym[group.gymId] ?? null;
           const preferredItem = group.items.find((item) => item.id === preferredId);
@@ -192,7 +204,7 @@ export function ExerciseFormDialog({
             preferredEquipmentId:
               preferredItem &&
               selectedIds.includes(preferredItem.id) &&
-              preferredItem.equipmentType === values.equipmentType
+              preferredItem.equipmentType === resolvedValuesType
                 ? preferredItem.id
                 : null,
           };
@@ -210,7 +222,14 @@ export function ExerciseFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={(event) => {
+          if (focusSection !== 'equipment') return;
+          event.preventDefault();
+          equipmentTypeTriggerRef.current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{mode === 'edit' ? t('editTitle') : t('addTitle')}</DialogTitle>
           <DialogDescription>{t('formDescription')}</DialogDescription>
@@ -270,12 +289,22 @@ export function ExerciseFormDialog({
           <div className="space-y-2">
             <Label htmlFor="equipmentType">{t('equipmentType')}</Label>
             <Select
-              value={form.watch('equipmentType')}
-              onValueChange={(v) =>
-                form.setValue('equipmentType', v as ExerciseInput['equipmentType'])
-              }
+              value={watchedEquipmentType}
+              onValueChange={(v) => {
+                const nextType = v as ExerciseInput['equipmentType'];
+                form.setValue('equipmentType', nextType);
+                if (resolveEquipmentType(nextType, form.getValues('name')) !== 'BARBELL') {
+                  setEquipmentIds((current) => {
+                    const next = new Set(current);
+                    for (const item of equipmentChoices) {
+                      if (item.systemBarbellFamily != null) next.delete(item.id);
+                    }
+                    return next;
+                  });
+                }
+              }}
             >
-              <SelectTrigger id="equipmentType">
+              <SelectTrigger id="equipmentType" ref={equipmentTypeTriggerRef}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -293,6 +322,9 @@ export function ExerciseFormDialog({
               <div>
                 <p className="text-sm font-medium">{t('physicalEquipment')}</p>
                 <p className="text-xs text-muted-foreground">{t('physicalEquipmentDescription')}</p>
+                <p className="mt-1 text-xs font-medium text-foreground">
+                  {t('equipmentConfirmationHint')}
+                </p>
               </div>
               <div className="max-h-48 space-y-3 overflow-y-auto pr-1">
                 {groupedEquipment.map((group) => (
@@ -302,49 +334,48 @@ export function ExerciseFormDialog({
                       {group.gymId === activeGymId ? ` · ${t('activeGym')}` : ''}
                     </p>
                     {group.items.map((item) => (
-                      <div
+                      <EquipmentChoiceRow
                         key={item.id}
-                        className="flex items-center justify-between gap-3 rounded-md bg-muted/30 p-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {t(`equipmentTypes.${equipmentTypeMessageKeys[item.equipmentType]}`)}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t('makePreferred', { equipment: item.name })}
-                            aria-pressed={preferredEquipmentByGym[item.gymId] === item.id}
-                            disabled={
-                              !equipmentIds.has(item.id) ||
-                              item.equipmentType !== form.watch('equipmentType')
+                        item={item}
+                        linked={equipmentIds.has(item.id)}
+                        preferred={
+                          preferredEquipmentByGym[item.gymId] === item.id &&
+                          item.equipmentType === resolvedEquipmentType
+                        }
+                        compatible={item.equipmentType === resolvedEquipmentType}
+                        onPreferred={() => {
+                          if (item.equipmentType !== resolvedEquipmentType) {
+                            form.setValue('equipmentType', item.equipmentType, {
+                              shouldDirty: true,
+                            });
+                          }
+                          setEquipmentIds((current) => {
+                            const next = new Set(current);
+                            if (item.equipmentType !== 'BARBELL') {
+                              for (const choice of equipmentChoices) {
+                                if (choice.systemBarbellFamily != null) next.delete(choice.id);
+                              }
                             }
-                            onClick={() =>
-                              setPreferredEquipmentByGym((current) => ({
-                                ...current,
-                                [item.gymId]: item.id,
-                              }))
+                            if (item.systemBarbellFamily != null) {
+                              for (const choice of equipmentChoices) {
+                                if (
+                                  choice.gymId === item.gymId &&
+                                  choice.systemBarbellFamily != null
+                                ) {
+                                  next.add(choice.id);
+                                }
+                              }
                             }
-                          >
-                            <Star
-                              className={`size-4 ${
-                                preferredEquipmentByGym[item.gymId] === item.id
-                                  ? 'fill-amber-400 text-amber-500'
-                                  : ''
-                              }`}
-                            />
-                          </Button>
-                          <Switch
-                            aria-label={item.name}
-                            checked={equipmentIds.has(item.id)}
-                            onCheckedChange={(checked) => toggleEquipment(item, checked)}
-                          />
-                        </div>
-                      </div>
+                            next.add(item.id);
+                            return next;
+                          });
+                          setPreferredEquipmentByGym((current) => ({
+                            ...current,
+                            [item.gymId]: item.id,
+                          }));
+                        }}
+                        onLinkedChange={(checked) => toggleEquipment(item, checked)}
+                      />
                     ))}
                   </div>
                 ))}
@@ -406,5 +437,63 @@ export function ExerciseFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function EquipmentChoiceRow({
+  item,
+  linked,
+  preferred,
+  compatible,
+  onPreferred,
+  onLinkedChange,
+}: {
+  item: ExerciseEquipmentChoice;
+  linked: boolean;
+  preferred: boolean;
+  compatible: boolean;
+  onPreferred: () => void;
+  onLinkedChange: (checked: boolean) => void;
+}) {
+  const t = useTranslations('exercises');
+  const typeLabel = t(`equipmentTypes.${equipmentTypeMessageKeys[item.equipmentType]}`);
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 p-2">
+      <div className="min-w-0">
+        <p className="truncate text-sm">{item.name}</p>
+        <p className="text-xs text-muted-foreground">
+          {typeLabel}
+          {!compatible ? ` · ${t('differentEquipmentType')}` : ''}
+          {item.systemBarbellFamily != null ? ` · ${t('managedByBarbellProfile')}` : ''}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={
+            compatible
+              ? t('makePreferred', { equipment: item.name })
+              : t('makePreferredAndChangeType', {
+                  equipment: item.name,
+                  type: typeLabel,
+                })
+          }
+          aria-pressed={preferred}
+          disabled={!linked && item.systemBarbellFamily == null}
+          onClick={onPreferred}
+        >
+          <Star className={`size-4 ${preferred ? 'fill-amber-400 text-amber-500' : ''}`} />
+        </Button>
+        <Switch
+          aria-label={item.name}
+          checked={linked}
+          disabled={item.systemBarbellFamily != null}
+          onCheckedChange={onLinkedChange}
+        />
+      </div>
+    </div>
   );
 }

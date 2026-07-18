@@ -122,8 +122,11 @@ export interface ExerciseEquipmentChoice {
   exerciseIds: string[];
   preferredExerciseIds?: string[];
   loadType?: EquipmentLoadType;
+  weightOptions?: number[];
+  selectedLoadMultiplier?: number;
   baseLoadKg?: number;
   loadingSides?: number;
+  systemBarbellFamily?: BarbellDiameterFamily | null;
   platePoolName?: string | null;
   plates?: GymPlateInventoryItemView[];
 }

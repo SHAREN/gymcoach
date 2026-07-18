@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise } from '@/lib/prisma-client';
-import { ExerciseDetailEquipment } from './exercise-detail-equipment';
+import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
+import {
+  ExerciseDetailEquipment,
+  ExerciseDetailEquipmentProvider,
+  ExerciseEquipmentEditTrigger,
+} from './exercise-detail-equipment';
 
 const refresh = vi.fn();
 
@@ -15,18 +20,21 @@ afterEach(() => {
   refresh.mockReset();
 });
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+
 Element.prototype.hasPointerCapture = vi.fn(() => false);
 Element.prototype.setPointerCapture = vi.fn();
 Element.prototype.releasePointerCapture = vi.fn();
 Element.prototype.scrollIntoView = vi.fn();
-vi.stubGlobal(
-  'ResizeObserver',
-  class ResizeObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  },
-);
 
 const exercise: Exercise = {
   id: 'exercise-1',
@@ -41,42 +49,78 @@ const exercise: Exercise = {
   createdAt: new Date('2026-07-16T00:00:00Z'),
 };
 
-const equipmentChoices = [
+const gyms = [
+  { id: 'other-gym', name: 'Alpha other gym' },
+  { id: 'active-gym', name: 'Zulu active gym' },
+];
+
+const equipmentChoices: ExerciseEquipmentChoice[] = [
   {
     id: 'small-bar',
-    name: '10 kg EZ bar',
+    name: 'Small diameter 6 kg bar',
     gymId: 'active-gym',
     gymName: 'Zulu active gym',
-    equipmentType: 'BARBELL' as const,
+    equipmentType: 'BARBELL',
     exerciseIds: [exercise.id],
     preferredExerciseIds: [exercise.id],
-    loadType: 'PLATE_LOADED' as const,
-    baseLoadKg: 10,
+    loadType: 'PLATE_LOADED',
+    baseLoadKg: 6,
     loadingSides: 2,
-    platePoolName: 'Olympic plates',
+    systemBarbellFamily: 'SMALL',
+    platePoolName: 'Small diameter plates',
   },
   {
     id: 'standard-bar',
-    name: '20 kg standard bar',
+    name: 'Large diameter 20 kg bar',
     gymId: 'active-gym',
     gymName: 'Zulu active gym',
-    equipmentType: 'BARBELL' as const,
+    equipmentType: 'BARBELL',
     exerciseIds: [exercise.id],
     preferredExerciseIds: [],
+    loadType: 'PLATE_LOADED',
+    baseLoadKg: 20,
+    loadingSides: 2,
+    systemBarbellFamily: 'LARGE',
+    platePoolName: 'Large diameter plates',
   },
   {
     id: 'other-bar',
     name: '15 kg other gym bar',
     gymId: 'other-gym',
     gymName: 'Alpha other gym',
-    equipmentType: 'BARBELL' as const,
+    equipmentType: 'BARBELL',
     exerciseIds: [exercise.id],
     preferredExerciseIds: [exercise.id],
   },
 ];
 
+function renderDetail({
+  activeGymId = 'active-gym',
+  choices = equipmentChoices,
+  exerciseValue = exercise,
+  equipmentTypeLabel = 'Barbell',
+}: {
+  activeGymId?: string | null;
+  choices?: ExerciseEquipmentChoice[];
+  exerciseValue?: Exercise;
+  equipmentTypeLabel?: string;
+} = {}) {
+  return render(
+    <ExerciseDetailEquipmentProvider
+      exercise={exerciseValue}
+      gyms={gyms}
+      activeGymId={activeGymId}
+      equipmentChoices={choices}
+    >
+      <ExerciseEquipmentEditTrigger kind="badge" equipmentTypeLabel={equipmentTypeLabel} />
+      <ExerciseEquipmentEditTrigger kind="information" equipmentTypeLabel={equipmentTypeLabel} />
+      <ExerciseDetailEquipment />
+    </ExerciseDetailEquipmentProvider>,
+  );
+}
+
 describe('ExerciseDetailEquipment', () => {
-  it('sorts the active gym first, persists a new preference, and reloads without losing alternatives', async () => {
+  it('makes both summaries accessible, shows the concrete bar family, and preserves alternatives', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -93,34 +137,34 @@ describe('ExerciseDetailEquipment', () => {
       );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
-    const rendered = render(
-      <ExerciseDetailEquipment
-        exercise={exercise}
-        gyms={[
-          { id: 'other-gym', name: 'Alpha other gym' },
-          { id: 'active-gym', name: 'Zulu active gym' },
-        ]}
-        activeGymId="active-gym"
-        equipmentChoices={equipmentChoices}
-      />,
+    const rendered = renderDetail();
+
+    const entryName = 'Edit equipment. Type: Barbell. Selected: Small diameter 6 kg bar.';
+    expect(screen.getAllByRole('button', { name: entryName })).toHaveLength(2);
+    expect(screen.getByTestId('exercise-equipment-badge-trigger')).toHaveTextContent(
+      'Small diameter 6 kg bar · 6 kg empty · Small / thin diameter',
     );
+    expect(screen.getByTestId('exercise-equipment-information-trigger')).toHaveTextContent(
+      'Broad equipment typeBarbellSelected concrete equipmentSmall diameter 6 kg bar',
+    );
+    expect(screen.getByText('Empty load: 6 kg')).toBeInTheDocument();
+    expect(screen.getByText('Plate pool: Small diameter plates')).toBeInTheDocument();
+    expect(screen.getAllByText('Small / thin diameter').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Large / thick diameter').length).toBeGreaterThan(0);
 
-    expect(screen.getByText('Active gym equipment')).toBeInTheDocument();
-    expect(screen.getByText('10 kg EZ bar')).toBeInTheDocument();
-    expect(screen.getByText('Preferred')).toBeInTheDocument();
-    expect(screen.getByText('Empty load: 10 kg')).toBeInTheDocument();
-    expect(screen.getByText('Plate pool: Olympic plates')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Edit exercise' }));
+    await user.click(screen.getByTestId('exercise-equipment-badge-trigger'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Edit exercise' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByTestId('exercise-equipment-information-trigger'));
     const activeGymHeading = screen.getByText('Zulu active gym · Active gym');
     const otherGymHeading = screen.getByText('Alpha other gym');
     expect(
       activeGymHeading.compareDocumentPosition(otherGymHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     const standardPreference = screen.getByRole('button', {
-      name: 'Use 20 kg standard bar by default in this gym',
+      name: 'Use Large diameter 20 kg bar by default in this gym',
     });
     await user.click(standardPreference);
     expect(standardPreference).toHaveAttribute('aria-pressed', 'true');
@@ -144,47 +188,221 @@ describe('ExerciseDetailEquipment', () => {
       ],
     });
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     rendered.unmount();
-    render(
-      <ExerciseDetailEquipment
-        exercise={exercise}
-        gyms={[
-          { id: 'other-gym', name: 'Alpha other gym' },
-          { id: 'active-gym', name: 'Zulu active gym' },
-        ]}
-        activeGymId="active-gym"
-        equipmentChoices={equipmentChoices.map((item) => ({
-          ...item,
-          preferredExerciseIds:
-            item.id === 'standard-bar' || item.id === 'other-bar' ? [exercise.id] : [],
-        }))}
-      />,
+    renderDetail({
+      choices: equipmentChoices.map((item) => ({
+        ...item,
+        preferredExerciseIds:
+          item.id === 'standard-bar' || item.id === 'other-bar' ? [exercise.id] : [],
+      })),
+    });
+    const standardCard = screen.getByRole('button', {
+      name: 'Edit exercise equipment starting from Large diameter 20 kg bar',
+    });
+    expect(within(standardCard).getByText('Preferred')).toBeInTheDocument();
+    expect(screen.getByText('Small diameter 6 kg bar')).toBeInTheDocument();
+  });
+
+  it('switches the broad type only through an explicit preferred-item action and Save', async () => {
+    const choices: ExerciseEquipmentChoice[] = [
+      ...equipmentChoices,
+      {
+        id: 'dumbbells',
+        name: 'Adjustable dumbbells',
+        gymId: 'active-gym',
+        gymName: 'Zulu active gym',
+        equipmentType: 'DUMBBELL',
+        exerciseIds: [],
+        loadType: 'FIXED',
+        weightOptions: [5, 10, 20],
+      },
+      {
+        id: 'cable',
+        name: 'Cable stack',
+        gymId: 'active-gym',
+        gymName: 'Zulu active gym',
+        equipmentType: 'CABLE',
+        exerciseIds: [],
+        loadType: 'SELECTORIZED',
+        weightOptions: [10, 20],
+        selectedLoadMultiplier: 0.5,
+      },
+      {
+        id: 'crossover',
+        name: 'Crossover',
+        gymId: 'active-gym',
+        gymName: 'Zulu active gym',
+        equipmentType: 'CABLE',
+        exerciseIds: [],
+        loadType: 'SELECTORIZED',
+        weightOptions: [5, 10, 15],
+        selectedLoadMultiplier: 1,
+      },
+      {
+        id: 'machine',
+        name: 'Chest press machine',
+        gymId: 'active-gym',
+        gymName: 'Zulu active gym',
+        equipmentType: 'MACHINE',
+        exerciseIds: [],
+        loadType: 'SELECTORIZED',
+        weightOptions: [10, 20, 30],
+        selectedLoadMultiplier: 1,
+      },
+    ];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...exercise, equipmentType: 'CABLE' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderDetail({ choices });
+
+    await user.click(screen.getByTestId('exercise-equipment-information-trigger'));
+    expect(
+      screen.getByText('Equipment changes apply only after you choose Save.'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('switch', { name: 'Adjustable dumbbells' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use Adjustable dumbbells by default and change the exercise type to Dumbbells',
+      }),
+    );
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Dumbbells');
+
+    await user.click(screen.getByRole('switch', { name: 'Cable stack' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use Cable stack by default and change the exercise type to Cable stack',
+      }),
+    );
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'Cable stack',
     );
 
-    const standardCard = screen
-      .getByText('20 kg standard bar')
-      .closest('.rounded-md.border') as HTMLElement | null;
-    expect(standardCard).not.toBeNull();
-    expect(within(standardCard!).getByText('Preferred')).toBeInTheDocument();
-    expect(screen.getByText('10 kg EZ bar')).toBeInTheDocument();
+    await user.click(screen.getByRole('switch', { name: 'Chest press machine' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use Chest press machine by default and change the exercise type to Machine',
+      }),
+    );
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent('Machine');
+
+    await user.click(screen.getByRole('switch', { name: 'Crossover' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use Crossover by default and change the exercise type to Cable stack',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId('exercise-equipment-badge-trigger'));
+    expect(screen.getByRole('switch', { name: 'Crossover' })).not.toBeChecked();
+    await user.click(screen.getByRole('switch', { name: 'Crossover' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use Crossover by default and change the exercise type to Cable stack',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      equipmentType: 'CABLE',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      gyms: [
+        {
+          gymId: 'active-gym',
+          equipmentIds: ['crossover'],
+          preferredEquipmentId: 'crossover',
+        },
+        {
+          gymId: 'other-gym',
+          equipmentIds: ['other-bar'],
+          preferredEquipmentId: null,
+        },
+      ],
+    });
+  });
+
+  it('shows fixed and selectorized load facts for dumbbells, machines, cables, and crossovers', () => {
+    renderDetail({
+      exerciseValue: { ...exercise, equipmentType: 'CABLE' },
+      equipmentTypeLabel: 'Cable stack',
+      choices: [
+        {
+          id: 'cable',
+          name: 'Cable stack',
+          gymId: 'active-gym',
+          gymName: 'Zulu active gym',
+          equipmentType: 'CABLE',
+          exerciseIds: [exercise.id],
+          preferredExerciseIds: [exercise.id],
+          loadType: 'SELECTORIZED',
+          weightOptions: [10, 20],
+          selectedLoadMultiplier: 0.5,
+        },
+        {
+          id: 'crossover',
+          name: 'Crossover',
+          gymId: 'active-gym',
+          gymName: 'Zulu active gym',
+          equipmentType: 'CABLE',
+          exerciseIds: [exercise.id],
+          loadType: 'SELECTORIZED',
+          weightOptions: [5, 10, 15],
+          selectedLoadMultiplier: 1,
+        },
+        {
+          id: 'dumbbells',
+          name: 'Adjustable dumbbells',
+          gymId: 'active-gym',
+          gymName: 'Zulu active gym',
+          equipmentType: 'DUMBBELL',
+          exerciseIds: [exercise.id],
+          loadType: 'FIXED',
+          weightOptions: [5, 10, 20],
+        },
+        {
+          id: 'machine',
+          name: 'Chest press machine',
+          gymId: 'active-gym',
+          gymName: 'Zulu active gym',
+          equipmentType: 'MACHINE',
+          exerciseIds: [exercise.id],
+          loadType: 'SELECTORIZED',
+          weightOptions: [10, 20, 30],
+          selectedLoadMultiplier: 1,
+        },
+      ],
+    });
+
+    expect(screen.getByTestId('exercise-equipment-badge-trigger')).toHaveTextContent(
+      'Cable stack · 10, 20 kg',
+    );
+    expect(screen.getByText('Displayed loads: 10, 20 kg')).toBeInTheDocument();
+    expect(screen.getByText('Displayed load x 0.5')).toBeInTheDocument();
+    expect(screen.getByText('Displayed loads: 5, 10, 15 kg')).toBeInTheDocument();
+    expect(screen.getByText('Available weights: 5, 10, 20 kg')).toBeInTheDocument();
+    expect(screen.getByText('Displayed loads: 10, 20, 30 kg')).toBeInTheDocument();
   });
 
   it('links directly to gym settings when no active gym exists', () => {
-    render(
-      <ExerciseDetailEquipment
-        exercise={exercise}
-        gyms={[{ id: 'gym-1', name: 'Gym' }]}
-        activeGymId={null}
-        equipmentChoices={equipmentChoices}
-      />,
-    );
+    renderDetail({ activeGymId: null });
 
     expect(screen.getByText(/Choose an active gym/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open gym settings' })).toHaveAttribute(
       'href',
       '/settings',
+    );
+    expect(screen.getByTestId('exercise-equipment-badge-trigger')).toHaveTextContent(
+      'No active gym',
     );
   });
 });

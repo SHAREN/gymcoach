@@ -13,7 +13,11 @@ import {
 import { estimate1RM } from '@/lib/stats';
 import { formatWeight } from '@/lib/units';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
-import { ExerciseDetailEquipment } from '@/components/exercises/exercise-detail-equipment';
+import {
+  ExerciseDetailEquipment,
+  ExerciseDetailEquipmentProvider,
+  ExerciseEquipmentEditTrigger,
+} from '@/components/exercises/exercise-detail-equipment';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -63,8 +67,11 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
             gymId: true,
             equipmentType: true,
             loadType: true,
+            weightOptions: true,
+            selectedLoadMultiplier: true,
             baseLoadKg: true,
             loadingSides: true,
+            systemBarbellFamily: true,
             preferredForConfigs: { select: { exerciseId: true } },
             exerciseLinks: { select: { exerciseId: true } },
             platePool: {
@@ -110,11 +117,17 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
       exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
       preferredExerciseIds: item.preferredForConfigs.map((config) => config.exerciseId),
       loadType: item.loadType,
+      weightOptions: item.weightOptions,
+      selectedLoadMultiplier: item.selectedLoadMultiplier,
       baseLoadKg: item.baseLoadKg,
       loadingSides: item.loadingSides,
+      systemBarbellFamily: item.systemBarbellFamily,
       platePoolName: item.platePool?.name ?? null,
       plates: item.platePool?.plates ?? [],
     })),
+  );
+  const equipmentTypeLabel = exerciseT(
+    `equipmentTypes.${equipmentTypeMessageKeys[exercise.equipmentType]}`,
   );
 
   return (
@@ -127,71 +140,74 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
           </Link>
         </Button>
 
-        <header className="space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-bold">{displayName}</h1>
-              {displayName !== exercise.name && (
-                <p className="text-sm text-muted-foreground">{exercise.name}</p>
-              )}
-            </div>
-            <ExerciseMediaDialog
-              exerciseName={exercise.name}
-              displayName={displayName}
-              equipmentType={exercise.equipmentType}
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge>
-              {exerciseT(`muscleGroups.${muscleGroupMessageKeys[exercise.muscleGroup]}`)}
-            </Badge>
-            <Badge variant="secondary">
-              {exerciseT(`categories.${exerciseCategoryMessageKeys[exercise.category]}`)}
-            </Badge>
-            <Badge variant="outline">
-              {exerciseT(`equipmentTypes.${equipmentTypeMessageKeys[exercise.equipmentType]}`)}
-            </Badge>
-          </div>
-        </header>
-
-        <section className="space-y-3 border-t border-border pt-5">
-          <h2 className="flex items-center gap-2 text-base font-semibold">
-            <Dumbbell className="size-4" />
-            {t('information')}
-          </h2>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('muscle')}</dt>
-              <dd className="font-medium">
-                {exerciseT(`muscleGroups.${muscleGroupMessageKeys[exercise.muscleGroup]}`)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('equipment')}</dt>
-              <dd className="font-medium">
-                {exerciseT(`equipmentTypes.${equipmentTypeMessageKeys[exercise.equipmentType]}`)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('defaultRest')}</dt>
-              <dd className="font-medium">
-                {exercise.defaultRestSec} {t('seconds')}
-              </dd>
-            </div>
-          </dl>
-          {exercise.notes && (
-            <p className="whitespace-pre-line rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
-              {exercise.notes}
-            </p>
-          )}
-        </section>
-
-        <ExerciseDetailEquipment
+        <ExerciseDetailEquipmentProvider
           exercise={exercise}
           gyms={gyms.map((gym) => ({ id: gym.id, name: gym.name }))}
           activeGymId={user?.activeGymId ?? null}
           equipmentChoices={equipmentChoices}
-        />
+        >
+          <header className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold">{displayName}</h1>
+                {displayName !== exercise.name && (
+                  <p className="text-sm text-muted-foreground">{exercise.name}</p>
+                )}
+              </div>
+              <ExerciseMediaDialog
+                exerciseName={exercise.name}
+                displayName={displayName}
+                equipmentType={exercise.equipmentType}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge>
+                {exerciseT(`muscleGroups.${muscleGroupMessageKeys[exercise.muscleGroup]}`)}
+              </Badge>
+              <Badge variant="secondary">
+                {exerciseT(`categories.${exerciseCategoryMessageKeys[exercise.category]}`)}
+              </Badge>
+              <ExerciseEquipmentEditTrigger kind="badge" equipmentTypeLabel={equipmentTypeLabel} />
+            </div>
+          </header>
+
+          <section className="space-y-3 border-t border-border pt-5">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Dumbbell className="size-4" />
+              {t('information')}
+            </h2>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('muscle')}</dt>
+                <dd className="font-medium">
+                  {exerciseT(`muscleGroups.${muscleGroupMessageKeys[exercise.muscleGroup]}`)}
+                </dd>
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <dt className="text-xs text-muted-foreground">{t('equipment')}</dt>
+                <dd>
+                  <ExerciseEquipmentEditTrigger
+                    kind="information"
+                    equipmentTypeLabel={equipmentTypeLabel}
+                  />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('defaultRest')}</dt>
+                <dd className="font-medium">
+                  {exercise.defaultRestSec} {t('seconds')}
+                </dd>
+              </div>
+            </dl>
+            {exercise.notes && (
+              <p className="whitespace-pre-line rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+                {exercise.notes}
+              </p>
+            )}
+          </section>
+
+          <ExerciseDetailEquipment />
+        </ExerciseDetailEquipmentProvider>
 
         <section className="space-y-3 border-t border-border pt-5">
           <div className="flex items-center justify-between gap-3">

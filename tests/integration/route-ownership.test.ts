@@ -326,8 +326,8 @@ describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
     expect(wrongTypeResponse.status).toBe(400);
   });
 
-  it('updates one gym preference without removing another gym links or frozen set facts', async () => {
-    const { a, exercise, set } = await seed();
+  it('updates one gym preference without removing other-gym links, active selections, or frozen set facts', async () => {
+    const { a, exercise, session, set } = await seed();
     await db.exercise.update({ where: { id: exercise.id }, data: { equipmentType: 'BARBELL' } });
     const [activeGym, otherGym] = await Promise.all([
       db.gym.create({ data: { userId: a.id, name: 'Active gym' } }),
@@ -383,6 +383,24 @@ describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
         equipmentLoadSnapshot: frozenSnapshot,
       },
     });
+    await db.session.update({
+      where: { id: session.id },
+      data: { finishedAt: new Date('2026-07-17T10:00:00Z') },
+    });
+    const activeSession = await db.session.create({
+      data: { userId: a.id, gymId: activeGym.id },
+    });
+    const activeSet = await db.set.create({
+      data: {
+        sessionId: activeSession.id,
+        exerciseId: exercise.id,
+        setNumber: 1,
+        weight: 20,
+        reps: 8,
+        gymEquipmentId: standardBar.id,
+        equipmentNameSnapshot: standardBar.name,
+      },
+    });
     actAs(a.id);
 
     const response = await patchExerciseEquipment(
@@ -422,6 +440,12 @@ describe('route ownership: PATCH /api/exercises/[id]/equipment', () => {
       selectedLoadKg: 40,
       selectedLoadMultiplierSnapshot: 1,
       equipmentLoadSnapshot: frozenSnapshot,
+    });
+    expect(await db.set.findUniqueOrThrow({ where: { id: activeSet.id } })).toMatchObject({
+      gymEquipmentId: standardBar.id,
+      equipmentNameSnapshot: standardBar.name,
+      weight: 20,
+      reps: 8,
     });
   });
 

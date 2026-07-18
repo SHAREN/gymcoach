@@ -226,12 +226,12 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   const session = await sessionResponse.json();
 
   await page.goto(`/exercises/${exercise.id}`);
-  await expect(page.getByRole('button', { name: 'Edit exercise' })).toBeVisible();
-  await expect(page.getByText('10 kg EZ bar')).toBeVisible();
-  await expect(page.getByText('20 kg standard bar')).toBeVisible();
-  await expect(page.getByText('Preferred')).toHaveCount(0);
+  await expect(page.getByTestId('exercise-equipment-badge-trigger')).toBeVisible();
+  await expect(page.getByText('10 kg EZ bar', { exact: true })).toBeVisible();
+  await expect(page.getByText('20 kg standard bar', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preferred', { exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Edit exercise' }).click();
+  await page.getByTestId('exercise-equipment-badge-trigger').click();
   let dialog = page.getByRole('dialog');
   const activeHeading = dialog.getByText('Zulu E2E Bar Gym · Active gym');
   const otherHeading = dialog.getByText('Alpha E2E Other Gym');
@@ -245,10 +245,10 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await expect(dialog).toBeHidden();
 
   await page.reload();
-  await expect(page.getByText('10 kg EZ bar')).toBeVisible();
-  await expect(page.getByText('Preferred')).toBeVisible();
+  await expect(page.getByText('10 kg EZ bar', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preferred', { exact: true })).toBeVisible();
   await expect(page.getByText('Empty load: 10 kg')).toBeVisible();
-  await expect(page.getByText('20 kg standard bar')).toBeVisible();
+  await expect(page.getByText('20 kg standard bar', { exact: true })).toBeVisible();
 
   let otherInventory = await (await page.request.get(`/api/gyms/${otherGym.id}/inventory`)).json();
   expect(
@@ -286,22 +286,22 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   await page.goto(`/exercises/${exercise.id}`);
-  const standardDetailCard = page
-    .getByText('20 kg standard bar', { exact: true })
-    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
-  await expect(standardDetailCard.getByText('Preferred')).toBeVisible();
+  const standardDetailCard = page.getByRole('button', {
+    name: 'Edit exercise equipment starting from 20 kg standard bar',
+  });
+  await expect(standardDetailCard.getByText('Preferred', { exact: true })).toBeVisible();
   await expect(page.getByText('10 kg EZ bar', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Edit exercise' }).click();
+  await page.getByTestId('exercise-equipment-information-trigger').click();
   dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Use 10 kg EZ bar by default in this gym' }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toBeHidden();
   await page.reload();
-  const smallDetailCard = page
-    .getByText('10 kg EZ bar', { exact: true })
-    .locator('xpath=ancestor::div[contains(@class,"rounded-md border p-3")][1]');
-  await expect(smallDetailCard.getByText('Preferred')).toBeVisible();
+  const smallDetailCard = page.getByRole('button', {
+    name: 'Edit exercise equipment starting from 10 kg EZ bar',
+  });
+  await expect(smallDetailCard.getByText('Preferred', { exact: true })).toBeVisible();
   await expect(page.getByText('20 kg standard bar', { exact: true })).toBeVisible();
 
   const activeInventory = await (await page.request.get(`/api/gyms/${gym.id}/inventory`)).json();
@@ -325,6 +325,111 @@ test('mobile exercise detail and workout use the preferred 10 kg bar profile', a
   await page.getByTestId('set-value-options').getByText('40 kg').click();
   await expect(page.getByTestId('barbell-weight-label')).toContainText('Bar 10 kg');
   await expect(page.getByTestId('barbell-plates')).toBeVisible();
+});
+
+test('mobile exercise detail distinguishes Olymp large and small bars through both edit entries', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 1200 });
+  const registerResponse = await page.request.post('/api/auth/register', {
+    headers: { 'x-forwarded-for': '10.111.0.47' },
+    data: {
+      displayName: 'Olymp Bar Detail E2E',
+      email: `e2e-olymp-bar-detail-${Date.now()}@test.dev`,
+      password: 'supersecret',
+    },
+  });
+  expect(registerResponse.ok()).toBeTruthy();
+
+  const exercise = await (
+    await page.request.post('/api/exercises', {
+      data: {
+        name: 'E2E Olymp Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    })
+  ).json();
+  const gym = await (
+    await page.request.post('/api/gyms', {
+      data: { name: 'Olymp', inventoryMode: 'EQUIPMENT_FIRST', makeActive: true },
+    })
+  ).json();
+  const profileResponse = await page.request.put(`/api/gyms/${gym.id}/system-profiles/barbell`, {
+    data: {
+      exerciseIds: [exercise.id],
+      families: [
+        {
+          family: 'LARGE',
+          loadingSides: 2,
+          bars: [{ weightKg: 12 }, { weightKg: 17.5 }, { weightKg: 20 }],
+          plates: [
+            { weightKg: 1.25, quantity: null },
+            { weightKg: 2.5, quantity: null },
+            { weightKg: 5, quantity: null },
+            { weightKg: 10, quantity: null },
+            { weightKg: 15, quantity: null },
+            { weightKg: 20, quantity: null },
+          ],
+        },
+        {
+          family: 'SMALL',
+          loadingSides: 2,
+          bars: [{ weightKg: 6 }],
+          plates: [
+            { weightKg: 1.25, quantity: null },
+            { weightKg: 2.5, quantity: null },
+            { weightKg: 3.5, quantity: null },
+            { weightKg: 5, quantity: null },
+          ],
+        },
+      ],
+    },
+  });
+  expect(profileResponse.ok()).toBeTruthy();
+
+  await page.goto(`/exercises/${exercise.id}`);
+  const badgeEntry = page.getByTestId('exercise-equipment-badge-trigger');
+  const informationEntry = page.getByTestId('exercise-equipment-information-trigger');
+  await expect(badgeEntry).toBeVisible();
+  await expect(informationEntry).toBeVisible();
+  expect((await badgeEntry.boundingBox())!.height).toBeGreaterThanOrEqual(64);
+  expect((await informationEntry.boundingBox())!.height).toBeGreaterThanOrEqual(64);
+  await expect(page.getByText('Empty load: 6 kg')).toBeVisible();
+  await expect(page.getByText('Empty load: 12 kg')).toBeVisible();
+  await expect(page.getByText('Empty load: 17.5 kg')).toBeVisible();
+  await expect(page.getByText('Empty load: 20 kg')).toBeVisible();
+  await expect(page.getByText('Small / thin diameter').first()).toBeVisible();
+  await expect(page.getByText('Large / thick diameter').first()).toBeVisible();
+
+  await badgeEntry.click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('combobox', { name: 'Equipment type' })).toBeFocused();
+  await dialog
+    .getByRole('button', { name: 'Use Small diameter 6 kg bar by default in this gym' })
+    .click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toBeHidden();
+
+  await page.reload();
+  await expect(badgeEntry).toContainText('Small diameter 6 kg bar');
+  await expect(badgeEntry).toContainText('6 kg empty');
+  await expect(badgeEntry).toContainText('Small / thin diameter');
+  await expect(informationEntry).toContainText('Selected concrete equipment');
+  await expect(informationEntry).toContainText('Small diameter 6 kg bar');
+
+  await informationEntry.click();
+  dialog = page.getByRole('dialog');
+  await dialog
+    .getByRole('button', { name: 'Use Large diameter 20 kg bar by default in this gym' })
+    .click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  await expect(badgeEntry).toContainText('Large diameter 20 kg bar');
+  await expect(badgeEntry).toContainText('20 kg empty');
+  await expect(badgeEntry).toContainText('Large / thick diameter');
 });
 
 test('settings exposes permanent Dumbbells and isolated Barbell system profiles', async ({
