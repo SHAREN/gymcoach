@@ -76,7 +76,7 @@ function beadsTask(
   return {
     id,
     status: 'in_progress',
-    labels: ['stage:verified'],
+    labels: ['stage:awaiting-integration'],
     acceptance_criteria: acceptanceCriteria,
     notes: '',
   };
@@ -88,7 +88,7 @@ function verifiedBeadsTask(
   {
     acceptanceCriteria = 'No installation or production deployment is required.',
     status = 'in_progress',
-    labels = ['stage:verified'],
+    labels = ['stage:awaiting-integration'],
     additionalNotes = '',
   } = {},
 ) {
@@ -318,6 +318,9 @@ async function testNoRuntimeArtifactException() {
     });
     assert.equal(allowedHarness.mode, 'no-runtime-artifact');
     assert.equal(isNoRuntimeArtifactPath('scripts/publish-integration-draft.mjs'), true);
+    assert.equal(isNoRuntimeArtifactPath('scripts/harness-status.ps1'), true);
+    assert.equal(isNoRuntimeArtifactPath('scripts/harness-status-core.mjs'), true);
+    assert.equal(isNoRuntimeArtifactPath('scripts/fixtures/harness-status/complete.json'), true);
     assert.equal(isNoRuntimeArtifactPath('.dockerignore'), false);
 
     authority.tasks['gymcoach-js4'] = {
@@ -579,7 +582,7 @@ async function testAuthoritativeBeadsBinding() {
           [invalidRoot, verifiedBeadsTask(manifest, 'gymcoach-vax')],
           { 'gymcoach-root': ['gymcoach-vax'] },
         ),
-        /must be stage:verified|coordinator authority requires/,
+        /must be stage:awaiting-integration|coordinator authority requires/,
       );
     }
   } finally {

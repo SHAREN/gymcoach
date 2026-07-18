@@ -1,0 +1,51 @@
+{
+  "observedAt": "2026-07-18T16:00:00.000Z",
+  "tasks": [
+    {
+      "id": "gymcoach-review-incomplete",
+      "title": "Review with incomplete thread data",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-ready-incomplete",
+      "title": "Ready with incomplete thread data",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-gate",
+      "title": "Full gate owner",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["area:infrastructure"],
+      "notes": "Exclusive shared full-gate ownership GRANTED for gymcoach-gate."
+    }
+  ],
+  "threads": {
+    "source": "codex-state-sqlite",
+    "complete": false,
+    "problems": [
+      "Desktop runtime and pending clientThreadId state are unavailable from PowerShell."
+    ],
+    "items": [
+      {
+        "id": "saved-thread",
+        "cwd": "D:/GymCoach/Worktrees/unknown",
+        "state": "unknown",
+        "source": "codex-state-sqlite"
+      }
+    ]
+  },
+  "worktrees": [],
+  "disks": [{ "name": "C", "freeBytes": 7000000000 }],
+  "ports": [{ "port": 3030, "listening": true, "ownerPid": 100, "processName": "node" }],
+  "sourceHealth": {
+    "beads": { "ok": true },
+    "git": { "ok": true },
+    "disks": { "ok": true },
+    "ports": { "ok": true }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: verify-task
-description: Independently verify one implemented GymCoach Beads task, record immutable evidence, and move product work to verified awaiting integration without closing it. Use with a TASK-ID after implementation reaches REVIEW, either explicitly or through the Project Dispatcher.
+description: Independently verify one implemented GymCoach Beads task, record immutable evidence, and move product work to stage:awaiting-integration without closing it. Use with a TASK-ID after implementation reaches REVIEW, either explicitly or through the stateless Project Dispatcher.
 ---
 
 # Verify Task
@@ -15,9 +15,6 @@ tests, expand scope, or implement follow-up work.
 ```text
 AGENTS.md
 CLAUDE.md
-docs/PRODUCT.md
-docs/ARCHITECTURE.md
-docs/CURRENT_MILESTONE.md
 docs/CODEX_WORKFLOW.md
 ```
 
@@ -40,7 +37,7 @@ bd dep list TASK-ID
    - stage:review is present;
    - acceptance criteria are non-empty;
    - the current worktree and branch belong to this task.
-   - the Project Dispatcher recorded the exact verifier
+   - the stateless Project Dispatcher recorded the exact verifier
      task/role/thread/host/resolved-path-hash Worktree binding in Beads notes
      from real thread creation state; never invent a missing identity.
 
@@ -159,7 +156,7 @@ transition.
 Remove VERIFY and move the task to VERIFIED / AWAITING_INTEGRATION:
 
 ```text
-bd update TASK-ID --append-notes "Immutable verification evidence v1: {...exact JSON...}" --remove-label stage:verify --add-label stage:verified --status in_progress
+bd update TASK-ID --append-notes "Immutable verification evidence v1: {...exact JSON...}" --remove-label stage:verify --add-label stage:awaiting-integration --status in_progress
 ```
 
 Create a unique temporary sanitized evidence JSON containing only the verified
@@ -175,9 +172,9 @@ back Beads or create a duplicate issue. Report the task as verified and awaiting
 integration. Do not call bd close.
 
 Do not remove the verifier or implementation Worktree from the active verifier
-thread. After this thread becomes inactive, the Project Dispatcher may plan
+thread. After this thread becomes inactive, the stateless Project Dispatcher may plan
 cleanup of the clean verifier Worktree. The implementation Worktree becomes a
-cleanup candidate only at `stage:verified` or closed and remains protected if
+cleanup candidate only at `stage:awaiting-integration` or closed and remains protected if
 any thread still uses it, it is dirty, owner-preserved, or it is the current
 source/integration Worktree. Cleanup requires the raw unfiltered
 `codex_app.list_threads` envelope with no unavailable hosts or tool-limit
@@ -203,8 +200,8 @@ The wrapper requires stage:verify, closes Beads only after the exception guard
 passes, and then closes the exact GitHub mirror. Do not use the exception for
 app, Android, Watch, backend, shared contract, package/runtime, deployment, build
 configuration, or artifact-producing changes. The guard uses a conservative
-allowlist for docs, `.agents/skills`, `.codex`, the named workflow guard scripts,
-their tests/fixtures, and `scripts/verify.sh`. `.dockerignore`, TypeScript,
+allowlist for docs, `.agents/skills`, `.codex`, the named status and workflow
+guard scripts, their tests/fixtures, and `scripts/verify.sh`. `.dockerignore`, TypeScript,
 Tailwind, PostCSS, Prisma, package/Docker, deployment, GitHub automation, and
 product paths are rejected. The harness-only
 `scripts/publish-integration-draft.mjs` path is explicitly allowed.

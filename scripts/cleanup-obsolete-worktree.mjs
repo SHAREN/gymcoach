@@ -808,13 +808,16 @@ export function planWorktreeCleanup({
 
     if (role === 'implementation') {
       const eligible =
-        status === 'closed' || (status === 'in_progress' && stage === 'stage:verified');
-      if (!eligible) reasons.push('implementation task is not closed or stage:verified');
+        status === 'closed' || (status === 'in_progress' && stage === 'stage:awaiting-integration');
+      if (!eligible) {
+        reasons.push('implementation task is not closed or stage:awaiting-integration');
+      }
     }
     if (role === 'verifier') {
       const eligible =
         status === 'closed' ||
-        (status === 'in_progress' && (stage === undefined || stage === 'stage:verified'));
+        (status === 'in_progress' &&
+          (stage === undefined || stage === 'stage:awaiting-integration'));
       if (!eligible) reasons.push('verifier lifecycle is not complete');
     }
     if (role === 'integration' && status !== 'closed') {

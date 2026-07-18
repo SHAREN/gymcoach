@@ -1,6 +1,6 @@
 ---
 name: capture-issue
-description: Capture a new GymCoach bug, idea, feature request, chore, or research need in the authoritative Beads INBOX and mirror it safely to GitHub without interrupting active implementation. Use for an ordinary implementation request routed automatically by AGENTS.md, when the user asks to add something to the queue or remember it for later, or when an unrelated discovery must be recorded.
+description: Capture a new GymCoach bug, idea, feature request, chore, or research need in the authoritative Beads INBOX and mirror it safely to GitHub without interrupting active implementation. Use for an ordinary implementation request routed by the stateless Project Dispatcher, when the user asks to add something to the queue or remember it for later, or when an unrelated discovery must be recorded.
 ---
 
 # Capture Issue

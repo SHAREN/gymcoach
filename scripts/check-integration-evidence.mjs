@@ -16,6 +16,8 @@ const NO_RUNTIME_ALLOWED_EXACT_PATHS = new Set([
   'scripts/check-integration-evidence.mjs',
   'scripts/cleanup-obsolete-worktree.mjs',
   'scripts/close-integrated-tasks.mjs',
+  'scripts/harness-status-core.mjs',
+  'scripts/harness-status.ps1',
   'scripts/publish-integration-draft.mjs',
   'scripts/sync-beads-github.mjs',
   'scripts/verify.sh',
@@ -25,6 +27,7 @@ const NO_RUNTIME_ALLOWED_PREFIXES = [
   '.codex/',
   'docs/',
   'scripts/fixtures/github-mirror/',
+  'scripts/fixtures/harness-status/',
   'scripts/fixtures/integration-evidence/',
   'scripts/fixtures/worktree-cleanup/',
 ];
@@ -35,7 +38,7 @@ const STAGE_LABELS = new Set([
   'stage:ready',
   'stage:review',
   'stage:verify',
-  'stage:verified',
+  'stage:awaiting-integration',
 ]);
 const GYMCOACH_ANDROID_PACKAGE = 'org.sharteman.gymcoach';
 
@@ -594,7 +597,7 @@ function taskHasVerifiedEvidence(
   const stages = taskStageLabels(task);
   const hasImmutableRecord = verificationRecords(task).length > 0;
   if (!hasImmutableRecord || task.status !== 'in_progress') return false;
-  if (stages.length === 1 && stages[0] === 'stage:verified') return true;
+  if (stages.length === 1 && stages[0] === 'stage:awaiting-integration') return true;
   if (allowVerifyStage && stages.length === 1 && stages[0] === 'stage:verify') return true;
   return (
     allowPartialClosure &&
@@ -810,7 +813,7 @@ function deriveAuthoritativePlan(
       verifiedTaskIds.push(taskId);
     } else {
       reject(
-        `authoritative required task ${taskId} must be stage:verified before integration closure`,
+        `authoritative required task ${taskId} must be stage:awaiting-integration before integration closure`,
       );
     }
   }

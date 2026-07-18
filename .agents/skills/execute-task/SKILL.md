@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use when invoked with a TASK-ID either explicitly by the user or automatically by the Project Dispatcher after the task reaches READY.
+description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use when invoked with a TASK-ID either explicitly by the user or by the stateless Project Dispatcher after the task reaches READY.
 ---
 
 # Execute Task
@@ -17,9 +17,6 @@ Before editing:
 ```text
 AGENTS.md
 CLAUDE.md
-docs/PRODUCT.md
-docs/ARCHITECTURE.md
-docs/CURRENT_MILESTONE.md
 docs/CODEX_WORKFLOW.md
 ```
 
@@ -49,7 +46,7 @@ bd dep list TASK-ID
    - git rev-parse --git-dir differs from git rev-parse --git-common-dir after
      path normalization, proving this is a linked worktree;
    - the current Codex task is dedicated to this Beads task.
-   - the Project Dispatcher recorded the exact implementation
+   - the stateless Project Dispatcher recorded the exact implementation
      task/role/thread/host/resolved-path-hash Worktree binding in Beads notes
      from real thread creation state. If it is missing, report the coordination
      gap; do not invent an identity for later cleanup.
@@ -196,8 +193,9 @@ identifiers, or personal data to GitHub. A partial mirror failure does not
 change REVIEW state and is retried separately.
 
 Do not remove or unregister the current implementation Worktree. REVIEW and
-VERIFY require it to remain available. The Project Dispatcher may consider it
-for automatic cleanup only after the task later reaches `stage:verified` or
+VERIFY require it to remain available. The stateless Project Dispatcher may
+consider it for automatic cleanup only after the task later reaches
+`stage:awaiting-integration` or
 closed, the implementation thread is inactive, and
 `scripts/cleanup-obsolete-worktree.mjs` validates fresh complete Codex thread
 state from the raw unfiltered `codex_app.list_threads` envelope, the exact

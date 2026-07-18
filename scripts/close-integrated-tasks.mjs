@@ -113,7 +113,8 @@ export function planClosureTaskAction({ evidence, taskId, issue }) {
       fail(`${taskId} coordinator must be stage-less before guarded closure`);
     }
   } else {
-    const expectedLabel = evidence.mode === 'integration' ? 'stage:verified' : 'stage:verify';
+    const expectedLabel =
+      evidence.mode === 'integration' ? 'stage:awaiting-integration' : 'stage:verify';
     if (stageLabels.length !== 1 || stageLabels[0] !== expectedLabel) {
       fail(`${taskId} must be in_progress with only ${expectedLabel} before guarded closure`);
     }

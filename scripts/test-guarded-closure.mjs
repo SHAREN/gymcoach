@@ -312,7 +312,7 @@ const retryTasks = new Map([
     {
       id: 'gymcoach-child',
       status: 'in_progress',
-      labels: ['stage:verified', 'area:infrastructure'],
+      labels: ['stage:awaiting-integration', 'area:infrastructure'],
       notes: '',
     },
   ],
@@ -403,7 +403,7 @@ assert.throws(
       repo: root,
       adapters: { readTask: () => stranded },
     }),
-  /must be in_progress with only stage:verified/,
+  /must be in_progress with only stage:awaiting-integration/,
 );
 
 async function testFullWrapperPartialCloseRetry() {

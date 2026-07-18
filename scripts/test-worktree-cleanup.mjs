@@ -265,14 +265,14 @@ assertPreserved(
     }),
     task: task('in_progress', [], { role: 'implementation' }),
   }),
-  /not closed or stage:verified/,
+  /not closed or stage:awaiting-integration/,
 );
 assert.equal(
   plan({
     manifest: manifest({
       candidate: { ...manifest().candidate, role: 'implementation' },
     }),
-    task: task('in_progress', ['stage:verified'], { role: 'implementation' }),
+    task: task('in_progress', ['stage:awaiting-integration'], { role: 'implementation' }),
   }).action,
   'remove-worktree',
 );

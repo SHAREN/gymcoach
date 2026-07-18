@@ -1,6 +1,6 @@
 ---
 name: integrate-tasks
-description: Integrate one root GymCoach request's independently verified Beads tasks in dependency order, run combined gates, validate runtime artifacts, close tasks through the deterministic guard, mirror final state to GitHub, and optionally publish the verified integration branch as a draft PR. Use after required tasks reach stage:verified.
+description: Integrate one root GymCoach request's independently verified Beads tasks in dependency order, run combined gates, validate runtime artifacts, close tasks through the deterministic guard, mirror final state to GitHub, and optionally publish the verified integration branch as a draft PR. Use after required tasks reach stage:awaiting-integration.
 ---
 
 # Integrate Tasks
@@ -13,7 +13,7 @@ This is the only normal product-task closure path.
 1. Read AGENTS.md, CLAUDE.md, docs/CODEX_WORKFLOW.md, and the complete
    verify-task skill.
 2. Run bd prime and inspect every required task with bd show and bd dep list.
-3. Require every product task to be in_progress with stage:verified and to have
+3. Require every product task to be in_progress with stage:awaiting-integration and to have
    exactly matching `Immutable verification evidence v1` JSON containing its
    verified base, verified commit, gate command/head/exit, and artifact impact.
 4. Record the current integration base. Inspect active tasks, every relevant
@@ -24,7 +24,7 @@ This is the only normal product-task closure path.
 codex/integration-ROOT-TASK-ID
 ```
 
-Require the Project Dispatcher to record the exact integration
+Require the stateless Project Dispatcher to record the exact integration
 task/role/thread/host/resolved-path-hash Worktree binding on the root Beads task
 from real thread creation state before integration begins. Do not fabricate a
 missing thread or host identity for cleanup.
@@ -134,7 +134,7 @@ review, close through the wrapper only:
 node scripts/close-integrated-tasks.mjs --manifest PATH
 ```
 
-The wrapper validates again, requires stage:verified, closes Beads, then mirrors
+The wrapper validates again, requires stage:awaiting-integration, closes Beads, then mirrors
 the closed state and sanitized evidence to the exact GitHub issue. Beads remains
 authoritative. A GitHub partial failure must be reported and retried without
 reopening or corrupting the successfully closed Beads task.
@@ -195,7 +195,7 @@ Report:
 
 Keep the integration Worktree while it remains the current source or current
 integration line. After guarded closure, any authorized draft publication, and
-an explicit no-longer-needed decision, let the preserved Project Dispatcher
+an explicit no-longer-needed decision, let the stateless Project Dispatcher
 capture a fresh complete live Codex thread snapshot and run:
 
 ```text

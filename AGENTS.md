@@ -121,7 +121,8 @@ For every implementation request, the coordinating Codex task must:
 8. Run verify-task as a separate pass for every implementation. Failed
    verification returns the task to its single write-owning implementation
    agent. Successful product verification records immutable base/commit
-   evidence and moves the task to `stage:verified`; it does not close it. Record
+   evidence and moves the task to `stage:awaiting-integration`; it does not
+   close it. Record
    the verifier thread/host/resolved-path binding before dispatching the pass.
 9. Dispatch integrate-tasks after all required tasks are verified. Integrate
    their commits in dependency order into a dedicated integration Worktree,
@@ -137,7 +138,7 @@ For every implementation request, the coordinating Codex task must:
     guard. Report the root request with integrated, published, installed, and
     deployed states separately.
 11. After an implementation, verifier, or integration Worktree is no longer
-    needed and every Codex thread using it is inactive, the preserved Project
+    needed and every Codex thread using it is inactive, the stateless Project
     Dispatcher captures a fresh complete live thread snapshot, runs the
     repository cleanup guard in planning mode, and applies only the eligible
     removals. A task never removes its own current Worktree.
@@ -150,9 +151,14 @@ read-only research, review, or verification.
 
 When Codex thread automations are available and child work will outlive the
 current turn, create or reuse one heartbeat for the coordinating task. Every
-heartbeat must reread Beads and live task state, avoid duplicate writers or
-verifiers, and stop after the root request completes or needs new authority.
-Never hardcode a stale branch HEAD as the source of truth.
+cycle must run `scripts/harness-status.ps1` first and reconstruct state from
+current read-only Beads, Git, OS, and Codex sources. Prompt history is never an
+operational source of truth. Incomplete Codex thread discovery suppresses new
+writer/verifier creation, and a durable queued reservation is treated as
+creation-pending or unresolved until explicit recovery. Perform at most one safe
+transition per cycle and stop after the root request completes or needs new
+authority. Never hardcode a task ID, thread ID, Worktree path, port owner,
+full-gate owner, blocker, or stale branch HEAD in the heartbeat prompt.
 
 Dependency-ordered tasks that have not started remain `open + stage:ready` with
 blocking dependencies. Native `blocked` is reserved for external/manual blockers
@@ -200,7 +206,7 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
 - Preserve dispatcher, primary, current-execution, current-source, current-
   integration, owner-preserved, Git-locked, main/master, active-thread, dirty,
   REVIEW, and VERIFY Worktrees. Preserve an implementation Worktree until its
-  task is closed or `stage:verified`, and preserve an integration Worktree
+  task is closed or `stage:awaiting-integration`, and preserve an integration Worktree
   until the root is closed. `worktree:preserve` is an explicit owner hold.
 - Before removing a clean Worktree whose immutable HEAD is otherwise
   unreachable, create and verify a full-SHA archive ref under
@@ -245,17 +251,21 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
 - One implementation task has one write-owning agent. Do not run multiple
   agents that edit the same task or Worktree. Read-only research, review, and
   verification may be delegated in parallel.
-- The Project Dispatcher is code-read-only but acts as the default coordinator.
-  It may capture, triage, select, decompose, create child Worktree tasks,
-  dispatch work, monitor results, integrate verified commits, and clean only
-  obsolete inactive Worktrees through the deterministic cleanup guard. It must
-  not edit product code or claim an implementation task itself.
+- The stateless Project Dispatcher v2 is code-read-only and acts as the default
+  coordinator. Every cycle begins with `scripts/harness-status.ps1`; only its
+  fresh JSON and current Beads state may drive a transition. It may capture,
+  triage, select, decompose, create child Worktree tasks, dispatch work, monitor
+  results, integrate verified commits, and clean only obsolete inactive
+  Worktrees through the deterministic cleanup guard. It performs at most one
+  safe transition per cycle, never duplicates a reserved or active writer or
+  verifier, and must not edit product code or claim an implementation task
+  itself.
 - One task must produce one focused diff.
 - Do not expand task scope. Capture unrelated findings as separate linked
   tasks.
 - Do not modify product code during issue capture or triage.
 - Do not work directly on main or master.
-- Product verification ends at `stage:verified`. Do not call `bd close` directly.
+- Product verification ends at `stage:awaiting-integration`. Do not call `bd close` directly.
   The normal close path is `scripts/close-integrated-tasks.mjs` after combined
   integration evidence passes against the live Beads dependency graph and
   acceptance criteria. Pure harness/docs work may use only the explicit
@@ -267,8 +277,9 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
   older immutable verification prose are legacy audit entries, not current
   verified tasks.
 - The no-runtime exception is a conservative allowlist limited to documentation,
-  repo-local agent/Codex harness files, the named integration/mirror/cleanup/
-  publication guard scripts, their tests/fixtures, and `scripts/verify.sh`.
+  repo-local agent/Codex harness files, the named status/integration/mirror/
+  cleanup/publication guard scripts, their tests/fixtures, and
+  `scripts/verify.sh`.
   Build inputs such as `.dockerignore`, TypeScript, Tailwind, PostCSS, Prisma,
   package, Docker, runtime, deployment, and product paths fail closed. The
   harness-only `scripts/publish-integration-draft.mjs` path is explicitly

@@ -33,7 +33,7 @@ Use Beads standard statuses plus at most one workflow stage label:
 | IN_PROGRESS                     | in_progress  | none                                                   |
 | REVIEW                          | in_progress  | stage:review                                           |
 | VERIFY                          | in_progress  | stage:verify                                           |
-| VERIFIED / AWAITING_INTEGRATION | in_progress  | stage:verified                                         |
+| VERIFIED / AWAITING_INTEGRATION | in_progress  | stage:awaiting-integration                             |
 | DONE                            | closed       | none                                                   |
 | BLOCKED                         | blocked      | preserve the prior stage only when it helps resumption |
 
@@ -61,7 +61,7 @@ stage:inbox
 stage:ready
 stage:review
 stage:verify
-stage:verified
+stage:awaiting-integration
 ```
 
 Type:
@@ -104,15 +104,28 @@ Priority meanings:
 - P2: an ordinary bug or meaningful improvement.
 - P3: a cosmetic issue, idea, or technical debt.
 
-## Project Dispatcher
+## Stateless Project Dispatcher v2
 
-Keep one long-lived Codex task named:
+Keep one coordinating Codex task named:
 
 ```text
 Project Dispatcher
 ```
 
-Use it as the default code-read-only coordinator:
+Use it as the default code-read-only coordinator. Every cycle starts with:
+
+```text
+pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/harness-status.ps1
+```
+
+The JSON reconstructs current Beads tasks and dependencies, Git Worktrees, disk
+and port state, Codex identities, durable queued reservations, full-gate
+ownership, source health, and idempotent safe actions. Prompt history is never
+operational state. Incomplete thread discovery suppresses writer/verifier
+creation, and a durable `clientThreadId` reservation remains creation-pending or
+unresolved until explicit recovery.
+
+Perform at most one safe transition per cycle through the workflow skills:
 
 ```text
 $capture-issue
@@ -121,9 +134,10 @@ $next-task
 ```
 
 Capturing a Beads task must not create a visible Codex task, switch branches,
-claim work, or interrupt an active implementation. After successful triage,
-an explicit implementation request may automatically create and dispatch a
-separate Codex Worktree task.
+claim work, or interrupt an active implementation. After successful triage, an
+explicit implementation request may reserve, create, and dispatch a separate
+Codex Worktree task only when fresh complete thread evidence proves that no
+writer already represents the task.
 
 ## Automatic Request Routing
 
@@ -141,7 +155,7 @@ coordinator automatically:
 6. dispatches execute-task for each task;
 7. runs independent tasks concurrently and ordered tasks serially;
 8. records the verifier Worktree binding and dispatches a separate verify-task
-   pass, which leaves product work at stage:verified;
+   pass, which leaves product work at stage:awaiting-integration;
 9. dispatches integrate-tasks to combine verified commits in dependency order
    in a local integration branch and Worktree, recording its binding on the root
    task;
@@ -156,10 +170,11 @@ is required. Questions, explanations, read-only reviews, and diagnostics do not
 enter the implementation lifecycle automatically.
 
 For work that continues beyond the current turn, the Codex coordinator creates
-or reuses one thread heartbeat. It rereads Beads and live task state on every
-run, avoids duplicate writers/verifiers, performs eligible Worktree cleanup
-from a fresh complete live thread snapshot, and stops when the root request is
-complete or needs new authority.
+or reuses one heartbeat with the short prompt in
+docs/PROJECT_DISPATCHER_V2_PROMPT.md. It runs the status harness on every cycle,
+performs at most one safe transition, avoids duplicate writers/verifiers,
+performs eligible Worktree cleanup from a fresh complete live thread snapshot,
+and stops when the root request is complete or needs new authority.
 
 Not-started dependency-ordered work remains `open + stage:ready`; the dependency
 graph keeps it out of bd ready. Native blocked is reserved for external/manual
@@ -188,8 +203,9 @@ The repository integrates the workflow directly with Codex:
   trusted project.
 - .codex/hooks.json loads and refreshes Beads context on session start, prompt
   submission, and context compaction.
-- The long-lived Project Dispatcher task remains available while separate
-  implementation tasks run in Codex-managed Worktrees.
+- The Project Dispatcher is stateless across cycles: it rebuilds the execution
+  snapshot with scripts/harness-status.ps1 while separate implementation tasks
+  run in Codex-managed Worktrees.
 
 Project-local configuration and hooks load only for a trusted checkout. Review
 them with /hooks after changes. A new Codex task or application restart may be
@@ -197,7 +213,7 @@ required after changing skill or hook files.
 
 ## Automatic Worktree Cleanup
 
-The preserved Project Dispatcher owns cleanup after an implementation,
+The stateless Project Dispatcher owns cleanup after an implementation,
 verifier, or integration thread is no longer running and the Worktree is no
 longer needed. A child task records cleanup eligibility at handoff but never
 self-removes. Hooks do not run cleanup because they do not have an authoritative
@@ -238,7 +254,7 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, binding the task, derived
   role, thread, host, and resolved path SHA-256; a caller-declared role cannot
   override or replace this ownership evidence;
 - Beads status and its single stage label are compatible with the candidate
-  role: implementation is closed or `stage:verified`, verifier has completed
+  role: implementation is closed or `stage:awaiting-integration`, verifier has completed
   its success/failure lifecycle, and integration is closed;
 - the Worktree is registered under the same Git common directory, is unlocked,
   is not main/master or the primary/current Worktree, and has no staged,
@@ -365,16 +381,16 @@ Selection order:
 1. The task has stage:ready.
 2. All blocking dependencies are complete.
 3. Priority is P0, P1, P2, then P3.
-4. The task aligns with docs/CURRENT_MILESTONE.md.
-5. For a tie, select the oldest task.
+4. For a tie, select the oldest task.
 
 When another implementation is active, also reject a candidate whose affected
 files or shared contracts overlap that active work. Missing scope information
 is a triage defect, not permission to run the tasks concurrently.
 
-If the current milestone remains an open question, report that the milestone
-criterion could not be applied and use the remaining ordering. Selection does
-not claim or start the task.
+Use current Beads root-request relationships when the user is continuing an
+existing request. Do not use a static milestone document as queue authority.
+Tasks already at `stage:awaiting-integration` are integration candidates, not
+READY implementation candidates. Selection does not claim or start the task.
 
 ## Start Implementation
 
@@ -425,7 +441,8 @@ thread snapshot prove it is no longer needed.
 
 ## Verification
 
-In the implementation Codex task, invoke:
+The Dispatcher creates a separate verifier Codex task and Worktree, records its
+authoritative binding, and invokes:
 
 ```text
 $verify-task TASK-ID
@@ -477,7 +494,7 @@ docs/ai-coach-principles.md rules.
 
 On product success, record the exact verified base, exact verified commit, gate
 commands/results, scope, artifact impact, and any installation/deployment
-requirements. Remove stage:verify and add stage:verified. The task remains
+requirements. Remove stage:verify and add stage:awaiting-integration. The task remains
 in_progress and the GitHub issue remains open as verified / awaiting integration.
 An isolated task APK or temporary runtime is not closure evidence.
 
@@ -497,8 +514,8 @@ only through an explicit no-runtime-artifact manifest. The deterministic guard
 must prove that its declared changed paths exactly match the verified Git diff
 and contain no product/runtime paths. This is the sole exception to integration.
 The path check is an explicit conservative allowlist: documentation,
-`.agents/skills`, `.codex`, the named integration/mirror/publication/cleanup
-scripts, their tests/fixtures, and `scripts/verify.sh`. Actual build inputs such
+`.agents/skills`, `.codex`, the named status/integration/mirror/publication/
+cleanup scripts, their tests/fixtures, and `scripts/verify.sh`. Actual build inputs such
 as `.dockerignore`, `tsconfig`, Tailwind, PostCSS, Prisma, package/Docker files,
 deployment/runtime paths, or product code are rejected. The harness-only
 `scripts/publish-integration-draft.mjs` file is allowed.
@@ -516,9 +533,9 @@ structured evidence only. A mirror failure does not change the Beads result.
 
 After the verifier thread becomes inactive, the Dispatcher may clean its clean
 verifier Worktree whether verification returned an exact failure to the writer
-or moved the task to `stage:verified`. Verification failure never makes the
+or moved the task to `stage:awaiting-integration`. Verification failure never makes the
 implementation Worktree obsolete. A successful implementation Worktree is
-eligible only after `stage:verified` or guarded closure and the same live-thread
+eligible only after `stage:awaiting-integration` or guarded closure and the same live-thread
 and Git safety checks pass.
 
 ## Guarded Integration And Closure
@@ -530,7 +547,7 @@ $integrate-tasks ROOT-TASK-ID
 ```
 
 Use one dedicated integration Worktree and preferably a branch named
-codex/integration-ROOT-TASK-ID. Read every stage:verified task, order commits by
+codex/integration-ROOT-TASK-ID. Read every stage:awaiting-integration task, order commits by
 dependencies, record `authority.rootTaskId`, record the complete
 requiredTaskIds set, and preserve newer work. The guard rereads that Beads root
 and every transitive `blocks` dependency, then requires the reviewed manifest
@@ -583,7 +600,7 @@ node scripts/close-integrated-tasks.mjs --manifest PATH --dry-run
 node scripts/close-integrated-tasks.mjs --manifest PATH
 ```
 
-The closure wrapper validates again, requires stage:verified, closes Beads, and
+The closure wrapper validates again, requires stage:awaiting-integration, closes Beads, and
 only then closes the exact GitHub mirror with sanitized integration/artifact
 evidence. Root coordination tasks are closed last, after all computed mapped
 tasks and delivery gates pass. It reports GitHub partial failures without
