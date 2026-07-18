@@ -1,24 +1,32 @@
 package org.sharteman.gymcoach.ui.programs
 
 import android.content.res.Configuration
+import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.IOException
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -42,7 +50,7 @@ import org.sharteman.gymcoach.ui.theme.GymCoachTheme
 
 class ProgramsCatalogUiTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun opensNativeProgramDetailsAndTargets() {
@@ -183,6 +191,7 @@ class ProgramsCatalogUiTest {
                     historyByExerciseId = mapOf("bench" to listOf(history)),
                     progressPointsByExerciseId = mapOf("bench" to listOf(progressPoint)),
                     unit = "KG",
+                    ownerUserId = "user-1",
                     onOpenProgress = { exerciseId -> openedProgressId = exerciseId },
                     onOpenHistory = { sessionId, startedAt ->
                         openedHistory = sessionId to startedAt
@@ -213,6 +222,170 @@ class ProgramsCatalogUiTest {
         composeRule.onNodeWithTag("exercise-detail-edit").performClick()
         composeRule.onNodeWithTag("exercise-editor").assertIsDisplayed()
         composeRule.onNodeWithTag("exercise-editor-name").assertTextContains("Bench Press")
+    }
+
+    @Test
+    fun catalogEditSavesInPlaceAndFailureRetriesWithoutDuplicateOrLostDraft() {
+        val dataSource = FakeProgramsCatalogDataSource().apply { failNextExerciseUpdates = 1 }
+        composeRule.setContent {
+            GymCoachTheme {
+                ExerciseCatalogScreen(
+                    dataSource = dataSource,
+                    serverUrl = "https://example.test",
+                    ownerUserId = "user-1",
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("exercise-bench").performClick()
+        composeRule.onNodeWithTag("exercise-detail-edit").performClick()
+        composeRule.onNodeWithTag("exercise-editor-name").performTextClearance()
+        composeRule.onNodeWithTag("exercise-editor-name").performTextInput("Updated Bench")
+        composeRule.onNodeWithTag("exercise-editor-save").performClick()
+
+        val errorText = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(R.string.exercise_update_error)
+        composeRule.onNodeWithTag("exercise-editor-error")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Error, errorText))
+        composeRule.onNodeWithTag("exercise-editor-name").assertTextContains("Updated Bench")
+        composeRule.runOnIdle { assertEquals(1, dataSource.exerciseUpdateAttempts) }
+
+        composeRule.onNodeWithTag("exercise-editor-save").performClick()
+        composeRule.onNodeWithTag("exercise-editor").assertDoesNotExist()
+        composeRule.onNodeWithTag("exercise-details-dialog").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Updated Bench").onFirst().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(2, dataSource.exerciseUpdateAttempts) }
+
+        composeRule.onNodeWithContentDescription("Back to exercise catalog").performClick()
+        composeRule.onNodeWithTag("exercise-details-dialog").assertDoesNotExist()
+        composeRule.onAllNodesWithText("Updated Bench").onFirst().assertIsDisplayed()
+    }
+
+    @Test
+    fun editorCancelAndProcessRestoreKeepExactCallerAndDraftWithoutMutation() {
+        val dataSource = FakeProgramsCatalogDataSource()
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent {
+            GymCoachTheme {
+                ExerciseCatalogScreen(
+                    dataSource = dataSource,
+                    serverUrl = "https://example.test",
+                    ownerUserId = "user-1",
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("exercise-bench").performClick()
+        composeRule.onNodeWithTag("exercise-detail-edit").performClick()
+        composeRule.onNodeWithTag("exercise-editor-name").performTextClearance()
+        composeRule.onNodeWithTag("exercise-editor-name").performTextInput("Unsaved draft")
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        composeRule.onNodeWithTag("exercise-editor").assertIsDisplayed()
+        composeRule.onNodeWithTag("exercise-editor-name").assertTextContains("Unsaved draft")
+        composeRule.runOnIdle { assertEquals(0, dataSource.exerciseUpdateAttempts) }
+
+        composeRule.onNodeWithTag("exercise-editor-cancel").performClick()
+        composeRule.onNodeWithTag("exercise-editor").assertDoesNotExist()
+        composeRule.onNodeWithTag("exercise-details-dialog").assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(0, dataSource.exerciseUpdateAttempts) }
+    }
+
+    @Test
+    fun systemBackReturnsFromEditorToTheSameExerciseDetail() {
+        val dataSource = FakeProgramsCatalogDataSource()
+        composeRule.setContent {
+            GymCoachTheme {
+                ExerciseCatalogScreen(
+                    dataSource = dataSource,
+                    serverUrl = "https://example.test",
+                    ownerUserId = "user-1",
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("exercise-bench").performClick()
+        composeRule.onNodeWithTag("exercise-detail-edit").performClick()
+        composeRule.onNodeWithTag("exercise-editor").assertIsDisplayed()
+
+        composeRule.runOnIdle { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
+
+        composeRule.onNodeWithTag("exercise-editor").assertDoesNotExist()
+        composeRule.onNodeWithTag("exercise-details-dialog").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Bench Press").onFirst().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(0, dataSource.exerciseUpdateAttempts) }
+    }
+
+    @Test
+    fun unownedExerciseNeverExposesEditOrDeleteMutations() {
+        composeRule.setContent {
+            GymCoachTheme {
+                ExerciseCatalogScreen(
+                    dataSource = FakeProgramsCatalogDataSource(),
+                    serverUrl = "https://example.test",
+                    ownerUserId = "user-1",
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("exercise-row").performScrollTo().performClick()
+
+        composeRule.onNodeWithTag("exercise-detail-edit").assertDoesNotExist()
+        composeRule.onNodeWithTag("exercise-detail-delete").assertDoesNotExist()
+    }
+
+    @Test
+    fun ownedEditorRemainsAccessibleOnNarrowRussianScreen() {
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ru"))
+            val russianContext = InstrumentationRegistry.getInstrumentation().targetContext
+                .createConfigurationContext(Configuration().apply { setLocale(Locale("ru")) })
+            assertEquals("Изменить упражнение", russianContext.getString(R.string.exercise_edit))
+            composeRule.setContent {
+                val baseContext = LocalContext.current
+                val baseConfiguration = LocalConfiguration.current
+                val configuration = remember(baseConfiguration) {
+                    Configuration(baseConfiguration).apply {
+                        setLocale(Locale("ru"))
+                        screenWidthDp = 320
+                        screenHeightDp = 640
+                    }
+                }
+                val localizedContext = remember(baseContext, configuration) {
+                    baseContext.createConfigurationContext(configuration)
+                }
+                CompositionLocalProvider(
+                    LocalContext provides localizedContext,
+                    LocalConfiguration provides configuration,
+                ) {
+                    GymCoachTheme {
+                        ExerciseCatalogScreen(
+                            dataSource = FakeProgramsCatalogDataSource(),
+                            serverUrl = "https://example.test",
+                            ownerUserId = "user-1",
+                            onBack = {},
+                        )
+                    }
+                }
+            }
+
+            composeRule.onNodeWithTag("exercise-bench").performClick()
+            composeRule.onNodeWithTag("exercise-detail-edit").performClick()
+
+            composeRule.onNodeWithTag("exercise-editor").assertIsDisplayed()
+            composeRule.onNodeWithTag("exercise-editor-name").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithTag("exercise-editor-cancel").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithTag("exercise-editor-save").performScrollTo().assertIsDisplayed()
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
     }
 
     @Test
@@ -323,8 +496,12 @@ class ProgramsCatalogUiTest {
 }
 
 private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
-    private val bench = ExerciseDto(
+    var exerciseUpdateAttempts = 0
+    var failNextExerciseUpdates = 0
+
+    private var bench = ExerciseDto(
         id = "bench",
+        userId = "user-1",
         name = "Bench Press",
         muscleGroup = "CHEST",
         category = "COMPOUND",
@@ -393,6 +570,23 @@ private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
     override suspend fun updateProgramExercise(id: String, input: ProgramExerciseInput) = error("unused")
     override suspend fun deleteProgramExercise(id: String) = Unit
     override suspend fun createExercise(input: ExerciseInput) = error("unused")
-    override suspend fun updateExercise(id: String, input: ExerciseInput) = error("unused")
+    override suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto {
+        exerciseUpdateAttempts++
+        if (failNextExerciseUpdates > 0) {
+            failNextExerciseUpdates--
+            throw IOException("offline")
+        }
+        check(id == bench.id)
+        bench = bench.copy(
+            name = input.name,
+            muscleGroup = input.muscleGroup,
+            category = input.category,
+            defaultRestSec = input.defaultRestSec,
+            notes = input.notes,
+            usesBodyweight = input.usesBodyweight,
+            equipmentType = input.equipmentType,
+        )
+        return bench
+    }
     override suspend fun deleteExercise(id: String) = Unit
 }

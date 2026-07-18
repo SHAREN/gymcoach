@@ -25,6 +25,7 @@ import org.sharteman.gymcoach.data.offline.OfflineMutation
 import org.sharteman.gymcoach.data.offline.OfflineMutationController
 import org.sharteman.gymcoach.data.offline.OfflinePersistence
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.offline.OfflineSyncLock
 import org.sharteman.gymcoach.data.offline.SetProgramActiveMutation
 import org.sharteman.gymcoach.data.offline.UpdateExerciseMutation
 import org.sharteman.gymcoach.data.offline.UpdateProgramExerciseMutation
@@ -40,6 +41,7 @@ class ProgramsCatalogRepository private constructor(
     private val persistence: OfflinePersistence?,
     private val networkStatus: NetworkStatus,
     private val scheduleSync: () -> Unit,
+    private val ownerUserId: String? = null,
 ) : ProgramsCatalogDataSource {
     private val mutex = Mutex()
 
@@ -160,31 +162,82 @@ class ProgramsCatalogRepository private constructor(
     }
 
     override suspend fun listExercises(): List<ExerciseDto> = mutex.withLock {
-        val base = refreshCatalogPart { current -> current.copy(exercises = remote.listExercises()) }
+        val base = refreshExerciseCatalog(authoritative = true) { remote.listExercises() }
         view(base).exercises
     }
 
     override suspend fun getExercise(id: String): ExerciseDto = mutex.withLock {
-        val base = refreshCatalogPart { current ->
-            val loaded = remote.getExercise(id)
-            current.copy(exercises = current.exercises.filterNot { it.id == id } + loaded)
-        }
+        val base = refreshExerciseCatalog(authoritative = false) { listOf(remote.getExercise(id)) }
         view(base).exercises.firstOrNull { it.id == id }
             ?: throw IOException("Exercise is not available offline.")
     }
 
     override suspend fun createExercise(input: ExerciseInput): ExerciseDto = mutex.withLock {
         if (persistence == null) return@withLock remote.createExercise(input)
-        val mutation = CreateExerciseMutation(operationId(), entityId("exercise"), input)
+        val mutation = CreateExerciseMutation(operationId(), entityId("exercise"), input, ownerUserId)
         enqueue(mutation)
         view(loadBase()).exercises.first { it.id == mutation.exerciseId }
     }
 
     override suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto = mutex.withLock {
-        if (persistence == null) return@withLock remote.updateExercise(id, input)
-        enqueue(UpdateExerciseMutation(operationId(), id, input))
-        view(loadBase()).exercises.firstOrNull { it.id == id }
+        updateExerciseLocked(id, input, expected = null)
+    }
+
+    suspend fun updateExercise(expected: ExerciseDto, input: ExerciseInput): ExerciseDto = mutex.withLock {
+        updateExerciseLocked(expected.id, input, expected)
+    }
+
+    private suspend fun updateExerciseLocked(
+        id: String,
+        input: ExerciseInput,
+        expected: ExerciseDto?,
+    ): ExerciseDto {
+        if (persistence == null) {
+            if (expected == null) return remote.updateExercise(id, input)
+            val current = remote.getExercise(id)
+            if (current.hasGeneralMetadata(input)) return current
+            if (!current.hasSameGeneralMetadata(expected)) {
+                throw IOException("Exercise changed after the editor was opened.")
+            }
+            return remote.updateExercise(id, input)
+        }
+        val base = loadBase()
+        val current = view(base).exercises.firstOrNull { it.id == id }
             ?: throw IOException("Exercise is not available offline.")
+        if (current.userId == null || ownerUserId != null && current.userId != ownerUserId) {
+            throw IOException("Exercise is not editable.")
+        }
+        val store = requireNotNull(persistence)
+        val key = requireNotNull(accountKey)
+        val existing = store.operations(key).lastOrNull { stored ->
+            val mutation = stored.mutation as? UpdateExerciseMutation
+            mutation?.exerciseId == id && mutation.input == input
+        }
+        if (current.hasGeneralMetadata(input)) {
+            if (existing != null) {
+                store.retry(existing.mutation.operationId)
+                scheduleSync()
+            }
+            return current
+        }
+        if (expected != null && !current.hasSameGeneralMetadata(expected)) {
+            throw IOException("Exercise changed after the editor was opened.")
+        }
+
+        if (existing == null) {
+            enqueue(
+                UpdateExerciseMutation(
+                    operationId = operationId(),
+                    exerciseId = id,
+                    input = input,
+                    expected = current.generalMetadataInput(),
+                ),
+            )
+        } else {
+            store.retry(existing.mutation.operationId)
+            scheduleSync()
+        }
+        return current.withGeneralMetadata(input)
     }
 
     override suspend fun deleteExercise(id: String) = mutex.withLock {
@@ -200,41 +253,92 @@ class ProgramsCatalogRepository private constructor(
 
     suspend fun seedActiveProgram(program: ProgramDto) = mutex.withLock {
         if (persistence == null || accountKey == null) return@withLock
+        OfflineSyncLock.mutex.withLock {
+            val current = loadBase()
+            val cachedProgram = current.programs.firstOrNull { it.id == program.id }
+            val seededProgram = ManagedProgramDto(
+                id = program.id,
+                name = program.name,
+                description = program.description,
+                phase = program.phase,
+                isActive = true,
+                workouts = program.workouts,
+                counts = cachedProgram?.counts ?: ProgramCountsDto(workouts = program.workouts.size),
+            )
+            val programs = current.programs.map { cached ->
+                if (cached.id == program.id) seededProgram else cached.copy(isActive = false)
+            }.let { merged ->
+                if (cachedProgram == null) merged + seededProgram else merged
+            }
 
-        val current = loadBase()
-        val cachedProgram = current.programs.firstOrNull { it.id == program.id }
-        val seededProgram = ManagedProgramDto(
-            id = program.id,
-            name = program.name,
-            description = program.description,
-            phase = program.phase,
-            isActive = true,
-            workouts = program.workouts,
-            counts = cachedProgram?.counts ?: ProgramCountsDto(workouts = program.workouts.size),
-        )
-        val programs = current.programs.map { cached ->
-            if (cached.id == program.id) seededProgram else cached.copy(isActive = false)
-        }.let { merged ->
-            if (cachedProgram == null) merged + seededProgram else merged
+            val bootstrapExercises = program.workouts.asSequence()
+                .flatMap { it.exercises.asSequence() }
+                .map { it.exercise }
+                .associateBy { it.id }
+            val exercises = current.exercises.map { cached ->
+                val merged = bootstrapExercises[cached.id]
+                    ?.let { loaded -> mergeExerciseSnapshot(cached, loaded) }
+                    ?: cached
+                current.exerciseEditReceipts[cached.id]?.let(merged::withGeneralMetadata) ?: merged
+            } + bootstrapExercises.values.filter { loaded ->
+                current.exercises.none { it.id == loaded.id }
+            }
+
+            saveBase(current.copy(programs = programs, exercises = exercises))
         }
+    }
 
-        val bootstrapExercises = program.workouts.asSequence()
-            .flatMap { it.exercises.asSequence() }
-            .map { it.exercise }
-            .associateBy { it.id }
-        val exercises = current.exercises.map { cached ->
-            bootstrapExercises[cached.id]?.let { loaded ->
-                if (loaded.trainingDates.isEmpty() && cached.trainingDates.isNotEmpty()) {
-                    loaded.copy(trainingDates = cached.trainingDates)
-                } else {
-                    loaded
-                }
-            } ?: cached
-        } + bootstrapExercises.values.filter { loaded ->
-            current.exercises.none { it.id == loaded.id }
+    suspend fun seedExerciseCatalog(exercises: List<ExerciseDto>) = mutex.withLock {
+        if (persistence == null || accountKey == null) return@withLock
+        OfflineSyncLock.mutex.withLock {
+            val current = loadBase()
+            saveBase(
+                reconcileExerciseCatalog(
+                    current,
+                    exercises,
+                    authoritative = true,
+                    pendingCreateIds = pendingCreateExerciseIds(),
+                ),
+            )
         }
+    }
 
-        saveBase(current.copy(programs = programs, exercises = exercises))
+    private suspend fun refreshExerciseCatalog(
+        authoritative: Boolean,
+        remoteLoad: suspend () -> List<ExerciseDto>,
+    ): CatalogSnapshot {
+        if (persistence == null || accountKey == null) {
+            return reconcileExerciseCatalog(CatalogSnapshot(), remoteLoad(), authoritative)
+        }
+        val captured = OfflineSyncLock.mutex.withLock {
+            ExerciseCatalogProtection(
+                cached = loadBaseOrNull(),
+                pendingCreateIds = pendingCreateExerciseIds(),
+            )
+        }
+        if (!networkStatus.isConnected()) {
+            return captured.cached
+                ?: throw IOException("No network connection and no cached catalog data.")
+        }
+        val loaded = runCatching { remoteLoad() }.getOrElse { error ->
+            return OfflineSyncLock.mutex.withLock { loadBaseOrNull() }
+                ?: throw error
+        }
+        return OfflineSyncLock.mutex.withLock {
+            val current = loadBaseOrNull() ?: captured.cached ?: CatalogSnapshot()
+            val protectedReceipts = captured.cached?.exerciseEditReceipts.orEmpty() +
+                current.exerciseEditReceipts
+            val reconciled = reconcileExerciseCatalog(
+                current.copy(exerciseEditReceipts = protectedReceipts),
+                loaded,
+                authoritative = authoritative,
+                pendingCreateIds = captured.pendingCreateIds + pendingCreateExerciseIds(),
+            ).copy(
+                exerciseEditReceipts = current.exerciseEditReceipts,
+            )
+            saveBase(reconciled)
+            reconciled
+        }
     }
 
     private suspend fun refreshCatalogPart(
@@ -293,6 +397,14 @@ class ProgramsCatalogRepository private constructor(
         return OfflineMutationController(store, scheduleSync).discard(create.mutation.operationId)
     }
 
+    private suspend fun pendingCreateExerciseIds(): Set<String> {
+        val store = persistence ?: return emptySet()
+        val key = accountKey ?: return emptySet()
+        return store.operations(key).mapNotNullTo(mutableSetOf()) { stored ->
+            (stored.mutation as? CreateExerciseMutation)?.exerciseId
+        }
+    }
+
     private fun controller(): OfflineMutationController? {
         val store = persistence ?: return null
         return OfflineMutationController(store, scheduleSync)
@@ -301,6 +413,48 @@ class ProgramsCatalogRepository private constructor(
     private fun entityId(type: String) = "mob_${type}_${uuid()}"
     private fun operationId() = "op_${uuid()}"
     private fun uuid() = UUID.randomUUID().toString().replace("-", "")
+
+    private fun mergeExerciseSnapshot(cached: ExerciseDto, loaded: ExerciseDto): ExerciseDto = loaded.copy(
+        userId = loaded.userId ?: cached.userId,
+        loadProfile = loaded.loadProfile ?: cached.loadProfile,
+        trainingDates = loaded.trainingDates.ifEmpty { cached.trainingDates },
+    )
+
+    private fun reconcileExerciseCatalog(
+        current: CatalogSnapshot,
+        loaded: List<ExerciseDto>,
+        authoritative: Boolean,
+        pendingCreateIds: Set<String> = emptySet(),
+    ): CatalogSnapshot {
+        val loadedById = loaded.associateBy { it.id }
+        val remainingReceipts = current.exerciseEditReceipts
+        fun reconcile(loadedExercise: ExerciseDto): ExerciseDto {
+            val cached = current.exercises.firstOrNull { it.id == loadedExercise.id }
+            val merged = cached?.let { mergeExerciseSnapshot(it, loadedExercise) } ?: loadedExercise
+            return remainingReceipts[loadedExercise.id]?.let(merged::withGeneralMetadata) ?: merged
+        }
+        val reconciledLoaded = loaded.map(::reconcile)
+        val reconciled = if (authoritative) {
+            reconciledLoaded + current.exercises.filter { cached ->
+                cached.id in pendingCreateIds && loadedById[cached.id] == null
+            }
+        } else {
+            current.exercises.map { cached ->
+                loadedById[cached.id]?.let(::reconcile) ?: cached
+            } + reconciledLoaded.filter { loadedExercise ->
+                current.exercises.none { it.id == loadedExercise.id }
+            }
+        }
+        return current.copy(
+            exercises = reconciled.distinctBy { it.id },
+            exerciseEditReceipts = remainingReceipts,
+        )
+    }
+
+    private data class ExerciseCatalogProtection(
+        val cached: CatalogSnapshot?,
+        val pendingCreateIds: Set<String>,
+    )
 
     companion object {
         fun remote(baseUrl: String, token: String): ProgramsCatalogRepository =
@@ -311,6 +465,7 @@ class ProgramsCatalogRepository private constructor(
                     persistence = null,
                     networkStatus = NetworkStatus { true },
                     scheduleSync = {},
+                    ownerUserId = null,
                 )
 
         fun offline(
@@ -319,12 +474,14 @@ class ProgramsCatalogRepository private constructor(
             persistence: OfflinePersistence,
             networkStatus: NetworkStatus,
             scheduleSync: () -> Unit,
+            ownerUserId: String? = null,
         ): ProgramsCatalogRepository = ProgramsCatalogRepository(
             remote,
             accountKey,
             persistence,
             networkStatus,
             scheduleSync,
+            ownerUserId,
         )
     }
 }

@@ -30,8 +30,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.4.28"
+        versionCode = 39
+        versionName = "0.4.29"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

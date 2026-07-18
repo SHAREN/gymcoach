@@ -49,6 +49,9 @@
     <string name="exercise_equipment_type">Equipment</string>
     <string name="exercise_default_rest">Default rest, seconds</string>
     <string name="exercise_bodyweight">Uses bodyweight</string>
+    <string name="exercise_name_required">Enter an exercise name.</string>
+    <string name="exercise_rest_range">Enter a rest time from 15 to 600 seconds.</string>
+    <string name="exercise_update_error">Could not save the exercise. Your changes are still here. Try again.</string>
     <string name="filter_all">All</string>
     <string name="filter_muscle">Muscle: %1$s</string>
     <string name="filter_category">Category: %1$s</string>

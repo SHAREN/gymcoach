@@ -49,6 +49,9 @@
     <string name="exercise_equipment_type">Оборудование</string>
     <string name="exercise_default_rest">Отдых по умолчанию, секунд</string>
     <string name="exercise_bodyweight">Учитывать вес тела</string>
+    <string name="exercise_name_required">Введите название упражнения.</string>
+    <string name="exercise_rest_range">Укажите отдых от 15 до 600 секунд.</string>
+    <string name="exercise_update_error">Не удалось сохранить упражнение. Изменения остались в форме. Повторите попытку.</string>
     <string name="filter_all">Все</string>
     <string name="filter_muscle">Мышцы: %1$s</string>
     <string name="filter_category">Категория: %1$s</string>

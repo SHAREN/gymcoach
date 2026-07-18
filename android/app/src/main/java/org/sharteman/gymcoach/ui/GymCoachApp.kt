@@ -27,6 +27,9 @@ import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.programs.ExerciseInput
+import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
 import org.sharteman.gymcoach.data.repository.SyncIssue
@@ -67,6 +70,9 @@ fun GymCoachApp(
     val context = LocalContext.current
     val accountStore = remember(context, loggedIn) { SecureAccountStore(context.applicationContext) }
     val accessToken = remember(accountStore, loggedIn) { accountStore.getAccessToken() }
+    val exerciseCatalogRepository = remember(repository.serverUrl, accessToken) {
+        accessToken?.let { token -> ProgramsCatalogRepository.remote(repository.serverUrl, token) }
+    }
     val bootstrap by repository.bootstrap.collectAsState(initial = null)
     val openSessions by repository.openSessions.collectAsState(initial = emptyList())
     val progress by repository.progress.collectAsState(initial = null)
@@ -95,6 +101,14 @@ fun GymCoachApp(
     val syncFailedMessage = stringResource(R.string.sync_error)
     val syncBlockedMessage = stringResource(R.string.sync_blocked)
     val readinessSavedMessage = stringResource(R.string.readiness_saved)
+    val updateExercise: suspend (ExerciseDto, ExerciseInput) -> ExerciseDto =
+        remember(exerciseCatalogRepository, repository) {
+            { exercise, input ->
+                val updated = requireNotNull(exerciseCatalogRepository).updateExercise(exercise, input)
+                repository.cacheExerciseMetadata(updated)
+                updated
+            }
+        }
 
     suspend fun syncAllPending(): Boolean {
         val workoutAccepted = repository.syncPending()
@@ -112,6 +126,13 @@ fun GymCoachApp(
             popUpTo(HOME_ROUTE) { inclusive = false }
             launchSingleTop = true
         }
+    }
+
+    LaunchedEffect(exerciseCatalogRepository, bootstrap) {
+        val catalogRepository = exerciseCatalogRepository ?: return@LaunchedEffect
+        val snapshot = bootstrap ?: return@LaunchedEffect
+        catalogRepository.seedExerciseCatalog(snapshot.catalog)
+        snapshot.activeProgram?.let { catalogRepository.seedActiveProgram(it) }
     }
 
     val openProgress: (String?) -> Unit = { exerciseId ->
@@ -310,8 +331,8 @@ fun GymCoachApp(
                         }
                     }
                     ExerciseCatalogScreen(
-                        baseUrl = repository.serverUrl,
-                        token = accessToken,
+                        dataSource = requireNotNull(exerciseCatalogRepository),
+                        serverUrl = repository.serverUrl,
                         onBack = { navController.popBackStack() },
                         historyByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty(),
                         progressPointsByExerciseId = progress?.exercises
@@ -319,6 +340,7 @@ fun GymCoachApp(
                             .orEmpty(),
                         unit = bootstrap?.profile?.unit ?: progress?.unit ?: "KG",
                         bodyweightKg = bootstrap?.profile?.bodyweight,
+                        ownerUserId = bootstrap?.profile?.id ?: accountStore.userId,
                         canFetchProgress = online,
                         onOpenProgress = { exerciseId -> openProgress(exerciseId) },
                         onOpenHistory = { historySessionId, startedAt ->
@@ -327,6 +349,7 @@ fun GymCoachApp(
                                 "history?sessionId=${Uri.encode(historySessionId)}&month=${Uri.encode(month)}",
                             )
                         },
+                        onUpdateExercise = updateExercise,
                     )
                 }
             }
@@ -412,6 +435,8 @@ fun GymCoachApp(
                     sessionId = sessionId,
                     bootstrap = bootstrap,
                     online = online,
+                    ownerUserId = bootstrap?.profile?.id ?: accountStore.userId,
+                    onUpdateExercise = updateExercise,
                     onAskCoach = {
                         navController.navigate("chat?sessionId=${Uri.encode(sessionId)}")
                     },
