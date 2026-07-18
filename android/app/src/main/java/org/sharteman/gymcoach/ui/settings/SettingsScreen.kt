@@ -131,6 +131,9 @@ fun SettingsScreen(
     var deleteGym by remember { mutableStateOf(false) }
     var equipmentEditor by remember { mutableStateOf<GymEquipmentDraft?>(null) }
     var equipmentToDelete by remember { mutableStateOf<SettingsGymEquipmentDto?>(null) }
+    var dumbbellsProfileEditor by remember { mutableStateOf<DumbbellsProfileDraft?>(null) }
+    var barbellProfileEditor by remember { mutableStateOf<BarbellProfileDraft?>(null) }
+    var systemProfileError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -144,6 +147,19 @@ fun SettingsScreen(
             return
         }
         error = settingsErrorMessage(context, throwable, apkCheck)
+        feedback = null
+    }
+
+    fun showSystemProfileFailure(throwable: Throwable) {
+        if (settingsErrorKind(throwable) == SettingsErrorKind.AUTHENTICATION) {
+            systemProfileError = null
+            error = null
+            feedback = null
+            onAuthenticationRequired()
+            return
+        }
+        systemProfileError = settingsErrorMessage(context, throwable, apkCheck = false)
+        error = null
         feedback = null
     }
 
@@ -514,15 +530,19 @@ fun SettingsScreen(
                                         (selectedId to previous.copy(weightOptions = selectedWeights)),
                                 )
                             } else gymDraft
-                            val input = committedDraft.toInputOrNull(makeActive = committedDraft.id == null)
-                            if (input == null || selectedWeights == null) {
+                            val createInput = committedDraft.takeIf { it.id == null }
+                                ?.toInputOrNull(makeActive = true)
+                            val updateInput = committedDraft.takeIf { it.id != null }
+                                ?.toUpdateInputOrNull()
+                            if ((createInput == null && updateInput == null) || selectedWeights == null) {
                                 error = context.getString(R.string.settings_native_invalid_gym)
                             } else {
                                 scope.launch {
                                     busy = true
                                     runCatching {
-                                        committedDraft.id?.let { repository.updateGym(it, input) }
-                                            ?: repository.createGym(input)
+                                        committedDraft.id?.let { id ->
+                                            repository.updateGym(id, requireNotNull(updateInput))
+                                        } ?: repository.createGym(requireNotNull(createInput))
                                     }.onSuccess {
                                         feedback = context.getString(R.string.settings_native_saved)
                                         refresh()
@@ -543,6 +563,67 @@ fun SettingsScreen(
                             }
                         },
                         onDelete = { deleteGym = true },
+                    )
+                }
+                item {
+                    SystemEquipmentProfilesSection(
+                        snapshot = snapshot,
+                        gymId = gymDraft.id,
+                        dumbbellsEditor = dumbbellsProfileEditor,
+                        barbellEditor = barbellProfileEditor,
+                        busy = busy,
+                        error = systemProfileError,
+                        onEditDumbbells = {
+                            systemProfileError = null
+                            dumbbellsProfileEditor = it
+                            barbellProfileEditor = null
+                        },
+                        onEditBarbell = {
+                            systemProfileError = null
+                            barbellProfileEditor = it
+                            dumbbellsProfileEditor = null
+                        },
+                        onDumbbellsChange = { dumbbellsProfileEditor = it },
+                        onBarbellChange = { barbellProfileEditor = it },
+                        onDismissEditor = {
+                            dumbbellsProfileEditor = null
+                            barbellProfileEditor = null
+                            systemProfileError = null
+                        },
+                        onSaveDumbbells = { input ->
+                            val gymId = gymDraft.id ?: return@SystemEquipmentProfilesSection
+                            scope.launch {
+                                busy = true
+                                systemProfileError = null
+                                runCatching {
+                                    repository.saveDumbbellsSystemProfile(gymId, input)
+                                    appRepository?.refreshBootstrap()
+                                }.onSuccess {
+                                    dumbbellsProfileEditor = null
+                                    feedback = context.getString(R.string.settings_system_profile_saved)
+                                    error = null
+                                    refresh(gymId)
+                                }.onFailure(::showSystemProfileFailure)
+                                busy = false
+                            }
+                        },
+                        onSaveBarbell = { input ->
+                            val gymId = gymDraft.id ?: return@SystemEquipmentProfilesSection
+                            scope.launch {
+                                busy = true
+                                systemProfileError = null
+                                runCatching {
+                                    repository.saveBarbellSystemProfile(gymId, input)
+                                    appRepository?.refreshBootstrap()
+                                }.onSuccess {
+                                    barbellProfileEditor = null
+                                    feedback = context.getString(R.string.settings_system_profile_saved)
+                                    error = null
+                                    refresh(gymId)
+                                }.onFailure(::showSystemProfileFailure)
+                                busy = false
+                            }
+                        },
                     )
                 }
                 item {
@@ -1024,17 +1105,8 @@ private fun GymSection(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
-        WeightField(R.string.settings_native_dumbbells, draft.dumbbellWeights) {
-            onDraftChange(draft.copy(dumbbellWeights = it))
-        }
-        WeightField(R.string.settings_native_plates, draft.plateWeights) {
-            onDraftChange(draft.copy(plateWeights = it))
-        }
-        WeightField(R.string.settings_native_bars, draft.barWeights) {
-            onDraftChange(draft.copy(barWeights = it))
-        }
         Text(
-            stringResource(R.string.settings_native_weight_hint),
+            stringResource(R.string.settings_system_profiles_gym_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1339,6 +1411,20 @@ private fun detectEquipmentImageMimeType(bytes: ByteArray): String? = when {
 }
 
 private fun settingsErrorMessage(context: Context, throwable: Throwable, apkCheck: Boolean): String {
+    val serverMessage = (throwable as? SettingsException)?.serverMessage.orEmpty().lowercase()
+    val systemProfileResource = when {
+        "active session cannot be removed" in serverMessage ->
+            R.string.settings_system_profile_error_active_bar
+        "does not belong to the selected family" in serverMessage ||
+            "select all system bars" in serverMessage ->
+            R.string.settings_system_profile_error_cross_family
+        "system equipment profiles cannot be deleted" in serverMessage ||
+            "system barbell members must be edited" in serverMessage ||
+            "system barbell pools" in serverMessage ->
+            R.string.settings_system_profile_error_non_removable
+        else -> null
+    }
+    if (systemProfileResource != null) return context.getString(systemProfileResource)
     val kind = settingsErrorKind(throwable)
     val resource = when (kind) {
         SettingsErrorKind.AUTHENTICATION -> R.string.settings_native_error_auth
