@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -9,43 +9,38 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const COMPLETE = 'complete';
 const DELIVERY_STAGES = ['integrated', 'published', 'installed', 'deployed'];
 const DELIVERY_STATUSES = new Set(['complete', 'not-required', 'not-authorized', 'pending']);
-const RUNTIME_PATHS = [
-  '.github/',
-  'android/',
-  'app/',
-  'components/',
-  'data/android-release/',
-  'deploy/',
-  'deployment/',
-  'docker/',
-  'huawei-watch-app/',
-  'i18n/',
-  'infrastructure/',
-  'lib/',
-  'messages/',
-  'nginx/',
-  'operations/',
-  'ops/',
-  'prisma/',
-  'public/',
-  'service/',
-  'services/',
-  'shared-contracts/',
-  'traefik/',
-  'middleware.ts',
-  'next.config.',
-  'package.json',
-  'package-lock.json',
-  'npm-shrinkwrap.json',
-  'scripts/deploy-',
-  'scripts/migrate-',
-  'scripts/publish-',
-  'scripts/start-',
+const NO_RUNTIME_ALLOWED_EXACT_PATHS = new Set([
+  'AGENTS.md',
+  'CLAUDE.md',
+  'CONTRIBUTING.md',
+  'scripts/check-integration-evidence.mjs',
+  'scripts/cleanup-obsolete-worktree.mjs',
+  'scripts/close-integrated-tasks.mjs',
+  'scripts/publish-integration-draft.mjs',
+  'scripts/sync-beads-github.mjs',
+  'scripts/verify.sh',
+]);
+const NO_RUNTIME_ALLOWED_PREFIXES = [
+  '.agents/skills/',
+  '.codex/',
+  'docs/',
+  'scripts/fixtures/github-mirror/',
+  'scripts/fixtures/integration-evidence/',
+  'scripts/fixtures/worktree-cleanup/',
 ];
-const VERIFIED_EVIDENCE_PATTERN = /Immutable verification evidence:/i;
+const VERIFICATION_EVIDENCE_PREFIX = 'Immutable verification evidence v1: ';
 const GUARDED_CLOSURE_PATTERN =
   /Guarded (?:integration(?: root coordination)?|no-runtime-artifact) closure/i;
 const COORDINATOR_CLOSURE_PATTERN = /Guarded integration root coordination closure/i;
+const COORDINATOR_AUTHORITY_LABEL = 'role:integration-coordinator';
+const STAGE_LABELS = new Set([
+  'stage:inbox',
+  'stage:ready',
+  'stage:review',
+  'stage:verify',
+  'stage:verified',
+]);
+const GYMCOACH_ANDROID_PACKAGE = 'org.sharteman.gymcoach';
 
 export class IntegrationEvidenceError extends Error {}
 
@@ -66,6 +61,14 @@ function requireCommit(value, label) {
     reject(`${label} must be a full 40-character Git commit`);
   }
   return commit;
+}
+
+function requireExactKeys(value, expectedKeys, label) {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    reject(`${label} has unexpected or missing fields`);
+  }
 }
 
 function runGit(repo, args, { allowFailure = false } = {}) {
@@ -142,20 +145,11 @@ async function readJson(jsonPath, label) {
   }
 }
 
-async function digestFile(filePath) {
-  const contents = await readFile(filePath);
-  return {
-    sha256: createHash('sha256').update(contents).digest('hex'),
-    sizeBytes: contents.length,
-  };
-}
-
 function normalizeDigest(value) {
   return value.replaceAll(':', '').toLowerCase();
 }
 
-async function readCertificateDigest(filePath, label) {
-  const output = await readFile(filePath, 'utf8');
+function readCertificateDigest(output, label) {
   const match = output.match(/Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f:]+)/i);
   if (!match) {
     reject(`${label} does not contain an apksigner SHA-256 certificate digest`);
@@ -165,6 +159,161 @@ async function readCertificateDigest(filePath, label) {
     reject(`${label} contains an invalid certificate digest`);
   }
   return digest;
+}
+
+function defaultAndroidToolRunner(executable, args, label) {
+  let command = executable;
+  let commandArgs = args;
+  if (process.platform === 'win32' && executable.toLowerCase().endsWith('.bat')) {
+    const values = [executable, ...args];
+    if (values.some((value) => /["&|<>^%!]/.test(value))) {
+      reject(`${label} contains a path or argument unsafe for cmd.exe batch execution`);
+    }
+    command = process.env.ComSpec ?? 'cmd.exe';
+    commandArgs = ['/d', '/s', '/c', values.map((value) => `"${value}"`).join(' ')];
+  }
+  const result = spawnSync(command, commandArgs, { encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0) {
+    reject(`${label} failed: ${result.error?.message ?? (result.stderr || result.stdout).trim()}`);
+  }
+  return `${result.stdout ?? ''}${result.stderr ?? ''}`;
+}
+
+async function resolveAndroidTool(repo, value, label, allowedNames, sdkRoot) {
+  const raw = requireString(value, label);
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : resolveInsideRepo(repo, raw, label);
+  const toolStat = await stat(resolved).catch(() => undefined);
+  if (!toolStat?.isFile()) reject(`${label} must identify an existing executable file`);
+  const resolvedTool = await realpath(resolved);
+  const resolvedSdkRoot = await realpath(requireString(sdkRoot, 'Android SDK root')).catch(() =>
+    reject('Android SDK root does not exist'),
+  );
+  const toolName = path.basename(resolvedTool).toLowerCase();
+  if (!allowedNames.has(toolName)) {
+    reject(`${label} must identify the Android SDK ${[...allowedNames][0]} executable`);
+  }
+  const relative = path.relative(resolvedSdkRoot, resolvedTool).replaceAll('\\', '/');
+  const match = relative.match(/^build-tools\/(\d+(?:\.\d+){1,2})\/[^/]+$/);
+  if (!match || relative.startsWith('../')) {
+    reject(`${label} must resolve under the configured Android SDK build-tools directory`);
+  }
+  return { path: resolvedTool, buildToolsVersion: match[1], directory: path.dirname(resolvedTool) };
+}
+
+function listZipEntries(contents, label) {
+  const minimumEocdSize = 22;
+  const searchStart = Math.max(0, contents.length - 65_557);
+  let eocd = -1;
+  for (let offset = contents.length - minimumEocdSize; offset >= searchStart; offset -= 1) {
+    if (contents.readUInt32LE(offset) === 0x06054b50) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) reject(`${label} is not a structurally valid ZIP/APK`);
+  const entryCount = contents.readUInt16LE(eocd + 10);
+  let offset = contents.readUInt32LE(eocd + 16);
+  const entries = [];
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > contents.length || contents.readUInt32LE(offset) !== 0x02014b50) {
+      reject(`${label} has an invalid ZIP central directory`);
+    }
+    const nameLength = contents.readUInt16LE(offset + 28);
+    const extraLength = contents.readUInt16LE(offset + 30);
+    const commentLength = contents.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + nameLength;
+    if (nameEnd > contents.length) reject(`${label} has a truncated ZIP entry`);
+    entries.push(contents.subarray(nameStart, nameEnd).toString('utf8'));
+    offset = nameEnd + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function validateApkStructure(filePath, label) {
+  const contents = await readFile(filePath);
+  const entries = listZipEntries(contents, label);
+  if (!entries.includes('AndroidManifest.xml')) {
+    reject(`${label} does not contain AndroidManifest.xml`);
+  }
+  if (!entries.some((entry) => /^classes\d*\.dex$/.test(entry))) {
+    reject(`${label} does not contain an Android DEX payload`);
+  }
+  return {
+    sha256: createHash('sha256').update(contents).digest('hex'),
+    sizeBytes: contents.length,
+  };
+}
+
+function parseAaptBadging(output, label) {
+  const packageLine = output.match(
+    /^package:\s+name='([^']+)'\s+versionCode='(\d+)'\s+versionName='([^']+)'/m,
+  );
+  if (!packageLine) reject(`${label} did not report package/version manifest data`);
+  return {
+    packageName: packageLine[1],
+    versionCode: Number(packageLine[2]),
+    versionName: packageLine[3],
+  };
+}
+
+export function buildImmutableVerificationNote({
+  verifiedBase,
+  verifiedCommit,
+  gate,
+  artifactImpact,
+}) {
+  return `${VERIFICATION_EVIDENCE_PREFIX}${JSON.stringify({
+    artifactImpact: requireString(artifactImpact, 'artifactImpact'),
+    gate: {
+      command: requireString(gate?.command, 'gate.command'),
+      exitCode: gate?.exitCode,
+      head: requireCommit(gate?.head, 'gate.head'),
+    },
+    verifiedBase: requireCommit(verifiedBase, 'verifiedBase'),
+    verifiedCommit: requireCommit(verifiedCommit, 'verifiedCommit'),
+  })}`;
+}
+
+function verificationRecords(task) {
+  const records = [];
+  for (const line of String(task.notes ?? '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(VERIFICATION_EVIDENCE_PREFIX)) continue;
+    let record;
+    try {
+      record = JSON.parse(trimmed.slice(VERIFICATION_EVIDENCE_PREFIX.length));
+    } catch (error) {
+      reject(`${task.id} has invalid immutable verification JSON: ${error.message}`);
+    }
+    if (!record || typeof record !== 'object') {
+      reject(`${task.id} immutable verification evidence must be an object`);
+    }
+    requireExactKeys(
+      record,
+      ['artifactImpact', 'gate', 'verifiedBase', 'verifiedCommit'],
+      `${task.id} immutable verification evidence`,
+    );
+    if (!record.gate || typeof record.gate !== 'object') {
+      reject(`${task.id} immutable verification gate is required`);
+    }
+    requireExactKeys(
+      record.gate,
+      ['command', 'exitCode', 'head'],
+      `${task.id} immutable verification gate`,
+    );
+    records.push({
+      artifactImpact: requireString(record.artifactImpact, `${task.id} artifactImpact`),
+      gate: {
+        command: requireString(record.gate.command, `${task.id} gate.command`),
+        exitCode: record.gate.exitCode,
+        head: requireCommit(record.gate.head, `${task.id} gate.head`),
+      },
+      verifiedBase: requireCommit(record.verifiedBase, `${task.id} verifiedBase`),
+      verifiedCommit: requireCommit(record.verifiedCommit, `${task.id} verifiedCommit`),
+    });
+  }
+  return records;
 }
 
 function validateGate(gate, expectedHead, label) {
@@ -244,7 +393,15 @@ function validateDelivery(delivery, { integrationHead, androidRequired, requirem
   }
 }
 
-function validateVerifiedTask(repo, task) {
+function expectedArtifactImpact(task, paths) {
+  if (task.classification === 'no-runtime-artifact') return 'no-runtime-artifact';
+  return task.affectsAndroid === true ||
+    paths.some((file) => file.startsWith('android/') || file.startsWith('data/android-release/'))
+    ? 'android'
+    : 'runtime';
+}
+
+function validateVerifiedTask(repo, task, authoritativeTask) {
   const id = requireString(task.id, 'task.id');
   if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id)) {
     reject(`task.id ${id} is not a safe Beads task ID`);
@@ -261,7 +418,24 @@ function validateVerifiedTask(repo, task) {
     reject(`${id}.verified.base is not an ancestor of the verified commit`);
   }
   validateGate(task.verified.gate, commit, `${id}.verified.gate`);
-  return { id, base, commit, changedPaths: changedPaths(repo, base, commit) };
+  if (!authoritativeTask || authoritativeTask.id !== id) {
+    reject(`${id} is absent from authoritative Beads verification state`);
+  }
+  const taskChangedPaths = changedPaths(repo, base, commit);
+  const artifactImpact = expectedArtifactImpact(task, taskChangedPaths);
+  const matches = verificationRecords(authoritativeTask).filter(
+    (record) =>
+      record.verifiedBase === base &&
+      record.verifiedCommit === commit &&
+      record.artifactImpact === artifactImpact &&
+      record.gate.head === commit &&
+      record.gate.exitCode === task.verified.gate.exitCode &&
+      record.gate.command === task.verified.gate.command,
+  );
+  if (matches.length !== 1) {
+    reject(`${id} manifest verification does not match exactly one immutable Beads note`);
+  }
+  return { id, base, commit, artifactImpact, changedPaths: taskChangedPaths };
 }
 
 function validateBehaviorEquivalentMapping(
@@ -316,14 +490,11 @@ function changedPaths(repo, base, commit) {
   return output === '' ? [] : output.split(/\r?\n/).sort();
 }
 
-function isRuntimePath(file) {
+export function isNoRuntimeArtifactPath(file) {
   return (
-    RUNTIME_PATHS.some((prefix) => file === prefix || file.startsWith(prefix)) ||
-    /(^|\/)Dockerfile(?:\.[^/]*)?$/.test(file) ||
-    /(^|\/)docker-compose(?:\.[^/]*)?\.ya?ml$/.test(file) ||
-    /^scripts\/(?:.*[\/_.-])?(?:apk|artifact|assemble|build|bundle|deploy|deployment|image|install|migrate|package|publish|release|restart|runtime|serve|service|start)(?:[-_.]|$)/i.test(
-      file,
-    )
+    NO_RUNTIME_ALLOWED_EXACT_PATHS.has(file) ||
+    NO_RUNTIME_ALLOWED_PREFIXES.some((prefix) => file.startsWith(prefix)) ||
+    /^scripts\/test-[a-z0-9_.-]+\.mjs$/i.test(file)
   );
 }
 
@@ -347,17 +518,30 @@ function validateNoRuntimeArtifact(repo, task, verified) {
   if (JSON.stringify(declared) !== JSON.stringify(actual)) {
     reject(`${verified.id} no-runtime changed paths do not match the verified Git diff`);
   }
-  const runtimePath = actual.find(isRuntimePath);
+  const runtimePath = actual.find((file) => !isNoRuntimeArtifactPath(file));
   if (runtimePath) {
     reject(`${verified.id} no-runtime exception includes runtime path ${runtimePath}`);
   }
 }
 
-function taskHasVerifiedEvidence(task, { allowVerifyStage = false } = {}) {
+function taskStageLabels(task) {
+  const stages = task.labels?.filter((label) => label.startsWith('stage:')) ?? [];
+  const unknown = stages.find((stage) => !STAGE_LABELS.has(stage));
+  if (unknown) reject(`${task.id} has unsupported workflow stage ${unknown}`);
+  return stages;
+}
+
+function taskHasVerifiedEvidence(
+  task,
+  { allowVerifyStage = false, allowPartialClosure = false } = {},
+) {
+  const stages = taskStageLabels(task);
+  const hasImmutableRecord = verificationRecords(task).length > 0;
+  if (!hasImmutableRecord || task.status !== 'in_progress') return false;
+  if (stages.length === 1 && stages[0] === 'stage:verified') return true;
+  if (allowVerifyStage && stages.length === 1 && stages[0] === 'stage:verify') return true;
   return (
-    task.labels?.includes('stage:verified') ||
-    (allowVerifyStage && task.labels?.includes('stage:verify')) ||
-    VERIFIED_EVIDENCE_PATTERN.test(task.notes ?? '')
+    allowPartialClosure && stages.length === 0 && GUARDED_CLOSURE_PATTERN.test(task.notes ?? '')
   );
 }
 
@@ -414,7 +598,11 @@ function clauseRequiresDelivery(clause, stageName) {
   }
   if (
     /\b(?:if|when|unless)\b/i.test(clause) ||
-    /\bonly\s+(?:if|when|after|once|with|under|upon)\b/i.test(clause)
+    /\bonly\s+(?:if|when|after|once|with|under|upon)\b/i.test(clause) ||
+    /\b(?:for example|e\.g\.|for instance|hypothetically|illustrative(?:ly)?|suppose|assuming)\b/i.test(
+      clause,
+    ) ||
+    /\b(?:could|might|may)\s+(?:be\s+)?(?:installed|deployed)\b/i.test(clause)
   ) {
     return false;
   }
@@ -440,6 +628,7 @@ function clauseRequiresDelivery(clause, stageName) {
           /\brequires?\s+(?:a\s+|production\s+)?deployment\b/i,
           /\bdeployment\s+(?:is|shall be|must be)\s+required\b/i,
           /\bdeployment\s+(?:reaches|completes?)\b/i,
+          /^\s*(?:\d+\.\s*)?deploy\s+the\s+integrated\s+version\b/i,
         ];
   if (directPatterns.some((pattern) => pattern.test(clause))) {
     return true;
@@ -455,8 +644,8 @@ function clauseRequiresDelivery(clause, stageName) {
   }
   const imperativePattern =
     stageName === 'installed'
-      ? /^\s*(?:\d+\.\s*)?install\b(?=[^.;\n]{0,80}\b(?:apk|app|application|artifact|build|hap|package)\b)/i
-      : /^\s*(?:\d+\.\s*)?deploy\b(?=[^.;\n]{0,80}\b(?:app|application|artifact|build|integration|runtime|service)\b)/i;
+      ? /^\s*(?:\d+\.\s*)?install\b(?=[^.;\n]{0,80}\b(?:apk|app|application|artifact|build|hap|package|version)\b)/i
+      : /^\s*(?:\d+\.\s*)?deploy\b(?=[^.;\n]{0,80}\b(?:app|application|artifact|build|integrated\s+version|integration|runtime|service|version)\b)/i;
   return imperativePattern.test(clause);
 }
 
@@ -487,7 +676,10 @@ function normalizeAuthority(authority, rootTaskId) {
   return authority;
 }
 
-function deriveAuthoritativePlan(authority, { allowVerifyStage = false } = {}) {
+function deriveAuthoritativePlan(
+  authority,
+  { allowVerifyStage = false, allowPartialClosure = false } = {},
+) {
   const visited = new Set();
   const active = new Set();
   const orderedTaskIds = [];
@@ -519,14 +711,29 @@ function deriveAuthoritativePlan(authority, { allowVerifyStage = false } = {}) {
   for (const taskId of orderedTaskIds) {
     const task = authority.tasks[taskId];
     const dependencies = authority.blockingDependencies[taskId] ?? [];
-    if (taskHasVerifiedEvidence(task, { allowVerifyStage })) {
+    if (task.status === 'closed') {
+      if (COORDINATOR_CLOSURE_PATTERN.test(task.notes ?? '')) {
+        coordinatorTaskIds.push(taskId);
+      } else if (taskHasGuardedClosure(task) && verificationRecords(task).length > 0) {
+        verifiedTaskIds.push(taskId);
+      } else {
+        legacyTaskIds.push(taskId);
+      }
+    } else if (task.labels?.includes(COORDINATOR_AUTHORITY_LABEL)) {
+      const stages = taskStageLabels(task);
+      if (
+        taskId !== authority.rootTaskId ||
+        dependencies.length === 0 ||
+        task.status !== 'in_progress' ||
+        stages.length !== 0
+      ) {
+        reject(
+          `${taskId} integration coordinator authority requires the in_progress stage-less root with blockers`,
+        );
+      }
+      coordinatorTaskIds.push(taskId);
+    } else if (taskHasVerifiedEvidence(task, { allowVerifyStage, allowPartialClosure })) {
       verifiedTaskIds.push(taskId);
-    } else if (task.status === 'closed' && COORDINATOR_CLOSURE_PATTERN.test(task.notes ?? '')) {
-      coordinatorTaskIds.push(taskId);
-    } else if (task.status === 'closed') {
-      legacyTaskIds.push(taskId);
-    } else if (dependencies.length > 0) {
-      coordinatorTaskIds.push(taskId);
     } else {
       reject(
         `authoritative required task ${taskId} must be stage:verified before integration closure`,
@@ -551,16 +758,22 @@ function deriveAuthoritativePlan(authority, { allowVerifyStage = false } = {}) {
   };
 }
 
-async function validateAndroid(repo, android, integrationHead) {
+async function validateAndroid(
+  repo,
+  android,
+  integrationHead,
+  toolRunner = defaultAndroidToolRunner,
+  androidSdkRoot = process.env.ANDROID_SDK_ROOT ?? process.env.ANDROID_HOME,
+) {
   if (!android || typeof android !== 'object') {
     reject('Android-affecting integration requires android evidence');
   }
   if (requireCommit(android.sourceHead, 'android.sourceHead') !== integrationHead) {
     reject('android.sourceHead must match the integration head');
   }
-  requireString(android.assembleCommand, 'android.assembleCommand');
-  if (!android.assembleCommand.includes('assembleDebug')) {
-    reject('android.assembleCommand must include assembleDebug');
+  validateGate(android.assembleGate, integrationHead, 'android.assembleGate');
+  if (!android.assembleGate.command.includes('assembleDebug')) {
+    reject('android.assembleGate.command must include assembleDebug');
   }
 
   const outputMetadataPath = resolveInsideRepo(
@@ -575,16 +788,26 @@ async function validateAndroid(repo, android, integrationHead) {
     'android.immutableApkPath',
   );
   const latestJsonPath = resolveInsideRepo(repo, android.latestJsonPath, 'android.latestJsonPath');
-  const debugSignaturePath = resolveInsideRepo(
+  const apksigner = await resolveAndroidTool(
     repo,
-    android.debugSignatureEvidencePath,
-    'android.debugSignatureEvidencePath',
+    android.apksignerPath,
+    'android.apksignerPath',
+    new Set(['apksigner', 'apksigner.bat', 'apksigner.exe']),
+    androidSdkRoot,
   );
-  const immutableSignaturePath = resolveInsideRepo(
+  const aapt = await resolveAndroidTool(
     repo,
-    android.immutableSignatureEvidencePath,
-    'android.immutableSignatureEvidencePath',
+    android.aaptPath,
+    'android.aaptPath',
+    new Set(['aapt', 'aapt.exe', 'aapt2', 'aapt2.exe']),
+    androidSdkRoot,
   );
+  if (
+    apksigner.directory !== aapt.directory ||
+    apksigner.buildToolsVersion !== aapt.buildToolsVersion
+  ) {
+    reject('aapt and apksigner must come from the same Android SDK build-tools version');
+  }
 
   const outputMetadata = await readJson(outputMetadataPath, 'Android output metadata');
   const output = outputMetadata.elements?.[0];
@@ -592,8 +815,8 @@ async function validateAndroid(repo, android, integrationHead) {
     reject('Android output metadata lacks versionName/versionCode');
   }
   const latest = await readJson(latestJsonPath, 'Android latest.json');
-  const debugApk = await digestFile(debugApkPath);
-  const immutableApk = await digestFile(immutableApkPath);
+  const debugApk = await validateApkStructure(debugApkPath, 'app-debug.apk');
+  const immutableApk = await validateApkStructure(immutableApkPath, 'immutable APK');
   if (debugApk.sha256 !== immutableApk.sha256 || debugApk.sizeBytes !== immutableApk.sizeBytes) {
     reject('app-debug.apk and immutable published APK do not match');
   }
@@ -614,16 +837,49 @@ async function validateAndroid(repo, android, integrationHead) {
   ) {
     reject('published APK is not an immutable version/hash-qualified artifact');
   }
-  const debugCertificate = await readCertificateDigest(
-    debugSignaturePath,
-    'debug APK signature evidence',
+  const apksignerVersion = requireString(
+    toolRunner(apksigner.path, ['version'], 'apksigner version').trim(),
+    'apksigner version output',
   );
-  const immutableCertificate = await readCertificateDigest(
-    immutableSignaturePath,
-    'immutable APK signature evidence',
+  const aaptVersion = requireString(
+    toolRunner(aapt.path, ['version'], 'aapt version').trim(),
+    'aapt version output',
+  );
+  const debugCertificate = readCertificateDigest(
+    toolRunner(apksigner.path, ['verify', '--print-certs', debugApkPath], 'debug APK apksigner'),
+    'debug APK apksigner output',
+  );
+  const immutableCertificate = readCertificateDigest(
+    toolRunner(
+      apksigner.path,
+      ['verify', '--print-certs', immutableApkPath],
+      'immutable APK apksigner',
+    ),
+    'immutable APK apksigner output',
   );
   if (debugCertificate !== immutableCertificate) {
     reject('debug and immutable APK signing certificates do not match');
+  }
+  const debugManifest = parseAaptBadging(
+    toolRunner(aapt.path, ['dump', 'badging', debugApkPath], 'debug APK aapt'),
+    'debug APK aapt output',
+  );
+  const immutableManifest = parseAaptBadging(
+    toolRunner(aapt.path, ['dump', 'badging', immutableApkPath], 'immutable APK aapt'),
+    'immutable APK aapt output',
+  );
+  if (
+    debugManifest.packageName !== GYMCOACH_ANDROID_PACKAGE ||
+    immutableManifest.packageName !== GYMCOACH_ANDROID_PACKAGE ||
+    JSON.stringify(debugManifest) !== JSON.stringify(immutableManifest)
+  ) {
+    reject('aapt package/version evidence does not match the GymCoach APK pair');
+  }
+  if (
+    debugManifest.versionName !== output.versionName ||
+    debugManifest.versionCode !== output.versionCode
+  ) {
+    reject('APK manifest version does not match output metadata');
   }
   await stat(debugApkPath);
   await stat(immutableApkPath);
@@ -634,10 +890,23 @@ async function validateAndroid(repo, android, integrationHead) {
     sizeBytes: immutableApk.sizeBytes,
     signingCertificateSha256: immutableCertificate,
     apkFile: immutableName,
+    buildToolsVersion: apksigner.buildToolsVersion,
+    apksignerVersion,
+    aaptVersion,
   };
 }
 
-function validateLegacyAudit(repo, legacyClosedTasks, integrationHead, expectedTaskIds = []) {
+function legacyVerifiedCommits(task) {
+  return [
+    ...String(task?.notes ?? '').matchAll(
+      /Immutable verification evidence:[^\r\n]*verified-commit\s+([0-9a-f]{40})/gi,
+    ),
+  ].map((match) => match[1].toLowerCase());
+}
+
+function validateLegacyAudit(repo, legacyClosedTasks, integrationHead, expectedTasks = []) {
+  const expectedTaskIds = expectedTasks.map((task) => task.id).sort();
+  const expectedTaskById = new Map(expectedTasks.map((task) => [task.id, task]));
   if (legacyClosedTasks === undefined) {
     if (expectedTaskIds.length > 0) {
       reject(`legacyClosedTasks must include ${expectedTaskIds.join(', ')}`);
@@ -665,6 +934,10 @@ function validateLegacyAudit(repo, legacyClosedTasks, integrationHead, expectedT
       repo,
       requireCommit(entry.verifiedCommit, `${id}.verifiedCommit`),
     );
+    const recordedLegacyCommits = legacyVerifiedCommits(expectedTaskById.get(id));
+    if (recordedLegacyCommits.length > 0 && !recordedLegacyCommits.includes(commit)) {
+      reject(`${id}.verifiedCommit does not match recorded legacy immutable verification notes`);
+    }
     if (entry.auditStatus === 'integrated' && !isAncestor(repo, commit, integrationHead)) {
       reject(`legacy closed task ${id} is marked integrated but its commit is absent`);
     }
@@ -690,7 +963,13 @@ function validateLegacyAudit(repo, legacyClosedTasks, integrationHead, expectedT
 
 export async function validateIntegrationEvidence(
   manifest,
-  { repo = process.cwd(), beadsAuthority } = {},
+  {
+    repo = process.cwd(),
+    beadsAuthority,
+    allowPartialClosure = false,
+    androidToolRunner,
+    androidSdkRoot,
+  } = {},
 ) {
   const repository = path.resolve(repo);
   if (manifest?.schemaVersion !== 1) {
@@ -703,13 +982,14 @@ export async function validateIntegrationEvidence(
   );
   const authoritativePlan = deriveAuthoritativePlan(authority, {
     allowVerifyStage: manifest.mode === 'no-runtime-artifact',
+    allowPartialClosure,
   });
   if (!Array.isArray(manifest.tasks) || manifest.tasks.length === 0) {
     reject('tasks must contain at least one task');
   }
   const taskIds = new Set();
   const verifiedTasks = manifest.tasks.map((task) => {
-    const verified = validateVerifiedTask(repository, task);
+    const verified = validateVerifiedTask(repository, task, authority.tasks[task.id]);
     if (taskIds.has(verified.id)) {
       reject(`duplicate task ${verified.id}`);
     }
@@ -815,13 +1095,19 @@ export async function validateIntegrationEvidence(
 
   validateDelivery(manifest.delivery, { integrationHead, androidRequired, requirements });
   const android = androidRequired
-    ? await validateAndroid(repository, manifest.android, integrationHead)
+    ? await validateAndroid(
+        repository,
+        manifest.android,
+        integrationHead,
+        androidToolRunner,
+        androidSdkRoot,
+      )
     : undefined;
   const warnings = validateLegacyAudit(
     repository,
     manifest.legacyClosedTasks,
     integrationHead,
-    authoritativePlan.legacyTaskIds,
+    authoritativePlan.legacyTaskIds.map((taskId) => authority.tasks[taskId]),
   );
   return {
     mode: manifest.mode,

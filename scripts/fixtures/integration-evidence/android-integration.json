@@ -41,13 +41,17 @@
   ],
   "android": {
     "sourceHead": "{{INTEGRATION_HEAD}}",
-    "assembleCommand": "gradlew testDebugUnitTest lintDebug assembleDebug",
+    "assembleGate": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+      "exitCode": 0
+    },
     "outputMetadataPath": "android/app/build/outputs/apk/debug/output-metadata.json",
     "debugApkPath": "android/app/build/outputs/apk/debug/app-debug.apk",
     "immutableApkPath": "data/android-release/{{APK_FILE}}",
     "latestJsonPath": "data/android-release/latest.json",
-    "debugSignatureEvidencePath": "evidence/debug-apksigner.txt",
-    "immutableSignatureEvidencePath": "evidence/immutable-apksigner.txt"
+    "apksignerPath": "{{APKSIGNER_PATH}}",
+    "aaptPath": "{{AAPT_PATH}}"
   },
   "delivery": {
     "integrated": {

@@ -167,11 +167,17 @@ blockers or paused work. Before resuming a legacy `blocked + stage:ready` task,
 revalidate dependencies and the integration base, return it to open, and
 confirm readiness.
 
-The owner has authorized only post-integration GitHub publication: a verified
-dedicated codex/ or task branch may be pushed to SHAREN/gymcoach and exposed as
-a draft PR against main. Automation never pushes an unverified writer branch,
-auto-merges, merges main/master, synchronizes Beads remotely, deploys production,
-or restarts services.
+The owner has authorized publication only after immutable independent
+verification and guarded closure. A verified dedicated codex/ or task branch,
+including a guarded no-runtime harness task, may be pushed to SHAREN/gymcoach
+and exposed as a draft PR against main. Automation never pushes an unverified
+writer branch, auto-merges, merges main/master, synchronizes Beads remotely,
+deploys production, or restarts services.
+
+A coordination-only root is explicit, not inferred. It carries
+`role:integration-coordinator`, remains `in_progress` with no stage, and has
+blocking dependencies. INBOX, READY, blocked, and ordinary product tasks never
+become coordinators merely because they have dependencies.
 
 ## Built-In Codex Integration
 
@@ -261,6 +267,9 @@ allowed managed root. Never use
 `--force`, permission changes, retry loops, junction-following, or a recursive
 fallback after Git failure. Missing, stale, ambiguous, dirty, active, or locked
 evidence always preserves the Worktree.
+If the non-forced Git for Windows command returns nonzero after registration is
+already absent, persist the canonical registered-pass residual receipt before
+returning the lock failure so a later guarded residual pass remains possible.
 
 ## Safe Parallel Task Execution
 
@@ -472,10 +481,27 @@ requirements. Remove stage:verify and add stage:verified. The task remains
 in_progress and the GitHub issue remains open as verified / awaiting integration.
 An isolated task APK or temporary runtime is not closure evidence.
 
+The durable record is one JSON line with the exact prefix and fields below:
+
+```text
+Immutable verification evidence v1: {"artifactImpact":"runtime|android|no-runtime-artifact","gate":{"command":"EXACT COMMAND","exitCode":0,"head":"FULL-SHA"},"verifiedBase":"FULL-SHA","verifiedCommit":"FULL-SHA"}
+```
+
+The integration manifest must match exactly one such Beads record for every
+current verified task. A different base, commit, gate command, gate head, exit
+code, or artifact impact is rejected. Older free-form immutable verification
+notes on closed tasks are routed through `legacyClosedTasks` instead.
+
 A pure harness/docs/infrastructure task may close from isolated verification
 only through an explicit no-runtime-artifact manifest. The deterministic guard
 must prove that its declared changed paths exactly match the verified Git diff
 and contain no product/runtime paths. This is the sole exception to integration.
+The path check is an explicit conservative allowlist: documentation,
+`.agents/skills`, `.codex`, the named integration/mirror/publication/cleanup
+scripts, their tests/fixtures, and `scripts/verify.sh`. Actual build inputs such
+as `.dockerignore`, `tsconfig`, Tailwind, PostCSS, Prisma, package/Docker files,
+deployment/runtime paths, or product code are rejected. The harness-only
+`scripts/publish-integration-draft.mjs` file is allowed.
 
 On failure:
 
@@ -517,10 +543,18 @@ verified commit must be either:
 
 A cherry-pick changes commit identity and therefore uses a behavior-equivalent
 mapping unless the original verified commit is also integrated by ancestry.
+If the root is coordination-only, record `role:integration-coordinator` before
+integration. It must remain stage-less and `in_progress`; open INBOX/READY and
+blocked roots cannot close through coordinator handling.
 
 Run all combined gates. For Android work, build and publish a fresh APK from the
 integration head. Verify versionName, versionCode, file size, SHA-256, signing
 certificate, app-debug.apk, immutable hash-qualified APK, and latest.json.
+The manifest supplies the real SDK `aapt`/`aapt2` and `apksigner` executable
+paths plus an assemble gate bound to the integration head. The guard directly
+runs `aapt dump badging` and `apksigner verify --print-certs` on both
+structurally valid APKs. Stored text reports and arbitrary byte fixtures are not
+accepted as provenance.
 Before closure, a separate integration reviewer records a passed review against
 the exact integration head.
 
@@ -563,6 +597,10 @@ allowed pre-close status and performs `close-only`; it never appends the note a
 second time. Missing, duplicate, mismatched, or stage-bearing partial evidence
 fails closed, so later dependency/root actions cannot hide an earlier partial
 failure.
+The full wrapper revalidates Beads on retry. A stage-less partial leaf is
+rediscovered only when its exact current immutable verification record and
+guarded closure note are both present; the normal evidence CLI and publication
+path do not accept that transient state.
 
 After a post-closure GitHub partial failure, retry only the mirror:
 
@@ -613,20 +651,28 @@ stage, type, priority, and area labels. It persists external_ref only after a
 unique issue succeeds. Exact-ID duplicates are an error. Raw notes/logs,
 credentials, private paths, device identifiers, browser state, and personal
 data are never sent. Partial failures are reported per task and safe to retry.
+The target is hard-fixed to `SHAREN/gymcoach`. Structured lifecycle evidence is
+appended using deterministic evidence IDs and retained across later updates;
+retries do not duplicate it. Beads-marker-like text in titles, descriptions,
+acceptance criteria, or evidence is neutralized, and closed tasks have no stage
+label or `stage:in-progress` fallback.
 
 ## Draft PR Publication
 
-Only after guarded integration and independent integration verification:
+Only after guarded closure and independent verification of integrated work or
+an explicit no-runtime harness task:
 
 ```text
 node scripts/publish-integration-draft.mjs --manifest PATH --dry-run
 node scripts/publish-integration-draft.mjs --manifest PATH
 ```
 
-The command revalidates integration evidence, origin SHAREN/gymcoach, the
-dedicated codex/ or task branch, and default base main. It pushes only that
-verified branch and creates or updates a draft PR. It never auto-merges and does
-not imply installation or deployment.
+The command revalidates integration evidence, the fixed SHAREN/gymcoach origin,
+a dedicated codex/ or task branch whose name contains a guarded Beads task ID,
+and the fixed base main. Repository/base overrides and generic unbound codex/
+branches are rejected. It pushes only that verified branch and creates or
+updates a draft PR. It never auto-merges and does not imply installation or
+deployment.
 
 ## Messages During Active Work
 

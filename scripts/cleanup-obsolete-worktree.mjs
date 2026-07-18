@@ -975,7 +975,6 @@ export async function executeWorktreeCleanup(
       if (removalError) throw removalError;
       fail('git worktree remove returned success but registration remains');
     }
-    if (removalError) throw removalError;
     const residualObserved = await exists(gitState.candidatePath);
     const receipt = buildRegisteredCleanupReceipt({
       manifest,
@@ -992,9 +991,17 @@ export async function executeWorktreeCleanup(
         receipt,
         receiptRef,
         measuredBytesBefore: measuredBytesBefore.toString(),
-        error:
-          'Git registration was removed but a residual directory remains; use guarded residual mode after Windows locks clear.',
+        gitRemovalFailed: removalError !== undefined,
+        error: removalError
+          ? 'Git registration was removed despite a nonzero git worktree remove result; the canonical residual receipt was persisted before returning the lock failure.'
+          : 'Git registration was removed but a residual directory remains; use guarded residual mode after Windows locks clear.',
       };
+    }
+    if (removalError) {
+      fail(
+        'git worktree remove returned nonzero after registration and path were already removed; no fallback deletion was attempted',
+        isWindowsLockFailure(removalError) ? 'windows-lock' : 'git-remove-failed',
+      );
     }
     const freeBytesAfter = await getFreeBytes(parent);
     return {

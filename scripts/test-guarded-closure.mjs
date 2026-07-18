@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildImmutableVerificationNote } from './check-integration-evidence.mjs';
 import {
   buildClosureNote,
   closureExecutionPlan,
   executeBeadsClosure,
   mirrorClosureTasks,
   planBeadsClosure,
+  runGuardedClosure,
 } from './close-integrated-tasks.mjs';
 import { mirrorTaskById } from './sync-beads-github.mjs';
 
@@ -16,6 +20,24 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const issues = JSON.parse(
   await readFile(path.join(root, 'scripts/fixtures/github-mirror/issues.json'), 'utf8'),
 );
+
+function git(repo, ...args) {
+  const result = spawnSync('git', ['-C', repo, ...args], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
+}
+
+async function commitFile(repo, relativePath, contents, message) {
+  const filePath = path.join(repo, relativePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, contents);
+  git(repo, 'add', relativePath);
+  git(repo, 'commit', '-m', message);
+  return git(repo, 'rev-parse', 'HEAD');
+}
 
 assert.deepEqual(closureExecutionPlan({ dryRun: true, mirrorOnly: false }), {
   mutateBeads: false,
@@ -276,7 +298,7 @@ const retryTasks = new Map([
     'gymcoach-root',
     {
       id: 'gymcoach-root',
-      status: 'open',
+      status: 'in_progress',
       labels: ['area:infrastructure'],
       notes: '',
     },
@@ -361,5 +383,116 @@ assert.throws(
     }),
   /must be in_progress with only stage:verified/,
 );
+
+async function testFullWrapperPartialCloseRetry() {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'gymcoach-guarded-retry-'));
+  try {
+    git(repo, 'init', '-b', 'chore/gymcoach-retry-harness');
+    git(repo, 'config', 'user.name', 'GymCoach Test');
+    git(repo, 'config', 'user.email', 'gymcoach-test@example.invalid');
+    const base = await commitFile(repo, 'README.md', 'base\n', 'base');
+    const commit = await commitFile(repo, 'docs/workflow.md', 'harness\n', 'harness');
+    const gate = {
+      head: commit,
+      command: 'node scripts/test-guarded-closure.mjs',
+      exitCode: 0,
+    };
+    const manifest = {
+      schemaVersion: 1,
+      mode: 'no-runtime-artifact',
+      authority: { rootTaskId: 'gymcoach-retry' },
+      tasks: [
+        {
+          id: 'gymcoach-retry',
+          classification: 'no-runtime-artifact',
+          verified: { base, commit, gate },
+          noRuntimeArtifact: {
+            reason: 'Pure harness retry regression.',
+            reviewedBy: 'independent verifier',
+            changedPaths: ['docs/workflow.md'],
+          },
+        },
+      ],
+      delivery: Object.fromEntries(
+        ['integrated', 'published', 'installed', 'deployed'].map((stage) => [
+          stage,
+          { required: false, status: 'not-required' },
+        ]),
+      ),
+    };
+    const task = {
+      id: 'gymcoach-retry',
+      status: 'in_progress',
+      labels: ['stage:verify', 'area:infrastructure'],
+      acceptance_criteria: 'No installation or deployment is required.',
+      notes: buildImmutableVerificationNote({
+        verifiedBase: base,
+        verifiedCommit: commit,
+        gate,
+        artifactImpact: 'no-runtime-artifact',
+      }),
+    };
+    const authority = {
+      rootTaskId: task.id,
+      tasks: { [task.id]: task },
+      blockingDependencies: { [task.id]: [] },
+    };
+    const wrapperLog = [];
+    let firstClose = true;
+    const closureAdapters = {
+      readTask(_repo, taskId) {
+        return structuredClone(authority.tasks[taskId]);
+      },
+      updateTask(_repo, action) {
+        wrapperLog.push(`update:${action.taskId}`);
+        task.labels = task.labels.filter((label) => !action.stageLabels.includes(label));
+        task.notes = `${task.notes}\n${action.note}`;
+      },
+      closeTask(_repo, action) {
+        wrapperLog.push(`close:${action.taskId}`);
+        if (firstClose) {
+          firstClose = false;
+          throw new Error('synthetic bd close failure');
+        }
+        task.status = 'closed';
+      },
+    };
+    const mirrorTask = async ({ taskId }) => ({ taskId, action: 'update' });
+
+    await assert.rejects(
+      () =>
+        runGuardedClosure({
+          manifest,
+          repo,
+          beadsAuthority: authority,
+          closureAdapters,
+          mirrorTask,
+        }),
+      /synthetic bd close failure/,
+    );
+    assert.deepEqual(wrapperLog, ['update:gymcoach-retry', 'close:gymcoach-retry']);
+    assert.deepEqual(task.labels, ['area:infrastructure']);
+    assert.match(task.notes, /Guarded no-runtime-artifact closure/);
+
+    await runGuardedClosure({
+      manifest,
+      repo,
+      beadsAuthority: authority,
+      closureAdapters,
+      mirrorTask,
+    });
+    assert.deepEqual(wrapperLog, [
+      'update:gymcoach-retry',
+      'close:gymcoach-retry',
+      'close:gymcoach-retry',
+    ]);
+    assert.equal(task.status, 'closed');
+    assert.equal((task.notes.match(/Guarded no-runtime-artifact closure/g) ?? []).length, 1);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+}
+
+await testFullWrapperPartialCloseRetry();
 
 console.log('Guarded closure and mirror-only retry regression tests passed.');

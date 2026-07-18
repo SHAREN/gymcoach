@@ -141,6 +141,16 @@ Append verification evidence with:
 - installation/deployment requirements from the acceptance criteria;
 - Android or training-science evidence when applicable.
 
+Append exactly one machine-readable line for the current immutable result:
+
+```text
+Immutable verification evidence v1: {"artifactImpact":"runtime|android|no-runtime-artifact","gate":{"command":"EXACT COMMAND","exitCode":0,"head":"FULL-SHA"},"verifiedBase":"FULL-SHA","verifiedCommit":"FULL-SHA"}
+```
+
+Use the exact gate command that was run. Do not reuse a prior commit's marker or
+write free-form substitutes for these fields. Later integration manifests must
+match exactly one authoritative marker.
+
 The working tree must be clean and the verified commit immutable before the
 transition.
 
@@ -149,7 +159,7 @@ transition.
 Remove VERIFY and move the task to VERIFIED / AWAITING_INTEGRATION:
 
 ```text
-bd update TASK-ID --append-notes "Immutable verification evidence: verified-base FULL-SHA; verified-commit FULL-SHA; gates..." --remove-label stage:verify --add-label stage:verified --status in_progress
+bd update TASK-ID --append-notes "Immutable verification evidence v1: {...exact JSON...}" --remove-label stage:verify --add-label stage:verified --status in_progress
 ```
 
 Create a unique temporary sanitized evidence JSON containing only the verified
@@ -191,17 +201,26 @@ node scripts/close-integrated-tasks.mjs --manifest PATH
 
 The wrapper requires stage:verify, closes Beads only after the exception guard
 passes, and then closes the exact GitHub mirror. Do not use the exception for
-app, Android, Watch, backend, shared contract, package/runtime, deployment, or
-artifact-publishing changes. Dockerfile, Docker Compose, runtime build,
-deployment, CI publication, and artifact-publication paths are runtime-affecting
-for this guard and must be rejected. Treat release/build/runtime/service scripts,
-deployment/operations directories, and all checked-in GitHub workflow/action
-automation conservatively as runtime-affecting.
+app, Android, Watch, backend, shared contract, package/runtime, deployment, build
+configuration, or artifact-producing changes. The guard uses a conservative
+allowlist for docs, `.agents/skills`, `.codex`, the named workflow guard scripts,
+their tests/fixtures, and `scripts/verify.sh`. `.dockerignore`, TypeScript,
+Tailwind, PostCSS, Prisma, package/Docker, deployment, GitHub automation, and
+product paths are rejected. The harness-only
+`scripts/publish-integration-draft.mjs` path is explicitly allowed.
 
 The wrapper preplans every closure action. If its exact deterministic note and
 stage removal succeeded but `bd close` failed, retry accepts only that matching
 stage-less pre-close task and performs close-only without duplicating the note;
-any other partial mutation remains rejected.
+any other partial mutation remains rejected. Verify this through the full
+wrapper, which reruns authoritative evidence validation before planning the
+close-only retry.
+
+After this guarded no-runtime closure succeeds and only when owner publication
+authority exists, the verified task branch may be published with
+`scripts/publish-integration-draft.mjs`. The command requires the closed Beads
+task, the fixed SHAREN/gymcoach origin/main base, and a branch containing the
+guarded task ID.
 
 ## Failure
 

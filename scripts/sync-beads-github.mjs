@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -8,6 +9,8 @@ export const DEFAULT_GITHUB_REPOSITORY = 'SHAREN/gymcoach';
 export const DEFAULT_GITHUB_BRANCH = 'main';
 
 const MANAGED_LABEL_PREFIXES = ['beads:', 'stage:', 'type:', 'priority:', 'area:'];
+const EVIDENCE_START = '<!-- beads-lifecycle-evidence:start -->';
+const EVIDENCE_END = '<!-- beads-lifecycle-evidence:end -->';
 const LABEL_COLORS = {
   'beads:open': '1d76db',
   'beads:in-progress': 'fbca04',
@@ -47,11 +50,20 @@ function markerFor(taskId) {
   return `<!-- beads-task-id: ${taskId} -->`;
 }
 
+function requireFixedRepository(repository) {
+  if (repository !== DEFAULT_GITHUB_REPOSITORY) {
+    fail(`GitHub repository is fixed to ${DEFAULT_GITHUB_REPOSITORY}`);
+  }
+  return repository;
+}
+
 export function sanitizeMirrorText(value, maxLength = 4000) {
   if (typeof value !== 'string') {
     return '';
   }
   let sanitized = value
+    .replace(/<!--\s*beads-task-id\s*:[^>]*-->/gi, '[REDACTED_BEADS_MARKER]')
+    .replace(/Beads\s+(?:task|source of truth)\s*:\s*`[^`]+`/gi, '[REDACTED_BEADS_MARKER]')
     .replace(/(?:\b[A-Za-z]:[\\/]|\\\\)[^\r\n]*/g, '[PRIVATE_PATH]')
     .replace(/\/(?:home|root|tmp|Users)\/[^\r\n]*/g, '[PRIVATE_PATH]')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
@@ -127,6 +139,7 @@ function normalizedStatus(status) {
 }
 
 function taskStage(task) {
+  if (task.status === 'closed') return 'none';
   return task.labels?.find((label) => label.startsWith('stage:')) ?? 'stage:in-progress';
 }
 
@@ -135,9 +148,10 @@ function taskLabel(task, prefix, fallback) {
 }
 
 function managedLabelsFor(task) {
+  const stage = taskStage(task);
   return [
     `beads:${normalizedStatus(task.status)}`,
-    taskStage(task),
+    ...(stage === 'none' ? [] : [stage]),
     taskLabel(task, 'type:', `type:${task.issue_type}`),
     taskLabel(task, 'priority:', `priority:P${task.priority}`),
     taskLabel(task, 'area:', 'area:unspecified'),
@@ -162,7 +176,9 @@ function evidenceLines(evidence) {
     lines.push(`- Verification gate: ${sanitizeMirrorText(evidence.gate, 300)}`);
   } else if (evidence.kind === 'integration') {
     lines.push(`- Integration head: \`${sanitizeMirrorText(evidence.integrationHead, 80)}\``);
-    for (const [stage, status] of Object.entries(evidence.delivery ?? {})) {
+    for (const [stage, status] of Object.entries(evidence.delivery ?? {}).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
       lines.push(
         `- ${sanitizeMirrorText(String(stage), 80)}: ${sanitizeMirrorText(String(status), 80)}`,
       );
@@ -189,6 +205,56 @@ function evidenceLines(evidence) {
     lines.push('Evidence kind was not recognized; no free-form evidence was mirrored.');
   }
   return lines;
+}
+
+function existingEvidenceHistory(existingIssue) {
+  const body = existingIssue?.body ?? '';
+  const start = body.indexOf(EVIDENCE_START);
+  const end = body.indexOf(EVIDENCE_END);
+  if (start >= 0 && end > start) {
+    const history = sanitizeMirrorText(body.slice(start + EVIDENCE_START.length, end), 1_000_000);
+    if (history.length > 40_000) fail('sanitized lifecycle evidence history exceeds safe limits');
+    return history;
+  }
+  const legacy = body.match(
+    /## Sanitized lifecycle evidence\s*\n\n([\s\S]*?)\n\nRaw logs, credentials, private paths, device identifiers, and personal data are intentionally excluded\./,
+  );
+  if (!legacy || /No sanitized lifecycle evidence was supplied/.test(legacy[1])) return '';
+  const history = sanitizeMirrorText(legacy[1], 1_000_000);
+  if (history.length > 40_000) fail('sanitized lifecycle evidence history exceeds safe limits');
+  return history;
+}
+
+function evidenceEntry(evidence) {
+  if (!evidence || typeof evidence !== 'object') return undefined;
+  const lines = evidenceLines(evidence);
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ kind: evidence.kind, lines }))
+    .digest('hex');
+  return {
+    fingerprint,
+    text: `<!-- beads-evidence-id: ${fingerprint} -->\n### ${sanitizeMirrorText(
+      String(evidence.kind ?? 'lifecycle'),
+      80,
+    )}\n\n${lines.join('\n')}`,
+  };
+}
+
+function lifecycleEvidenceHistory(existingIssue, evidence) {
+  const existing = existingEvidenceHistory(existingIssue);
+  const entry = evidenceEntry(evidence);
+  const parts = existing === '' ? [] : [existing];
+  if (entry && !existing.includes(`<!-- beads-evidence-id: ${entry.fingerprint} -->`)) {
+    parts.push(entry.text);
+  }
+  if (parts.length === 0) {
+    parts.push('No sanitized lifecycle evidence has been recorded yet.');
+  }
+  const history = parts.join('\n\n');
+  if (history.length > 45_000) {
+    fail('sanitized lifecycle evidence cannot be appended within the safe GitHub body limit');
+  }
+  return `${EVIDENCE_START}\n${history}\n${EVIDENCE_END}`;
 }
 
 function guardedClosureRecorded(task) {
@@ -233,7 +299,7 @@ ${sanitizeMirrorText(task.acceptance_criteria) || 'No acceptance criteria record
 
 ## Sanitized lifecycle evidence
 
-${evidenceLines(evidence).join('\n')}
+${lifecycleEvidenceHistory(existingIssue, evidence)}
 
 Raw logs, credentials, private paths, device identifiers, and personal data are intentionally excluded.
 `;
@@ -250,19 +316,19 @@ export function selectBackfillTasks(tasks) {
   return tasks.filter((task) => ['open', 'in_progress', 'blocked'].includes(task.status));
 }
 
-function issueNumberFromExternalRef(externalRef, repository) {
+function issueNumberFromExternalRef(externalRef) {
   if (typeof externalRef !== 'string') {
     return undefined;
   }
-  const escapedRepository = repository.replace('/', '\\/');
+  const escapedRepository = DEFAULT_GITHUB_REPOSITORY.replace('/', '\\/');
   const match = externalRef.match(
     new RegExp(`^https://github\\.com/${escapedRepository}/issues/(\\d+)$`),
   );
   return match ? Number(match[1]) : undefined;
 }
 
-function issueUrl(repository, number) {
-  return `https://github.com/${repository}/issues/${number}`;
+function issueUrl(number) {
+  return `https://github.com/${DEFAULT_GITHUB_REPOSITORY}/issues/${number}`;
 }
 
 export function issueEqual(issue, payload) {
@@ -349,6 +415,7 @@ function persistExternalRef(task, url, { cwd, dryRun }) {
 }
 
 export function planIssueMatch(task, issues, repository) {
+  requireFixedRepository(repository);
   const index = indexIssuesByBeadsId(issues);
   const markerMatches = index.get(task.id) ?? [];
   for (const issue of markerMatches) {
@@ -359,7 +426,7 @@ export function planIssueMatch(task, issues, repository) {
       );
     }
   }
-  const externalNumber = issueNumberFromExternalRef(task.external_ref, repository);
+  const externalNumber = issueNumberFromExternalRef(task.external_ref);
   if (
     typeof task.external_ref === 'string' &&
     task.external_ref.trim() !== '' &&
@@ -406,6 +473,7 @@ export async function mirrorTaskById({
   task: suppliedTask,
   adapters = {},
 }) {
+  requireFixedRepository(repository);
   const readTask = adapters.readTask ?? readBeadsTask;
   const listIssues = adapters.listIssues ?? listGitHubIssues;
   const ensureMirrorLabels = adapters.ensureLabels ?? ensureLabels;
@@ -433,7 +501,7 @@ export async function mirrorTaskById({
 
   if (dryRun) {
     const url = existingIssue
-      ? (existingIssue.html_url ?? issueUrl(repository, existingIssue.number))
+      ? (existingIssue.html_url ?? issueUrl(existingIssue.number))
       : undefined;
     if (url) {
       await persistMirrorExternalRef(task, url, { cwd, dryRun: true });
@@ -463,7 +531,7 @@ export async function mirrorTaskById({
   } else {
     issue = await updateIssue(existingIssue.number, payload);
   }
-  const url = issue.html_url ?? issueUrl(repository, issue.number);
+  const url = issue.html_url ?? issueUrl(issue.number);
   await persistMirrorExternalRef(task, url, { cwd, dryRun: false });
   return {
     taskId: task.id,
@@ -489,7 +557,6 @@ export function summarizeMirrorResults(results) {
 
 function parseArguments(argv) {
   const options = {
-    repository: DEFAULT_GITHUB_REPOSITORY,
     cwd: process.cwd(),
     dryRun: false,
   };
@@ -499,8 +566,6 @@ function parseArguments(argv) {
       options.taskId = argv[++index];
     } else if (argument === '--backfill') {
       options.backfill = true;
-    } else if (argument === '--repository') {
-      options.repository = argv[++index];
     } else if (argument === '--repo') {
       options.cwd = argv[++index];
     } else if (argument === '--evidence-file') {
@@ -525,7 +590,7 @@ if (isMain) {
       ? JSON.parse(await readFile(path.resolve(options.cwd, options.evidenceFile), 'utf8'))
       : undefined;
     run('gh', ['auth', 'status', '--hostname', 'github.com'], { cwd: options.cwd });
-    const issues = listGitHubIssues(options.repository, options.cwd);
+    const issues = listGitHubIssues(DEFAULT_GITHUB_REPOSITORY, options.cwd);
     const taskIds = options.backfill
       ? readBackfillTasks(options.cwd).map((task) => task.id)
       : [options.taskId];
@@ -534,7 +599,7 @@ if (isMain) {
       try {
         const result = await mirrorTaskById({
           taskId,
-          repository: options.repository,
+          repository: DEFAULT_GITHUB_REPOSITORY,
           cwd: options.cwd,
           dryRun: options.dryRun,
           evidence,

@@ -680,6 +680,39 @@ async function testRegisteredRemoval() {
   }
 }
 
+async function testNonzeroRemovalAfterDeregistrationPersistsReceipt() {
+  const state = await createRepository();
+  try {
+    const worktree = path.join(state.managedRoot, 'nonzero residual worktree');
+    const branch = 'chore/gymcoach-example-nonzero-residual';
+    git(state.repo, 'worktree', 'add', '-b', branch, worktree, 'HEAD');
+    const worktreeHead = git(worktree, 'rev-parse', 'HEAD');
+    const cleanupManifest = realManifest({ ...state, worktree, worktreeHead, branch });
+    const result = await executeWorktreeCleanup(cleanupManifest, {
+      repo: state.repo,
+      dryRun: false,
+      executorPath: state.repo,
+      adapters: {
+        readBeadsTask: () => realTask(worktree),
+        async removeRegisteredWorktree(repo, candidate) {
+          git(repo, 'worktree', 'remove', '--', candidate);
+          await mkdir(candidate);
+          await writeFile(path.join(candidate, 'locked-build-cache.bin'), Buffer.alloc(2048, 3));
+          throw new WorktreeCleanupError('synthetic Windows sharing violation', 'windows-lock');
+        },
+      },
+    });
+    assert.equal(result.status, 'residual-remains');
+    assert.equal(result.gitRemovalFailed, true);
+    assert.match(result.error, /canonical residual receipt was persisted/);
+    assert.equal(git(state.repo, 'cat-file', '-t', result.receiptRef), 'blob');
+    assert.doesNotMatch(git(state.repo, 'worktree', 'list', '--porcelain'), /nonzero residual/);
+    assert.equal(await exists(worktree), true);
+  } finally {
+    await rm(state.container, { recursive: true, force: false, maxRetries: 0 });
+  }
+}
+
 async function testUnreachableCommitArchive() {
   const state = await createRepository();
   try {
@@ -944,6 +977,7 @@ async function testFailuresNeverForceDelete() {
 }
 
 await testRegisteredRemoval();
+await testNonzeroRemovalAfterDeregistrationPersistsReceipt();
 await testUnreachableCommitArchive();
 await testResidualRemovalAndContainment();
 await testFailuresNeverForceDelete();

@@ -52,13 +52,11 @@ function readTask(repo, taskId) {
   return JSON.parse(runBd(repo, ['show', taskId, '--json'], { capture: true }))[0];
 }
 
-const IMPLEMENTATION_STAGES = new Set(['stage:review', 'stage:verify', 'stage:verified']);
-
 export function buildClosureNote(evidence, taskId) {
   if (evidence.mode === 'integration') {
     return `${evidence.coordinatorTaskIds.includes(taskId) ? 'Guarded integration root coordination closure' : 'Guarded integration closure'}: head ${evidence.head}; integrated=${evidence.delivery.integrated.status}; published=${evidence.delivery.published.status}; installed=${evidence.delivery.installed.status}; deployed=${evidence.delivery.deployed.status}.`;
   }
-  return `Immutable verification evidence: verified-commit ${evidence.head}. Guarded no-runtime-artifact closure at verified commit ${evidence.head}.`;
+  return `Guarded no-runtime-artifact closure at verified commit ${evidence.head}.`;
 }
 
 export function buildClosureReason(evidence) {
@@ -72,12 +70,6 @@ function exactNoteCount(notes, expectedNote) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line === expectedNote).length;
-}
-
-function allowedOpenStatuses(evidence, taskId) {
-  return evidence.coordinatorTaskIds.includes(taskId)
-    ? new Set(['open', 'in_progress', 'blocked'])
-    : new Set(['in_progress']);
 }
 
 function taskStageLabels(issue) {
@@ -98,7 +90,7 @@ export function planClosureTaskAction({ evidence, taskId, issue }) {
     return { taskId, action: 'skip', note: expectedNote, reason: buildClosureReason(evidence) };
   }
 
-  if (!allowedOpenStatuses(evidence, taskId).has(issue.status)) {
+  if (issue.status !== 'in_progress') {
     fail(`${taskId} has invalid status ${issue.status} before guarded closure`);
   }
   if (noteCount > 1) {
@@ -117,8 +109,8 @@ export function planClosureTaskAction({ evidence, taskId, issue }) {
   }
 
   if (evidence.coordinatorTaskIds.includes(taskId)) {
-    if (stageLabels.some((label) => IMPLEMENTATION_STAGES.has(label))) {
-      fail(`${taskId} has an implementation stage and must be verified as a mapped task`);
+    if (stageLabels.length > 0) {
+      fail(`${taskId} coordinator must be stage-less before guarded closure`);
     }
   } else {
     const expectedLabel = evidence.mode === 'integration' ? 'stage:verified' : 'stage:verify';
@@ -161,14 +153,6 @@ export async function executeBeadsClosure({ evidence, repo, adapters = {} }) {
     await closeTask(repo, action);
   }
   return plan;
-}
-
-function requireClosedTask(repo, taskId, evidence) {
-  const issue = readTask(repo, taskId);
-  planClosureTaskAction({ evidence, taskId, issue });
-  if (issue.status !== 'closed') {
-    fail(`${taskId} must already have a guarded Beads closure for mirror-only retry`);
-  }
 }
 
 export function buildMirrorEvidence(evidence) {
@@ -228,36 +212,67 @@ export async function mirrorClosureTasks({
   return results;
 }
 
-async function main(argv) {
-  const options = parseArguments(argv);
-  const executionPlan = closureExecutionPlan(options);
-  const repo = path.resolve(options.repo);
-  const manifestPath = path.resolve(repo, options.manifest);
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const evidence = await validateIntegrationEvidence(manifest, { repo });
-  if (options.mirrorOnly) {
-    for (const taskId of evidence.closureTaskIds) requireClosedTask(repo, taskId, evidence);
+export async function runGuardedClosure({
+  manifest,
+  repo = process.cwd(),
+  dryRun = false,
+  mirrorOnly = false,
+  beadsAuthority,
+  closureAdapters = {},
+  mirrorTask = mirrorTaskById,
+}) {
+  const executionPlan = closureExecutionPlan({ dryRun, mirrorOnly });
+  const repository = path.resolve(repo);
+  const evidence = await validateIntegrationEvidence(manifest, {
+    repo: repository,
+    beadsAuthority,
+    allowPartialClosure: !mirrorOnly,
+  });
+  if (mirrorOnly) {
+    for (const taskId of evidence.closureTaskIds) {
+      const issue = (closureAdapters.readTask ?? readTask)(repository, taskId);
+      planClosureTaskAction({ evidence, taskId, issue });
+      if (issue.status !== 'closed') {
+        fail(`${taskId} must already have a guarded Beads closure for mirror-only retry`);
+      }
+    }
   } else {
-    planBeadsClosure({ evidence, repo });
+    planBeadsClosure({ evidence, repo: repository, adapters: closureAdapters });
   }
   if (!executionPlan.mutateBeads && !executionPlan.runMirrors) {
     console.log(`Guarded closure dry-run passed for ${evidence.closureTaskIds.join(', ')}`);
-    return;
+    return { evidence, mirrors: [] };
   }
   if (executionPlan.mutateBeads) {
-    await executeBeadsClosure({ evidence, repo });
+    await executeBeadsClosure({ evidence, repo: repository, adapters: closureAdapters });
   }
+  let mirrors = [];
   if (executionPlan.runMirrors) {
-    await mirrorClosureTasks({
+    mirrors = await mirrorClosureTasks({
       evidence,
-      repo,
+      repo: repository,
       dryRun: executionPlan.mirrorDryRun,
-      mirrorOnly: options.mirrorOnly,
+      mirrorOnly,
+      mirrorTask,
     });
   }
-  if (options.mirrorOnly && options.dryRun) {
+  if (mirrorOnly && dryRun) {
     console.log(`Mirror-only retry dry-run passed for ${evidence.closureTaskIds.join(', ')}`);
   }
+  return { evidence, mirrors };
+}
+
+async function main(argv) {
+  const options = parseArguments(argv);
+  const repo = path.resolve(options.repo);
+  const manifestPath = path.resolve(repo, options.manifest);
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  await runGuardedClosure({
+    manifest,
+    repo,
+    dryRun: options.dryRun,
+    mirrorOnly: options.mirrorOnly,
+  });
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

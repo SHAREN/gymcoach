@@ -24,48 +24,65 @@ function run(command, args, { cwd, capture = false } = {}) {
   return capture ? result.stdout.trim() : '';
 }
 
-export function validatePublicationBranch(branch, taskIds) {
-  if (branch.startsWith('codex/')) {
+export function validatePublicationBranch(branch, { rootTaskId, closureTaskIds }) {
+  const guardedTaskIds = new Set([rootTaskId, ...closureTaskIds]);
+  const codexTask = /^codex\/(?:integration-)?(gymcoach-[a-z0-9]+(?:\.[a-z0-9]+)*)(?:-|$)/.exec(
+    branch,
+  );
+  if (codexTask) {
+    if (!guardedTaskIds.has(codexTask[1])) {
+      fail('codex publication branch is not bound to a guarded Beads task');
+    }
     return branch;
   }
   const taskBranch = /^(?:feat|fix|chore)\/(gymcoach-[a-z0-9]+(?:\.[a-z0-9]+)*)-/.exec(branch);
-  if (!taskBranch || !taskIds.includes(taskBranch[1])) {
-    fail('publication branch must use codex/ or a dedicated branch for a guarded task');
+  if (!taskBranch || !guardedTaskIds.has(taskBranch[1])) {
+    fail('publication branch must be dedicated to a guarded Beads task');
   }
   return branch;
 }
 
-export function originMatchesRepository(originUrl, repository) {
+export function originMatchesRepository(originUrl) {
   const normalized = originUrl.trim().replace(/\.git$/, '');
   return (
-    normalized === `https://github.com/${repository}` ||
-    normalized === `git@github.com:${repository}` ||
-    normalized === `ssh://git@github.com/${repository}`
+    normalized === `https://github.com/${DEFAULT_GITHUB_REPOSITORY}` ||
+    normalized === `git@github.com:${DEFAULT_GITHUB_REPOSITORY}` ||
+    normalized === `ssh://git@github.com/${DEFAULT_GITHUB_REPOSITORY}`
   );
 }
 
 export function buildDraftPrBody(evidence) {
   const delivery = Object.entries(evidence.delivery)
+    .sort(([left], [right]) => left.localeCompare(right))
     .map(([stage, value]) => `- ${stage}: ${value.status}`)
     .join('\n');
-  return `## Guarded integration
+  return `## Guarded ${evidence.mode === 'integration' ? 'integration' : 'verified harness task'}
 
-- Integration head: \`${evidence.head}\`
-- Tasks: ${evidence.taskIds.map((id) => `\`${id}\``).join(', ')}
+- ${evidence.mode === 'integration' ? 'Integration' : 'Verified'} head: \`${evidence.head}\`
+- Tasks: ${evidence.closureTaskIds.map((id) => `\`${id}\``).join(', ')}
 
 ## Delivery state
 
 ${delivery}
 
-This draft PR was created only after the repository integration guard passed. Beads remains authoritative. The PR must not be auto-merged, and it does not imply installation or deployment.
+This draft PR was created only after guarded closure and immutable verification passed. Beads remains authoritative. The PR must not be auto-merged, and it does not imply installation or deployment.
 `;
+}
+
+export function validatePublicationEvidence(evidence) {
+  if (
+    !Array.isArray(evidence?.closureTaskIds) ||
+    !Array.isArray(evidence?.alreadyGuardedTaskIds) ||
+    !evidence.closureTaskIds.every((taskId) => evidence.alreadyGuardedTaskIds.includes(taskId))
+  ) {
+    fail('publication requires every guarded task to be closed first');
+  }
+  return evidence;
 }
 
 function parseArguments(argv) {
   const options = {
     repo: process.cwd(),
-    repository: DEFAULT_GITHUB_REPOSITORY,
-    base: DEFAULT_GITHUB_BRANCH,
     dryRun: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -74,10 +91,6 @@ function parseArguments(argv) {
       options.manifest = argv[++index];
     } else if (argument === '--repo') {
       options.repo = argv[++index];
-    } else if (argument === '--repository') {
-      options.repository = argv[++index];
-    } else if (argument === '--base') {
-      options.base = argv[++index];
     } else if (argument === '--dry-run') {
       options.dryRun = true;
     } else {
@@ -94,40 +107,36 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const repo = path.resolve(options.repo);
   const manifest = JSON.parse(await readFile(path.resolve(repo, options.manifest), 'utf8'));
-  const evidence = await validateIntegrationEvidence(manifest, { repo });
-  if (evidence.mode !== 'integration') {
-    fail('only guarded integrated product work may be published through this command');
-  }
+  const evidence = validatePublicationEvidence(
+    await validateIntegrationEvidence(manifest, { repo }),
+  );
   const branch = validatePublicationBranch(
     run('git', ['branch', '--show-current'], { cwd: repo, capture: true }),
-    evidence.taskIds,
+    evidence,
   );
   const origin = run('git', ['remote', 'get-url', 'origin'], { cwd: repo, capture: true });
-  if (!originMatchesRepository(origin, options.repository)) {
-    fail(`origin does not target ${options.repository}`);
+  if (!originMatchesRepository(origin)) {
+    fail(`origin does not target ${DEFAULT_GITHUB_REPOSITORY}`);
   }
   const originHead = run('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
     cwd: repo,
     capture: true,
   });
-  if (
-    originHead !== `refs/remotes/origin/${options.base}` ||
-    options.base !== DEFAULT_GITHUB_BRANCH
-  ) {
+  if (originHead !== `refs/remotes/origin/${DEFAULT_GITHUB_BRANCH}`) {
     fail('draft PR base must be the confirmed origin default branch main');
   }
-  const title = `[integration] ${evidence.taskIds.join(', ')}`;
+  const title = `[${evidence.mode === 'integration' ? 'integration' : 'verified'}] ${evidence.closureTaskIds.join(', ')}`;
   const body = buildDraftPrBody(evidence);
   if (options.dryRun) {
     console.log(
       JSON.stringify(
         {
           action: 'publish-draft-pr',
-          repository: options.repository,
+          repository: DEFAULT_GITHUB_REPOSITORY,
           branch,
-          base: options.base,
+          base: DEFAULT_GITHUB_BRANCH,
           head: evidence.head,
-          taskIds: evidence.taskIds,
+          taskIds: evidence.closureTaskIds,
         },
         null,
         2,
@@ -145,7 +154,7 @@ async function main() {
         'pr',
         'list',
         '--repo',
-        options.repository,
+        DEFAULT_GITHUB_REPOSITORY,
         '--head',
         branch,
         '--state',
@@ -166,10 +175,10 @@ async function main() {
         'pr',
         'create',
         '--repo',
-        options.repository,
+        DEFAULT_GITHUB_REPOSITORY,
         '--draft',
         '--base',
-        options.base,
+        DEFAULT_GITHUB_BRANCH,
         '--head',
         branch,
         '--title',
@@ -188,9 +197,9 @@ async function main() {
         'edit',
         String(pullRequest.number),
         '--repo',
-        options.repository,
+        DEFAULT_GITHUB_REPOSITORY,
         '--base',
-        options.base,
+        DEFAULT_GITHUB_BRANCH,
         '--title',
         title,
         '--body',
@@ -201,7 +210,7 @@ async function main() {
     if (!pullRequest.isDraft) {
       run(
         'gh',
-        ['pr', 'ready', String(pullRequest.number), '--repo', options.repository, '--undo'],
+        ['pr', 'ready', String(pullRequest.number), '--repo', DEFAULT_GITHUB_REPOSITORY, '--undo'],
         { cwd: repo },
       );
     }

@@ -129,6 +129,10 @@ For every implementation request, the coordinating Codex task must:
    mappings, and rerun the combined gates. The integration guard rereads the
    authoritative Beads root and transitive blocking dependencies; manifest task
    lists and delivery booleans are never accepted as their own authority.
+   A coordination-only root must carry `role:integration-coordinator`, remain
+   `in_progress` with no stage, and have blocking dependencies. Never infer
+   coordinator authority merely from dependencies, and never close an INBOX,
+   READY, or externally blocked product task as a coordinator.
 10. Close product tasks only through the deterministic integration closure
     guard. Report the root request with integrated, published, installed, and
     deployed states separately.
@@ -210,6 +214,10 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
   task/role/thread/host/path/common-directory/branch/HEAD identity, original
   removal intent, and current archive or durable-ref reachability before exact
   real-path containment and deletion are considered.
+- If Git for Windows returns nonzero after registration is already gone but a
+  locked residual remains, persist the same canonical registered-pass receipt
+  before returning the failure. Never lose recovery provenance because the Git
+  command and registration removal were only partially aligned.
 - Report Windows locks and cleanup failures without `--force`, permission
   changes, retry loops, or recursive fallback deletion. One blocked candidate
   must not authorize changes to another Worktree.
@@ -251,8 +259,20 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
   The normal close path is `scripts/close-integrated-tasks.mjs` after combined
   integration evidence passes against the live Beads dependency graph and
   acceptance criteria. Pure harness/docs work may use only the explicit
-  deterministic no-runtime-artifact exception; Docker, runtime build,
-  deployment, and artifact-publication files are not eligible for it.
+  deterministic no-runtime-artifact exception.
+- Every current verified task has an exact machine-readable Beads note beginning
+  `Immutable verification evidence v1: ` whose JSON binds verified base,
+  verified commit, artifact impact, and the exact gate command, head, and exit
+  code. Manifests cannot substitute any of those values. Closed tasks with only
+  older immutable verification prose are legacy audit entries, not current
+  verified tasks.
+- The no-runtime exception is a conservative allowlist limited to documentation,
+  repo-local agent/Codex harness files, the named integration/mirror/cleanup/
+  publication guard scripts, their tests/fixtures, and `scripts/verify.sh`.
+  Build inputs such as `.dockerignore`, TypeScript, Tailwind, PostCSS, Prisma,
+  package, Docker, runtime, deployment, and product paths fail closed. The
+  harness-only `scripts/publish-integration-draft.mjs` path is explicitly
+  eligible when its complete verified diff otherwise satisfies the exception.
 - Guarded closure plans every dependency-first/root-last action before mutation.
   If the exact guarded note was appended and every stage removed but `bd close`
   failed, the only accepted retry state is the matching stage-less task with
@@ -268,6 +288,10 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
 
 - Beads remains authoritative. GitHub Issues in `SHAREN/gymcoach` are an
   idempotent external mirror keyed by the exact Beads ID.
+- The repository target is fixed to `SHAREN/gymcoach`; callers cannot override
+  it. Sanitized lifecycle evidence is append-only and idempotent. User text that
+  resembles Beads issue markers is neutralized before rendering, and a closed
+  task is mirrored with no stage label.
 - Capture and every lifecycle transition run
   `node scripts/sync-beads-github.mjs --task TASK-ID`. Backfill uses `--backfill`.
   Always inspect a `--dry-run` before a broad backfill.
@@ -281,10 +305,13 @@ thread=THREAD-ID; host=HOST-ID; path-sha256=SHA256`, derives the role from
   idempotently. Close the GitHub issue only after guarded closure has closed the
   Beads task. A mirror-only dry-run must execute the same read-only duplicate,
   exact-marker, external_ref, label, and issue-reuse planning as the real retry.
-- After independent integration verification, publication may use
+- After guarded closure and independent verification, publication may use
   `scripts/publish-integration-draft.mjs`. It validates the integration manifest,
-  origin, branch prefix, and `main` base before pushing and creating/updating a
-  draft PR. It never merges the PR.
+  fixed `SHAREN/gymcoach` origin, a branch name bound to the guarded root/task
+  set, and the fixed `main` base before pushing and creating/updating a draft
+  PR. Repository/base overrides, generic unbound `codex/*` branches, force push,
+  and merge remain prohibited. It supports either verified integrated work or a
+  guarded no-runtime harness task after Beads closure.
 
 ## Automation tool routing
 
@@ -379,6 +406,13 @@ the integration guard to prove that versionName, versionCode, size, SHA-256,
 signing certificate, app-debug.apk, immutable APK, and latest.json agree. An APK
 built in an isolated task Worktree is insufficient. Do not leave the web
 download pointing at a stale Android build.
+
+The integration manifest identifies the real Android SDK `aapt`/`aapt2` and
+`apksigner` executables. The guard executes them directly against both APKs,
+requires a structurally valid APK containing the Android manifest and DEX,
+binds the actual package/version to output metadata/latest.json, and compares
+the certificates returned by `apksigner verify --print-certs`. Caller-authored
+certificate-report text or arbitrary bytes are never artifact evidence.
 
 Pure web changes do not require a new APK because the Android WebView loads the
 web interface from the configured server.

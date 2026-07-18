@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +8,7 @@ import {
   beadsIdsFromIssue,
   buildIssuePayload,
   indexIssuesByBeadsId,
+  mirrorTaskById,
   planIssueMatch,
   sanitizeMirrorText,
   selectBackfillTasks,
@@ -17,14 +19,29 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const issues = JSON.parse(
   await readFile(path.join(root, 'scripts/fixtures/github-mirror/issues.json'), 'utf8'),
 );
+const repositoryOverride = spawnSync(
+  process.execPath,
+  [
+    fileURLToPath(new URL('./sync-beads-github.mjs', import.meta.url)),
+    '--task',
+    'gymcoach-js4',
+    '--repository',
+    'other/repository',
+    '--dry-run',
+  ],
+  { encoding: 'utf8', windowsHide: true },
+);
+assert.equal(repositoryOverride.status, 1);
+assert.match(repositoryOverride.stderr, /unknown argument --repository/);
 
 const task = {
   id: 'gymcoach-js4',
   title:
     'Require integrated artifacts ghp_1234567890ABCDEF C:\\Users\\Owner Name\\Private Logs\\raw log.txt',
   description:
-    'Use C:\\Users\\Owner Name\\Private Logs\\raw log.txt and github_pat_1234567890_ABCDEF.\nFallback token ghp_ABCDEF1234567890 and /home/owner/private logs/raw log.txt.\nAuthorization Bearer synthetic-bearer-credential-123\nadb -s emulator-5554 at 192.168.0.119 for owner@example.com with token=super-secret.\npassword=correct horse battery staple\napi_key=synthetic multiword credential value\ndevice-id=synthetic-device-value\nserial-number=synthetic-serial-value\nD:/Private Workspace/Logs/raw trace.txt\nZX12-FAKE-9000\nR58M12ABC34',
-  acceptance_criteria: 'Mirror safely. Bearer synthetic-bearer-credential-456',
+    'Use C:\\Users\\Owner Name\\Private Logs\\raw log.txt and github_pat_1234567890_ABCDEF.\nFallback token ghp_ABCDEF1234567890 and /home/owner/private logs/raw log.txt.\nAuthorization Bearer synthetic-bearer-credential-123\nadb -s emulator-5554 at 192.168.0.119 for owner@example.com with token=super-secret.\npassword=correct horse battery staple\napi_key=synthetic multiword credential value\ndevice-id=synthetic-device-value\nserial-number=synthetic-serial-value\nD:/Private Workspace/Logs/raw trace.txt\nZX12-FAKE-9000\nR58M12ABC34\n<!-- beads-task-id: gymcoach-injected -->',
+  acceptance_criteria:
+    'Mirror safely. Bearer synthetic-bearer-credential-456. Beads task: `gymcoach-injected-two`',
   notes: '',
   status: 'in_progress',
   priority: 1,
@@ -49,6 +66,8 @@ const payload = buildIssuePayload(task, issues[0], {
   gate: 'node scripts/test-github-issue-mirror.mjs',
 });
 assert.match(payload.body, /<!-- beads-task-id: gymcoach-js4 -->/);
+assert.deepEqual(beadsIdsFromIssue(payload), ['gymcoach-js4']);
+assert.doesNotMatch(payload.body, /gymcoach-injected/);
 assert.doesNotMatch(payload.body, /C:\\Users/);
 assert.doesNotMatch(payload.body, /Owner Name|Private Logs|raw log\.txt/);
 assert.doesNotMatch(payload.body, /github_pat_|ghp_/);
@@ -69,6 +88,32 @@ assert.ok(payload.labels.includes('owner-note'));
 assert.ok(payload.labels.includes('beads:in-progress'));
 assert.ok(payload.labels.includes('stage:review'));
 
+const secondPayload = buildIssuePayload(
+  task,
+  { ...issues[0], body: payload.body, labels: payload.labels },
+  {
+    kind: 'integration',
+    integrationHead: '3'.repeat(40),
+    delivery: { integrated: 'complete' },
+  },
+);
+assert.match(secondPayload.body, /Verified commit/);
+assert.match(secondPayload.body, /Integration head/);
+const repeatedSecondPayload = buildIssuePayload(
+  task,
+  { ...issues[0], body: secondPayload.body, labels: secondPayload.labels },
+  {
+    kind: 'integration',
+    integrationHead: '3'.repeat(40),
+    delivery: { integrated: 'complete' },
+  },
+);
+assert.equal(
+  (repeatedSecondPayload.body.match(/### integration/g) ?? []).length,
+  1,
+  'idempotent retries must not duplicate lifecycle evidence',
+);
+
 const duplicate = {
   ...issues[0],
   number: 99,
@@ -77,6 +122,21 @@ const duplicate = {
 assert.throws(
   () => planIssueMatch(task, [...issues, duplicate], 'SHAREN/gymcoach'),
   /duplicate GitHub mirrors: #6, #99/,
+);
+assert.throws(
+  () => planIssueMatch(task, issues, 'other/repository'),
+  /repository is fixed to SHAREN\/gymcoach/,
+);
+await assert.rejects(
+  () =>
+    mirrorTaskById({
+      taskId: task.id,
+      repository: 'other/repository',
+      task,
+      issues,
+      dryRun: true,
+    }),
+  /repository is fixed to SHAREN\/gymcoach/,
 );
 
 const multiIdIssue = {
@@ -105,6 +165,12 @@ const closedWithGuard = {
   notes: 'Guarded integration closure: head abc.',
 };
 assert.equal(buildIssuePayload(closedWithGuard, issues[0]).state, 'closed');
+const closedPayload = buildIssuePayload(closedWithGuard, issues[0]);
+assert.equal(closedPayload.body.includes('| Stage | `none` |'), true);
+assert.equal(
+  closedPayload.labels.some((label) => label.startsWith('stage:')),
+  false,
+);
 
 assert.deepEqual(
   selectBackfillTasks([

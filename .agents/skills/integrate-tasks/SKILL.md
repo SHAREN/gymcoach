@@ -14,8 +14,8 @@ This is the only normal product-task closure path.
    verify-task skill.
 2. Run bd prime and inspect every required task with bd show and bd dep list.
 3. Require every product task to be in_progress with stage:verified and to have
-   immutable verification notes containing its exact verified base, verified
-   commit, gate commands, and artifact impact.
+   exactly matching `Immutable verification evidence v1` JSON containing its
+   verified base, verified commit, gate command/head/exit, and artifact impact.
 4. Record the current integration base. Inspect active tasks, every relevant
    branch/Worktree, and newer verified product lines before selecting the base.
 5. Create or use one dedicated integration Worktree and branch. Prefer:
@@ -28,6 +28,11 @@ Require the Project Dispatcher to record the exact integration
 task/role/thread/host/resolved-path-hash Worktree binding on the root Beads task
 from real thread creation state before integration begins. Do not fabricate a
 missing thread or host identity for cleanup.
+
+If the root is coordination-only, require the authoritative
+`role:integration-coordinator` label, `in_progress` status, no stage, and at
+least one blocking dependency. Never infer this role from dependencies and
+never close an INBOX, READY, or blocked product task as a coordinator.
 
 Never integrate directly on main/master, never write in a task Worktree, and
 never use a stale whole-file copy to resolve a conflict.
@@ -75,18 +80,20 @@ An APK from a task Worktree is never closure evidence. Record:
 - apksigner --print-certs output for both APK paths;
 - the exact integration head used for the build.
 
-Create an untracked evidence directory and record both signing reports with the
-Android SDK apksigner executable:
+Record the actual Android SDK `aapt`/`aapt2` and `apksigner` executable paths in
+the untracked manifest. The guard invokes them directly against both APKs:
 
 ```text
-apksigner verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk > evidence/debug-apksigner.txt
-apksigner verify --print-certs data/android-release/HASH-QUALIFIED.apk > evidence/immutable-apksigner.txt
+aapt dump badging android/app/build/outputs/apk/debug/app-debug.apk
+apksigner verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
+aapt dump badging data/android-release/HASH-QUALIFIED.apk
+apksigner verify --print-certs data/android-release/HASH-QUALIFIED.apk
 ```
 
-If apksigner is not on PATH, locate the exact executable under the configured
-Android SDK build-tools directory and record that resolved tool version in the
-integration review. Do not substitute a declared fingerprint without tool
-output.
+Locate the exact executables under the configured Android SDK build-tools
+directory and record their resolved tool versions in the integration review.
+Do not substitute stored report text, a declared fingerprint, or arbitrary
+bytes for direct tool execution and a structurally valid APK.
 
 Keep delivery stages distinct in the manifest:
 
@@ -141,6 +148,8 @@ note was appended and all stages removed but `bd close` failed, the next retry
 may classify only that exact allowed pre-close state as close-only, without
 appending the note again. Duplicate/missing notes, remaining stages, unexpected
 statuses, or any other partial state fail closed before further mutation.
+The complete wrapper must rediscover that exact transient state by rerunning the
+authoritative validator; direct planner-only tests are insufficient.
 
 Retry only the failed mirror after Beads is already closed:
 
@@ -159,7 +168,7 @@ flagged and blocks the root request until it is integrated or explicitly mapped.
 
 ## GitHub Publication
 
-Only after guarded integration and independent verification, and only when the
+Only after guarded closure and independent verification, and only when the
 owner has authorized publication, validate the publication plan:
 
 ```text
@@ -167,9 +176,11 @@ node scripts/publish-integration-draft.mjs --manifest PATH --dry-run
 ```
 
 Then run the same command without --dry-run. It may push only the current
-dedicated codex/ or task branch to origin SHAREN/gymcoach and create or update a
-draft PR against main. Never push an unverified writer branch, never auto-merge,
-and never treat a draft PR as deployment evidence.
+dedicated codex/ or task branch whose name contains a guarded Beads task ID to
+the fixed origin SHAREN/gymcoach and create or update a draft PR against the
+fixed main base. Repository/base overrides and unbound codex branches are
+rejected. Never push an unverified writer branch, never force-push or
+auto-merge, and never treat a draft PR as deployment evidence.
 
 ## Result
 

@@ -7,8 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildImmutableVerificationNote,
   deriveAcceptanceDeliveryRequirements,
   IntegrationEvidenceError,
+  isNoRuntimeArtifactPath,
   validateIntegrationEvidence,
 } from './check-integration-evidence.mjs';
 
@@ -80,6 +82,94 @@ function beadsTask(
   };
 }
 
+function verifiedBeadsTask(
+  manifest,
+  id,
+  {
+    acceptanceCriteria = 'No installation or production deployment is required.',
+    status = 'in_progress',
+    labels = ['stage:verified'],
+    additionalNotes = '',
+  } = {},
+) {
+  const task = manifest.tasks.find((entry) => entry.id === id);
+  assert.ok(task, `manifest task ${id} is required`);
+  const artifactImpact =
+    task.classification === 'no-runtime-artifact'
+      ? 'no-runtime-artifact'
+      : task.affectsAndroid === true
+        ? 'android'
+        : 'runtime';
+  return {
+    ...beadsTask(id, acceptanceCriteria),
+    status,
+    labels,
+    notes: [
+      buildImmutableVerificationNote({
+        verifiedBase: task.verified.base,
+        verifiedCommit: task.verified.commit,
+        gate: task.verified.gate,
+        artifactImpact,
+      }),
+      additionalNotes,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+function coordinatorTask(
+  id,
+  acceptanceCriteria = 'No installation or production deployment is required.',
+) {
+  return {
+    ...beadsTask(id, acceptanceCriteria),
+    status: 'in_progress',
+    labels: ['role:integration-coordinator'],
+  };
+}
+
+function createMinimalApk() {
+  const entries = [
+    ['AndroidManifest.xml', Buffer.from('manifest')],
+    ['classes.dex', Buffer.from('dex')],
+  ];
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const [name, contents] of entries) {
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(0, 14);
+    local.writeUInt32LE(contents.length, 18);
+    local.writeUInt32LE(contents.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    localParts.push(local, nameBytes, contents);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(0, 16);
+    central.writeUInt32LE(contents.length, 20);
+    central.writeUInt32LE(contents.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, nameBytes);
+    offset += local.length + nameBytes.length + contents.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, eocd]);
+}
+
 function beadsAuthority(rootTaskId, tasks, blockingDependencies = {}) {
   return {
     rootTaskId,
@@ -105,7 +195,7 @@ async function testTaskBranchOnlyRegression() {
       TASK_COMMIT: state.taskCommit,
       INTEGRATION_HEAD: state.integrationHead,
     });
-    const authority = beadsAuthority('gymcoach-nrh', [beadsTask('gymcoach-nrh')]);
+    const authority = beadsAuthority('gymcoach-nrh', [verifiedBeadsTask(manifest, 'gymcoach-nrh')]);
     await expectRejected(manifest, state.repo, authority, /not an ancestor of integration head/);
   } finally {
     await rm(state.repo, { recursive: true, force: true });
@@ -127,7 +217,7 @@ async function testBehaviorEquivalentMapping() {
       REPLACEMENT_COMMIT: replacementCommit,
       INTEGRATION_HEAD: replacementCommit,
     });
-    const authority = beadsAuthority('gymcoach-vax', [beadsTask('gymcoach-vax')]);
+    const authority = beadsAuthority('gymcoach-vax', [verifiedBeadsTask(manifest, 'gymcoach-vax')]);
     const result = await validateIntegrationEvidence(manifest, {
       repo: state.repo,
       beadsAuthority: authority,
@@ -159,7 +249,7 @@ async function testNoRuntimeArtifactException() {
       TASK_COMMIT: taskCommit,
     });
     const authority = beadsAuthority('gymcoach-js4', [
-      { ...beadsTask('gymcoach-js4'), labels: ['stage:verify'] },
+      verifiedBeadsTask(manifest, 'gymcoach-js4', { labels: ['stage:verify'] }),
     ]);
     const result = await validateIntegrationEvidence(manifest, { repo, beadsAuthority: authority });
     assert.equal(result.mode, 'no-runtime-artifact');
@@ -173,10 +263,18 @@ async function testNoRuntimeArtifactException() {
     manifest.tasks[0].verified.commit = runtimeCommit;
     manifest.tasks[0].verified.gate.head = runtimeCommit;
     manifest.tasks[0].noRuntimeArtifact.changedPaths = ['app/page.tsx', 'docs/workflow.md'];
+    authority.tasks['gymcoach-js4'] = verifiedBeadsTask(manifest, 'gymcoach-js4', {
+      labels: ['stage:verify'],
+    });
     await expectRejected(manifest, repo, authority, /includes runtime path app\/page\.tsx/);
 
     const runtimeOnlyPaths = [
       ['Dockerfile', 'FROM scratch\n'],
+      ['.dockerignore', 'node_modules\n'],
+      ['postcss.config.js', 'export default {};\n'],
+      ['tailwind.config.ts', 'export default {};\n'],
+      ['tsconfig.json', '{}\n'],
+      ['prisma.config.ts', 'export default {};\n'],
       ['scripts/build-runtime.mjs', 'export default {};\n'],
       ['scripts/release-apk.mjs', 'export default {};\n'],
       ['deployment/service.yml', 'service: gymcoach\n'],
@@ -189,6 +287,9 @@ async function testNoRuntimeArtifactException() {
       manifest.tasks[0].verified.commit = runtimeOnlyCommit;
       manifest.tasks[0].verified.gate.head = runtimeOnlyCommit;
       manifest.tasks[0].noRuntimeArtifact.changedPaths = [runtimePath];
+      authority.tasks['gymcoach-js4'] = verifiedBeadsTask(manifest, 'gymcoach-js4', {
+        labels: ['stage:verify'],
+      });
       await expectRejected(
         manifest,
         repo,
@@ -196,6 +297,40 @@ async function testNoRuntimeArtifactException() {
         new RegExp(`includes runtime path ${runtimePath.replaceAll('.', '\\.')}`),
       );
     }
+
+    git(repo, 'switch', '-c', 'allowed-harness-publish', taskCommit);
+    const publishHarnessCommit = await commitFile(
+      repo,
+      'scripts/publish-integration-draft.mjs',
+      'export default {};\n',
+      'harness publication workflow',
+    );
+    manifest.tasks[0].verified.base = taskCommit;
+    manifest.tasks[0].verified.commit = publishHarnessCommit;
+    manifest.tasks[0].verified.gate.head = publishHarnessCommit;
+    manifest.tasks[0].noRuntimeArtifact.changedPaths = ['scripts/publish-integration-draft.mjs'];
+    authority.tasks['gymcoach-js4'] = verifiedBeadsTask(manifest, 'gymcoach-js4', {
+      labels: ['stage:verify'],
+    });
+    const allowedHarness = await validateIntegrationEvidence(manifest, {
+      repo,
+      beadsAuthority: authority,
+    });
+    assert.equal(allowedHarness.mode, 'no-runtime-artifact');
+    assert.equal(isNoRuntimeArtifactPath('scripts/publish-integration-draft.mjs'), true);
+    assert.equal(isNoRuntimeArtifactPath('.dockerignore'), false);
+
+    authority.tasks['gymcoach-js4'] = {
+      ...authority.tasks['gymcoach-js4'],
+      status: 'closed',
+      labels: [],
+      notes: `${authority.tasks['gymcoach-js4'].notes}\nGuarded no-runtime-artifact closure at verified commit ${publishHarnessCommit}.`,
+    };
+    const closedHarness = await validateIntegrationEvidence(manifest, {
+      repo,
+      beadsAuthority: authority,
+    });
+    assert.deepEqual(closedHarness.alreadyGuardedTaskIds, ['gymcoach-js4']);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -206,12 +341,14 @@ async function testAndroidArtifactEvidence() {
   try {
     git(state.repo, 'merge', '--no-ff', 'task/gymcoach-nrh', '-m', 'integrate task');
     const integrationHead = git(state.repo, 'rev-parse', 'HEAD');
-    const apk = Buffer.from('fresh integrated apk fixture');
+    const apk = createMinimalApk();
     const sha256 = createHash('sha256').update(apk).digest('hex');
     const apkFile = `gymcoach-42-${sha256.slice(0, 12)}.apk`;
     await mkdir(path.join(state.repo, 'android/app/build/outputs/apk/debug'), { recursive: true });
     await mkdir(path.join(state.repo, 'data/android-release'), { recursive: true });
-    await mkdir(path.join(state.repo, 'evidence'), { recursive: true });
+    const androidSdkRoot = path.join(state.repo, 'test-sdk');
+    const buildTools = path.join(androidSdkRoot, 'build-tools', '35.0.0');
+    await mkdir(buildTools, { recursive: true });
     await writeFile(
       path.join(state.repo, 'android/app/build/outputs/apk/debug/app-debug.apk'),
       apk,
@@ -239,29 +376,97 @@ async function testAndroidArtifactEvidence() {
         2,
       )}\n`,
     );
+    const apksignerPath = path.join(buildTools, 'apksigner');
+    const aaptPath = path.join(buildTools, 'aapt');
+    await writeFile(apksignerPath, 'test tool fixture\n');
+    await writeFile(aaptPath, 'test tool fixture\n');
     const certificate = 'ab'.repeat(32);
-    const signatureOutput = `Signer #1 certificate SHA-256 digest: ${certificate}\n`;
-    await writeFile(path.join(state.repo, 'evidence/debug-apksigner.txt'), signatureOutput);
-    await writeFile(path.join(state.repo, 'evidence/immutable-apksigner.txt'), signatureOutput);
     const manifest = await loadFixture('android-integration.json', {
       BASE: state.base,
       TASK_COMMIT: state.taskCommit,
       INTEGRATION_HEAD: integrationHead,
       APK_FILE: apkFile,
+      APKSIGNER_PATH: path.relative(state.repo, apksignerPath).replaceAll('\\', '/'),
+      AAPT_PATH: path.relative(state.repo, aaptPath).replaceAll('\\', '/'),
     });
-    const authority = beadsAuthority('gymcoach-android', [beadsTask('gymcoach-android')]);
+    const authority = beadsAuthority('gymcoach-android', [
+      verifiedBeadsTask(manifest, 'gymcoach-android'),
+    ]);
+    const toolCalls = [];
+    const androidToolRunner = (executable, args) => {
+      toolCalls.push({ executable: path.basename(executable), args });
+      if (path.basename(executable) === 'apksigner') {
+        return args[0] === 'version'
+          ? '0.9-test\n'
+          : `Signer #1 certificate SHA-256 digest: ${certificate}\n`;
+      }
+      return args[0] === 'version'
+        ? 'Android Asset Packaging Tool, v0.2-test\n'
+        : "package: name='org.sharteman.gymcoach' versionCode='42' versionName='1.2.3'\n";
+    };
     const result = await validateIntegrationEvidence(manifest, {
       repo: state.repo,
       beadsAuthority: authority,
+      androidToolRunner,
+      androidSdkRoot,
     });
     assert.equal(result.android.sha256, sha256);
     assert.equal(result.android.signingCertificateSha256, certificate);
+    assert.deepEqual(
+      toolCalls.map(({ executable, args }) => `${executable} ${args.slice(0, 2).join(' ')}`),
+      [
+        'apksigner version',
+        'aapt version',
+        'apksigner verify --print-certs',
+        'apksigner verify --print-certs',
+        'aapt dump badging',
+        'aapt dump badging',
+      ],
+    );
+
+    const fakeToolPath = path.join(state.repo, 'apksigner');
+    await writeFile(fakeToolPath, 'not an SDK build tool\n');
+    const fakeToolManifest = structuredClone(manifest);
+    fakeToolManifest.android.apksignerPath = 'apksigner';
+    await assert.rejects(
+      () =>
+        validateIntegrationEvidence(fakeToolManifest, {
+          repo: state.repo,
+          beadsAuthority: authority,
+          androidToolRunner,
+          androidSdkRoot,
+        }),
+      /must resolve under the configured Android SDK build-tools directory/,
+    );
+
+    const debugPath = path.join(state.repo, 'android/app/build/outputs/apk/debug/app-debug.apk');
+    await writeFile(debugPath, Buffer.from('arbitrary bytes'));
+    await assert.rejects(
+      () =>
+        validateIntegrationEvidence(manifest, {
+          repo: state.repo,
+          beadsAuthority: authority,
+          androidToolRunner,
+          androidSdkRoot,
+        }),
+      /not a structurally valid ZIP\/APK/,
+    );
+    await writeFile(debugPath, apk);
 
     const latestPath = path.join(state.repo, 'data/android-release/latest.json');
     const latest = JSON.parse(await readFile(latestPath, 'utf8'));
     latest.sha256 = '00'.repeat(32);
     await writeFile(latestPath, `${JSON.stringify(latest, null, 2)}\n`);
-    await expectRejected(manifest, state.repo, authority, /latest\.json does not match/);
+    await assert.rejects(
+      () =>
+        validateIntegrationEvidence(manifest, {
+          repo: state.repo,
+          beadsAuthority: authority,
+          androidToolRunner,
+          androidSdkRoot,
+        }),
+      /latest\.json does not match/,
+    );
   } finally {
     await rm(state.repo, { recursive: true, force: true });
   }
@@ -279,14 +484,26 @@ async function testAuthoritativeBeadsBinding() {
       INTEGRATION_HEAD: replacementCommit,
     });
     manifest.authority.rootTaskId = 'gymcoach-root';
-    const root = {
-      ...beadsTask('gymcoach-root'),
-      status: 'blocked',
-      labels: ['stage:ready'],
-    };
+    const root = coordinatorTask('gymcoach-root');
     const authority = beadsAuthority(
       'gymcoach-root',
-      [root, beadsTask('gymcoach-vax'), beadsTask('gymcoach-missing')],
+      [
+        root,
+        verifiedBeadsTask(manifest, 'gymcoach-vax'),
+        {
+          ...beadsTask('gymcoach-missing'),
+          notes: buildImmutableVerificationNote({
+            verifiedBase: state.base,
+            verifiedCommit: state.taskCommit,
+            gate: {
+              head: state.taskCommit,
+              command: 'bash scripts/verify.sh',
+              exitCode: 0,
+            },
+            artifactImpact: 'runtime',
+          }),
+        },
+      ],
       { 'gymcoach-root': ['gymcoach-vax', 'gymcoach-missing'] },
     );
     await expectRejected(
@@ -295,6 +512,33 @@ async function testAuthoritativeBeadsBinding() {
       authority,
       /missing or contains an unexpected required task/,
     );
+
+    const substituted = structuredClone(manifest);
+    substituted.authority.rootTaskId = 'gymcoach-vax';
+    substituted.tasks[0].verified.gate.command = 'npm test';
+    await expectRejected(
+      substituted,
+      state.repo,
+      beadsAuthority('gymcoach-vax', [verifiedBeadsTask(manifest, 'gymcoach-vax')]),
+      /does not match exactly one immutable Beads note/,
+    );
+
+    for (const invalidRoot of [
+      { ...coordinatorTask('gymcoach-root'), labels: ['stage:ready'] },
+      { ...coordinatorTask('gymcoach-root'), status: 'blocked' },
+      { ...coordinatorTask('gymcoach-root'), labels: [] },
+    ]) {
+      await expectRejected(
+        manifest,
+        state.repo,
+        beadsAuthority(
+          'gymcoach-root',
+          [invalidRoot, verifiedBeadsTask(manifest, 'gymcoach-vax')],
+          { 'gymcoach-root': ['gymcoach-vax'] },
+        ),
+        /must be stage:verified|coordinator authority requires/,
+      );
+    }
   } finally {
     await rm(state.repo, { recursive: true, force: true });
   }
@@ -332,21 +576,25 @@ async function testLegacyBehaviorEquivalentAudit() {
         verifiedCommit: legacyCommit,
       },
     ];
-    const rootTask = {
-      ...beadsTask('gymcoach-root'),
-      status: 'blocked',
-      labels: ['stage:ready'],
-    };
+    const rootTask = coordinatorTask('gymcoach-root');
     const legacyTask = {
       ...beadsTask('gymcoach-legacy'),
       status: 'closed',
       labels: [],
-      notes: 'Legacy closure without guarded integration evidence.',
+      notes: `Immutable verification evidence: verified-base ${state.base}; verified-commit ${legacyCommit}; gates passed.`,
     };
     const authority = beadsAuthority(
       'gymcoach-root',
-      [rootTask, beadsTask('gymcoach-vax'), legacyTask],
+      [rootTask, verifiedBeadsTask(manifest, 'gymcoach-vax'), legacyTask],
       { 'gymcoach-root': ['gymcoach-vax', 'gymcoach-legacy'] },
+    );
+    const mismatchedLegacy = structuredClone(manifest);
+    mismatchedLegacy.legacyClosedTasks[0].verifiedCommit = state.taskCommit;
+    await expectRejected(
+      mismatchedLegacy,
+      state.repo,
+      authority,
+      /does not match recorded legacy immutable verification notes/,
     );
     await expectRejected(
       manifest,
@@ -420,17 +668,13 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
       INTEGRATION_HEAD: replacementCommit,
     });
     manifest.authority.rootTaskId = 'gymcoach-root';
-    const installRoot = {
-      ...beadsTask(
-        'gymcoach-root',
-        '1. The integrated APK is installed in place and installation evidence is recorded. 2. No production deployment occurs.',
-      ),
-      status: 'blocked',
-      labels: ['stage:ready'],
-    };
+    const installRoot = coordinatorTask(
+      'gymcoach-root',
+      '1. The integrated APK is installed in place and installation evidence is recorded. 2. No production deployment occurs.',
+    );
     const installAuthority = beadsAuthority(
       'gymcoach-root',
-      [installRoot, beadsTask('gymcoach-vax')],
+      [installRoot, verifiedBeadsTask(manifest, 'gymcoach-vax')],
       { 'gymcoach-root': ['gymcoach-vax'] },
     );
     await expectRejected(
@@ -464,11 +708,10 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
           notes: 'Guarded integration root coordination closure: head abc.',
         },
         {
-          ...beadsTask('gymcoach-vax'),
+          ...verifiedBeadsTask(manifest, 'gymcoach-vax'),
           status: 'closed',
           labels: [],
-          notes:
-            'Immutable verification evidence: verified-base abc; verified-commit def.\nGuarded integration closure: head abc.',
+          notes: `${verifiedBeadsTask(manifest, 'gymcoach-vax').notes}\nGuarded integration closure: head ${replacementCommit}; integrated=complete; published=not-required; installed=complete; deployed=not-authorized.`,
         },
       ],
       { 'gymcoach-root': ['gymcoach-vax'] },
@@ -481,17 +724,13 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
     assert.deepEqual(postClosure.closureTaskIds, completed.closureTaskIds);
     assert.deepEqual(postClosure.alreadyGuardedTaskIds, ['gymcoach-root', 'gymcoach-vax']);
 
-    const deployRoot = {
-      ...beadsTask(
-        'gymcoach-root',
-        '1. No physical installation is required. 2. The integration must be deployed to the canonical runtime.',
-      ),
-      status: 'blocked',
-      labels: ['stage:ready'],
-    };
+    const deployRoot = coordinatorTask(
+      'gymcoach-root',
+      '1. No physical installation is required. 2. The integration must be deployed to the canonical runtime.',
+    );
     const deployAuthority = beadsAuthority(
       'gymcoach-root',
-      [deployRoot, beadsTask('gymcoach-vax')],
+      [deployRoot, verifiedBeadsTask(manifest, 'gymcoach-vax')],
       { 'gymcoach-root': ['gymcoach-vax'] },
     );
     await expectRejected(
@@ -540,6 +779,15 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
     assert.deepEqual(
       deriveAcceptanceDeliveryRequirements([
         beadsTask(
+          'delivery-grammar-regression',
+          '1. Deploy the integrated version. 2. For example, the app is deployed in a preview environment.',
+        ),
+      ]),
+      { installed: false, deployed: true },
+    );
+    assert.deepEqual(
+      deriveAcceptanceDeliveryRequirements([
+        beadsTask(
           'metadata-only-delivery-terms',
           '1. Install and deploy appear only as metadata fields. 2. Install and deploy are status labels, not delivery requirements.',
         ),
@@ -560,6 +808,20 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
   }
 }
 
+function testCurrentHarnessDiffIsExceptionEligible() {
+  const paths = git(
+    root,
+    'diff',
+    '--name-only',
+    'bce854ab095480e3ff0f15fb3b032bc194af487a..HEAD',
+  ).split(/\r?\n/);
+  assert.equal(paths.length > 0, true);
+  assert.deepEqual(
+    paths.filter((file) => !isNoRuntimeArtifactPath(file)),
+    [],
+  );
+}
+
 await testTaskBranchOnlyRegression();
 await testBehaviorEquivalentMapping();
 await testNoRuntimeArtifactException();
@@ -567,4 +829,5 @@ await testAndroidArtifactEvidence();
 await testAuthoritativeBeadsBinding();
 await testLegacyBehaviorEquivalentAudit();
 await testAcceptanceCriteriaDeliveryRequirements();
+testCurrentHarnessDiffIsExceptionEligible();
 console.log('Integration evidence regression tests passed.');
