@@ -62,6 +62,7 @@ data class ProfileDto(
     val bodyweight: Double? = null,
     val unit: String = "KG",
     val activeGymId: String? = null,
+    val coachingProfile: CoachingProfileDto? = null,
     val deloadActive: Boolean = false,
 )
 

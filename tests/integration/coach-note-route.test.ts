@@ -42,14 +42,10 @@ describe('profile route - coachNote (issue #188)', () => {
       jsonReq('PATCH', { coachNote: 'Shoulder is bothering me, go easy on pressing.' }),
     );
     expect(setRes.status).toBe(200);
-    expect((await setRes.json()).coachNote).toBe(
-      'Shoulder is bothering me, go easy on pressing.',
-    );
+    expect((await setRes.json()).coachNote).toBe('Shoulder is bothering me, go easy on pressing.');
 
     const getRes = await getProfile(new Request('http://test.local/api/profile'));
-    expect((await getRes.json()).coachNote).toBe(
-      'Shoulder is bothering me, go easy on pressing.',
-    );
+    expect((await getRes.json()).coachNote).toBe('Shoulder is bothering me, go easy on pressing.');
 
     // null clears it.
     const clearRes = await patchProfile(jsonReq('PATCH', { coachNote: null }));
@@ -72,9 +68,7 @@ describe('profile route - coachNote (issue #188)', () => {
     const user = await seedUser('coachnote-bound@test.dev');
     actAs(user.id);
 
-    const res = await patchProfile(
-      jsonReq('PATCH', { coachNote: 'a'.repeat(501) }),
-    );
+    const res = await patchProfile(jsonReq('PATCH', { coachNote: 'a'.repeat(501) }));
     expect(res.status).toBe(400);
     // Exactly 500 is accepted.
     const ok = await patchProfile(jsonReq('PATCH', { coachNote: 'a'.repeat(500) }));
@@ -119,6 +113,11 @@ describe('buildCoachPayload - coachNote (issue #188)', () => {
 
     const payloadWith = await buildCoachPayload(withNote.id);
     expect(payloadWith.userProfile.coachNote).toBe('travelling, expect missed sessions');
+    expect(payloadWith.userProfile.coachingProfile.healthStatus).toEqual({
+      state: 'UNKNOWN',
+      value: null,
+      updatedAt: null,
+    });
 
     const payloadWithout = await buildCoachPayload(without.id);
     expect(payloadWithout.userProfile.coachNote).toBeNull();

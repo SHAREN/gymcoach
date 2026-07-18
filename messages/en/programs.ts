@@ -112,9 +112,9 @@ export const programs = {
     questionsTitle: 'The coach needs a little more context',
     questionsDescription: 'These answers prevent the model from guessing important constraints.',
     healthStatus: 'Training safety status',
-    healthNoConcerns: 'No relevant health or pain concerns',
-    healthClearedLimitations: 'Cleared for ordinary training with limitations',
-    healthNeedsClearance: 'Medical clearance is needed before programming',
+    healthNoConcerns: 'No significant issues for ordinary training',
+    healthClearedLimitations: 'Train with known limitations',
+    healthNeedsClearance: 'Medical clearance is required before programming',
     trainingExperience: 'Training experience',
     experienceBeginner: 'Beginner',
     experienceIntermediate: 'Intermediate',
@@ -131,7 +131,7 @@ export const programs = {
     sessionDuration: 'Maximum session duration (minutes)',
     limitations: 'Training movement or load constraints',
     limitationsPlaceholder:
-      'Enter none, or describe approved movements, loads, or ranges to respect.',
+      'Name the constraint and every affected exercise, or enter none when there are no constraints.',
     equipmentAccess: 'Available equipment',
     equipmentAccessPlaceholder:
       'Describe the bars, dumbbells, machines and other equipment available.',

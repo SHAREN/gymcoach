@@ -14,8 +14,9 @@ import {
   getReturnToTrainingRecommendationsByEquipment,
   type EquipmentReturnRecommendation,
 } from '@/lib/return-to-training-history';
+import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 5;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 6;
 export const MOBILE_CALCULATION_VERSION = '2026-07-16-return-history-v2';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
@@ -185,6 +186,8 @@ export async function buildMobileBootstrap(userId: string) {
         bodyweight: true,
         unit: true,
         activeGymId: true,
+        coachingProfile: true,
+        coachingProfileUpdatedAt: true,
         deloadUntil: true,
       },
     }),
@@ -421,6 +424,10 @@ export async function buildMobileBootstrap(userId: string) {
       bodyweight: user.bodyweight,
       unit: user.unit,
       activeGymId: user.activeGymId,
+      coachingProfile: normalizeCoachingProfile(
+        user.coachingProfile,
+        user.coachingProfileUpdatedAt,
+      ),
       deloadActive: isDeloadActive(user.deloadUntil, new Date()),
     },
     activeProgram,

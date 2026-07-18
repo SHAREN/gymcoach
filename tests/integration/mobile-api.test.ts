@@ -330,8 +330,15 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 5,
-      profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
+      schemaVersion: 6,
+      profile: {
+        email: seeded.user.email,
+        activeGymId: seeded.gym.id,
+        coachingProfile: {
+          version: 1,
+          healthStatus: { state: 'UNKNOWN', value: null },
+        },
+      },
       activeProgram: { name: 'Offline block' },
       exerciseHistoryByExerciseId: {},
     });

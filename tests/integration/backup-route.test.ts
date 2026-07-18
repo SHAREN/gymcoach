@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { db } from '@/lib/db';
 import { getCurrentUserId } from '@/lib/auth';
+import { applyCoachingProfilePatch } from '@/lib/schemas/coaching-profile';
+import { Prisma } from '@/lib/prisma-client';
 
 // Backup export/restore completeness (issue #168): the export must carry every
 // user-owned model/field, the restore must be a lossless, ownership-scoped
@@ -57,6 +59,24 @@ function comparable(dump: Record<string, unknown>): unknown {
 // Seeds a user with at least one row in every exported model, exercising all
 // the fields issue #168 found missing.
 async function seedFullUser(email: string) {
+  const coachingProfile = applyCoachingProfilePatch(
+    null,
+    {
+      healthStatus: { state: 'KNOWN', value: 'NO_SIGNIFICANT_ISSUES' },
+      trainingLevel: { state: 'KNOWN', value: 'ADVANCED' },
+      availableWeekdays: { state: 'KNOWN', value: [1, 3, 5, 6] },
+      limitations: { state: 'NOT_APPLICABLE' },
+      maximumSessionDurationMin: { state: 'KNOWN', value: 90 },
+      outsideActivities: {
+        state: 'KNOWN',
+        value: [{ type: 'CARDIO', name: 'Cycling', minutesPerWeek: 120 }],
+      },
+      averageSleepHours: { state: 'KNOWN', value: 7.5 },
+      baselineStress: { state: 'KNOWN', value: 3 },
+      generalRecovery: { state: 'KNOWN', value: 4 },
+    },
+    new Date('2026-07-18T10:00:00.000Z'),
+  );
   const user = await db.user.create({
     data: {
       email,
@@ -67,6 +87,9 @@ async function seedFullUser(email: string) {
       heightCm: 181,
       goal: 'HYPERTROPHY',
       weeklyFrequency: 4,
+      coachNote: 'Synthetic backup fixture note',
+      coachingProfile: coachingProfile as Prisma.InputJsonValue,
+      coachingProfileUpdatedAt: new Date(coachingProfile.updatedAt!),
       unit: 'LB',
       deloadUntil: new Date('2026-07-05T00:00:00.000Z'),
     },
@@ -369,7 +392,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 12 with system profiles, preferences, provenance, membership order, snapshots, and earlier fields', async () => {
+  it('exports version 13 with coaching profile, coach note, system profiles and earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -377,7 +400,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(12);
+    expect(dump.version).toBe(13);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -385,6 +408,17 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
       heightCm: 181,
       goal: 'HYPERTROPHY',
       weeklyFrequency: 4,
+      coachNote: 'Synthetic backup fixture note',
+      coachingProfile: {
+        version: 1,
+        updatedAt: '2026-07-18T10:00:00.000Z',
+        healthStatus: { state: 'KNOWN', value: 'NO_SIGNIFICANT_ISSUES' },
+        limitations: { state: 'NOT_APPLICABLE', value: null },
+        outsideActivities: {
+          state: 'KNOWN',
+          value: [{ type: 'CARDIO', name: 'Cycling', minutesPerWeek: 120 }],
+        },
+      },
       unit: 'LB',
       deloadUntil: '2026-07-05T00:00:00.000Z',
       activeGymName: 'Basement',

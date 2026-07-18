@@ -59,9 +59,7 @@ describe('Android native settings API compatibility', () => {
       displayName: 'Native settings',
       weeklyFrequency: 4,
     });
-    expect(
-      (await getProfile(request('http://test/api/profile', 'GET', token))).status,
-    ).toBe(200);
+    expect((await getProfile(request('http://test/api/profile', 'GET', token))).status).toBe(200);
 
     const gymResponse = await createGym(
       request('http://test/api/gyms', 'POST', token, {
@@ -85,6 +83,107 @@ describe('Android native settings API compatibility', () => {
     const backupResponse = await exportBackup(request('http://test/api/backup', 'GET', token));
     expect(backupResponse.status).toBe(200);
     expect(await backupResponse.json()).toMatchObject({ version: expect.any(Number) });
+  });
+
+  it('round-trips the additive coaching profile without old partial writes erasing it', async () => {
+    const { token } = await mobileUser('mobile-coaching-profile@test.dev');
+
+    const initial = await getProfile(request('http://test/api/profile', 'GET', token));
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toMatchObject({
+      coachingProfile: {
+        version: 1,
+        healthStatus: { state: 'UNKNOWN', value: null, updatedAt: null },
+        limitations: { state: 'UNKNOWN', value: null, updatedAt: null },
+      },
+    });
+
+    const saved = await patchProfile(
+      request('http://test/api/profile', 'PATCH', token, {
+        coachingProfile: {
+          healthStatus: { state: 'KNOWN', value: 'TRAIN_WITH_LIMITATIONS' },
+          trainingLevel: { state: 'KNOWN', value: 'INTERMEDIATE' },
+          availableWeekdays: { state: 'KNOWN', value: [5, 1, 3] },
+          maximumSessionDurationMin: { state: 'KNOWN', value: 75 },
+          limitations: {
+            state: 'KNOWN',
+            value: {
+              entries: [
+                {
+                  kind: 'DISCOURAGED_EXERCISE',
+                  label: 'Self-reported pressing constraint',
+                  affectedExerciseNames: ['Bench press'],
+                },
+              ],
+            },
+          },
+          priorityMuscles: { state: 'KNOWN', value: ['BACK_WIDTH'] },
+          priorityStrengthMovements: { state: 'KNOWN', value: ['Pull-up'] },
+          outsideActivities: {
+            state: 'KNOWN',
+            value: [
+              {
+                type: 'CARDIO',
+                name: 'Cycling',
+                sessionsPerWeek: 2,
+                minutesPerWeek: 90,
+                intensity: 'MODERATE',
+              },
+            ],
+          },
+          likedExercises: { state: 'KNOWN', value: ['Pull-up'] },
+          dislikedExercises: { state: 'NOT_APPLICABLE' },
+          averageSleepHours: { state: 'KNOWN', value: 7.5 },
+          baselineStress: { state: 'KNOWN', value: 3 },
+          generalRecovery: { state: 'KNOWN', value: 4 },
+        },
+      }),
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({
+      coachingProfile: {
+        availableWeekdays: { state: 'KNOWN', value: [1, 3, 5] },
+        dislikedExercises: { state: 'NOT_APPLICABLE', value: null },
+        updatedAt: expect.any(String),
+      },
+    });
+
+    const legacyPartial = await patchProfile(
+      request('http://test/api/profile', 'PATCH', token, { displayName: 'Legacy Android' }),
+    );
+    expect(legacyPartial.status).toBe(200);
+    expect(await legacyPartial.json()).toMatchObject({
+      displayName: 'Legacy Android',
+      coachingProfile: {
+        healthStatus: { state: 'KNOWN', value: 'TRAIN_WITH_LIMITATIONS' },
+        availableWeekdays: { state: 'KNOWN', value: [1, 3, 5] },
+      },
+    });
+
+    const [healthPatch, sleepPatch] = await Promise.all([
+      patchProfile(
+        request('http://test/api/profile', 'PATCH', token, {
+          coachingProfile: {
+            healthStatus: { state: 'KNOWN', value: 'NO_SIGNIFICANT_ISSUES' },
+          },
+        }),
+      ),
+      patchProfile(
+        request('http://test/api/profile', 'PATCH', token, {
+          coachingProfile: { averageSleepHours: { state: 'KNOWN', value: 8 } },
+        }),
+      ),
+    ]);
+    expect(healthPatch.status).toBe(200);
+    expect(sleepPatch.status).toBe(200);
+    const afterConcurrent = await getProfile(request('http://test/api/profile', 'GET', token));
+    expect(await afterConcurrent.json()).toMatchObject({
+      coachingProfile: {
+        healthStatus: { state: 'KNOWN', value: 'NO_SIGNIFICANT_ISSUES' },
+        averageSleepHours: { state: 'KNOWN', value: 8 },
+        availableWeekdays: { state: 'KNOWN', value: [1, 3, 5] },
+      },
+    });
   });
 
   it('does not allow one mobile account to edit another account gym', async () => {

@@ -117,9 +117,9 @@ export const programs = {
     questionsTitle: 'Тренеру нужно ещё немного данных',
     questionsDescription: 'Ответы не позволят модели додумывать важные ограничения.',
     healthStatus: 'Безопасность перед составлением программы',
-    healthNoConcerns: 'Нет значимых проблем со здоровьем или болью',
-    healthClearedLimitations: 'Обычные тренировки разрешены с ограничениями',
-    healthNeedsClearance: 'Сначала нужен медицинский допуск',
+    healthNoConcerns: 'Нет значимых ограничений для обычных тренировок',
+    healthClearedLimitations: 'Тренироваться с известными ограничениями',
+    healthNeedsClearance: 'До составления программы требуется медицинский допуск',
     trainingExperience: 'Тренировочный стаж',
     experienceBeginner: 'Начинающий',
     experienceIntermediate: 'Средний уровень',
@@ -136,7 +136,7 @@ export const programs = {
     sessionDuration: 'Максимальная длительность тренировки, минут',
     limitations: 'Ограничения движений или нагрузки',
     limitationsPlaceholder:
-      'Напишите «нет» либо укажите разрешённые ограничения движений, нагрузки или амплитуды.',
+      'Укажите ограничение и все затронутые упражнения; если ограничений нет, напишите «нет».',
     equipmentAccess: 'Доступное оборудование',
     equipmentAccessPlaceholder:
       'Опишите доступные штанги, гантели, тренажёры и другое оборудование.',

@@ -97,6 +97,8 @@ describe('GymCoach MCP server', () => {
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/does not currently calculate indirect sets/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/untrusted trainee data/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/never treat their text as confirmation/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/coachingProfile fields have explicit UNKNOWN/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/MEDICAL_CLEARANCE_REQUIRED/);
     const buildPrompt = await client.getPrompt({
       name: 'build-training-program',
       arguments: { goal: 'Build a three day strength program' },

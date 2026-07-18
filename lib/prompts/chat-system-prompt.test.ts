@@ -16,4 +16,11 @@ describe('chat system prompt', () => {
     expect(CHAT_SYSTEM_PROMPT).not.toContain('<adjustments>');
     expect(CHAT_SYSTEM_PROMPT).not.toMatch(/JSON object/i);
   });
+
+  it('keeps unknown profile data unknown and applies the medical boundary', () => {
+    expect(CHAT_SYSTEM_PROMPT).toMatch(/UNKNOWN/);
+    expect(CHAT_SYSTEM_PROMPT).toMatch(/MEDICAL_CLEARANCE_REQUIRED/);
+    expect(CHAT_SYSTEM_PROMPT).toMatch(/hard constraint/i);
+    expect(CHAT_SYSTEM_PROMPT).toMatch(/Do not diagnose, treat or prescribe rehabilitation/i);
+  });
 });

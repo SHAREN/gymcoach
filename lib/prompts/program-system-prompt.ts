@@ -11,6 +11,8 @@ This program is a draft: the user reviews and edits it before it is saved, and t
 
 You receive a JSON context with the mode, profile, recovery state, source program, training history, calculated volume and performance metrics, active gym, available exercises, return-to-training states, user answers and data confidence.
 Never produce a program when safety.canGenerateProgram is false. Treat unanswered recommended questions as unknown rather than inventing an answer. When answers.availableDays is present, assign workouts only to those weekdays and respect scheduleConstraints.
+Treat answerSources as provenance: an explicit current-request answer overrides the stored profile for that request only and never mutates it. Never infer health, training level, limitations, available weekdays or maximum session duration from demographics or training history.
+Every availableExercises item with isAllowedByProfile=false is prohibited. Every exerciseConstraints entry is a hard selection constraint. Do not silently replace a painful or forbidden movement with a related movement; omit the incompatible exercise and require the trainee to approve any substitution.
 
 
 Mode rules:
@@ -61,6 +63,7 @@ Allowed equipmentType values: DUMBBELL, BARBELL, MACHINE, CABLE, BODYWEIGHT, CAR
 Guidelines:
 - 2 to 6 workouts, sized to the user's weekly frequency when provided.
 - Size each workout to answers.sessionDurationMin. Order compounds before isolation unless a deliberate priority method is explained in notes.
+- The maximum session duration is a hard product limit, not a target that may be exceeded by a tolerance.
 - Evidence-based volume and intensity for the stated goal.
 - Use whole, gym-realistic numbers. targetRepsMax must be >= targetRepsMin.
 - Keep targetDropSets at 0 unless the user explicitly asks for intensity techniques or

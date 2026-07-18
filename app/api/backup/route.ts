@@ -30,6 +30,7 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment';
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { resolveEquipmentType } from '@/lib/gym-loads';
+import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -45,7 +46,8 @@ import { resolveEquipmentType } from '@/lib/gym-loads';
 //
 // Exported models and fields:
 // - User: profile fields (displayName, bodyweight, sex, heightCm, goal,
-//   weeklyFrequency, unit, deloadUntil). email/createdAt ride along for
+//   weeklyFrequency, unit, deloadUntil, coachNote and the versioned coaching
+//   profile). email/createdAt ride along for
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
@@ -62,7 +64,7 @@ import { resolveEquipmentType } from '@/lib/gym-loads';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 12;
+const VERSION = 13;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -97,6 +99,9 @@ export async function GET(req: Request) {
           heightCm: true,
           goal: true,
           weeklyFrequency: true,
+          coachNote: true,
+          coachingProfile: true,
+          coachingProfileUpdatedAt: true,
           unit: true,
           deloadUntil: true,
           activeGymId: true,
@@ -187,6 +192,11 @@ export async function GET(req: Request) {
         heightCm: user.heightCm,
         goal: user.goal,
         weeklyFrequency: user.weeklyFrequency,
+        coachNote: user.coachNote,
+        coachingProfile: normalizeCoachingProfile(
+          user.coachingProfile,
+          user.coachingProfileUpdatedAt,
+        ),
         unit: user.unit,
         deloadUntil: user.deloadUntil?.toISOString() ?? null,
         activeGymName: gyms.find((gym) => gym.id === user.activeGymId)?.name ?? null,
@@ -538,6 +548,8 @@ const importSchema = z.object({
       heightCm: z.number().int().min(100).max(250).nullable().optional(),
       goal: z.nativeEnum(TrainingGoal).nullable().optional(),
       weeklyFrequency: z.number().int().min(1).max(14).nullable().optional(),
+      coachNote: z.string().trim().min(1).max(500).nullable().optional(),
+      coachingProfile: coachingProfileSchema.optional(),
       unit: z.nativeEnum(WeightUnit).optional(),
       deloadUntil: dateString.nullable().optional(),
       activeGymName: z.string().max(80).nullable().optional(),
@@ -859,6 +871,15 @@ export async function POST(req: Request) {
               ...(p.heightCm !== undefined ? { heightCm: p.heightCm } : {}),
               ...(p.goal !== undefined ? { goal: p.goal } : {}),
               ...(p.weeklyFrequency !== undefined ? { weeklyFrequency: p.weeklyFrequency } : {}),
+              ...(p.coachNote !== undefined ? { coachNote: p.coachNote } : {}),
+              ...(p.coachingProfile !== undefined
+                ? {
+                    coachingProfile: p.coachingProfile as Prisma.InputJsonValue,
+                    coachingProfileUpdatedAt: p.coachingProfile.updatedAt
+                      ? new Date(p.coachingProfile.updatedAt)
+                      : null,
+                  }
+                : {}),
               ...(p.unit !== undefined ? { unit: p.unit } : {}),
               ...(p.deloadUntil !== undefined
                 ? { deloadUntil: p.deloadUntil ? new Date(p.deloadUntil) : null }

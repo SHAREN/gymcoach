@@ -139,19 +139,31 @@ facts. Important current fallbacks:
 
 Source-backed intake principles require the goal, training experience, a
 realistic schedule, session-duration limit, actual equipment and a current
-safety/constraint status. The product implements this with required weekly
-frequency, specific available weekdays and one structured safety status. This
-required/optional split is an engineering product rule, not a clinical
-screening instrument.
+safety/constraint status. Source-backed personalization also benefits from
+priorities, exercise preferences, recurring cardio, sport or physical work and
+ordinary sleep, stress and recovery context. Static baseline recovery does not
+replace a current readiness check-in.
 
-`NEEDS_MEDICAL_CLEARANCE` blocks automatic program generation. A trainee who is
-cleared for ordinary training with known limitations MUST describe those
-approved limitations. GymCoach does not diagnose, rehabilitate or decide return
-after illness, injury, surgery or unusual pain. A next mesocycle or current
-revision also requires the post-block recovery checklist. Goal priorities,
-schedule constraints, preferences, concurrent activity, recent external
-training, RIR familiarity and changes since the source program are recommended
-questions: missing answers lower specificity but do not authorize invention.
+The product implements these principles with a versioned structured coaching
+profile. Every field is explicitly `UNKNOWN`, `KNOWN` or, where meaningful,
+`NOT_APPLICABLE`, with server-owned update timestamps. `UNKNOWN` MUST NOT be
+normalized to healthy, unrestricted, experienced or available. Exact available
+weekdays determine feasible frequency; historical attendance and duration MUST
+NOT fill missing schedule or maximum-duration answers. These state names, JSON
+shape, field bounds, exact-day gate and provenance rules are engineering
+heuristics, not a clinical screening instrument.
+
+`MEDICAL_CLEARANCE_REQUIRED` blocks automatic new-program, next-mesocycle and
+current-revision generation. `TRAIN_WITH_LIMITATIONS` requires structured
+limitations. Every exercise named under pain, injury, forbidden or discouraged
+movement/exercise information is a hard exercise-selection constraint. The
+validator MUST reject it and MUST NOT silently substitute a related movement.
+GymCoach does not diagnose, rehabilitate or decide return after illness, injury,
+surgery or unusual pain. A next mesocycle or current revision also requires the
+post-block recovery checklist. Goal priorities, schedule constraints,
+preferences, concurrent activity, recent external training, RIR familiarity
+and changes since the source program are recommended questions: missing answers
+lower specificity but do not authorize invention.
 
 ## 5. Current deterministic calculations
 
@@ -447,6 +459,8 @@ server-built `ProgramDesignContext`. It includes:
 - actual RIR minus programmed RIR, excluding warm-ups and drop sets;
 - readiness, sleep, soreness, deload and post-block recovery signals;
 - exercise-specific return-to-training ceilings;
+- normalized structured coaching-profile facts with request/profile provenance;
+- hard named-exercise constraints from self-reported limitations;
 - required questions, recommended questions, a safety gate and data confidence.
 
 Objective performance trends and completed training have higher decision weight
@@ -463,10 +477,14 @@ blocks an increase in total primary-muscle sets relative to the source program.
 Program validation currently checks required answers, unavailable equipment,
 compound failure and drop-set warnings, weekly and per-session primary-muscle
 volume, frequency distribution, available weekday assignments, estimated
-session duration, active-gym state, the medical-clearance gate, and attempts to
-raise volume during under-recovery. The final user-edited draft MUST be rebuilt
-against fresh context and validated again immediately before it is saved. MCP
-write tools follow the same rule.
+session duration, active-gym state, the medical-clearance gate, named limitation
+constraints, and attempts to raise volume during under-recovery. Maximum session
+duration is a hard product feasibility limit without a hidden tolerance.
+Exact-name constraint matching and the absence of a tolerance are engineering
+rules; the source-backed principle is to respect the trainee's stated safety and
+feasibility constraints. The final user-edited draft MUST be rebuilt against
+fresh context and validated again immediately before it is saved. MCP write
+tools follow the same rule.
 
 Session RPE and actual recovery time between attempts are now first-class set
 and session records. They are persisted by the web and Android APIs, included in
@@ -533,7 +551,7 @@ need for a deload.
 
 The MCP preserves `weekCurrent` and `weekPrevious` as exact UTC ISO calendar
 weeks. A null previous week means only that no session was logged in that one
-calendar week. Context schema version 4 adds a separate rolling history with
+calendar week. Context schema version 4 added a separate rolling history with
 these engineering windows and calculations:
 
 - 56 days of coverage and exact details for up to the latest 12 strength
@@ -548,6 +566,11 @@ these engineering windows and calculations:
 - working sets, ordinary working sets, drop sets, recorded-RIR coverage and
   ordinary sets whose recorded RIR is 0-4;
 - direct set totals by the exercise's stored primary muscle.
+
+Context schema version 5 preserves those calculations and adds the normalized
+structured coaching profile. Its field states, timestamps and hard named
+exercise constraints are shared with web program design; missing values remain
+missing and medical-clearance status blocks generation.
 
 The 56/7/42/28-day windows, the 12-session cap, the ratio calculations and the
 RIR 0-4 bucket are engineering heuristics. The returned ratios have no alarm
@@ -827,8 +850,19 @@ rules. The implementation requires specific weekdays and a safety status, adds
 recommended questions for priorities, preferences, concurrent activity and
 missing recent context, exposes rolling history, session RPE/rest, physical gym
 inventory and personal volume targets, and adds source-linked
-`REVISE_CURRENT` parity to MCP. `NEEDS_MEDICAL_CLEARANCE` blocks generation and
+`REVISE_CURRENT` parity to MCP. `MEDICAL_CLEARANCE_REQUIRED` blocks generation and
 is a referral boundary, not a diagnosis or treatment recommendation.
+
+The structured coaching-profile implementation on 2026-07-18 reconciled this
+same fifth review with the current eight-source notebook state already recorded
+in task `gymcoach-3cz`. Source-backed requirements are the safety status,
+training experience, real schedule, maximum duration, actual equipment,
+limitations and optional personalization/recovery context. The exact values
+`NO_SIGNIFICANT_ISSUES`, `TRAIN_WITH_LIMITATIONS` and
+`MEDICAL_CLEARANCE_REQUIRED`; the `UNKNOWN` / `KNOWN` / `NOT_APPLICABLE` states;
+the versioned JSON storage, timestamps, field limits, exact exercise-name hard
+gate and request-over-profile provenance are engineering heuristics. No new
+physiological formula or threshold was introduced.
 
 A sixth review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
 sources for four distinct questions about selecting the first working-set load,

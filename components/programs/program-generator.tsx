@@ -532,11 +532,13 @@ function ProgramDesignQuestionField({
             <SelectValue placeholder={labels.healthStatus} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="NO_RELEVANT_CONCERNS">{labels.healthNoConcerns}</SelectItem>
-            <SelectItem value="CLEARED_WITH_LIMITATIONS">
+            <SelectItem value="NO_SIGNIFICANT_ISSUES">{labels.healthNoConcerns}</SelectItem>
+            <SelectItem value="TRAIN_WITH_LIMITATIONS">
               {labels.healthClearedLimitations}
             </SelectItem>
-            <SelectItem value="NEEDS_MEDICAL_CLEARANCE">{labels.healthNeedsClearance}</SelectItem>
+            <SelectItem value="MEDICAL_CLEARANCE_REQUIRED">
+              {labels.healthNeedsClearance}
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>

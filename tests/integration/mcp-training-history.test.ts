@@ -213,7 +213,7 @@ describe('GymCoach MCP training history', () => {
         dataQuality: { indirectSetAccounting: string; rirCoveragePct: number | null };
       };
     };
-    expect(context.contextSchemaVersion).toBe(4);
+    expect(context.contextSchemaVersion).toBe(5);
     expect(context.coach.weekCurrent.sessions).toEqual([]);
     expect(context.coach.weekPrevious).toBeNull();
     expect(context.trainingHistory.recentSessionDetails).toEqual({

@@ -12,49 +12,55 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(cuid())
-  email              String              @unique
-  passwordHash       String
+  id                       String              @id @default(cuid())
+  email                    String              @unique
+  passwordHash             String
   // Bodyweight in kg, used to compute the effective tonnage on bodyweight
   // exercises (Set.weight = added load, always >= 0; the input schemas clamp
   // it). Null = not filled in yet, so no bodyweight bonus is applied
   // (backward-safe).
-  bodyweight         Float?
+  bodyweight               Float?
   // Optional profile, used to tailor the AI coach output to the user.
-  displayName        String?
-  sex                Sex?
-  heightCm           Int?
-  goal               TrainingGoal?
-  weeklyFrequency    Int?
+  displayName              String?
+  sex                      Sex?
+  heightCm                 Int?
+  goal                     TrainingGoal?
+  weeklyFrequency          Int?
   // Preferred weight unit for display and input. Data is always stored in kg;
   // this only affects the presentation layer. Default keeps existing users on kg.
-  unit               WeightUnit          @default(KG)
+  unit                     WeightUnit          @default(KG)
   // End of the user's planned deload week (issue #112). While this timestamp
   // is in the future, load suggestions apply the planned-deload step-down.
   // Null or in the past = no planned deload (backward-safe additive column).
-  deloadUntil        DateTime?
+  deloadUntil              DateTime?
   // Free-text note the user writes to their AI coach (issue #188): their own
   // current context for the coach to weigh - injuries, illness, life
   // constraints ("shoulder is bothering me, go easy on pressing"). Input-side
   // only and correctable by the user. Null = no note (backward-safe additive
   // column); the set/clear route bounds it to 500 chars.
-  coachNote          String?
-  createdAt          DateTime            @default(now())
-  programs           Program[]
-  sessions           Session[]
-  exercises          Exercise[]
-  conversations      Conversation[]
-  readinessCheckins  ReadinessCheckin[]
-  exerciseGoals      ExerciseGoal[]
-  bodyweightEntries  BodyweightEntry[]
-  bodyMeasurements   BodyMeasurement[]
-  volumeTargets      VolumeTarget[]
-  gyms               Gym[]               @relation("GymOwner")
-  mcpAccessTokens    McpAccessToken[]
-  mobileAccessTokens MobileAccessToken[]
-  mobileMutations    MobileMutation[]
-  activeGymId        String?
-  activeGym          Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
+  coachNote                String?
+  // Versioned self-reported coaching profile. The JSON contract uses explicit
+  // UNKNOWN / KNOWN / NOT_APPLICABLE field states and server-owned per-field
+  // timestamps. Null is preserved for older rows and normalizes to UNKNOWN,
+  // never to a healthy or cleared state.
+  coachingProfile          Json?
+  coachingProfileUpdatedAt DateTime?
+  createdAt                DateTime            @default(now())
+  programs                 Program[]
+  sessions                 Session[]
+  exercises                Exercise[]
+  conversations            Conversation[]
+  readinessCheckins        ReadinessCheckin[]
+  exerciseGoals            ExerciseGoal[]
+  bodyweightEntries        BodyweightEntry[]
+  bodyMeasurements         BodyMeasurement[]
+  volumeTargets            VolumeTarget[]
+  gyms                     Gym[]               @relation("GymOwner")
+  mcpAccessTokens          McpAccessToken[]
+  mobileAccessTokens       MobileAccessToken[]
+  mobileMutations          MobileMutation[]
+  activeGymId              String?
+  activeGym                Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
 
 // Personal access tokens for remote MCP clients such as ChatGPT. Only a

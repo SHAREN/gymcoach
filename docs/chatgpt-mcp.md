@@ -60,13 +60,19 @@ Read tools:
 - `list_programs`
 - `get_program`
 
-`get_training_context` schema version 4 keeps `weekCurrent` and
+`get_training_context` schema version 5 keeps `weekCurrent` and
 `weekPrevious` as exact UTC ISO calendar weeks, but also includes a separate
 56-day rolling history. The rolling section zero-fills calendar weeks, compares
 the latest 7 days with the preceding 42-day weekly average, reports the last 28
 days of attendance against the saved plan, preserves exact recent sessions and
 shows RIR coverage. These windows and ratios are descriptive engineering
 heuristics, not fatigue, detraining or overtraining thresholds.
+
+Version 5 also exposes the same versioned structured coaching profile used by
+the web coach and program-design context. Its `UNKNOWN`, `KNOWN` and
+`NOT_APPLICABLE` states are explicit. MCP agents must not convert missing
+health, training level, weekdays or limitations into defaults, and
+`MEDICAL_CLEARANCE_REQUIRED` blocks automatic program generation.
 
 `get_training_history` reads exact older sessions and sets by program and/or
 date range. It returns ordinary working sets, drop sets, RIR, recovery time and
