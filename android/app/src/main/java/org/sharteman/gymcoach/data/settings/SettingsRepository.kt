@@ -98,8 +98,14 @@ private class FailoverSettingsDataSource(
     override suspend fun confirmImport(preview: SettingsImportPreview): JsonObject =
         withRemote { confirmImport(preview) }
 
-    private suspend fun <T> withRemote(block: suspend SettingsDataSource.() -> T): T =
+    private suspend fun <T> withRemote(block: suspend SettingsDataSource.() -> T): T = try {
         endpointResolver.execute { baseUrl -> remote(baseUrl).block() }
+    } catch (error: SettingsException) {
+        if (error.kind == SettingsErrorKind.AUTHENTICATION) {
+            accountStore.clearAccessToken()
+        }
+        throw error
+    }
 
     private fun remote(baseUrl: String): SettingsDataSource = synchronized(remotes) {
         remotes.getOrPut(baseUrl) { remoteFactory(baseUrl, token) }

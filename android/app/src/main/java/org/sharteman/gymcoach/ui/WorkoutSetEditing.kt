@@ -19,6 +19,71 @@ internal data class ParsedSet(
     val rir: Int?,
 )
 
+internal data class DisplayWorkoutSet(
+    val set: LocalSetEntity,
+    val workingNumber: Int?,
+)
+
+internal data class UpcomingWorkoutSet(
+    val rowNumber: Int,
+    val performanceIndex: Int,
+    val isDropSet: Boolean,
+)
+
+internal fun displayedWorkoutSets(sets: List<LocalSetEntity>): List<DisplayWorkoutSet> {
+    var workingNumber = 0
+    return sets
+        .filterNot { it.deleted }
+        .sortedWith(
+            compareBy<LocalSetEntity> { it.completedAt }
+                .thenBy { it.setNumber }
+                .thenBy { it.id },
+        )
+        .map { set ->
+            DisplayWorkoutSet(
+                set = set,
+                workingNumber = if (set.isWarmup || set.isDropSet) {
+                    null
+                } else {
+                    ++workingNumber
+                },
+            )
+        }
+}
+
+internal fun upcomingWorkoutSets(
+    displayedSets: List<DisplayWorkoutSet>,
+    targetWorkingSets: Int,
+    targetDropSets: Int,
+    activeIsWarmup: Boolean,
+    activeIsDropSet: Boolean,
+): List<UpcomingWorkoutSet> {
+    val completedWorkingSets = displayedSets.count { it.workingNumber != null }
+    val completedDropSets = displayedSets.count { it.set.isDropSet }
+    val activeWorkingSets = if (!activeIsWarmup && !activeIsDropSet) 1 else 0
+    val activeDropSets = if (activeIsDropSet) 1 else 0
+    val remainingWorkingSets = (targetWorkingSets - completedWorkingSets - activeWorkingSets).coerceAtLeast(0)
+    val remainingDropSets = (targetDropSets - completedDropSets - activeDropSets).coerceAtLeast(0)
+    val upcomingWorkingSets = List(remainingWorkingSets) { offset ->
+        val workingNumber = completedWorkingSets + activeWorkingSets + offset + 1
+        UpcomingWorkoutSet(
+            rowNumber = workingNumber,
+            performanceIndex = workingNumber - 1,
+            isDropSet = false,
+        )
+    }
+    val upcomingDropSets = List(remainingDropSets) { offset ->
+        val dropNumber = completedDropSets + activeDropSets + offset + 1
+        val performanceIndex = targetWorkingSets + dropNumber - 1
+        UpcomingWorkoutSet(
+            rowNumber = performanceIndex + 1,
+            performanceIndex = performanceIndex,
+            isDropSet = true,
+        )
+    }
+    return upcomingWorkingSets + upcomingDropSets
+}
+
 internal fun draftFromSet(set: LocalSetEntity, unit: String): EditableSetDraft = EditableSetDraft(
     weightText = formatDraftWeight(set.weight, unit),
     repsText = set.reps.toString(),
