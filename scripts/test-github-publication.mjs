@@ -57,13 +57,52 @@ assert.throws(
     }),
   /requires every guarded task to be closed/,
 );
-assert.equal(
-  validatePublicationEvidence({
-    closureTaskIds: ['gymcoach-js4'],
-    alreadyGuardedTaskIds: ['gymcoach-js4'],
-  }).closureTaskIds[0],
-  'gymcoach-js4',
-);
+const publicationHead = 'c'.repeat(40);
+const publicationEvidence = {
+  mode: 'integration',
+  head: publicationHead,
+  closureTaskIds: ['gymcoach-js4'],
+  coordinatorTaskIds: [],
+  alreadyGuardedTaskIds: ['gymcoach-js4'],
+  delivery: {
+    integrated: { status: 'complete' },
+    published: { status: 'not-required' },
+    installed: { status: 'not-authorized' },
+    deployed: { status: 'not-authorized' },
+  },
+  authoritativeTaskStates: {
+    'gymcoach-js4': {
+      id: 'gymcoach-js4',
+      status: 'closed',
+      labels: ['area:infrastructure'],
+      notes: `Guarded integration closure: head ${publicationHead}; integrated=complete; published=not-required; installed=not-authorized; deployed=not-authorized.`,
+    },
+  },
+};
+assert.equal(validatePublicationEvidence(publicationEvidence).closureTaskIds[0], 'gymcoach-js4');
+for (const task of [
+  {
+    ...publicationEvidence.authoritativeTaskStates['gymcoach-js4'],
+    notes: 'Guarded no-runtime-artifact closure with fabricated text.',
+  },
+  {
+    ...publicationEvidence.authoritativeTaskStates['gymcoach-js4'],
+    notes: `Guarded integration closure: head ${publicationHead}; integrated=complete; published=complete; installed=not-authorized; deployed=not-authorized.`,
+  },
+  {
+    ...publicationEvidence.authoritativeTaskStates['gymcoach-js4'],
+    labels: ['stage:verify', 'area:infrastructure'],
+  },
+]) {
+  assert.throws(
+    () =>
+      validatePublicationEvidence({
+        ...publicationEvidence,
+        authoritativeTaskStates: { 'gymcoach-js4': task },
+      }),
+    /requires exactly one matching guarded closure note and no stage labels/,
+  );
+}
 const repositoryOverride = spawnSync(
   process.execPath,
   [

@@ -160,17 +160,46 @@ for (const taskId of ['gymcoach-js4', 'gymcoach-a7b']) {
 
 const closedWithoutGuard = { ...task, status: 'closed' };
 assert.throws(() => buildIssuePayload(closedWithoutGuard, issues[0]), /without guarded/);
+const closedHead = '6'.repeat(40);
+const closedMirrorEvidence = {
+  kind: 'integration',
+  integrationHead: closedHead,
+  coordinatorTaskIds: [],
+  delivery: {
+    integrated: 'complete',
+    published: 'not-required',
+    installed: 'not-authorized',
+    deployed: 'not-authorized',
+  },
+};
 const closedWithGuard = {
   ...closedWithoutGuard,
-  notes: 'Guarded integration closure: head abc.',
+  labels: ['area:infrastructure', 'priority:P1', 'type:chore'],
+  notes: `Guarded integration closure: head ${closedHead}; integrated=complete; published=not-required; installed=not-authorized; deployed=not-authorized.`,
 };
-assert.equal(buildIssuePayload(closedWithGuard, issues[0]).state, 'closed');
-const closedPayload = buildIssuePayload(closedWithGuard, issues[0]);
+assert.throws(() => buildIssuePayload(closedWithGuard, issues[0]), /without guarded/);
+const closedPayload = buildIssuePayload(closedWithGuard, issues[0], closedMirrorEvidence);
 assert.equal(closedPayload.body.includes('| Stage | `none` |'), true);
 assert.equal(
   closedPayload.labels.some((label) => label.startsWith('stage:')),
   false,
 );
+for (const closedTask of [
+  {
+    ...closedWithGuard,
+    notes: 'Guarded no-runtime-artifact closure with fabricated text.',
+  },
+  {
+    ...closedWithGuard,
+    notes: `Guarded integration closure: head ${closedHead}; integrated=complete; published=complete; installed=not-authorized; deployed=not-authorized.`,
+  },
+  { ...closedWithGuard, labels: [...closedWithGuard.labels, 'stage:verify'] },
+]) {
+  assert.throws(
+    () => buildIssuePayload(closedTask, issues[0], closedMirrorEvidence),
+    /closed without guarded integration\/no-runtime closure evidence/,
+  );
+}
 
 assert.deepEqual(
   selectBackfillTasks([

@@ -331,6 +331,49 @@ async function testNoRuntimeArtifactException() {
       beadsAuthority: authority,
     });
     assert.deepEqual(closedHarness.alreadyGuardedTaskIds, ['gymcoach-js4']);
+
+    const verifiedHarnessTask = verifiedBeadsTask(manifest, 'gymcoach-js4', {
+      labels: ['stage:verify'],
+    });
+    authority.tasks['gymcoach-js4'] = {
+      ...verifiedHarnessTask,
+      status: 'closed',
+      labels: ['stage:verify'],
+      notes: `${verifiedHarnessTask.notes}\nGuarded no-runtime-artifact closure with fabricated text.`,
+    };
+    await expectRejected(
+      manifest,
+      repo,
+      authority,
+      /closed without exactly one matching guarded closure note and no stage labels/,
+    );
+
+    authority.tasks['gymcoach-js4'] = {
+      ...verifiedHarnessTask,
+      status: 'closed',
+      labels: [],
+      notes: `${verifiedHarnessTask.notes}\nGuarded no-runtime-artifact closure at verified commit ${'f'.repeat(40)}.`,
+    };
+    await expectRejected(
+      manifest,
+      repo,
+      authority,
+      /closed without exactly one matching guarded closure note and no stage labels/,
+    );
+
+    const matchingClosureNote = `Guarded no-runtime-artifact closure at verified commit ${publishHarnessCommit}.`;
+    authority.tasks['gymcoach-js4'] = {
+      ...verifiedHarnessTask,
+      status: 'closed',
+      labels: [],
+      notes: `${verifiedHarnessTask.notes}\n${matchingClosureNote}\n${matchingClosureNote}`,
+    };
+    await expectRejected(
+      manifest,
+      repo,
+      authority,
+      /closed without exactly one matching guarded closure note and no stage labels/,
+    );
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -704,8 +747,8 @@ async function testAcceptanceCriteriaDeliveryRequirements() {
         {
           ...installRoot,
           status: 'closed',
-          labels: [],
-          notes: 'Guarded integration root coordination closure: head abc.',
+          labels: ['role:integration-coordinator'],
+          notes: `Guarded integration root coordination closure: head ${replacementCommit}; integrated=complete; published=not-required; installed=complete; deployed=not-authorized.`,
         },
         {
           ...verifiedBeadsTask(manifest, 'gymcoach-vax'),

@@ -29,9 +29,6 @@ const NO_RUNTIME_ALLOWED_PREFIXES = [
   'scripts/fixtures/worktree-cleanup/',
 ];
 const VERIFICATION_EVIDENCE_PREFIX = 'Immutable verification evidence v1: ';
-const GUARDED_CLOSURE_PATTERN =
-  /Guarded (?:integration(?: root coordination)?|no-runtime-artifact) closure/i;
-const COORDINATOR_CLOSURE_PATTERN = /Guarded integration root coordination closure/i;
 const COORDINATOR_AUTHORITY_LABEL = 'role:integration-coordinator';
 const STAGE_LABELS = new Set([
   'stage:inbox',
@@ -273,6 +270,65 @@ export function buildImmutableVerificationNote({
     verifiedBase: requireCommit(verifiedBase, 'verifiedBase'),
     verifiedCommit: requireCommit(verifiedCommit, 'verifiedCommit'),
   })}`;
+}
+
+function closureDeliveryStatus(evidence, stageName) {
+  const stage = evidence?.delivery?.[stageName];
+  const status = typeof stage === 'string' ? stage : stage?.status;
+  if (!DELIVERY_STATUSES.has(status)) {
+    reject(`guarded closure delivery.${stageName}.status is invalid`);
+  }
+  return status;
+}
+
+export function buildGuardedClosureNote(evidence, taskId) {
+  const head = requireCommit(evidence?.head, 'guarded closure head');
+  if (evidence?.mode === 'no-runtime-artifact') {
+    return `Guarded no-runtime-artifact closure at verified commit ${head}.`;
+  }
+  if (evidence?.mode !== 'integration') {
+    reject('guarded closure mode must be integration or no-runtime-artifact');
+  }
+  const coordinatorTaskIds = new Set(evidence.coordinatorTaskIds ?? []);
+  const prefix = coordinatorTaskIds.has(taskId)
+    ? 'Guarded integration root coordination closure'
+    : 'Guarded integration closure';
+  return `${prefix}: head ${head}; integrated=${closureDeliveryStatus(evidence, 'integrated')}; published=${closureDeliveryStatus(evidence, 'published')}; installed=${closureDeliveryStatus(evidence, 'installed')}; deployed=${closureDeliveryStatus(evidence, 'deployed')}.`;
+}
+
+function guardedClosureRecords(task) {
+  const records = [];
+  const integrationPattern =
+    /^(Guarded integration(?: root coordination)? closure): head ([0-9a-f]{40}); integrated=(complete|not-required|not-authorized|pending); published=(complete|not-required|not-authorized|pending); installed=(complete|not-required|not-authorized|pending); deployed=(complete|not-required|not-authorized|pending)\.$/;
+  const noRuntimePattern =
+    /^Guarded no-runtime-artifact closure at verified commit ([0-9a-f]{40})\.$/;
+  for (const line of String(task?.notes ?? '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const integration = trimmed.match(integrationPattern);
+    if (integration) {
+      records.push({ line: trimmed, kind: 'integration' });
+      continue;
+    }
+    if (noRuntimePattern.test(trimmed)) {
+      records.push({ line: trimmed, kind: 'no-runtime-artifact' });
+    }
+  }
+  return records;
+}
+
+function taskHasMatchingGuardedClosureNote(task, evidence, taskId = task?.id) {
+  const records = guardedClosureRecords(task);
+  if (records.length !== 1) return false;
+  return records[0].line === buildGuardedClosureNote(evidence, taskId);
+}
+
+export function taskHasGuardedClosure(task, evidence, taskId = task?.id) {
+  if (evidence === undefined || task?.status !== 'closed' || taskStageLabels(task).length !== 0) {
+    return false;
+  }
+  const records = guardedClosureRecords(task);
+  if (records.length !== 1) return false;
+  return records[0].line === buildGuardedClosureNote(evidence, taskId);
 }
 
 function verificationRecords(task) {
@@ -533,7 +589,7 @@ function taskStageLabels(task) {
 
 function taskHasVerifiedEvidence(
   task,
-  { allowVerifyStage = false, allowPartialClosure = false } = {},
+  { allowVerifyStage = false, allowPartialClosure = false, closureEvidence } = {},
 ) {
   const stages = taskStageLabels(task);
   const hasImmutableRecord = verificationRecords(task).length > 0;
@@ -541,12 +597,10 @@ function taskHasVerifiedEvidence(
   if (stages.length === 1 && stages[0] === 'stage:verified') return true;
   if (allowVerifyStage && stages.length === 1 && stages[0] === 'stage:verify') return true;
   return (
-    allowPartialClosure && stages.length === 0 && GUARDED_CLOSURE_PATTERN.test(task.notes ?? '')
+    allowPartialClosure &&
+    stages.length === 0 &&
+    taskHasMatchingGuardedClosureNote(task, closureEvidence, task.id)
   );
-}
-
-function taskHasGuardedClosure(task) {
-  return task.status === 'closed' && GUARDED_CLOSURE_PATTERN.test(task.notes ?? '');
 }
 
 function dependencyId(dependency) {
@@ -678,7 +732,7 @@ function normalizeAuthority(authority, rootTaskId) {
 
 function deriveAuthoritativePlan(
   authority,
-  { allowVerifyStage = false, allowPartialClosure = false } = {},
+  { allowVerifyStage = false, allowPartialClosure = false, closureEvidence } = {},
 ) {
   const visited = new Set();
   const active = new Set();
@@ -711,15 +765,29 @@ function deriveAuthoritativePlan(
   for (const taskId of orderedTaskIds) {
     const task = authority.tasks[taskId];
     const dependencies = authority.blockingDependencies[taskId] ?? [];
+    const coordinatorAuthority = task.labels?.includes(COORDINATOR_AUTHORITY_LABEL) === true;
     if (task.status === 'closed') {
-      if (COORDINATOR_CLOSURE_PATTERN.test(task.notes ?? '')) {
+      if (coordinatorAuthority) {
+        if (taskId !== authority.rootTaskId || dependencies.length === 0) {
+          reject(`${taskId} integration coordinator authority requires the root with blockers`);
+        }
+        if (!taskHasGuardedClosure(task, closureEvidence, taskId)) {
+          reject(
+            `${taskId} is closed without exactly one matching guarded coordinator closure note and no stage labels`,
+          );
+        }
         coordinatorTaskIds.push(taskId);
-      } else if (taskHasGuardedClosure(task) && verificationRecords(task).length > 0) {
+      } else if (verificationRecords(task).length > 0) {
+        if (!taskHasGuardedClosure(task, closureEvidence, taskId)) {
+          reject(
+            `${taskId} is closed without exactly one matching guarded closure note and no stage labels`,
+          );
+        }
         verifiedTaskIds.push(taskId);
       } else {
         legacyTaskIds.push(taskId);
       }
-    } else if (task.labels?.includes(COORDINATOR_AUTHORITY_LABEL)) {
+    } else if (coordinatorAuthority) {
       const stages = taskStageLabels(task);
       if (
         taskId !== authority.rootTaskId ||
@@ -732,7 +800,13 @@ function deriveAuthoritativePlan(
         );
       }
       coordinatorTaskIds.push(taskId);
-    } else if (taskHasVerifiedEvidence(task, { allowVerifyStage, allowPartialClosure })) {
+    } else if (
+      taskHasVerifiedEvidence(task, {
+        allowVerifyStage,
+        allowPartialClosure,
+        closureEvidence,
+      })
+    ) {
       verifiedTaskIds.push(taskId);
     } else {
       reject(
@@ -751,7 +825,7 @@ function deriveAuthoritativePlan(
     legacyTaskIds: legacyTaskIds.sort(),
     closureTaskIds: orderedTaskIds.filter((taskId) => !legacyTaskIds.includes(taskId)),
     alreadyGuardedTaskIds: orderedTaskIds
-      .filter((taskId) => taskHasGuardedClosure(authority.tasks[taskId]))
+      .filter((taskId) => taskHasGuardedClosure(authority.tasks[taskId], closureEvidence, taskId))
       .sort(),
     tasks: authority.tasks,
     deliveryRequirements,
@@ -980,9 +1054,22 @@ export async function validateIntegrationEvidence(
     beadsAuthority ?? (await loadBeadsAuthority(repository, rootTaskId)),
     rootTaskId,
   );
+  const coordinatorTaskIds = Object.values(authority.tasks)
+    .filter((task) => task.labels?.includes(COORDINATOR_AUTHORITY_LABEL))
+    .map((task) => task.id);
+  const closureEvidence = {
+    mode: manifest.mode,
+    head:
+      manifest.mode === 'integration'
+        ? manifest.integration?.head
+        : manifest.tasks?.[0]?.verified?.commit,
+    delivery: manifest.delivery,
+    coordinatorTaskIds,
+  };
   const authoritativePlan = deriveAuthoritativePlan(authority, {
     allowVerifyStage: manifest.mode === 'no-runtime-artifact',
     allowPartialClosure,
+    closureEvidence,
   });
   if (!Array.isArray(manifest.tasks) || manifest.tasks.length === 0) {
     reject('tasks must contain at least one task');
@@ -1033,6 +1120,9 @@ export async function validateIntegrationEvidence(
       closureTaskIds: [verified.id],
       coordinatorTaskIds: [],
       alreadyGuardedTaskIds: authoritativePlan.alreadyGuardedTaskIds,
+      authoritativeTaskStates: Object.fromEntries(
+        authoritativePlan.closureTaskIds.map((taskId) => [taskId, authority.tasks[taskId]]),
+      ),
       head: verified.commit,
       delivery: manifest.delivery,
       warnings: [],
@@ -1116,6 +1206,9 @@ export async function validateIntegrationEvidence(
     closureTaskIds: authoritativePlan.closureTaskIds,
     coordinatorTaskIds: authoritativePlan.coordinatorTaskIds,
     alreadyGuardedTaskIds: authoritativePlan.alreadyGuardedTaskIds,
+    authoritativeTaskStates: Object.fromEntries(
+      authoritativePlan.closureTaskIds.map((taskId) => [taskId, authority.tasks[taskId]]),
+    ),
     requirements,
     head: integrationHead,
     branch,

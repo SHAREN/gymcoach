@@ -60,13 +60,25 @@ assert.deepEqual(closureExecutionPlan({ dryRun: false, mirrorOnly: true }), {
   mirrorDryRun: false,
 });
 
+const integrationMirrorEvidence = {
+  kind: 'integration',
+  integrationHead: 'a'.repeat(40),
+  delivery: {
+    integrated: 'complete',
+    published: 'not-required',
+    installed: 'not-authorized',
+    deployed: 'not-authorized',
+  },
+  coordinatorTaskIds: [],
+};
+
 function closedTask(id, externalRef) {
   return {
     id,
     title: `Closed ${id}`,
     description: 'Sanitized closure mirror fixture.',
     acceptance_criteria: 'Closure evidence is mirrored safely.',
-    notes: 'Guarded integration closure: head abc.',
+    notes: `Guarded integration closure: head ${integrationMirrorEvidence.integrationHead}; integrated=complete; published=not-required; installed=not-authorized; deployed=not-authorized.`,
     status: 'closed',
     priority: 1,
     issue_type: 'chore',
@@ -88,7 +100,7 @@ const dryRunReuse = await mirrorTaskById({
   task: closedTask('gymcoach-js4'),
   issues,
   dryRun: true,
-  evidence: { kind: 'integration', integrationHead: 'a'.repeat(40), delivery: {} },
+  evidence: integrationMirrorEvidence,
   adapters: {
     ...noOpAdapters,
     persistExternalRef(task, url, options) {
@@ -114,7 +126,7 @@ const realReuse = await mirrorTaskById({
   taskId: 'gymcoach-js4',
   task: closedTask('gymcoach-js4'),
   issues,
-  evidence: { kind: 'integration', integrationHead: 'a'.repeat(40), delivery: {} },
+  evidence: integrationMirrorEvidence,
   adapters: {
     ensureLabels() {},
     createIssue() {
@@ -153,6 +165,7 @@ await assert.rejects(
       task: closedTask('gymcoach-js4', 'https://github.com/other/repo/issues/6'),
       issues,
       dryRun: true,
+      evidence: integrationMirrorEvidence,
       adapters: noOpAdapters,
     }),
   /external_ref is not an exact SHAREN\/gymcoach GitHub issue URL/,
@@ -164,6 +177,7 @@ await assert.rejects(
       task: closedTask('gymcoach-js4', 'https://github.com/SHAREN/gymcoach/issues/404'),
       issues,
       dryRun: true,
+      evidence: integrationMirrorEvidence,
       adapters: noOpAdapters,
     }),
   /external_ref points to missing GitHub issue #404/,
@@ -175,6 +189,7 @@ await assert.rejects(
       task: closedTask('gymcoach-js4', 'https://github.com/SHAREN/gymcoach/issues/7'),
       issues,
       dryRun: true,
+      evidence: integrationMirrorEvidence,
       adapters: noOpAdapters,
     }),
   /external_ref points to an issue without the exact Beads ID marker/,
@@ -194,6 +209,7 @@ await assert.rejects(
       task: closedTask('gymcoach-js4', multiIdIssue.html_url),
       issues: [multiIdIssue],
       dryRun: true,
+      evidence: integrationMirrorEvidence,
       adapters: {
         ensureLabels() {
           multiIdMutationCount += 1;
@@ -224,7 +240,13 @@ const batchEvidence = {
   mode: 'integration',
   head: 'a'.repeat(40),
   closureTaskIds: ['gymcoach-js4', 'gymcoach-a7b'],
-  delivery: {},
+  coordinatorTaskIds: [],
+  delivery: {
+    integrated: { status: 'complete' },
+    published: { status: 'not-required' },
+    installed: { status: 'not-authorized' },
+    deployed: { status: 'not-authorized' },
+  },
 };
 await assert.rejects(
   () =>
@@ -278,10 +300,10 @@ const retryEvidence = {
   coordinatorTaskIds: ['gymcoach-root'],
   alreadyGuardedTaskIds: [],
   delivery: {
-    integrated: { status: true },
-    published: { status: false },
-    installed: { status: false },
-    deployed: { status: false },
+    integrated: { status: 'complete' },
+    published: { status: 'not-required' },
+    installed: { status: 'not-authorized' },
+    deployed: { status: 'not-authorized' },
   },
 };
 const retryTasks = new Map([
@@ -488,6 +510,57 @@ async function testFullWrapperPartialCloseRetry() {
     ]);
     assert.equal(task.status, 'closed');
     assert.equal((task.notes.match(/Guarded no-runtime-artifact closure/g) ?? []).length, 1);
+
+    const immutableNote = buildImmutableVerificationNote({
+      verifiedBase: base,
+      verifiedCommit: commit,
+      gate,
+      artifactImpact: 'no-runtime-artifact',
+    });
+    const exactClosureNote = `Guarded no-runtime-artifact closure at verified commit ${commit}.`;
+    const adversarialTasks = [
+      {
+        ...task,
+        labels: ['stage:verify', 'area:infrastructure'],
+        notes: `${immutableNote}\nGuarded no-runtime-artifact closure with fabricated text.`,
+      },
+      {
+        ...task,
+        labels: ['area:infrastructure'],
+        notes: `${immutableNote}\nGuarded no-runtime-artifact closure at verified commit ${'f'.repeat(40)}.`,
+      },
+      {
+        ...task,
+        labels: ['stage:verify', 'area:infrastructure'],
+        notes: `${immutableNote}\n${exactClosureNote}`,
+      },
+    ];
+    for (const adversarialTask of adversarialTasks) {
+      let downstreamCalled = false;
+      await assert.rejects(
+        () =>
+          runGuardedClosure({
+            manifest,
+            repo,
+            beadsAuthority: {
+              rootTaskId: adversarialTask.id,
+              tasks: { [adversarialTask.id]: adversarialTask },
+              blockingDependencies: { [adversarialTask.id]: [] },
+            },
+            closureAdapters: {
+              readTask() {
+                downstreamCalled = true;
+                return adversarialTask;
+              },
+            },
+            mirrorTask: async () => {
+              downstreamCalled = true;
+            },
+          }),
+        /closed without exactly one matching guarded closure note and no stage labels/,
+      );
+      assert.equal(downstreamCalled, false);
+    }
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

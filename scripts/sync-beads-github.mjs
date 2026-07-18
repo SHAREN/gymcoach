@@ -5,6 +5,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { taskHasGuardedClosure } from './check-integration-evidence.mjs';
+
 export const DEFAULT_GITHUB_REPOSITORY = 'SHAREN/gymcoach';
 export const DEFAULT_GITHUB_BRANCH = 'main';
 
@@ -257,10 +259,29 @@ function lifecycleEvidenceHistory(existingIssue, evidence) {
   return `${EVIDENCE_START}\n${history}\n${EVIDENCE_END}`;
 }
 
-function guardedClosureRecorded(task) {
-  return /Guarded (?:integration(?: root coordination)?|no-runtime-artifact) closure/.test(
-    task.notes ?? '',
-  );
+function guardedClosureEvidence(evidence) {
+  if (evidence?.kind === 'integration') {
+    return {
+      mode: 'integration',
+      head: evidence.integrationHead,
+      delivery: evidence.delivery,
+      coordinatorTaskIds: evidence.coordinatorTaskIds ?? [],
+    };
+  }
+  if (evidence?.kind === 'no-runtime-artifact') {
+    return {
+      mode: 'no-runtime-artifact',
+      head: evidence.verifiedCommit,
+      delivery: {},
+      coordinatorTaskIds: [],
+    };
+  }
+  return undefined;
+}
+
+function guardedClosureRecorded(task, evidence) {
+  const expectedEvidence = guardedClosureEvidence(evidence);
+  return expectedEvidence !== undefined && taskHasGuardedClosure(task, expectedEvidence, task.id);
 }
 
 export function buildIssuePayload(task, existingIssue, evidence) {
@@ -268,7 +289,7 @@ export function buildIssuePayload(task, existingIssue, evidence) {
   const type = taskLabel(task, 'type:', `type:${task.issue_type}`);
   const priority = taskLabel(task, 'priority:', `priority:P${task.priority}`);
   const area = taskLabel(task, 'area:', 'area:unspecified');
-  if (task.status === 'closed' && !guardedClosureRecorded(task)) {
+  if (task.status === 'closed' && !guardedClosureRecorded(task, evidence)) {
     fail(`${task.id} is closed without guarded integration/no-runtime closure evidence`);
   }
   const preservedLabels = (existingIssue?.labels ?? [])

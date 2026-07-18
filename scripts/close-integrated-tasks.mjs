@@ -4,7 +4,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { validateIntegrationEvidence } from './check-integration-evidence.mjs';
+import {
+  buildGuardedClosureNote,
+  validateIntegrationEvidence,
+} from './check-integration-evidence.mjs';
 import { DEFAULT_GITHUB_REPOSITORY, mirrorTaskById } from './sync-beads-github.mjs';
 
 function fail(message) {
@@ -53,10 +56,7 @@ function readTask(repo, taskId) {
 }
 
 export function buildClosureNote(evidence, taskId) {
-  if (evidence.mode === 'integration') {
-    return `${evidence.coordinatorTaskIds.includes(taskId) ? 'Guarded integration root coordination closure' : 'Guarded integration closure'}: head ${evidence.head}; integrated=${evidence.delivery.integrated.status}; published=${evidence.delivery.published.status}; installed=${evidence.delivery.installed.status}; deployed=${evidence.delivery.deployed.status}.`;
-  }
-  return `Guarded no-runtime-artifact closure at verified commit ${evidence.head}.`;
+  return buildGuardedClosureNote(evidence, taskId);
 }
 
 export function buildClosureReason(evidence) {
@@ -164,6 +164,7 @@ export function buildMirrorEvidence(evidence) {
           Object.entries(evidence.delivery).map(([stage, value]) => [stage, value.status]),
         ),
         android: evidence.android,
+        coordinatorTaskIds: evidence.coordinatorTaskIds,
       }
     : {
         kind: 'no-runtime-artifact',

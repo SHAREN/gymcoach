@@ -4,7 +4,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { validateIntegrationEvidence } from './check-integration-evidence.mjs';
+import {
+  taskHasGuardedClosure,
+  validateIntegrationEvidence,
+} from './check-integration-evidence.mjs';
 import { DEFAULT_GITHUB_BRANCH, DEFAULT_GITHUB_REPOSITORY } from './sync-beads-github.mjs';
 
 function fail(message) {
@@ -76,6 +79,14 @@ export function validatePublicationEvidence(evidence) {
     !evidence.closureTaskIds.every((taskId) => evidence.alreadyGuardedTaskIds.includes(taskId))
   ) {
     fail('publication requires every guarded task to be closed first');
+  }
+  for (const taskId of evidence.closureTaskIds) {
+    const task = evidence.authoritativeTaskStates?.[taskId];
+    if (!taskHasGuardedClosure(task, evidence, taskId)) {
+      fail(
+        `${taskId} publication requires exactly one matching guarded closure note and no stage labels`,
+      );
+    }
   }
   return evidence;
 }
