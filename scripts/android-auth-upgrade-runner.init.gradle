@@ -1,0 +1,10 @@
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        if (project.path == ':app') {
+            project.androidComponents.finalizeDsl { androidDsl ->
+                androidDsl.defaultConfig.testInstrumentationRunner =
+                    'org.sharteman.gymcoach.data.security.AuthUpgradeTestRunner'
+            }
+        }
+    }
+}

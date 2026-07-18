@@ -1,21 +1,36 @@
 package org.sharteman.gymcoach.ui.settings
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import androidx.test.platform.app.InstrumentationRegistry
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
+import org.sharteman.gymcoach.data.network.ServerReachabilityProbe
+import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.data.settings.AndroidReleaseDto
 import org.sharteman.gymcoach.data.settings.SettingsDataSource
+import org.sharteman.gymcoach.data.settings.SettingsErrorKind
+import org.sharteman.gymcoach.data.settings.SettingsException
 import org.sharteman.gymcoach.data.settings.SettingsGymDto
 import org.sharteman.gymcoach.data.settings.SettingsEquipmentImageDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
@@ -27,6 +42,7 @@ import org.sharteman.gymcoach.data.settings.SettingsImportFormat
 import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsProfileDto
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
+import org.sharteman.gymcoach.data.settings.SettingsRepository
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -42,6 +58,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
+                    onAuthenticationRequired = {},
                     repository = FakeSettingsSource(),
                 )
             }
@@ -76,6 +93,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
+                    onAuthenticationRequired = {},
                     repository = FakeSettingsSource(),
                     watchDiagnosticsLabel = "Watch diagnostics test",
                     onOpenWatchDiagnostics = { opened = true },
@@ -93,13 +111,16 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun showsRetryInsteadOfEmptyProfileWhenLoadingFails() {
+    fun retryableFailureStaysOnSettingsAndRetryLoadsContent() {
+        val source = RetryableSettingsSource()
+        var authenticationRequired = false
         composeRule.setContent {
             GymCoachTheme(darkTheme = true) {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
-                    repository = FailingSettingsSource(),
+                    onAuthenticationRequired = { authenticationRequired = true },
+                    repository = source,
                 )
             }
         }
@@ -108,6 +129,81 @@ class SettingsScreenTest {
             runCatching {
                 composeRule.onNodeWithTag("settings-retry-load").assertIsDisplayed()
             }.isSuccess
+        }
+        composeRule.runOnIdle { assertFalse(authenticationRequired) }
+        composeRule.onNodeWithTag("settings-retry-load").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.runOnIdle { assertFalse(authenticationRequired) }
+    }
+
+    @Test
+    fun authenticationFailureReturnsToLoginAndSettingsLoadAfterReauthentication() {
+        val accountStore = SecureAccountStore(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+        )
+        accountStore.clearAccount()
+        accountStore.setAccessToken(STALE_TOKEN)
+        val staleRepository = testSettingsRepository(accountStore, STALE_TOKEN) {
+            throw SettingsException(SettingsErrorKind.AUTHENTICATION, statusCode = 401)
+        }
+
+        try {
+            composeRule.setContent {
+                var authenticated by remember { mutableStateOf(true) }
+                var repository by remember { mutableStateOf<SettingsDataSource>(staleRepository) }
+                GymCoachTheme(darkTheme = true) {
+                    if (authenticated) {
+                        SettingsScreen(
+                            onBack = {},
+                            onOpenWebPath = {},
+                            onAuthenticationRequired = { authenticated = false },
+                            repository = repository,
+                        )
+                    } else {
+                        Column {
+                            Text("Login required", Modifier.testTag("settings-login-flow"))
+                            Button(
+                                onClick = {
+                                    accountStore.setAccessToken(FRESH_TOKEN)
+                                    repository = testSettingsRepository(accountStore, FRESH_TOKEN) {
+                                        FakeSettingsSource().snapshot()
+                                    }
+                                    authenticated = true
+                                },
+                                modifier = Modifier.testTag("settings-complete-login"),
+                            ) {
+                                Text("Sign in")
+                            }
+                        }
+                    }
+                }
+            }
+
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    composeRule.onNodeWithTag("settings-login-flow").assertIsDisplayed()
+                }.isSuccess
+            }
+            assertEquals(null, accountStore.getAccessToken())
+            composeRule.onNodeWithTag("settings-complete-login").performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+                }.isSuccess
+            }
+            assertEquals(FRESH_TOKEN, accountStore.getAccessToken())
+            composeRule.onNodeWithTag("settings-profile-display-name")
+                .performScrollTo()
+                .assertTextContains("Android")
+            composeRule.onNodeWithTag("settings-native-screen")
+                .performScrollToNode(hasTestTag("settings-equipment-card-equipment-1"))
+            composeRule.onNodeWithTag("settings-equipment-card-equipment-1").assertIsDisplayed()
+        } finally {
+            accountStore.clearAccount()
         }
     }
 
@@ -234,6 +330,35 @@ private class FakeSettingsSource : SettingsDataSource {
     override suspend fun confirmImport(preview: SettingsImportPreview) = JsonObject(emptyMap())
 }
 
-private class FailingSettingsSource : SettingsDataSource by FakeSettingsSource() {
-    override suspend fun load(): SettingsSnapshot = error("Settings are unavailable")
+private class RetryableSettingsSource(
+    private val delegate: FakeSettingsSource = FakeSettingsSource(),
+) : SettingsDataSource by delegate {
+    private var attempts = 0
+
+    override suspend fun load(): SettingsSnapshot {
+        attempts += 1
+        if (attempts == 1) error("Settings are unavailable")
+        return delegate.snapshot()
+    }
 }
+
+private fun testSettingsRepository(
+    accountStore: SecureAccountStore,
+    expectedToken: String,
+    load: suspend () -> SettingsSnapshot,
+): SettingsRepository = SettingsRepository.failover(
+    accountStore = accountStore,
+    token = expectedToken,
+    endpointResolver = ServerEndpointResolver(accountStore, ServerReachabilityProbe { true }),
+    remoteFactory = { _, accessToken ->
+        object : SettingsDataSource by FakeSettingsSource() {
+            override suspend fun load(): SettingsSnapshot {
+                assertEquals(expectedToken, accessToken)
+                return load()
+            }
+        }
+    },
+)
+
+private const val STALE_TOKEN = "stale-test-token"
+private const val FRESH_TOKEN = "fresh-test-token"

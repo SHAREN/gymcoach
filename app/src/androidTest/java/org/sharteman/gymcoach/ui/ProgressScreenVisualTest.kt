@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -83,7 +84,6 @@ class ProgressScreenVisualTest {
         composeRule.onNodeWithTag("progress-list")
             .performScrollToNode(hasTestTag("progress-metric-ESTIMATED_1RM"))
         composeRule.onNodeWithTag("progress-metric-ESTIMATED_1RM")
-            .performClick()
             .assertIsSelected()
         composeRule.onNodeWithTag("progress-range-ONE_MONTH")
             .performClick()
@@ -97,6 +97,43 @@ class ProgressScreenVisualTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Недельный объём по группам мышц").assertIsDisplayed()
         saveScreenshot("progress-overview-volume.png")
+    }
+
+    @Test
+    fun defaultsToEstimatedOneRmAndRestoresExplicitMetricSelection() {
+        val restorationTester = StateRestorationTester(composeRule)
+        restorationTester.setContent {
+            GymCoachTheme {
+                ProgressScreen(
+                    snapshot = progressFixture(),
+                    unit = "KG",
+                    refreshing = false,
+                    onRefresh = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("progress-list")
+            .performScrollToNode(hasTestTag("progress-metric-ESTIMATED_1RM"))
+        composeRule.onNodeWithTag("progress-metric-ESTIMATED_1RM")
+            .assertIsSelected()
+        composeRule.onNodeWithTag("progress-list")
+            .performScrollToNode(hasTestTag("progress-main-chart"))
+        composeRule.onNodeWithText("143 kg").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("progress-list")
+            .performScrollToNode(hasTestTag("progress-metric-MAX_WEIGHT"))
+        composeRule.onNodeWithTag("progress-metric-MAX_WEIGHT")
+            .performClick()
+            .assertIsSelected()
+
+        restorationTester.emulateSavedInstanceStateRestore()
+
+        composeRule.onNodeWithTag("progress-list")
+            .performScrollToNode(hasTestTag("progress-metric-MAX_WEIGHT"))
+        composeRule.onNodeWithTag("progress-metric-MAX_WEIGHT")
+            .assertIsSelected()
     }
 
     private fun saveScreenshot(name: String) {

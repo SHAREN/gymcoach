@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Never restore encrypted account state without its device-bound key. -->
+        <exclude domain="sharedpref" path="gymcoach-account.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- A transferred ciphertext cannot be decrypted by the destination device. -->
+        <exclude domain="sharedpref" path="gymcoach-account.xml" />
+    </device-transfer>
+</data-extraction-rules>
