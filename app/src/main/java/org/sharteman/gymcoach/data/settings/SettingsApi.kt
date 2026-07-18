@@ -19,12 +19,22 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.sharteman.gymcoach.data.model.ApiErrorResponse
+import org.sharteman.gymcoach.data.model.CoachingProfilePatchInput
+import org.sharteman.gymcoach.data.model.CoachingProfilePatchRequest
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.network.resolveAndroidDownloadUrl
 
-interface SettingsDataSource {
+interface CoachingProfileRemoteDataSource {
+    suspend fun loadProfile(): SettingsProfileDto
+    suspend fun saveCoachingProfile(input: CoachingProfilePatchInput): SettingsProfileDto
+}
+
+interface SettingsDataSource : CoachingProfileRemoteDataSource {
     suspend fun load(): SettingsSnapshot
+    override suspend fun loadProfile(): SettingsProfileDto = load().profile
     suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto
+    override suspend fun saveCoachingProfile(input: CoachingProfilePatchInput): SettingsProfileDto =
+        throw UnsupportedOperationException("Coaching profile writes are unavailable.")
     suspend fun createGym(input: SettingsGymInput): SettingsGymDto
     suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto
     suspend fun activateGym(id: String)
@@ -71,9 +81,14 @@ class SettingsApi(
         encodeDefaults = true
         explicitNulls = true
     }
+    private val patchJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+        explicitNulls = false
+    }
 
     override suspend fun load(): SettingsSnapshot {
-        val profile = request<SettingsProfileDto>("GET", "/api/profile")
+        val profile = loadProfile()
         val gyms = request<SettingsGymListDto>("GET", "/api/gyms")
         val exercises = request<List<ExerciseDto>>("GET", "/api/mobile/exercises")
         val inventories = gyms.gyms.associate { gym ->
@@ -82,8 +97,18 @@ class SettingsApi(
         return SettingsSnapshot(profile, gyms, exercises, inventories)
     }
 
+    override suspend fun loadProfile(): SettingsProfileDto =
+        request("GET", "/api/profile")
+
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto =
         request("PATCH", "/api/profile", json.encodeToString(input))
+
+    override suspend fun saveCoachingProfile(input: CoachingProfilePatchInput): SettingsProfileDto =
+        request(
+            "PATCH",
+            "/api/profile",
+            patchJson.encodeToString(CoachingProfilePatchRequest(input)),
+        )
 
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto =
         request("POST", "/api/gyms", json.encodeToString(input))

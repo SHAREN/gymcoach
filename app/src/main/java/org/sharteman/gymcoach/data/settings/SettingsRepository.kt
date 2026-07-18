@@ -2,6 +2,7 @@ package org.sharteman.gymcoach.data.settings
 
 import android.content.Context
 import kotlinx.serialization.json.JsonObject
+import org.sharteman.gymcoach.data.model.CoachingProfilePatchInput
 import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.SecureAccountStore
@@ -40,8 +41,13 @@ private class FailoverSettingsDataSource(
 
     override suspend fun load(): SettingsSnapshot = withRemote { load() }
 
+    override suspend fun loadProfile(): SettingsProfileDto = withRemote { loadProfile() }
+
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto =
         withRemote { saveProfile(input) }
+
+    override suspend fun saveCoachingProfile(input: CoachingProfilePatchInput): SettingsProfileDto =
+        withRemote { saveCoachingProfile(input) }
 
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto =
         withRemote { createGym(input) }

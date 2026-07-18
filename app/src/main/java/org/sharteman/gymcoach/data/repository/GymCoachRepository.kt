@@ -32,6 +32,7 @@ import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.CoachingProfileDto
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
@@ -54,6 +55,7 @@ import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
+import org.sharteman.gymcoach.data.model.mergeCoachingProfilesByTimestamp
 import org.sharteman.gymcoach.data.network.MobileApi
 import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
@@ -309,6 +311,26 @@ class GymCoachRepository(
         return persistBootstrap(response)
     }
 
+    suspend fun mergeCoachingProfileIntoBootstrap(profile: CoachingProfileDto) {
+        bootstrapCacheMutex.withLock {
+            val cachedEntity = dao.getBootstrap() ?: return@withLock
+            val cached = runCatching {
+                api.json.decodeFromString<BootstrapResponse>(cachedEntity.payloadJson)
+            }.getOrNull() ?: return@withLock
+            val merged = mergeCoachingProfilesByTimestamp(cached.profile.coachingProfile, profile)
+                ?: return@withLock
+            if (merged == cached.profile.coachingProfile) return@withLock
+            dao.saveBootstrap(
+                cachedEntity.copy(
+                    payloadJson = api.json.encodeToString(
+                        cached.copy(profile = cached.profile.copy(coachingProfile = merged)),
+                    ),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
     suspend fun refreshProgress(exerciseId: String? = null): MobileProgressSnapshot =
         progressRefreshMutex.withLock {
             val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
@@ -342,6 +364,20 @@ class GymCoachRepository(
 
     private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse =
         bootstrapCacheMutex.withLock {
+            val cachedProfile = dao.getBootstrap()?.let { cached ->
+                runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
+                    .getOrNull()
+                    ?.profile
+                    ?.coachingProfile
+            }
+            val protectedResponse = response.copy(
+                profile = response.profile.copy(
+                    coachingProfile = mergeCoachingProfilesByTimestamp(
+                        cachedProfile,
+                        response.profile.coachingProfile,
+                    ),
+                ),
+            )
             val queuedOperations = dao.queuedOperations()
             val pendingTargetUpdates = queuedOperations.mapNotNull { entry ->
                 runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
@@ -358,7 +394,7 @@ class GymCoachRepository(
                 emptyList()
             }
             val historyMerged = mergeLocalExerciseHistory(
-                bootstrap = response,
+                bootstrap = protectedResponse,
                 sessions = pendingFinishedSessions,
                 deletedSessionIds = targets.deletedSessionIds,
             )

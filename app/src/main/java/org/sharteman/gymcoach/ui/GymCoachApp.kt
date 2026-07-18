@@ -36,10 +36,12 @@ import org.sharteman.gymcoach.ui.coach.ChatScreen
 import org.sharteman.gymcoach.ui.coach.CoachScreen
 import org.sharteman.gymcoach.ui.programs.ExerciseCatalogScreen
 import org.sharteman.gymcoach.ui.programs.ProgramsScreen
+import org.sharteman.gymcoach.ui.profile.CoachingProfileScreen
 
 private const val HOME_ROUTE = "home"
 private const val WEB_ROUTE = "web"
 private const val SETTINGS_ROUTE = "settings"
+private const val COACHING_PROFILE_ROUTE = "coaching-profile"
 private const val WATCH_DIAGNOSTICS_ROUTE = "watch-diagnostics"
 
 @Composable
@@ -50,6 +52,7 @@ fun GymCoachApp(
         onBack: () -> Unit,
         onOpenWebPath: (String) -> Unit,
         onAuthenticationRequired: () -> Unit,
+        onOpenCoachingProfile: () -> Unit,
         watchDiagnosticsLabel: String?,
         onOpenWatchDiagnostics: (() -> Unit)?,
     ) -> Unit)? = null,
@@ -432,6 +435,7 @@ fun GymCoachApp(
                             accountStore.clearAccessToken()
                             loggedIn = false
                         },
+                        { navController.navigate(COACHING_PROFILE_ROUTE) },
                         watchDiagnosticsDestination?.settingsLabel,
                         watchDiagnosticsDestination?.let {
                             { navController.navigate(WATCH_DIAGNOSTICS_ROUTE) }
@@ -445,6 +449,17 @@ fun GymCoachApp(
                         onBack = back,
                     )
                 }
+            }
+            composable(COACHING_PROFILE_ROUTE) {
+                CoachingProfileScreen(
+                    initialProfile = bootstrap?.profile?.coachingProfile,
+                    onBack = { navController.popBackStack() },
+                    onAuthenticationRequired = {
+                        accountStore.clearAccessToken()
+                        loggedIn = false
+                    },
+                    appRepository = repository,
+                )
             }
             if (watchDiagnosticsDestination != null) {
                 composable(WATCH_DIAGNOSTICS_ROUTE) {

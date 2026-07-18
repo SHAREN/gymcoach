@@ -70,6 +70,42 @@ class CoachingProfileModelsTest {
     }
 
     @Test
+    fun `merges stale bootstrap fields by exact server timestamps`() {
+        val newer = CoachingProfileDto(
+            updatedAt = "2026-07-18T12:00:00.000Z",
+            healthStatus = CoachingFieldDto(
+                state = "KNOWN",
+                value = "TRAIN_WITH_LIMITATIONS",
+                updatedAt = "2026-07-18T12:00:00.000Z",
+            ),
+            trainingLevel = CoachingFieldDto(
+                state = "KNOWN",
+                value = "ADVANCED",
+                updatedAt = "2026-07-18T09:00:00.000Z",
+            ),
+        )
+        val staleBootstrap = CoachingProfileDto(
+            updatedAt = "2026-07-18T11:00:00.000Z",
+            healthStatus = CoachingFieldDto(
+                state = "KNOWN",
+                value = "NO_SIGNIFICANT_ISSUES",
+                updatedAt = "2026-07-18T11:00:00.000Z",
+            ),
+            trainingLevel = CoachingFieldDto(
+                state = "KNOWN",
+                value = "INTERMEDIATE",
+                updatedAt = "2026-07-18T10:00:00.000Z",
+            ),
+        )
+
+        val merged = requireNotNull(mergeCoachingProfilesByTimestamp(newer, staleBootstrap))
+
+        assertEquals("TRAIN_WITH_LIMITATIONS", merged.healthStatus.value)
+        assertEquals("INTERMEDIATE", merged.trainingLevel.value)
+        assertEquals("2026-07-18T12:00:00.000Z", merged.updatedAt)
+    }
+
+    @Test
     fun `decodes additive exercise load profile and keeps legacy exercise compatible`() {
         val exercise = json.decodeFromString<ExerciseDto>(
             """

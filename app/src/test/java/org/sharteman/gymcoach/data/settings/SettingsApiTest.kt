@@ -13,6 +13,10 @@ import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.sharteman.gymcoach.data.model.CoachingFieldInput
+import org.sharteman.gymcoach.data.model.CoachingFieldState
+import org.sharteman.gymcoach.data.model.CoachingHealthStatus
+import org.sharteman.gymcoach.data.model.CoachingProfilePatchInput
 
 class SettingsApiTest {
     @Test
@@ -89,5 +93,46 @@ class SettingsApiTest {
         assertTrue(!requests[3].second.contains("dumbbellWeights"))
         assertTrue(!requests[3].second.contains("plateWeights"))
         assertTrue(!requests[3].second.contains("barWeights"))
+    }
+
+    @Test
+    fun `coaching profile writes use exact partial body without server timestamps or base fields`() = runTest {
+        val bodies = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val buffer = Buffer()
+            request.body?.writeTo(buffer)
+            bodies += buffer.readUtf8()
+            assertEquals("Bearer token", request.header("Authorization"))
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(
+                    """{"email":"private@example.test","coachingProfile":{"version":1,"updatedAt":"2026-07-18T11:00:00.000Z","healthStatus":{"state":"KNOWN","value":"TRAIN_WITH_LIMITATIONS","updatedAt":"2026-07-18T11:00:00.000Z"}}}"""
+                        .toResponseBody("application/json".toMediaType()),
+                )
+                .build()
+        }.build()
+        val api = SettingsApi("https://example.test", "token", client)
+        val patch = CoachingProfilePatchInput(
+            healthStatus = CoachingFieldInput(
+                CoachingFieldState.KNOWN,
+                CoachingHealthStatus.TRAIN_WITH_LIMITATIONS,
+            ),
+        )
+
+        val first = api.saveCoachingProfile(patch)
+        api.saveCoachingProfile(patch)
+
+        assertEquals("TRAIN_WITH_LIMITATIONS", first.coachingProfile?.healthStatus?.value)
+        assertEquals(bodies[0], bodies[1])
+        assertEquals(
+            """{"coachingProfile":{"healthStatus":{"state":"KNOWN","value":"TRAIN_WITH_LIMITATIONS"}}}""",
+            bodies[0],
+        )
+        assertTrue(!bodies[0].contains("updatedAt"))
+        assertTrue(!bodies[0].contains("displayName"))
     }
 }
