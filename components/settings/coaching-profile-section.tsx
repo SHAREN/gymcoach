@@ -163,6 +163,12 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
       draft.limitations.value.entries.every(
         (entry) => entry.label.trim() && entry.affectedExerciseNames.length > 0,
       ));
+  const recoveryValid =
+    draft.averageSleepHours.state !== 'KNOWN' ||
+    (draft.averageSleepHours.value != null &&
+      Number.isFinite(draft.averageSleepHours.value) &&
+      draft.averageSleepHours.value >= 0 &&
+      draft.averageSleepHours.value <= 24);
 
   const weekdayLabels = [
     t('weekdays.monday'),
@@ -859,6 +865,8 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
             max={24}
             step={0.25}
             onChange={(field) => patch('averageSleepHours', field)}
+            invalid={!recoveryValid}
+            errorMessage={t('fixFields')}
             labels={{ unknown: t('unknown'), known: t('known'), notApplicable: t('notApplicable') }}
           />
           <StatefulRating
@@ -881,13 +889,15 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
             error={errors.recovery}
             errorMessage={t('saveError')}
             retryLabel={t('retry')}
-            onSave={() =>
+            disabled={!recoveryValid}
+            onSave={() => {
+              if (!recoveryValid) return toast.error(t('fixFields'));
               void saveSection('recovery', {
                 averageSleepHours: fieldInput(draft.averageSleepHours),
                 baselineStress: fieldInput(draft.baselineStress),
                 generalRecovery: fieldInput(draft.generalRecovery),
-              })
-            }
+              });
+            }}
           />
         </section>
       </CardContent>
@@ -973,6 +983,8 @@ function StatefulNumber({
   max,
   step,
   onChange,
+  invalid = false,
+  errorMessage,
   labels,
 }: {
   id: string;
@@ -982,8 +994,11 @@ function StatefulNumber({
   max: number;
   step: number;
   onChange: (field: FieldDraft<number>) => void;
+  invalid?: boolean;
+  errorMessage?: string;
   labels: { unknown: string; known: string; notApplicable: string };
 }) {
+  const errorId = `${id}-error`;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1013,7 +1028,14 @@ function StatefulNumber({
             })
           }
           className="max-w-40"
+          aria-invalid={invalid}
+          aria-describedby={invalid && errorMessage ? errorId : undefined}
         />
+      )}
+      {field.state === 'KNOWN' && invalid && errorMessage && (
+        <p id={errorId} role="alert" className="text-sm text-rose-600">
+          {errorMessage}
+        </p>
       )}
     </div>
   );

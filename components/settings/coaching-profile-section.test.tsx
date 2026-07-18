@@ -78,4 +78,27 @@ describe('CoachingProfileSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
+
+  it('validates a cleared known average-sleep value before building the save payload', () => {
+    const profile = applyCoachingProfilePatch(
+      null,
+      { averageSleepHours: { state: 'KNOWN', value: 7.5 } },
+      new Date('2026-07-18T10:00:00.000Z'),
+    );
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+
+    render(<CoachingProfileSection initial={profile} />);
+
+    const input = screen.getByRole('spinbutton', { name: 'Average sleep (hours)' });
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Check the highlighted coaching-profile fields.',
+    );
+    const save = screen.getByRole('button', { name: 'Save recovery baseline' });
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
