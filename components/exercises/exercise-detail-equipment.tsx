@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useContext, useMemo, useRef, useState } from 'react';
 import { Dumbbell, Pencil, Star } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { Exercise } from '@/lib/prisma-client';
@@ -25,7 +25,7 @@ interface EquipmentEditorContextValue extends Omit<ProviderProps, 'children'> {
   orderedEquipment: ExerciseEquipmentChoice[];
   preferred: ExerciseEquipmentChoice | null;
   selected: ExerciseEquipmentChoice | null;
-  openEditor: () => void;
+  openEditor: (focusSection: 'details' | 'equipment') => void;
 }
 
 const EquipmentEditorContext = createContext<EquipmentEditorContextValue | null>(null);
@@ -38,6 +38,8 @@ export function ExerciseDetailEquipmentProvider({
   equipmentChoices,
 }: ProviderProps) {
   const [editOpen, setEditOpen] = useState(false);
+  const [focusSection, setFocusSection] = useState<'details' | 'equipment'>('details');
+  const editorTriggerRef = useRef<HTMLElement | null>(null);
   const activeGym = gyms.find((gym) => gym.id === activeGymId) ?? null;
   const activeEquipment = activeGym
     ? equipmentChoices.filter(
@@ -59,7 +61,12 @@ export function ExerciseDetailEquipmentProvider({
     orderedEquipment,
     preferred,
     selected,
-    openEditor: () => setEditOpen(true),
+    openEditor: (nextFocusSection) => {
+      editorTriggerRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setFocusSection(nextFocusSection);
+      setEditOpen(true);
+    },
   };
 
   return (
@@ -72,9 +79,28 @@ export function ExerciseDetailEquipmentProvider({
         exercise={exercise}
         activeGymId={activeGymId}
         equipmentChoices={equipmentChoices}
-        focusSection="equipment"
+        focusSection={focusSection}
+        returnFocusRef={editorTriggerRef}
       />
     </EquipmentEditorContext.Provider>
+  );
+}
+
+export function ExerciseDetailEditTrigger() {
+  const detailT = useTranslations('exercises.detail');
+  const { openEditor } = useEquipmentEditor();
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="min-h-tap"
+      onClick={() => openEditor('details')}
+    >
+      <Pencil className="size-4" />
+      <span className="ml-2">{detailT('edit')}</span>
+    </Button>
   );
 }
 
@@ -112,7 +138,7 @@ export function ExerciseEquipmentEditTrigger({
           'h-auto min-h-tap max-w-full flex-wrap justify-start gap-1.5 whitespace-normal px-3 py-2 text-left hover:bg-muted/60',
         )}
         aria-label={ariaLabel}
-        onClick={openEditor}
+        onClick={() => openEditor('equipment')}
       >
         <span>{equipmentTypeLabel}</span>
         <span aria-hidden="true" className="text-muted-foreground">
@@ -130,7 +156,7 @@ export function ExerciseEquipmentEditTrigger({
       data-testid="exercise-equipment-information-trigger"
       className="flex min-h-tap w-full flex-col items-start justify-center rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       aria-label={ariaLabel}
-      onClick={openEditor}
+      onClick={() => openEditor('equipment')}
     >
       <span className="text-xs text-muted-foreground">{detailT('broadEquipmentType')}</span>
       <span className="font-medium">{equipmentTypeLabel}</span>
@@ -156,7 +182,7 @@ export function ExerciseDetailEquipment() {
           variant="outline"
           size="sm"
           className="min-h-tap"
-          onClick={openEditor}
+          onClick={() => openEditor('equipment')}
         >
           <Pencil className="size-4" />
           <span className="ml-2">{detailT('editEquipment')}</span>
@@ -180,7 +206,7 @@ export function ExerciseDetailEquipment() {
               key={item.id}
               item={item}
               preferred={item.id === preferred?.id}
-              onEdit={openEditor}
+              onEdit={() => openEditor('equipment')}
             />
           ))}
         </div>

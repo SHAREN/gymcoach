@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise } from '@/lib/prisma-client';
 import type { ExerciseEquipmentChoice } from '@/lib/gym-inventory-types';
 import {
+  ExerciseDetailEditTrigger,
   ExerciseDetailEquipment,
   ExerciseDetailEquipmentProvider,
   ExerciseEquipmentEditTrigger,
@@ -112,6 +113,7 @@ function renderDetail({
       activeGymId={activeGymId}
       equipmentChoices={choices}
     >
+      <ExerciseDetailEditTrigger />
       <ExerciseEquipmentEditTrigger kind="badge" equipmentTypeLabel={equipmentTypeLabel} />
       <ExerciseEquipmentEditTrigger kind="information" equipmentTypeLabel={equipmentTypeLabel} />
       <ExerciseDetailEquipment />
@@ -120,6 +122,64 @@ function renderDetail({
 }
 
 describe('ExerciseDetailEquipment', () => {
+  it('edits general details, resets on cancel, and keeps a failed save retryable', async () => {
+    const updatedExercise = { ...exercise, name: 'Updated skull crusher' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(updatedExercise), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetail();
+
+    const editButton = screen.getByRole('button', { name: 'Edit exercise' });
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+
+    editButton.focus();
+    fireEvent.click(editButton);
+    const nameInput = screen.getByLabelText('Name');
+    await waitFor(() => expect(nameInput).toHaveFocus());
+    expect(nameInput).toHaveValue(exercise.name);
+    fireEvent.change(nameInput, { target: { value: 'Cancelled edit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(editButton).toHaveFocus());
+
+    fireEvent.click(editButton);
+    expect(screen.getByLabelText('Name')).toHaveValue(exercise.name);
+    fireEvent.change(screen.getByLabelText('Name'), {
+      target: { value: updatedExercise.name },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue(updatedExercise.name);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/exercises/${exercise.id}`);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      name: updatedExercise.name,
+      muscleGroup: exercise.muscleGroup,
+      category: exercise.category,
+    });
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/exercises/${exercise.id}/equipment`);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(editButton).toHaveFocus());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('makes both summaries accessible, shows the concrete bar family, and preserves alternatives', async () => {
     const fetchMock = vi
       .fn()
@@ -152,12 +212,15 @@ describe('ExerciseDetailEquipment', () => {
     expect(screen.getAllByText('Small / thin diameter').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Large / thick diameter').length).toBeGreaterThan(0);
 
-    await user.click(screen.getByTestId('exercise-equipment-badge-trigger'));
+    const badgeTrigger = screen.getByTestId('exercise-equipment-badge-trigger');
+    await user.click(badgeTrigger);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(badgeTrigger).toHaveFocus());
 
-    await user.click(screen.getByTestId('exercise-equipment-information-trigger'));
+    const informationTrigger = screen.getByTestId('exercise-equipment-information-trigger');
+    await user.click(informationTrigger);
     const activeGymHeading = screen.getByText('Zulu active gym · Active gym');
     const otherGymHeading = screen.getByText('Alpha other gym');
     expect(
@@ -188,6 +251,7 @@ describe('ExerciseDetailEquipment', () => {
       ],
     });
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(informationTrigger).toHaveFocus());
 
     rendered.unmount();
     renderDetail({

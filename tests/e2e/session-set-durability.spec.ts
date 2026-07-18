@@ -107,7 +107,12 @@ test('web sets survive reload/offline and reconcile mobile duplicates without lo
   // sets. Temporarily add one future row through the normal set-count control,
   // then commit it while offline.
   await page.getByRole('button', { name: 'Adjust set count' }).click();
+  const setControls = page.getByTestId('set-controls-dialog');
+  await expect(setControls).toBeVisible();
   await page.getByRole('button', { name: 'Increase total sets' }).click();
+  await expect(setControls).toHaveAttribute('aria-busy', 'false');
+  await setControls.getByRole('button', { name: 'Close' }).click();
+  await expect(setControls).toBeHidden();
   await expect(page.getByRole('button', { name: 'Confirm set 3' })).toBeVisible();
 
   await context.setOffline(true);
@@ -208,7 +213,6 @@ test('web sets survive reload/offline and reconcile mobile duplicates without lo
   // available; the next persisted number must be max(setNumber) + 1, not the
   // display position and not a duplicate overwrite.
   const confirmFifth = page.getByRole('button', { name: 'Confirm set 5' });
-  const setControls = page.getByTestId('set-controls-dialog');
   for (let attempt = 0; attempt < 6 && !(await confirmFifth.isVisible()); attempt += 1) {
     await page.getByRole('button', { name: 'Adjust set count' }).click();
     await expect(setControls).toBeVisible();
@@ -220,7 +224,11 @@ test('web sets survive reload/offline and reconcile mobile duplicates without lo
         (await setControls.isVisible()) ? Number(await totalSets.textContent()) : previousTotal + 1,
       )
       .toBeGreaterThan(previousTotal);
-    if (await setControls.isVisible()) await page.keyboard.press('Escape');
+    if (await setControls.isVisible()) {
+      await expect(setControls).toHaveAttribute('aria-busy', 'false');
+      await setControls.getByRole('button', { name: 'Close' }).click();
+      await expect(setControls).toBeHidden();
+    }
   }
   await expect(confirmFifth).toBeVisible();
   await confirmFifth.click();

@@ -86,6 +86,12 @@ import {
   nextPlannedSetIsDropSet,
   remainingPlannedSets,
 } from '@/lib/planned-sets';
+import {
+  consumeSessionDetailReturnState,
+  saveSessionDetailReturnState,
+  type CardioSetDraft,
+  type StrengthSetDraft,
+} from '@/lib/session-detail-return-state';
 
 export interface SerializedLastPerformance {
   sessionId?: string;
@@ -310,6 +316,13 @@ export function SessionRunner({
     Record<string, string | null>
   >(() => initialEquipmentSelections(session));
   const [targetSetOverrides, setTargetSetOverrides] = useState<Record<string, number>>({});
+  const [strengthDraftsByExercise, setStrengthDraftsByExercise] = useState<
+    Record<string, StrengthSetDraft>
+  >({});
+  const [cardioDraftsByExercise, setCardioDraftsByExercise] = useState<
+    Record<string, CardioSetDraft>
+  >({});
+  const [detailReturnReady, setDetailReturnReady] = useState(false);
   // Supersets (issue #146, slice 1): run the workout in presentation order -
   // members of a superset group come consecutively with A1/A2 labels. For a
   // workout without supersets this is exactly the stored order.
@@ -377,6 +390,61 @@ export function SessionRunner({
   const syncScope = useMemo<Required<Pick<FlushScope, 'ownerId' | 'sessionId'>>>(
     () => ({ ownerId: session.userId, sessionId: session.id }),
     [session.id, session.userId],
+  );
+
+  useEffect(() => {
+    const restored = consumeSessionDetailReturnState(session.id);
+    if (restored) {
+      setSelectedEquipmentByExercise(restored.selectedEquipmentByExercise);
+      setTargetSetOverrides(restored.targetSetOverrides);
+      setStrengthDraftsByExercise(restored.strengthDraftsByExercise);
+      setCardioDraftsByExercise(restored.cardioDraftsByExercise);
+      if (restored.mode.kind === 'rest' && restored.mode.endsAt > Date.now()) {
+        setMode(restored.mode);
+      }
+    }
+    setDetailReturnReady(true);
+  }, [session.id]);
+
+  const handleStrengthDraftChange = useCallback(
+    (exerciseId: string, draft: StrengthSetDraft) => {
+      if (!detailReturnReady) return;
+      setStrengthDraftsByExercise((current) => {
+        const existing = current[exerciseId];
+        if (
+          existing?.weight === draft.weight &&
+          existing.reps === draft.reps &&
+          existing.rir === draft.rir
+        ) {
+          return current;
+        }
+        return { ...current, [exerciseId]: draft };
+      });
+    },
+    [detailReturnReady],
+  );
+
+  const handleCardioDraftChange = useCallback(
+    (exerciseId: string, draft: CardioSetDraft) => {
+      if (!detailReturnReady) return;
+      setCardioDraftsByExercise((current) => {
+        const existing = current[exerciseId];
+        if (
+          existing?.weight === draft.weight &&
+          existing.reps === draft.reps &&
+          existing.rir === draft.rir &&
+          existing.durationInput === draft.durationInput &&
+          existing.distanceInput === draft.distanceInput &&
+          existing.isWarmup === draft.isWarmup &&
+          existing.isDropSet === draft.isDropSet &&
+          existing.notes === draft.notes
+        ) {
+          return current;
+        }
+        return { ...current, [exerciseId]: draft };
+      });
+    },
+    [detailReturnReady],
   );
 
   const selectedIndex = programExercises.findIndex((pe) => pe.id === selectedProgramExerciseId);
@@ -958,6 +1026,16 @@ export function SessionRunner({
 
   function openExerciseDetails(exerciseId: string) {
     const returnTo = `/session/${session.id}?exerciseId=${encodeURIComponent(exerciseId)}`;
+    saveSessionDetailReturnState({
+      version: 1,
+      sessionId: session.id,
+      savedAt: Date.now(),
+      selectedEquipmentByExercise,
+      targetSetOverrides,
+      strengthDraftsByExercise,
+      cardioDraftsByExercise,
+      mode: mode.kind === 'rest' ? mode : { kind: 'input' },
+    });
     router.push(`/exercises/${exerciseId}?returnTo=${encodeURIComponent(returnTo)}`);
   }
   function handleProgramChanged(options?: { selectProgramExerciseId?: string }) {
@@ -1134,6 +1212,8 @@ export function SessionRunner({
                 recommendation={currentRecommendation}
                 loadConstraints={loadConstraintsFor(currentTarget)}
                 submissionDisabled={currentEquipmentSelectionRequired}
+                restoredForm={cardioDraftsByExercise[currentPE.exerciseId]}
+                onFormChange={handleCardioDraftChange}
                 onSubmit={handleValidate}
               />
             ) : (
@@ -1163,6 +1243,8 @@ export function SessionRunner({
               returnRecommendation={currentReturnRecommendation}
               loadConstraints={loadConstraintsFor(currentTarget)}
               equipmentSelectionRequired={currentEquipmentSelectionRequired}
+              restoredDraft={strengthDraftsByExercise[currentPE.exerciseId]}
+              onDraftChange={handleStrengthDraftChange}
               gym={sessionGym}
               onGymUpdated={setSessionGym}
               disabled={!hydrated || mode.kind !== 'input'}

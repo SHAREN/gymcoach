@@ -14,6 +14,7 @@ import { estimate1RM } from '@/lib/stats';
 import { formatWeight } from '@/lib/units';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
 import {
+  ExerciseDetailEditTrigger,
   ExerciseDetailEquipment,
   ExerciseDetailEquipmentProvider,
   ExerciseEquipmentEditTrigger,
@@ -147,18 +148,21 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
           equipmentChoices={equipmentChoices}
         >
           <header className="space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
                 <h1 className="text-2xl font-bold">{displayName}</h1>
                 {displayName !== exercise.name && (
                   <p className="text-sm text-muted-foreground">{exercise.name}</p>
                 )}
               </div>
-              <ExerciseMediaDialog
-                exerciseName={exercise.name}
-                displayName={displayName}
-                equipmentType={exercise.equipmentType}
-              />
+              <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+                <ExerciseDetailEditTrigger />
+                <ExerciseMediaDialog
+                  exerciseName={exercise.name}
+                  displayName={displayName}
+                  equipmentType={exercise.equipmentType}
+                />
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge>

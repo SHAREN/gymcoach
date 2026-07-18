@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
@@ -50,7 +50,8 @@ interface Props {
   exercise?: Exercise;
   equipmentChoices?: ExerciseEquipmentChoice[];
   activeGymId?: string | null;
-  focusSection?: 'equipment';
+  focusSection?: 'details' | 'equipment';
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 const DEFAULT_VALUES: ExerciseInput = {
@@ -71,6 +72,7 @@ export function ExerciseFormDialog({
   equipmentChoices = [],
   activeGymId = null,
   focusSection,
+  returnFocusRef,
 }: Props) {
   const t = useTranslations('exercises');
   const common = useTranslations('common');
@@ -223,11 +225,20 @@ export function ExerciseFormDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-md"
+        className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto"
         onOpenAutoFocus={(event) => {
-          if (focusSection !== 'equipment') return;
+          if (focusSection === 'details') {
+            event.preventDefault();
+            form.setFocus('name');
+          } else if (focusSection === 'equipment') {
+            event.preventDefault();
+            equipmentTypeTriggerRef.current?.focus();
+          }
+        }}
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusRef?.current) return;
           event.preventDefault();
-          equipmentTypeTriggerRef.current?.focus();
+          returnFocusRef.current.focus();
         }}
       >
         <DialogHeader>

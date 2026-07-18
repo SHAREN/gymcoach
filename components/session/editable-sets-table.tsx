@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -50,6 +50,7 @@ import {
   remainingPlannedSets,
   targetDropSets,
 } from '@/lib/planned-sets';
+import type { StrengthSetDraft } from '@/lib/session-detail-return-state';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -66,6 +67,8 @@ interface Props {
   onGymUpdated?: (gym: SessionGym) => void;
   disabled?: boolean;
   equipmentSelectionRequired?: boolean;
+  restoredDraft?: StrengthSetDraft;
+  onDraftChange?: (exerciseId: string, draft: StrengthSetDraft) => void;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -86,11 +89,7 @@ interface Props {
   onTargetSetsChange?: (targetSets: number) => Promise<void>;
 }
 
-interface DraftSet {
-  weight: number;
-  reps: number;
-  rir: number | null;
-}
+type DraftSet = StrengthSetDraft;
 
 interface EditingSet {
   set: PendingSet;
@@ -239,6 +238,8 @@ export function EditableSetsTable({
   onGymUpdated,
   disabled = false,
   equipmentSelectionRequired = false,
+  restoredDraft,
+  onDraftChange,
   onSubmit,
   onUpdateSet,
   onChangeSetEquipment,
@@ -256,19 +257,23 @@ export function EditableSetsTable({
   );
   const equipmentHistorySets = historySets ?? visibleSets;
   const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
-  const [draft, setDraft] = useState<DraftSet>(() =>
-    initialDraft(
-      programExercise,
-      visibleSets,
-      equipmentHistorySets,
-      lastPerformance,
-      recommendation,
-      returnRecommendation,
-      readiness,
-      deloadActive,
-      loadConstraints,
-    ),
+  const [draft, setDraft] = useState<DraftSet>(
+    () =>
+      restoredDraft ??
+      initialDraft(
+        programExercise,
+        visibleSets,
+        equipmentHistorySets,
+        lastPerformance,
+        recommendation,
+        returnRecommendation,
+        readiness,
+        deloadActive,
+        loadConstraints,
+      ),
   );
+  const draftExerciseRef = useRef(programExercise.id);
+  const restoredDraftExerciseRef = useRef<string | null>(restoredDraft ? programExercise.id : null);
   const [submitting, setSubmitting] = useState(false);
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
@@ -300,6 +305,13 @@ export function EditableSetsTable({
   }, []);
 
   useEffect(() => {
+    if (draftExerciseRef.current !== programExercise.id) return;
+    if (restoredDraft && restoredDraftExerciseRef.current !== programExercise.id) return;
+    onDraftChange?.(programExercise.exerciseId, draft);
+  }, [draft, onDraftChange, programExercise.exerciseId, programExercise.id, restoredDraft]);
+
+  useEffect(() => {
+    draftExerciseRef.current = programExercise.id;
     setDraft(
       initialDraft(
         programExercise,
@@ -325,7 +337,6 @@ export function EditableSetsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     programExercise.id,
-    programExercise.targetSets,
     programExercise.targetDropSets,
     returnRecommendation?.mode,
     returnRecommendation?.suggestedWeight,
@@ -335,6 +346,13 @@ export function EditableSetsTable({
     lastPerformance?.sessionId,
     lastPerformance?.gymEquipmentId,
   ]);
+
+  useEffect(() => {
+    if (!restoredDraft || restoredDraftExerciseRef.current === programExercise.id) return;
+    restoredDraftExerciseRef.current = programExercise.id;
+    draftExerciseRef.current = programExercise.id;
+    setDraft(restoredDraft);
+  }, [programExercise.id, restoredDraft]);
 
   useEffect(() => {
     const normalize = (current: DraftSet): DraftSet => {

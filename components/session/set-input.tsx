@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Check, Minus, Plus } from 'lucide-react';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
@@ -27,6 +27,7 @@ import type { PendingSet } from '@/lib/indexeddb';
 import type { SerializedLastPerformance } from './session-runner';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
 import { constrainGymWeight, type GymLoadConstraints } from '@/lib/gym-loads';
+import type { CardioSetDraft } from '@/lib/session-detail-return-state';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -39,6 +40,8 @@ interface Props {
   recommendation?: IntraSetRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
   submissionDisabled?: boolean;
+  restoredForm?: CardioSetDraft;
+  onFormChange?: (exerciseId: string, form: CardioSetDraft) => void;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -51,18 +54,7 @@ interface Props {
   }) => Promise<void>;
 }
 
-interface FormState {
-  weight: number;
-  reps: number;
-  rir: number | null;
-  // Cardio inputs (issue #133), kept as raw strings while typing: duration as
-  // "mm:ss" (or plain minutes) and distance in km. Empty on strength exercises.
-  durationInput: string;
-  distanceInput: string;
-  isWarmup: boolean;
-  isDropSet: boolean;
-  notes: string;
-}
+type FormState = CardioSetDraft;
 
 const RIR_OPTIONS = [0, 1, 2, 3];
 
@@ -80,6 +72,8 @@ export function SetInput({
   recommendation = null,
   loadConstraints = null,
   submissionDisabled = false,
+  restoredForm,
+  onFormChange,
   onSubmit,
 }: Props) {
   const t = useTranslations('session.input');
@@ -96,7 +90,9 @@ export function SetInput({
     recommendation,
     loadConstraints,
   );
-  const [form, setForm] = useState<FormState>(initial);
+  const [form, setForm] = useState<FormState>(restoredForm ?? initial);
+  const formExerciseRef = useRef(programExercise.id);
+  const restoredFormExerciseRef = useRef<string | null>(restoredForm ? programExercise.id : null);
   const [submitting, setSubmitting] = useState(false);
   const [quickEntry, setQuickEntry] = useState('');
   // Opt-in AI free-text parse (issue #210): a DELIBERATE action that fills the
@@ -106,8 +102,15 @@ export function SetInput({
   const [aiParsing, setAiParsing] = useState(false);
   const [aiHint, setAiHint] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (formExerciseRef.current !== programExercise.id) return;
+    if (restoredForm && restoredFormExerciseRef.current !== programExercise.id) return;
+    onFormChange?.(programExercise.exerciseId, form);
+  }, [form, onFormChange, programExercise.exerciseId, programExercise.id, restoredForm]);
+
   // Re-init when the exercise changes or a set changes.
   useEffect(() => {
+    formExerciseRef.current = programExercise.id;
     setForm(
       computeInitial(
         programExercise,
@@ -124,6 +127,13 @@ export function SetInput({
     setAiHint(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programExercise.id, existingSets.length]);
+
+  useEffect(() => {
+    if (!restoredForm || restoredFormExerciseRef.current === programExercise.id) return;
+    restoredFormExerciseRef.current = programExercise.id;
+    formExerciseRef.current = programExercise.id;
+    setForm(restoredForm);
+  }, [programExercise.id, restoredForm]);
 
   const incrementKg = weightIncrement(programExercise.exercise.category);
   // Increment shown in the user's unit (clean plate jumps), applied to the
