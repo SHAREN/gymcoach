@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import { SetInput } from './set-input';
@@ -254,6 +254,190 @@ describe('SetInput cardio mode', () => {
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ weight: 100, reps: 8, durationSec: null, distanceM: null }),
+    );
+  });
+
+  it('preserves a restored cardio draft through completed-set hydration and reseeds after logging', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onFormChange = vi.fn();
+    const restoredForm = {
+      weight: 0,
+      reps: 1,
+      rir: null,
+      durationInput: '12:30',
+      distanceInput: '2.5',
+      isWarmup: false,
+      isDropSet: false,
+      notes: 'restored cardio note',
+    };
+    const props = {
+      programExercise: cardioPE,
+      lastPerformance: undefined,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      restoredForm,
+      onFormChange,
+      onSubmit,
+    };
+    const { rerender, unmount } = render(<SetInput {...props} existingSets={[]} />);
+
+    expect(screen.getByLabelText(/duration/i)).toHaveValue('12:30');
+    expect(screen.getByLabelText(/distance/i)).toHaveValue(2.5);
+    expect(screen.getByLabelText(/note/i)).toHaveValue('restored cardio note');
+
+    rerender(
+      <SetInput
+        {...props}
+        existingSets={[
+          {
+            localId: 'hydrated-cardio',
+            sessionId: 'session',
+            exerciseId: cardioExo.id,
+            setNumber: 1,
+            weight: 0,
+            reps: 1,
+            rir: null,
+            durationSec: 300,
+            distanceM: 1000,
+            notes: null,
+            isWarmup: false,
+            isDropSet: false,
+            createdAt: Date.now(),
+            status: 'synced',
+            serverId: 'server-cardio',
+            syncedAt: Date.now(),
+            attempts: 0,
+            lastError: null,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByLabelText(/duration/i)).toHaveValue('12:30');
+    expect(screen.getByLabelText(/distance/i)).toHaveValue(2.5);
+
+    await user.clear(screen.getByLabelText(/duration/i));
+    await user.type(screen.getByLabelText(/duration/i), '15:00');
+    await user.clear(screen.getByLabelText(/distance/i));
+    await user.type(screen.getByLabelText(/distance/i), '3');
+    await user.click(screen.getByRole('button', { name: /log the set/i }));
+
+    await waitFor(() =>
+      expect(onFormChange).toHaveBeenLastCalledWith(
+        cardioExo.id,
+        expect.objectContaining({
+          durationInput: '15:00',
+          distanceInput: '3',
+          notes: '',
+        }),
+      ),
+    );
+
+    const nextForm = onFormChange.mock.calls.at(-1)?.[1];
+    unmount();
+    render(<SetInput {...props} restoredForm={nextForm} existingSets={[]} />);
+    expect(screen.getByLabelText(/duration/i)).toHaveValue('15:00');
+    expect(screen.getByLabelText(/distance/i)).toHaveValue(3);
+  });
+
+  it('keeps the restored cardio draft when the parent reports that no set was saved', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    const onFormChange = vi.fn();
+    const restoredForm = {
+      weight: 0,
+      reps: 1,
+      rir: null,
+      durationInput: '18:00',
+      distanceInput: '4.2',
+      isWarmup: false,
+      isDropSet: false,
+      notes: 'keep after local failure',
+    };
+    render(
+      <SetInput
+        programExercise={cardioPE}
+        existingSets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        restoredForm={restoredForm}
+        onFormChange={onFormChange}
+        onSubmit={onSubmit}
+      />,
+    );
+    await waitFor(() => expect(onFormChange).toHaveBeenCalled());
+    onFormChange.mockClear();
+
+    await user.click(screen.getByRole('button', { name: /log the set/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText(/duration/i)).toHaveValue('18:00');
+    expect(screen.getByLabelText(/distance/i)).toHaveValue(4.2);
+    expect(screen.getByLabelText(/note/i)).toHaveValue('keep after local failure');
+    expect(onFormChange).not.toHaveBeenCalled();
+  });
+
+  it('restores the next cardio exercise without attributing the outgoing draft to it', async () => {
+    const user = userEvent.setup();
+    const onFormChange = vi.fn();
+    let resolveSubmit: ((saved: boolean) => void) | undefined;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const firstDraft = {
+      weight: 0,
+      reps: 1,
+      rir: null,
+      durationInput: '10:00',
+      distanceInput: '2',
+      isWarmup: false,
+      isDropSet: false,
+      notes: 'first exercise',
+    };
+    const nextExercise = {
+      ...cardioPE,
+      id: 'pe3',
+      exerciseId: 'e3',
+      exercise: { ...cardioExo, id: 'e3', name: 'Cycling' },
+    };
+    const nextDraft = {
+      ...firstDraft,
+      durationInput: '22:00',
+      distanceInput: '8.5',
+      notes: 'next exercise',
+    };
+    const commonProps = {
+      existingSets: [],
+      lastPerformance: undefined,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      onFormChange,
+      onSubmit,
+    };
+    const { rerender } = render(
+      <SetInput {...commonProps} programExercise={cardioPE} restoredForm={firstDraft} />,
+    );
+    onFormChange.mockClear();
+
+    await user.click(screen.getByRole('button', { name: /log the set/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    rerender(<SetInput {...commonProps} programExercise={nextExercise} restoredForm={nextDraft} />);
+    resolveSubmit?.(true);
+
+    await waitFor(() => expect(screen.getByLabelText(/duration/i)).toHaveValue('22:00'));
+    expect(screen.getByLabelText(/distance/i)).toHaveValue(8.5);
+    expect(onFormChange).not.toHaveBeenCalledWith(nextExercise.exerciseId, firstDraft);
+    await waitFor(() =>
+      expect(onFormChange).toHaveBeenCalledWith(nextExercise.exerciseId, nextDraft),
     );
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -50,6 +50,7 @@ import {
   remainingPlannedSets,
   targetDropSets,
 } from '@/lib/planned-sets';
+import type { StrengthSetDraft } from '@/lib/session-detail-return-state';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -66,6 +67,8 @@ interface Props {
   onGymUpdated?: (gym: SessionGym) => void;
   disabled?: boolean;
   equipmentSelectionRequired?: boolean;
+  restoredDraft?: StrengthSetDraft;
+  onDraftChange?: (exerciseId: string, draft: StrengthSetDraft) => void;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -75,7 +78,7 @@ interface Props {
     isWarmup: false;
     isDropSet: boolean;
     notes: null;
-  }) => Promise<void>;
+  }) => Promise<boolean | void>;
   onUpdateSet: (
     set: PendingSet,
     values: { weight: number; reps: number; rir: number | null },
@@ -86,11 +89,7 @@ interface Props {
   onTargetSetsChange?: (targetSets: number) => Promise<void>;
 }
 
-interface DraftSet {
-  weight: number;
-  reps: number;
-  rir: number | null;
-}
+type DraftSet = StrengthSetDraft;
 
 interface EditingSet {
   set: PendingSet;
@@ -239,6 +238,8 @@ export function EditableSetsTable({
   onGymUpdated,
   disabled = false,
   equipmentSelectionRequired = false,
+  restoredDraft,
+  onDraftChange,
   onSubmit,
   onUpdateSet,
   onChangeSetEquipment,
@@ -256,19 +257,25 @@ export function EditableSetsTable({
   );
   const equipmentHistorySets = historySets ?? visibleSets;
   const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
-  const [draft, setDraft] = useState<DraftSet>(() =>
-    initialDraft(
-      programExercise,
-      visibleSets,
-      equipmentHistorySets,
-      lastPerformance,
-      recommendation,
-      returnRecommendation,
-      readiness,
-      deloadActive,
-      loadConstraints,
-    ),
+  const [draft, setDraft] = useState<DraftSet>(
+    () =>
+      restoredDraft ??
+      initialDraft(
+        programExercise,
+        visibleSets,
+        equipmentHistorySets,
+        lastPerformance,
+        recommendation,
+        returnRecommendation,
+        readiness,
+        deloadActive,
+        loadConstraints,
+      ),
   );
+  const draftExerciseRef = useRef(programExercise.id);
+  const restoredDraftExerciseRef = useRef<string | null>(restoredDraft ? programExercise.id : null);
+  const resetEffectInitializedRef = useRef(false);
+  const preserveRestoredHydrationRef = useRef(Boolean(restoredDraft));
   const [submitting, setSubmitting] = useState(false);
   const [editingSet, setEditingSet] = useState<EditingSet | null>(null);
   const [updatingSetId, setUpdatingSetId] = useState<string | null>(null);
@@ -294,38 +301,97 @@ export function EditableSetsTable({
   const historyKey = equipmentHistorySets
     .map((set) => `${set.localId}:${set.weight}:${set.reps}:${set.rir ?? ''}`)
     .join('|');
+  const resetInputsRef = useRef({
+    programExerciseId: programExercise.id,
+    targetDropSets: programExercise.targetDropSets,
+    returnMode: returnRecommendation?.mode,
+    returnSuggestedWeight: returnRecommendation?.suggestedWeight,
+    returnTargetRIR: returnRecommendation?.targetRIR,
+    visibleSetsLength: visibleSets.length,
+    historyKey,
+    lastPerformanceSessionId: lastPerformance?.sessionId,
+    lastPerformanceEquipmentId: lastPerformance?.gymEquipmentId,
+  });
 
   useEffect(() => {
     setMetrics(loadPreferences().setTableMetrics);
   }, []);
 
   useEffect(() => {
-    setDraft(
-      initialDraft(
-        programExercise,
-        visibleSets,
-        equipmentHistorySets,
-        lastPerformance,
-        recommendation,
-        returnRecommendation,
-        readiness,
-        deloadActive,
-        loadConstraints,
-      ),
-    );
-    setAppliedRecommendationKey(null);
-    setAiOpen(false);
-    setInventoryOpen(false);
-    setSetControlsOpen(false);
-    setSetControlsSet(null);
-    setSetControlsBusy(false);
-    setAiText('');
-    setAiHint(null);
+    if (draftExerciseRef.current !== programExercise.id) return;
+    if (restoredDraft && restoredDraftExerciseRef.current !== programExercise.id) return;
+    onDraftChange?.(programExercise.exerciseId, draft);
+  }, [draft, onDraftChange, programExercise.exerciseId, programExercise.id, restoredDraft]);
+
+  useEffect(() => {
+    const previousInputs = resetInputsRef.current;
+    const nextInputs = {
+      programExerciseId: programExercise.id,
+      targetDropSets: programExercise.targetDropSets,
+      returnMode: returnRecommendation?.mode,
+      returnSuggestedWeight: returnRecommendation?.suggestedWeight,
+      returnTargetRIR: returnRecommendation?.targetRIR,
+      visibleSetsLength: visibleSets.length,
+      historyKey,
+      lastPerformanceSessionId: lastPerformance?.sessionId,
+      lastPerformanceEquipmentId: lastPerformance?.gymEquipmentId,
+    };
+    resetInputsRef.current = nextInputs;
+
+    if (!resetEffectInitializedRef.current) {
+      resetEffectInitializedRef.current = true;
+      return;
+    }
+
+    const exerciseChanged = draftExerciseRef.current !== programExercise.id;
+    const hydrationChanged =
+      previousInputs.visibleSetsLength !== nextInputs.visibleSetsLength ||
+      previousInputs.historyKey !== nextInputs.historyKey;
+    const configurationChanged =
+      previousInputs.targetDropSets !== nextInputs.targetDropSets ||
+      previousInputs.returnMode !== nextInputs.returnMode ||
+      previousInputs.returnSuggestedWeight !== nextInputs.returnSuggestedWeight ||
+      previousInputs.returnTargetRIR !== nextInputs.returnTargetRIR ||
+      previousInputs.lastPerformanceSessionId !== nextInputs.lastPerformanceSessionId ||
+      previousInputs.lastPerformanceEquipmentId !== nextInputs.lastPerformanceEquipmentId;
+    if (
+      !exerciseChanged &&
+      restoredDraftExerciseRef.current === programExercise.id &&
+      preserveRestoredHydrationRef.current &&
+      hydrationChanged &&
+      !configurationChanged
+    ) {
+      preserveRestoredHydrationRef.current = false;
+      return;
+    }
+
+    draftExerciseRef.current = programExercise.id;
+    if (exerciseChanged && restoredDraft) {
+      restoredDraftExerciseRef.current = programExercise.id;
+      preserveRestoredHydrationRef.current = true;
+      setDraft(restoredDraft);
+    } else {
+      if (exerciseChanged) restoredDraftExerciseRef.current = null;
+      preserveRestoredHydrationRef.current = false;
+      setDraft(
+        initialDraft(
+          programExercise,
+          visibleSets,
+          equipmentHistorySets,
+          lastPerformance,
+          recommendation,
+          returnRecommendation,
+          readiness,
+          deloadActive,
+          loadConstraints,
+        ),
+      );
+    }
+    resetDraftInteractionState();
     // Re-seed when the active exercise or logged row count changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     programExercise.id,
-    programExercise.targetSets,
     programExercise.targetDropSets,
     returnRecommendation?.mode,
     returnRecommendation?.suggestedWeight,
@@ -335,6 +401,14 @@ export function EditableSetsTable({
     lastPerformance?.sessionId,
     lastPerformance?.gymEquipmentId,
   ]);
+
+  useEffect(() => {
+    if (!restoredDraft || restoredDraftExerciseRef.current === programExercise.id) return;
+    restoredDraftExerciseRef.current = programExercise.id;
+    draftExerciseRef.current = programExercise.id;
+    preserveRestoredHydrationRef.current = true;
+    setDraft(restoredDraft);
+  }, [programExercise.id, restoredDraft]);
 
   useEffect(() => {
     const normalize = (current: DraftSet): DraftSet => {
@@ -534,21 +608,74 @@ export function EditableSetsTable({
     ) {
       return;
     }
+    const submittedProgramExerciseId = programExercise.id;
+    const submittedExerciseId = programExercise.exerciseId;
+    const submittedDraft = {
+      weight: constrainGymWeight(draft.weight, draft.weight, loadConstraints),
+      reps: draft.reps,
+      rir: draft.rir,
+    };
+    const submittedSet: PendingSet = {
+      localId: `submitted-${submittedProgramExerciseId}-${visibleSets.length + 1}`,
+      sessionId: '',
+      exerciseId: submittedExerciseId,
+      setNumber: Math.max(0, ...visibleSets.map((set) => set.setNumber)) + 1,
+      ...submittedDraft,
+      durationSec: null,
+      distanceM: null,
+      notes: null,
+      isWarmup: false,
+      isDropSet: isNextDropSet,
+      createdAt: Date.now(),
+      status: 'pending',
+      serverId: null,
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+    };
     setSubmitting(true);
     try {
-      await onSubmit({
-        weight: constrainGymWeight(draft.weight, draft.weight, loadConstraints),
-        reps: draft.reps,
-        rir: draft.rir,
+      const saved = await onSubmit({
+        ...submittedDraft,
         durationSec: null,
         distanceM: null,
         isWarmup: false,
         isDropSet: isNextDropSet,
         notes: null,
       });
+      if (saved === false) return;
+      const nextDraft = initialDraft(
+        programExercise,
+        [...visibleSets, submittedSet],
+        [...equipmentHistorySets, submittedSet],
+        lastPerformance,
+        recommendation,
+        returnRecommendation,
+        readiness,
+        deloadActive,
+        loadConstraints,
+      );
+      if (draftExerciseRef.current === submittedProgramExerciseId) {
+        restoredDraftExerciseRef.current = submittedProgramExerciseId;
+        preserveRestoredHydrationRef.current = false;
+        setDraft(nextDraft);
+        resetDraftInteractionState();
+      }
+      onDraftChange?.(submittedExerciseId, nextDraft);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function resetDraftInteractionState() {
+    setAppliedRecommendationKey(null);
+    setAiOpen(false);
+    setInventoryOpen(false);
+    setSetControlsOpen(false);
+    setSetControlsSet(null);
+    setSetControlsBusy(false);
+    setAiText('');
+    setAiHint(null);
   }
 
   async function persistEditedSet(set: PendingSet, nextDraft: DraftSet) {
