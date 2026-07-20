@@ -176,11 +176,17 @@ export function ExerciseFormDialog({
     const resolvedValuesType = resolveEquipmentType(values.equipmentType, values.name);
     const url = mode === 'edit' && exercise ? `/api/exercises/${exercise.id}` : '/api/exercises';
     const method = mode === 'edit' ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...values, notes: values.notes || null }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...values, notes: values.notes || null }),
+      });
+    } catch {
+      toast.error(t('saveError'));
+      return;
+    }
     if (!res.ok) {
       toast.error(t('saveError'));
       return;

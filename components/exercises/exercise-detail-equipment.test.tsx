@@ -10,15 +10,23 @@ import {
   ExerciseEquipmentEditTrigger,
 } from './exercise-detail-equipment';
 
-const refresh = vi.fn();
+const { refresh, toastError } = vi.hoisted(() => ({
+  refresh: vi.fn(),
+  toastError: vi.fn(),
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh, push: vi.fn() }),
 }));
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: toastError },
+}));
+
 afterEach(() => {
   vi.unstubAllGlobals();
   refresh.mockReset();
+  toastError.mockReset();
 });
 
 beforeEach(() => {
@@ -171,11 +179,11 @@ function renderDetail({
 }
 
 describe('ExerciseDetailEquipment', () => {
-  it('edits general details, resets on cancel, and keeps a failed save retryable', async () => {
+  it('edits general details, resets on cancel, and keeps a rejected save retryable', async () => {
     const updatedExercise = { ...exercise, name: 'Updated skull crusher' };
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 500 }))
+      .mockRejectedValueOnce(new TypeError('Network request failed'))
       .mockResolvedValueOnce(
         new Response(JSON.stringify(updatedExercise), {
           status: 200,
@@ -212,8 +220,10 @@ describe('ExerciseDetailEquipment', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not save the exercise.'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByLabelText('Name')).toHaveValue(updatedExercise.name);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
