@@ -86,7 +86,6 @@ import {
   nextPlannedSetIsDropSet,
   remainingPlannedSets,
 } from '@/lib/planned-sets';
-<<<<<<< HEAD
 import {
   consumeSessionDetailReturnState,
   saveSessionDetailReturnState,
@@ -94,9 +93,6 @@ import {
   type StrengthSetDraft,
 } from '@/lib/session-detail-return-state';
 import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
-=======
-import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
->>>>>>> 3217568d8ee7d8b6b929823476ba364da4971161
 
 export interface SerializedLastPerformance {
   sessionId?: string;
