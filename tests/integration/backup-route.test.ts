@@ -587,6 +587,28 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     expect(profileB?.email).toBe('b@test.dev');
   });
 
+  it('redacts legacy coach payloads again during restore', async () => {
+    const source = await seedFullUser('coach-prompt-source@test.dev');
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    dump.coachSessions[0].prompt = JSON.stringify({
+      generatedAt: '2026-07-20T00:00:00.000Z',
+      userProfile: { coachingProfile: { privateField: 'must-not-survive' } },
+    });
+
+    const target = await db.user.create({
+      data: { email: 'coach-prompt-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+
+    expect(response.status).toBe(200);
+    const restored = await db.coachSession.findFirstOrThrow({ where: { userId: target.id } });
+    expect(restored.prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
+    expect(restored.prompt).not.toContain('coachingProfile');
+    expect(restored.prompt).not.toContain('privateField');
+  });
+
   it('round-trips catalog origin and keeps later catalog seeding idempotent', async () => {
     const source = await db.user.create({
       data: { email: 'catalog-backup-source@test.dev', passwordHash: 'x' },

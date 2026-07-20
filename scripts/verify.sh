@@ -99,11 +99,32 @@ required_harness_files=(
   ".agents/skills/execute-task/agents/openai.yaml"
   ".agents/skills/verify-task/SKILL.md"
   ".agents/skills/verify-task/agents/openai.yaml"
+  ".agents/skills/integrate-tasks/SKILL.md"
+  ".agents/skills/integrate-tasks/agents/openai.yaml"
+  ".agents/skills/playwright-cli/SKILL.md"
+  "scripts/check-integration-evidence.mjs"
+  "scripts/close-integrated-tasks.mjs"
+  "scripts/sync-beads-github.mjs"
+  "scripts/publish-integration-draft.mjs"
+  "scripts/cleanup-obsolete-worktree.mjs"
+  "scripts/harness-status.ps1"
+  "scripts/harness-status-core.mjs"
+  "scripts/test-integration-evidence.mjs"
+  "scripts/test-github-issue-mirror.mjs"
+  "scripts/test-guarded-closure.mjs"
+  "scripts/test-github-publication.mjs"
+  "scripts/test-worktree-cleanup.mjs"
+  "scripts/test-harness-status.mjs"
+  "scripts/fixtures/integration-evidence/task-branch-only.json"
+  "scripts/fixtures/integration-evidence/behavior-equivalent.json"
+  "scripts/fixtures/integration-evidence/no-runtime-artifact.json"
+  "scripts/fixtures/integration-evidence/android-integration.json"
 )
 for harness_file in "${required_harness_files[@]}"; do
   [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
 done
 grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
+grep -q "stage:awaiting-integration" docs/CODEX_WORKFLOW.md || fail "awaiting integration state"
 node <<'NODE' || fail "Codex harness configuration"
 const fs = require('fs');
 
@@ -139,6 +160,13 @@ for (const [event, [command, matcher]] of Object.entries(expected)) {
   }
 }
 NODE
+
+step "integration and harness regression tests"
+node scripts/test-guarded-closure.mjs || fail "guarded closure regression tests"
+node scripts/test-github-issue-mirror.mjs || fail "GitHub issue mirror regression tests"
+node scripts/test-github-publication.mjs || fail "GitHub publication regression tests"
+node scripts/test-worktree-cleanup.mjs || fail "Worktree cleanup regression tests"
+node scripts/test-harness-status.mjs || fail "stateless Dispatcher harness regression tests"
 
 if [ "$FULL" = "1" ]; then
   step "full-gate production safety preflight"
