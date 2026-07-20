@@ -73,8 +73,8 @@ describe('MCP structured coaching profile', () => {
     const training = await client.callTool({ name: 'get_training_context', arguments: {} });
     expect(training.isError).not.toBe(true);
     expect(training.structuredContent).toMatchObject({
-      instructionsVersion: 5,
-      contextSchemaVersion: 5,
+      instructionsVersion: 6,
+      contextSchemaVersion: 6,
       coach: {
         userProfile: {
           coachingProfile: {

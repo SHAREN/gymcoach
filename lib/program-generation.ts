@@ -3,6 +3,7 @@ import { getLlmProvider, LlmError } from '@/lib/llm';
 import { PROGRAM_GEN_SYSTEM_PROMPT } from '@/lib/prompts/program-system-prompt';
 import { parseGeneratedProgram, type GeneratedProgram } from '@/lib/schemas/program-generation';
 import { defaultIntraSetConfig } from '@/lib/intra-set-autoregulation';
+import { deriveServerExerciseClassification } from '@/lib/exercise-classification';
 import { buildProgramDesignContext } from '@/lib/program-design-context';
 import {
   validateProgramDesign,
@@ -134,16 +135,22 @@ export async function buildProgramFromGenerated(
         const existingExercise = await tx.exercise.findFirst({
           where: { userId, name: { equals: ex.name, mode: 'insensitive' } },
         });
+        const identity = {
+          name: ex.name,
+          muscleGroup: ex.muscleGroup,
+          category: ex.category,
+          equipmentType: ex.equipmentType ?? ('OTHER' as const),
+          defaultRestSec: ex.restSec,
+          notes: null,
+          usesBodyweight: false,
+        };
         const exercise =
           existingExercise ??
           (await tx.exercise.create({
             data: {
               userId,
-              name: ex.name,
-              muscleGroup: ex.muscleGroup,
-              category: ex.category,
-              equipmentType: ex.equipmentType ?? 'OTHER',
-              defaultRestSec: ex.restSec,
+              ...identity,
+              ...deriveServerExerciseClassification(identity),
             },
           }));
 

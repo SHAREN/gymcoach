@@ -3,6 +3,10 @@ import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { defaultIntraSetConfig } from '@/lib/intra-set-autoregulation';
+import {
+  classificationMetadataAfterServerUpdate,
+  deriveServerExerciseClassification,
+} from '@/lib/exercise-classification';
 
 export async function POST(req: Request) {
   try {
@@ -36,6 +40,21 @@ export async function POST(req: Request) {
         });
 
         for (const [exerciseIndex, exercise] of workout.exercises.entries()) {
+          const existingExercise = await tx.exercise.findUnique({
+            where: { userId_name: { userId, name: exercise.name } },
+          });
+          const identity = {
+            name: exercise.name,
+            muscleGroup: exercise.muscleGroup,
+            category: exercise.category,
+            defaultRestSec: exercise.restSec,
+            notes: exercise.notes ?? existingExercise?.notes ?? null,
+            usesBodyweight: existingExercise?.usesBodyweight ?? false,
+            equipmentType: exercise.equipmentType ?? existingExercise?.equipmentType ?? 'OTHER',
+          };
+          const updatedClassification = existingExercise
+            ? classificationMetadataAfterServerUpdate(existingExercise, identity)
+            : deriveServerExerciseClassification(identity);
           const createdExercise = await tx.exercise.upsert({
             where: {
               userId_name: {
@@ -44,18 +63,17 @@ export async function POST(req: Request) {
               },
             },
             update: {
-              muscleGroup: exercise.muscleGroup,
-              category: exercise.category,
-              defaultRestSec: exercise.restSec,
-              notes: exercise.notes ?? undefined,
+              muscleGroup: identity.muscleGroup,
+              category: identity.category,
+              defaultRestSec: identity.defaultRestSec,
+              notes: identity.notes,
+              equipmentType: identity.equipmentType,
+              ...updatedClassification,
             },
             create: {
               userId,
-              name: exercise.name,
-              muscleGroup: exercise.muscleGroup,
-              category: exercise.category,
-              defaultRestSec: exercise.restSec,
-              notes: exercise.notes ?? null,
+              ...identity,
+              ...updatedClassification,
             },
           });
 

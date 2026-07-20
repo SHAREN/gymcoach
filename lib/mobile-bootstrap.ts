@@ -15,9 +15,10 @@ import {
   type EquipmentReturnRecommendation,
 } from '@/lib/return-to-training-history';
 import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 6;
-export const MOBILE_CALCULATION_VERSION = '2026-07-16-return-history-v2';
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 7;
+export const MOBILE_CALCULATION_VERSION = '2026-07-18-multi-muscle-load-v1';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
 interface MobileExerciseHistoryRow {
@@ -432,7 +433,10 @@ export async function buildMobileBootstrap(userId: string) {
     },
     activeProgram,
     gyms: mobileGyms,
-    catalog,
+    catalog: catalog.map((exercise) => ({
+      ...exercise,
+      loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
+    })),
     openSessions,
     lastPerformances: serializedPerformances,
     ...equipmentHistoryContract,

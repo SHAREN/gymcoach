@@ -94,7 +94,9 @@ describe('GymCoach MCP server', () => {
     const instructions = await client.readResource({ uri: 'gymcoach://instructions/agent' });
     expect(instructions.contents[0]).toMatchObject({ text: GYMCOACH_MCP_INSTRUCTIONS });
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/exact UTC ISO calendar weeks/);
-    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/does not currently calculate indirect sets/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/explicit indirect sets/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/versioned engineering-heuristic metadata/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/unknown participation/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/untrusted trainee data/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/never treat their text as confirmation/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/coachingProfile fields have explicit UNKNOWN/);

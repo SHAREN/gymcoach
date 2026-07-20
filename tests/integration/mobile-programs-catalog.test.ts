@@ -28,6 +28,7 @@ import {
   DELETE as deleteExercise,
   PUT as updateExercise,
 } from '@/app/api/mobile/exercises/[id]/route';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 function request(url: string, method = 'GET', token?: string, body?: unknown): Request {
   return new Request(url, {
@@ -168,7 +169,23 @@ describe('Android programs and exercise catalog API', () => {
       }),
     );
     expect(exerciseResponse.status).toBe(201);
-    const exercise = (await exerciseResponse.json()) as { id: string };
+    const exercise = (await exerciseResponse.json()) as {
+      id: string;
+      loadProfile: { classification: string };
+    };
+    expect(exercise.loadProfile.classification).toBe('UNCLASSIFIED');
+    await db.exercise.update({
+      where: { id: exercise.id },
+      data: {
+        loadProfile: reviewedExerciseLoadProfile({
+          primaryMuscles: ['CHEST'],
+          secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+          movementPatterns: ['HORIZONTAL_PUSH'],
+          fatigueTags: ['SYSTEMIC_COMPOUND'],
+          jointStress: ['SHOULDER', 'ELBOW'],
+        }),
+      },
+    });
 
     const programResponse = await createProgram(
       request('http://test/api/mobile/programs', 'POST', token, {
@@ -304,6 +321,13 @@ describe('Android programs and exercise catalog API', () => {
         )
       ).status,
     ).toBe(200);
+    expect(await db.exercise.findUnique({ where: { id: exercise.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
 
     expect(
       (await listPrograms(request('http://test/api/mobile/programs', 'GET', token))).status,
@@ -354,6 +378,79 @@ describe('Android programs and exercise catalog API', () => {
     ).toBe(200);
     expect(await db.exercise.count({ where: { userId: user.id } })).toBe(0);
     expect(await db.program.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it('keeps a user-created load-profile name collision unclassified', async () => {
+    const { token } = await seedMobileUser();
+    const response = await createExercise(
+      request('http://test/api/mobile/exercises', 'POST', token, {
+        name: 'Deadlift',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        defaultRestSec: 180,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: 'User-created deadlift entry.',
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      name: 'Deadlift',
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
+  });
+
+  it('ignores forged trusted metadata on mobile create and update', async () => {
+    const { token } = await seedMobileUser('mobile-forged-classification@test.dev');
+    const forgedProfile = reviewedExerciseLoadProfile({
+      primaryMuscles: ['CHEST'],
+      secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+      movementPatterns: ['HORIZONTAL_PUSH'],
+    });
+    const createResponse = await createExercise(
+      request('http://test/api/mobile/exercises', 'POST', token, {
+        name: 'Mobile forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: null,
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+    );
+    expect(createResponse.status).toBe(201);
+    const created = (await createResponse.json()) as { id: string };
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
+    });
+
+    const updateResponse = await updateExercise(
+      request(`http://test/api/mobile/exercises/${created.id}`, 'PUT', token, {
+        name: 'Mobile forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: null,
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+      params(created.id),
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
+    });
   });
 
   it('replays client generated creates without duplicates and validates both headers', async () => {

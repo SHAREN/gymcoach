@@ -1,4 +1,9 @@
-export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-18.1';
+import {
+  DEFAULT_EQUIVALENT_SET_COEFFICIENTS,
+  EQUIVALENT_SETS_HEURISTIC_VERSION,
+} from '@/lib/training-load-aggregation';
+
+export const PROGRAM_DESIGN_METHODOLOGY_VERSION = '2026-07-18.2';
 
 export const PROGRAM_DESIGN_RULES = {
   authority: [
@@ -20,6 +25,7 @@ export const PROGRAM_DESIGN_RULES = {
     'Treat pain, illness and medical red flags outside automatic training optimization.',
     'Available equipment and practical load increments constrain exercise selection and progression.',
     'Self-reported painful, injured, forbidden or discouraged exercises constrain exercise selection until the trainee changes that information.',
+    'Compound exercises train agonists and synergists, so comparative volume accounting must preserve direct and indirect work separately.',
   ],
   engineeringHeuristics: {
     perMuscleSessionSoftCapSets: 10,
@@ -28,6 +34,12 @@ export const PROGRAM_DESIGN_RULES = {
     postBlockWarningSignalsForLoadReduction: 2,
     defaultPhaseLengthWeeks: 6,
     compoundFailureDefaultAllowed: false,
+    equivalentSetHeuristic: {
+      version: EQUIVALENT_SETS_HEURISTIC_VERSION,
+      primaryCoefficient: DEFAULT_EQUIVALENT_SET_COEFFICIENTS.primary,
+      explicitSecondaryCoefficient: DEFAULT_EQUIVALENT_SET_COEFFICIENTS.secondary,
+      unknownParticipationCoefficient: null,
+    },
   },
   forbiddenClaims: [
     'Do not calculate or claim an exact muscle catabolism percentage.',
@@ -52,7 +64,7 @@ Source-backed principles:
 - Compare actual RIR with programmed RIR. Repeatedly training materially harder than prescribed is a recovery-cost signal, not automatic evidence that the program needs more volume.
 - Most working sets should stop short of failure. Never make failure the default for complex compound lifts.
 - Related exercises may show that a muscle stayed trained, but they do not provide an exact load conversion.
-- High volume should be distributed across sessions. More than about 10 hard sets for one primary muscle in one session is a soft warning for diminishing returns, not an absolute physiological prohibition.
+- High volume should be distributed across sessions. GymCoach keeps direct and explicit indirect sets separate, then applies existing soft policies to a visible overlap-adjusted heuristic instead of hiding compound overlap.
 - Poor recovery plus declining performance calls for holding or reducing stress, not adding volume.
 - Pain, illness, injury rehabilitation and medical red flags are outside automatic program optimization.
 - Available equipment constrains exercise selection. Different physical machines are not exact load equivalents.
@@ -63,6 +75,7 @@ Engineering heuristics:
 - Two or more worsening items in the post-block sleep, motivation, performance, life-stress and aches checklist trigger a conservative load-reduction state. This is a product heuristic, not a diagnosis of overtraining.
 - Use six weeks as the default phase length when the trainee gives no event date or preferred duration.
 - Treat exact date windows, readiness cutoffs, e1RM equations and fatigue coefficients as revisable product rules.
+- Treat primary=1.0 and explicit secondary=0.5 equivalent-set coefficients as a versioned engineering heuristic. Unknown participation receives no coefficient, and raw direct/indirect counts remain authoritative.
 - Treat plate compatibility pools, nullable inventory quantities and per-machine load multipliers as explicit GymCoach engineering configuration, not universal training science.
 
 Source-backed intake principle: a usable program requires the goal, training experience, realistic schedule, session-duration limit, actual equipment and a current safety/constraint status. Ordinary return after a scheduling gap uses recent exposure and tolerated performance; illness, injury, surgery, unusual pain and medical restrictions are not automatic-programming inputs.

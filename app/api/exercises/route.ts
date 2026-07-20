@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
+import { clientExerciseClassificationMetadata } from '@/lib/exercise-classification';
 
 export async function GET() {
   try {
@@ -21,7 +22,12 @@ export async function POST(req: Request) {
     const userId = await requireApiUserId();
     const data = await parseJsonBody(req, exerciseInputSchema);
     const exercise = await db.exercise.create({
-      data: { ...data, userId, notes: data.notes ?? null },
+      data: {
+        ...data,
+        userId,
+        notes: data.notes ?? null,
+        ...clientExerciseClassificationMetadata(),
+      },
     });
     return NextResponse.json(exercise, { status: 201 });
   } catch (err) {

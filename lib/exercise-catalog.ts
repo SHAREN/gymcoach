@@ -1,4 +1,6 @@
 import { MuscleGroup, ExerciseCategory, type PrismaClient } from '@/prisma/generated/client';
+import { catalogExerciseLoadProfile } from '@/lib/exercise-load-catalog';
+import type { ExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 // ============================================================
 // Default exercise catalog
@@ -6,7 +8,9 @@ import { MuscleGroup, ExerciseCategory, type PrismaClient } from '@/prisma/gener
 // Seeded per user: at registration (so a new account is not empty) and by the
 // demo seed. Generic, evidence-informed technique cues, no personal data.
 
-export interface CatalogExercise {
+export const SYSTEM_EXERCISE_CATALOG_ORIGIN = 'SYSTEM_DEFAULT_V1' as const;
+
+interface CatalogExerciseBase {
   name: string;
   muscleGroup: MuscleGroup;
   category: ExerciseCategory;
@@ -15,7 +19,12 @@ export interface CatalogExercise {
   notes?: string;
 }
 
-export const EXERCISE_CATALOG: CatalogExercise[] = [
+export interface CatalogExercise extends CatalogExerciseBase {
+  catalogOrigin: typeof SYSTEM_EXERCISE_CATALOG_ORIGIN;
+  loadProfile: ExerciseLoadProfile;
+}
+
+const BASE_EXERCISE_CATALOG: CatalogExerciseBase[] = [
   // Chest
   {
     name: 'Barbell bench press',
@@ -465,12 +474,31 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
   },
 ];
 
+export const EXERCISE_CATALOG: CatalogExercise[] = BASE_EXERCISE_CATALOG.map((exercise) => ({
+  ...exercise,
+  catalogOrigin: SYSTEM_EXERCISE_CATALOG_ORIGIN,
+  loadProfile: catalogExerciseLoadProfile(exercise.name, exercise.muscleGroup, exercise.category),
+}));
+
 // Upserts the default catalog for a user. Returns a name -> exercise id map so
 // callers can wire up a starter program. Idempotent (safe to re-run).
 export async function seedExerciseCatalog(
   prisma: PrismaClient,
   userId: string,
 ): Promise<Map<string, string>> {
+  const existing = await prisma.exercise.findMany({
+    where: { userId, name: { in: EXERCISE_CATALOG.map((exercise) => exercise.name) } },
+    select: { name: true, catalogOrigin: true },
+  });
+  const unprovenCollision = existing.find(
+    (exercise) => exercise.catalogOrigin !== SYSTEM_EXERCISE_CATALOG_ORIGIN,
+  );
+  if (unprovenCollision) {
+    throw new Error(
+      `Cannot seed the system exercise catalog because ${unprovenCollision.name} is an unproven user exercise with the same name.`,
+    );
+  }
+
   const map = new Map<string, string>();
   for (const data of EXERCISE_CATALOG) {
     const exercise = await prisma.exercise.upsert({

@@ -36,6 +36,8 @@ function exercise(over: Partial<Exercise>): Exercise {
     notes: null,
     usesBodyweight: false,
     equipmentType: over.equipmentType ?? 'OTHER',
+    catalogOrigin: over.catalogOrigin ?? null,
+    loadProfile: over.loadProfile ?? {},
     createdAt: new Date('2026-01-01T00:00:00Z'),
     ...over,
   };

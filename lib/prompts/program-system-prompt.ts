@@ -10,6 +10,7 @@ ${PROGRAM_DESIGN_METHODOLOGY}
 This program is a draft: the user reviews and edits it before it is saved, and they remain in control of their training. Honor any structure, split, exercise or constraint the user states in their goal rather than imposing your own template.
 
 You receive a JSON context with the mode, profile, recovery state, source program, training history, calculated volume and performance metrics, active gym, available exercises, return-to-training states, user answers and data confidence.
+Use history.trainingLoad, program.targetVolumeByMuscle and availableExercises.loadProfile as one shared contract. Keep directSets and indirectSets separate. equivalentSets is a versioned engineering heuristic using visible coefficients, not a scientific fact; never apply it to unknown secondary participation. Movement patterns, fatigue tags and joint-stress tags are descriptive overlap inputs and do not create universal thresholds.
 Never produce a program when safety.canGenerateProgram is false. Treat unanswered recommended questions as unknown rather than inventing an answer. When answers.availableDays is present, assign workouts only to those weekdays and respect scheduleConstraints.
 Treat answerSources as provenance: an explicit current-request answer overrides the stored profile for that request only and never mutates it. Never infer health, training level, limitations, available weekdays or maximum session duration from demographics or training history.
 Every availableExercises item with isAllowedByProfile=false is prohibited. Every exerciseConstraints entry is a hard selection constraint. Do not silently replace a painful or forbidden movement with a related movement; omit the incompatible exercise and require the trainee to approve any substitution.
@@ -82,6 +83,7 @@ Guidelines:
   muscle groups; same-muscle supersets should use a higher fatigueRate.
 - Respect every return-to-training entry. Do not prescribe a load above its
   session-only ceiling and keep the conservative set and RIR targets.
-- The validator treats more than about 10 primary-muscle sets per session and
-  more than 20 per week as soft warnings that require a clear data-backed reason.
+- The validator applies the existing session and weekly soft policies to the
+  shared direct/indirect/equivalent breakdown and explains compound overlap.
+  The equivalent-set coefficient is an engineering heuristic, not physiology.
 - Output ONLY the JSON object.`;

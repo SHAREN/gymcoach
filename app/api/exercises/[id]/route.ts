@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
+import { classificationMetadataAfterClientUpdate } from '@/lib/exercise-classification';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -30,11 +31,18 @@ export async function PUT(req: Request, props: Params) {
   const params = await props.params;
   try {
     const userId = await requireApiUserId();
-    await ensureOwnership(params.id, userId);
+    const exercise = await ensureOwnership(params.id, userId);
     const data = await parseJsonBody(req, exerciseInputSchema);
     const updated = await db.exercise.update({
       where: { id: params.id },
-      data: { ...data, notes: data.notes ?? null },
+      data: {
+        ...data,
+        notes: data.notes ?? null,
+        ...classificationMetadataAfterClientUpdate(exercise, {
+          ...data,
+          notes: data.notes ?? null,
+        }),
+      },
     });
     return NextResponse.json(updated);
   } catch (err) {
@@ -58,10 +66,7 @@ export async function DELETE(_req: Request, props: Params) {
       },
     });
     if (usage && (usage._count.programExercises > 0 || usage._count.sets > 0)) {
-      throw new ApiError(
-        409,
-        'Exercise used in a program or in history. Remove it first.',
-      );
+      throw new ApiError(409, 'Exercise used in a program or in history. Remove it first.');
     }
 
     await db.exercise.delete({ where: { id: params.id } });

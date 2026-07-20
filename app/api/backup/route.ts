@@ -31,6 +31,12 @@ import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { resolveEquipmentType } from '@/lib/gym-loads';
 import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import {
+  exerciseLoadProfileSchema,
+  normalizeExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
+import { deriveBackupExerciseClassification } from '@/lib/exercise-classification';
+import { SYSTEM_EXERCISE_CATALOG_ORIGIN } from '@/lib/exercise-catalog';
 import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 
 // ============================================================
@@ -51,12 +57,12 @@ import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 //   profile). email/createdAt ride along for
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
-//   usesBodyweight.
+//   usesBodyweight, server-owned catalog origin and the versioned load profile.
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / SessionExercise / Set: all user content incl durable exercise
 //   membership, durationSec, distanceM, avgHr.
-// - CoachSession response and non-sensitive audit metadata, ExerciseGoal,
-//   BodyweightEntry, ReadinessCheckin, Conversation / Message: user content.
+// - CoachSession, ExerciseGoal, BodyweightEntry, ReadinessCheckin,
+//   Conversation / Message: all user content.
 //
 // Intentionally excluded:
 // - User.id / email / passwordHash / createdAt (identity + credentials of the
@@ -65,7 +71,7 @@ import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 13;
+const VERSION = 14;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -210,6 +216,8 @@ export async function GET(req: Request) {
         notes: e.notes,
         usesBodyweight: e.usesBodyweight,
         equipmentType: e.equipmentType,
+        catalogOrigin: e.catalogOrigin,
+        loadProfile: normalizeExerciseLoadProfile(e.loadProfile, e.muscleGroup),
       })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
@@ -422,6 +430,13 @@ const importSchema = z.object({
         usesBodyweight: z.boolean().optional(),
         // v3; absent in older backups.
         equipmentType: z.nativeEnum(EquipmentType).optional(),
+        // v14; absent from earlier v14 exports created before catalog-origin
+        // preservation was added. Import rederives it only from a complete
+        // immutable catalog fingerprint.
+        catalogOrigin: z.literal(SYSTEM_EXERCISE_CATALOG_ORIGIN).nullable().optional(),
+        // v14; absent in older backups, which retain their legacy primary
+        // muscle as low-confidence migration evidence.
+        loadProfile: exerciseLoadProfileSchema.optional(),
       }),
     )
     .max(2000),
@@ -892,6 +907,19 @@ export async function POST(req: Request) {
         // 3. Recreate the exercises; we keep a name -> id index to link them.
         const exerciseIdByName = new Map<string, string>();
         for (const e of payload.exercises) {
+          const notes = e.notes ?? null;
+          const usesBodyweight = e.usesBodyweight ?? false;
+          const equipmentType = e.equipmentType ?? EquipmentType.OTHER;
+          const classification = deriveBackupExerciseClassification({
+            name: e.name,
+            muscleGroup: e.muscleGroup,
+            category: e.category,
+            defaultRestSec: e.defaultRestSec,
+            notes,
+            usesBodyweight,
+            equipmentType,
+            loadProfile: e.loadProfile,
+          });
           const created = await tx.exercise.create({
             data: {
               userId,
@@ -899,9 +927,10 @@ export async function POST(req: Request) {
               muscleGroup: e.muscleGroup,
               category: e.category,
               defaultRestSec: e.defaultRestSec,
-              notes: e.notes ?? null,
-              usesBodyweight: e.usesBodyweight ?? false,
-              equipmentType: e.equipmentType ?? 'OTHER',
+              notes,
+              usesBodyweight,
+              equipmentType,
+              ...classification,
             },
           });
           exerciseIdByName.set(e.name, created.id);

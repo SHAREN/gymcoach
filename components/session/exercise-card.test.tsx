@@ -16,6 +16,8 @@ const exercise: Exercise = {
   notes: importedNote,
   usesBodyweight: false,
   equipmentType: 'DUMBBELL',
+  catalogOrigin: null,
+  loadProfile: {},
   createdAt: new Date(),
 };
 

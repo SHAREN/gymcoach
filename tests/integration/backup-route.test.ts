@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getCurrentUserId } from '@/lib/auth';
 import { applyCoachingProfilePatch } from '@/lib/schemas/coaching-profile';
 import { Prisma } from '@/lib/prisma-client';
+import { EXERCISE_CATALOG, seedExerciseCatalog } from '@/lib/exercise-catalog';
 import { createCoachAuditPrompt } from '@/lib/coach-audit';
 
 // Backup export/restore completeness (issue #168): the export must carry every
@@ -393,7 +394,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 13 with coaching profile, coach note, system profiles and earlier fields', async () => {
+  it('exports version 14 with exercise load profiles and all earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -401,7 +402,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(13);
+    expect(dump.version).toBe(14);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -428,6 +429,12 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const pullup = dump.exercises.find((e: { name: string }) => e.name === 'Pull-up');
     expect(pullup.usesBodyweight).toBe(true);
     expect(pullup.equipmentType).toBe('BODYWEIGHT');
+    expect(pullup.catalogOrigin).toBeNull();
+    expect(pullup.loadProfile).toMatchObject({
+      version: 1,
+      classification: 'UNCLASSIFIED',
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+    });
     expect(dump.gyms).toHaveLength(1);
     const exportedGym = dump.gyms[0];
     expect(exportedGym).toMatchObject({
@@ -536,8 +543,6 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     ]);
     expect(dump.conversations).toHaveLength(1);
     expect(dump.conversations[0].messages).toHaveLength(2);
-    expect(dump.coachSessions[0].prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
-    expect(JSON.stringify(dump.coachSessions)).not.toContain('coachingProfile');
   });
 });
 
@@ -582,26 +587,91 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     expect(profileB?.email).toBe('b@test.dev');
   });
 
-  it('redacts legacy coach payloads again during restore', async () => {
-    const source = await seedFullUser('coach-prompt-source@test.dev');
+  it('round-trips catalog origin and keeps later catalog seeding idempotent', async () => {
+    const source = await db.user.create({
+      data: { email: 'catalog-backup-source@test.dev', passwordHash: 'x' },
+    });
+    await seedExerciseCatalog(db, source.id);
     actAs(source.id);
     const dump = await (await getBackup(getReq())).json();
-    dump.coachSessions[0].prompt = JSON.stringify({
-      generatedAt: '2026-07-20T00:00:00.000Z',
-      userProfile: { coachingProfile: { privateField: 'must-not-survive' } },
+    const exportedBench = dump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    expect(exportedBench).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
     });
 
     const target = await db.user.create({
-      data: { email: 'coach-prompt-target@test.dev', passwordHash: 'x' },
+      data: { email: 'catalog-backup-target@test.dev', passwordHash: 'x' },
     });
     actAs(target.id);
-    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+    expect((await postBackup(jsonReq({ payload: dump, confirmReplace: true }))).status).toBe(200);
+    const restoredBeforeSeed = await db.exercise.findUniqueOrThrow({
+      where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+    });
+    expect(restoredBeforeSeed).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
+    });
 
-    expect(response.status).toBe(200);
-    const restored = await db.coachSession.findFirstOrThrow({ where: { userId: target.id } });
-    expect(restored.prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
-    expect(restored.prompt).not.toContain('coachingProfile');
-    expect(restored.prompt).not.toContain('privateField');
+    await seedExerciseCatalog(db, target.id);
+    const restoredAfterSeed = await db.exercise.findUniqueOrThrow({
+      where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+    });
+    expect(restoredAfterSeed.id).toBe(restoredBeforeSeed.id);
+    expect(await db.exercise.count({ where: { userId: target.id } })).toBe(EXERCISE_CATALOG.length);
+  });
+
+  it('rederives legacy catalog origin and neutralizes malformed reviewed metadata', async () => {
+    const source = await db.user.create({
+      data: { email: 'catalog-backup-legacy-source@test.dev', passwordHash: 'x' },
+    });
+    await seedExerciseCatalog(db, source.id);
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    const legacyDump = structuredClone(dump);
+    const legacyBench = legacyDump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    delete legacyBench.catalogOrigin;
+
+    const target = await db.user.create({
+      data: { email: 'catalog-backup-legacy-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    expect((await postBackup(jsonReq({ payload: legacyDump, confirmReplace: true }))).status).toBe(
+      200,
+    );
+    expect(
+      await db.exercise.findUniqueOrThrow({
+        where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+      }),
+    ).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
+    });
+
+    const malformedDump = structuredClone(dump);
+    const malformedBench = malformedDump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    malformedBench.defaultRestSec = 90;
+    expect(
+      (await postBackup(jsonReq({ payload: malformedDump, confirmReplace: true }))).status,
+    ).toBe(200);
+    expect(
+      await db.exercise.findUniqueOrThrow({
+        where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+      }),
+    ).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        provenance: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
   });
 
   it('round-trips ordered membership timestamps and accepts legacy v9 name-only rows', async () => {
@@ -1136,6 +1206,14 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     // v2 fields default to their pre-#168 values.
     const squat = await db.exercise.findFirst({ where: { userId: user.id } });
     expect(squat?.usesBodyweight).toBe(false);
+    expect(squat?.loadProfile).toMatchObject({
+      classification: 'LEGACY_PRIMARY_ONLY',
+      primaryMuscles: {
+        state: 'KNOWN',
+        entries: [expect.objectContaining({ muscleGroup: 'QUADS' })],
+      },
+      secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+    });
     const pe = await db.programExercise.findFirst({
       where: { workout: { program: { userId: user.id } } },
     });

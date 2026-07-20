@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { MuscleGroup, ExerciseCategory } from '@/lib/prisma-client';
 import { EXERCISE_CATALOG } from './exercise-catalog';
+import { exerciseLoadProfileSchema } from '@/lib/schemas/exercise-load-profile';
 
 describe('EXERCISE_CATALOG', () => {
   it('has unique exercise names', () => {
@@ -17,6 +18,8 @@ describe('EXERCISE_CATALOG', () => {
       expect(e.defaultRestSec).toBeGreaterThan(0);
       expect(groups).toContain(e.muscleGroup);
       expect(categories).toContain(e.category);
+      expect(exerciseLoadProfileSchema.safeParse(e.loadProfile).success).toBe(true);
+      expect(['REVIEWED', 'UNCLASSIFIED']).toContain(e.loadProfile.classification);
     }
   });
 
@@ -43,5 +46,47 @@ describe('EXERCISE_CATALOG', () => {
         expect(e.category).toBe(ExerciseCategory.CARDIO);
       }
     }
+  });
+
+  it('maps core compound overlap, movement, lumbar, axial and joint tags', () => {
+    const byName = new Map(EXERCISE_CATALOG.map((exercise) => [exercise.name, exercise]));
+    const bench = byName.get('Barbell bench press')!.loadProfile;
+    expect(bench.primaryMuscles.entries.map((entry) => entry.muscleGroup)).toContain('CHEST');
+    expect(bench.secondaryMuscles.entries.map((entry) => entry.muscleGroup)).toEqual(
+      expect.arrayContaining(['TRICEPS', 'SHOULDERS_FRONT']),
+    );
+    expect(bench.movementPatterns.entries.map((entry) => entry.value)).toContain('HORIZONTAL_PUSH');
+
+    const pullup = byName.get('Pronated pull-ups (weighted if possible)')!.loadProfile;
+    expect(pullup.secondaryMuscles.entries.map((entry) => entry.muscleGroup)).toContain('BICEPS');
+    expect(pullup.movementPatterns.entries.map((entry) => entry.value)).toContain('VERTICAL_PULL');
+
+    const overhead = byName.get('Standing barbell overhead press')!.loadProfile;
+    expect(overhead.movementPatterns.entries.map((entry) => entry.value)).toContain(
+      'VERTICAL_PUSH',
+    );
+    expect(overhead.fatigueTags.entries.map((entry) => entry.value)).toEqual(
+      expect.arrayContaining(['AXIAL_LOAD', 'LUMBAR_ISOMETRIC']),
+    );
+
+    const squat = byName.get('Machine squat (or Hack squat)')!.loadProfile;
+    expect(squat.movementPatterns.entries.map((entry) => entry.value)).toContain(
+      'SQUAT_KNEE_DOMINANT',
+    );
+    expect(squat.jointStress.entries.map((entry) => entry.value)).toEqual(
+      expect.arrayContaining(['HIP', 'KNEE', 'LUMBAR_SPINE']),
+    );
+
+    const hinge = byName.get('Dumbbell Romanian Deadlift')!.loadProfile;
+    expect(hinge.movementPatterns.entries.map((entry) => entry.value)).toContain('HIP_HINGE');
+    expect(hinge.fatigueTags.entries.map((entry) => entry.value)).toEqual(
+      expect.arrayContaining(['AXIAL_LOAD', 'LUMBAR_ISOMETRIC']),
+    );
+
+    const row = byName.get('Bent-over barbell row')!.loadProfile;
+    expect(row.movementPatterns.entries.map((entry) => entry.value)).toEqual(
+      expect.arrayContaining(['HORIZONTAL_PULL', 'ROW', 'HIP_HINGE']),
+    );
+    expect(row.jointStress.entries.map((entry) => entry.value)).toContain('LUMBAR_SPINE');
   });
 });
