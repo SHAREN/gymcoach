@@ -117,4 +117,48 @@ interface ProgramsCatalogRemoteDataSource : ProgramsCatalogDataSource {
         input: ExerciseInput,
         metadata: ClientMutationMetadata,
     ): ExerciseDto
+
+    suspend fun updateExercise(
+        id: String,
+        input: ExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ExerciseDto = updateExercise(id, input)
 }
+
+internal fun ExerciseDto.withGeneralMetadata(input: ExerciseInput): ExerciseDto = copy(
+    name = input.name,
+    muscleGroup = input.muscleGroup,
+    category = input.category,
+    defaultRestSec = input.defaultRestSec,
+    notes = input.notes,
+    usesBodyweight = input.usesBodyweight,
+    equipmentType = input.equipmentType,
+)
+
+internal fun ExerciseDto.hasGeneralMetadata(input: ExerciseInput): Boolean =
+    name == input.name &&
+        muscleGroup == input.muscleGroup &&
+        category == input.category &&
+        defaultRestSec == input.defaultRestSec &&
+        notes == input.notes &&
+        usesBodyweight == input.usesBodyweight &&
+        equipmentType == input.equipmentType
+
+internal fun ExerciseDto.generalMetadataInput(): ExerciseInput = ExerciseInput(
+    name = name,
+    muscleGroup = muscleGroup,
+    category = category,
+    defaultRestSec = defaultRestSec,
+    notes = notes,
+    usesBodyweight = usesBodyweight,
+    equipmentType = equipmentType,
+)
+
+internal fun ExerciseDto.hasSameGeneralMetadata(other: ExerciseDto): Boolean =
+    name == other.name &&
+        muscleGroup == other.muscleGroup &&
+        category == other.category &&
+        defaultRestSec == other.defaultRestSec &&
+        notes == other.notes &&
+        usesBodyweight == other.usesBodyweight &&
+        equipmentType == other.equipmentType

@@ -130,6 +130,17 @@ class ProgramsCatalogApi(
     override suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto =
         request("PUT", "/api/mobile/exercises/$id", json.encodeToString(input))
 
+    override suspend fun updateExercise(
+        id: String,
+        input: ExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ExerciseDto = request(
+        "PUT",
+        "/api/mobile/exercises/$id",
+        json.encodeToString(input),
+        metadata,
+    )
+
     override suspend fun deleteExercise(id: String) {
         request<MutationResult>("DELETE", "/api/mobile/exercises/$id")
     }

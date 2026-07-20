@@ -102,6 +102,8 @@ import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.PerformanceSetDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
+import org.sharteman.gymcoach.data.programs.ExerciseInput
+import org.sharteman.gymcoach.data.programs.hasSameGeneralMetadata
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
@@ -142,6 +144,8 @@ fun WorkoutScreen(
     sessionId: String,
     bootstrap: BootstrapResponse?,
     online: Boolean,
+    ownerUserId: String?,
+    onUpdateExercise: suspend (ExerciseDto, ExerciseInput) -> ExerciseDto,
     onAskCoach: () -> Unit,
     onOpenProgress: (String) -> Unit,
     onOpenHistory: (String, String) -> Unit,
@@ -167,7 +171,7 @@ fun WorkoutScreen(
     var controlsDialog by remember { mutableStateOf(false) }
     var resetDialog by remember { mutableStateOf(false) }
     var resetBusy by remember { mutableStateOf(false) }
-    var detailsExercise by remember { mutableStateOf<ExerciseDto?>(null) }
+    var detailsExerciseId by rememberSaveable { mutableStateOf<String?>(null) }
     var setTableMetricNames by rememberSaveable {
         mutableStateOf(workoutPreferences.getString(SET_TABLE_METRIC_KEY, null))
     }
@@ -201,6 +205,9 @@ fun WorkoutScreen(
     }
 
     val exercises = workout.exercises
+    val detailsExercise = detailsExerciseId?.let { exerciseId ->
+        exercises.firstOrNull { it.exerciseId == exerciseId }?.exercise
+    }
     if (selectedIndex !in exercises.indices) selectedIndex = 0
     fun selectExercise(index: Int, persist: Boolean = true, preserveRest: Boolean = false) {
         val selected = exercises.getOrNull(index) ?: return
@@ -339,15 +346,45 @@ fun WorkoutScreen(
     var notesText by rememberSaveable(current.id) { mutableStateOf("") }
     var isWarmup by rememberSaveable(current.id) { mutableStateOf(false) }
     var isDropSet by rememberSaveable(current.id) { mutableStateOf(false) }
+    var preserveInputsAfterExerciseEdit by remember(current.id) { mutableStateOf(false) }
+    var completedExerciseEdit by remember(current.id) { mutableStateOf<ExerciseDto?>(null) }
+    val autofillKey = workoutInputAutofillKey(
+        exerciseId = current.id,
+        comparableSetCount = comparableSets.size,
+        recommendation = recommendation,
+        equipmentId = selectedProfile?.equipmentId,
+        returnSuggestedWeight = returnRecommendation?.suggestedWeight,
+        lastPerformanceSessionId = lastPerformance?.sessionId,
+    )
+    var lastAppliedAutofillKey by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
+    var hasAppliedAutofill by rememberSaveable(current.id) { mutableStateOf(false) }
+    var observedAutofillKey by remember(current.id) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(
-        current.id,
-        comparableSets.size,
-        recommendation,
-        selectedProfile?.equipmentId,
-        returnRecommendation?.suggestedWeight,
-        lastPerformance?.sessionId,
-    ) {
+    LaunchedEffect(autofillKey) {
+        if (shouldPreserveRestoredWorkoutInputs(
+                hasAppliedAutofill = hasAppliedAutofill,
+                observedAutofillKey = observedAutofillKey,
+                weightText = weightText,
+                repsText = repsText,
+                rirText = rirText,
+            )
+        ) {
+            observedAutofillKey = autofillKey
+            lastAppliedAutofillKey = autofillKey
+            return@LaunchedEffect
+        }
+        observedAutofillKey = autofillKey
+        if (preserveInputsAfterExerciseEdit) return@LaunchedEffect
+        if (!shouldApplyWorkoutInputAutofill(
+                lastAppliedKey = lastAppliedAutofillKey,
+                currentKey = autofillKey,
+                weightText = weightText,
+                repsText = repsText,
+                rirText = rirText,
+            )
+        ) {
+            return@LaunchedEffect
+        }
         val candidateWeight = recommendation?.weight
             ?: returnRecommendation?.suggestedWeight
             ?: lastPerformance?.maxWeight
@@ -361,6 +398,16 @@ fun WorkoutScreen(
         }
         repsText = (recommendation?.reps ?: target.targetRepsMin).toString()
         rirText = (recommendation?.rir ?: target.targetRIR).toString()
+        lastAppliedAutofillKey = autofillKey
+        hasAppliedAutofill = true
+    }
+
+    LaunchedEffect(current.exercise, completedExerciseEdit) {
+        val updated = completedExerciseEdit ?: return@LaunchedEffect
+        if (current.exercise.hasSameGeneralMetadata(updated)) {
+            completedExerciseEdit = null
+            preserveInputsAfterExerciseEdit = false
+        }
     }
 
     LaunchedEffect(activeRuntime?.restEndsAtEpochMs) {
@@ -398,7 +445,7 @@ fun WorkoutScreen(
                 onSelect = { index ->
                     selectExercise(index)
                 },
-                onOpen = { detailsExercise = it },
+                onOpen = { detailsExerciseId = it.id },
                 onOpenControls = { controlsDialog = true },
             )
         },
@@ -647,15 +694,30 @@ fun WorkoutScreen(
                 online || progressSnapshot?.exercises?.any { it.id == exercise.id } == true
             ) {
                 { exerciseId ->
-                    detailsExercise = null
+                    detailsExerciseId = null
                     onOpenProgress(exerciseId)
                 }
             } else null,
             onOpenHistory = { historySessionId, startedAt ->
-                detailsExercise = null
+                detailsExerciseId = null
                 onOpenHistory(historySessionId, startedAt)
             },
-            onDismiss = { detailsExercise = null },
+            onDismiss = { detailsExerciseId = null },
+            editableUserId = ownerUserId,
+            onUpdateExercise = { currentExercise, input ->
+                preserveInputsAfterExerciseEdit = true
+                try {
+                    onUpdateExercise(currentExercise, input).also { updated ->
+                        completedExerciseEdit = updated
+                    }
+                } catch (error: CancellationException) {
+                    preserveInputsAfterExerciseEdit = false
+                    throw error
+                } catch (error: Exception) {
+                    preserveInputsAfterExerciseEdit = false
+                    throw error
+                }
+            },
         )
     }
 }
@@ -1432,7 +1494,10 @@ private fun WorkoutSetTable(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = { optionsExpanded = !optionsExpanded }) {
+            TextButton(
+                onClick = { optionsExpanded = !optionsExpanded },
+                modifier = Modifier.testTag("active-set-options"),
+            ) {
                 Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(stringResource(R.string.set_options))
@@ -1455,7 +1520,7 @@ private fun WorkoutSetTable(
                     onValueChange = onNotesChange,
                     placeholder = { Text(stringResource(R.string.notes_optional)) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("active-set-notes"),
                 )
             }
             val enteredWeightKg = weightText.replace(',', '.').toDoubleOrNull()
@@ -2587,15 +2652,57 @@ private fun formatPerformanceDate(value: String): String = runCatching {
     )
 }.getOrElse { value.take(10) }
 
+internal fun workoutInputAutofillKey(
+    exerciseId: String,
+    comparableSetCount: Int,
+    recommendation: SetRecommendation?,
+    equipmentId: String?,
+    returnSuggestedWeight: Double?,
+    lastPerformanceSessionId: String?,
+): String = listOf(
+    exerciseId,
+    comparableSetCount,
+    recommendation?.weight,
+    recommendation?.reps,
+    recommendation?.rir,
+    recommendation?.reason,
+    recommendation?.predictedRepsAtSameLoad,
+    recommendation?.fatigueLoss,
+    recommendation?.confidence,
+    equipmentId,
+    returnSuggestedWeight,
+    lastPerformanceSessionId,
+).joinToString("|")
+
+internal fun shouldApplyWorkoutInputAutofill(
+    lastAppliedKey: String?,
+    currentKey: String,
+    weightText: String,
+    repsText: String,
+    rirText: String,
+): Boolean = lastAppliedKey != currentKey ||
+    weightText.isBlank() && repsText.isBlank() && rirText.isBlank()
+
+internal fun shouldPreserveRestoredWorkoutInputs(
+    hasAppliedAutofill: Boolean,
+    observedAutofillKey: String?,
+    weightText: String,
+    repsText: String,
+    rirText: String,
+): Boolean = hasAppliedAutofill && observedAutofillKey == null &&
+    (weightText.isNotBlank() || repsText.isNotBlank() || rirText.isNotBlank())
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun WorkoutScreenPreview(
     initialSets: List<LocalSetEntity>? = null,
     onDeleteSet: (suspend (LocalSetEntity) -> Boolean)? = null,
     onConfirmSet: (suspend () -> Boolean)? = null,
+    onUpdateExercise: (suspend (ExerciseDto, ExerciseInput) -> ExerciseDto)? = null,
 ) {
-    val exercises = remember {
-        listOf(
+    var exercises by remember {
+        mutableStateOf(
+            listOf(
             previewProgramExercise(
                 id = "romanian-deadlift",
                 name = "Romanian Deadlift · Barbell",
@@ -2633,6 +2740,7 @@ internal fun WorkoutScreenPreview(
                 restSec = 90,
                 equipmentType = "CABLE",
             ),
+            ),
         )
     }
     var sets by remember {
@@ -2667,7 +2775,10 @@ internal fun WorkoutScreenPreview(
     var dropSet by remember { mutableStateOf(false) }
     var metrics by remember { mutableStateOf(listOf(SetTableMetric.ONE_RM)) }
     var previewSelectedIndex by remember { mutableIntStateOf(0) }
-    var previewDetailsExercise by remember { mutableStateOf<ExerciseDto?>(null) }
+    var previewDetailsExerciseId by rememberSaveable { mutableStateOf<String?>(null) }
+    val previewDetailsExercise = previewDetailsExerciseId?.let { exerciseId ->
+        exercises.firstOrNull { it.exerciseId == exerciseId }?.exercise
+    }
     val previewTarget = exercises[previewSelectedIndex]
     val recommendation = remember {
         SetRecommendation(
@@ -2692,7 +2803,7 @@ internal fun WorkoutScreenPreview(
                 selectionEnabled = true,
                 progress = 2f / 12f,
                 onSelect = { previewSelectedIndex = it },
-                onOpen = { previewDetailsExercise = it },
+                onOpen = { previewDetailsExerciseId = it.id },
                 onOpenControls = {},
             )
         },
@@ -2802,7 +2913,14 @@ internal fun WorkoutScreenPreview(
             serverUrl = "https://gymcoach7.sharteman.duckdns.org",
             onOpenProgress = {},
             onOpenHistory = { _, _ -> },
-            onDismiss = { previewDetailsExercise = null },
+            onDismiss = { previewDetailsExerciseId = null },
+            editableUserId = "preview-user",
+            onUpdateExercise = onUpdateExercise,
+            onExerciseUpdated = { updated ->
+                exercises = exercises.map { target ->
+                    if (target.exerciseId == updated.id) target.copy(exercise = updated) else target
+                }
+            },
         )
     }
 }
@@ -2832,6 +2950,7 @@ private fun previewProgramExercise(
     supersetGroup = supersetGroup,
     exercise = ExerciseDto(
         id = id,
+        userId = "preview-user",
         name = name,
         muscleGroup = muscleGroup,
         category = "STRENGTH",

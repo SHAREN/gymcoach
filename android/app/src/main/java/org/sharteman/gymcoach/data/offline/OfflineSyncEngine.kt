@@ -11,6 +11,7 @@ import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.network.HistoryMutationRemote
 import org.sharteman.gymcoach.data.programs.ClientMutationMetadata
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRemoteDataSource
+import org.sharteman.gymcoach.data.programs.hasGeneralMetadata
 
 class OfflineSyncEngine(
     private val persistence: OfflinePersistence,
@@ -107,7 +108,20 @@ class OfflineSyncEngine(
                 mutation.input,
                 ClientMutationMetadata(mutation.operationId, mutation.exerciseId),
             )
-            is UpdateExerciseMutation -> catalog.updateExercise(mutation.exerciseId, mutation.input)
+            is UpdateExerciseMutation -> {
+                val current = catalog.getExercise(mutation.exerciseId)
+                if (!current.hasGeneralMetadata(mutation.input)) {
+                    val expected = mutation.expected
+                    if (expected == null || !current.hasGeneralMetadata(expected)) {
+                        throw ApiException(409, "Exercise changed before the offline edit was synchronized.")
+                    }
+                    catalog.updateExercise(
+                        mutation.exerciseId,
+                        mutation.input,
+                        ClientMutationMetadata(mutation.operationId, mutation.exerciseId),
+                    )
+                }
+            }
             is DeleteExerciseMutation -> catalog.deleteExercise(mutation.exerciseId)
             is DeleteHistorySessionMutation ->
                 history.deleteHistorySession(baseUrl, token, mutation.sessionId)
@@ -214,7 +228,7 @@ internal fun backoffDelayMs(attempt: Int): Long {
 
 class OfflineSyncRetryException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
-private object OfflineSyncLock {
+internal object OfflineSyncLock {
     val mutex = Mutex()
 }
 

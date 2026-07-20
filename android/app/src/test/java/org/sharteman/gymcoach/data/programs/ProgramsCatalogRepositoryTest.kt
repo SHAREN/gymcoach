@@ -1,8 +1,13 @@
 package org.sharteman.gymcoach.data.programs
 
+import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -12,6 +17,7 @@ import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.offline.CatalogSnapshot
+import org.sharteman.gymcoach.data.offline.CreateExerciseMutation
 import org.sharteman.gymcoach.data.offline.NetworkStatus
 import org.sharteman.gymcoach.data.offline.OFFLINE_DOMAIN_CATALOG
 import org.sharteman.gymcoach.data.offline.OFFLINE_STATUS_PENDING
@@ -19,7 +25,9 @@ import org.sharteman.gymcoach.data.offline.OfflineCacheUpdate
 import org.sharteman.gymcoach.data.offline.OfflineMutation
 import org.sharteman.gymcoach.data.offline.OfflinePersistence
 import org.sharteman.gymcoach.data.offline.OfflineSyncIssue
+import org.sharteman.gymcoach.data.offline.OfflineSyncLock
 import org.sharteman.gymcoach.data.offline.StoredOfflineMutation
+import org.sharteman.gymcoach.data.offline.UpdateExerciseMutation
 import org.sharteman.gymcoach.data.offline.catalogCacheKey
 import org.sharteman.gymcoach.data.offline.offlineJson
 
@@ -93,6 +101,246 @@ class ProgramsCatalogRepositoryTest {
         assertEquals(1, schedules)
     }
 
+    @Test
+    fun `identical offline exercise retry reuses one mutation and newer edit remains authoritative`() = runTest {
+        val account = "account"
+        val persistence = SeedOfflinePersistence()
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(exercises = listOf(exercise("exercise-1", "Original"))),
+        )
+        var schedules = 0
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = { schedules++ },
+        )
+        val original = repository.getExercise("exercise-1")
+        val first = ExerciseInput("First", "CHEST", "COMPOUND", 120, null, false, "BARBELL")
+        val newer = first.copy(name = "Newer")
+
+        repository.updateExercise(original, first)
+        val firstMutation = persistence.operations(account).single().mutation as UpdateExerciseMutation
+        assertEquals(original.generalMetadataInput(), firstMutation.expected)
+        repository.updateExercise(original, first)
+        val firstResult = repository.getExercise("exercise-1")
+        repository.updateExercise(firstResult, newer)
+        try {
+            repository.updateExercise(original, first)
+            throw AssertionError("A stale editor must not overwrite a newer exercise edit.")
+        } catch (_: IOException) {
+            // Expected.
+        }
+
+        assertEquals(2, persistence.operations(account).size)
+        assertEquals("Newer", repository.getExercise("exercise-1").name)
+        assertEquals(3, schedules)
+    }
+
+    @Test
+    fun `exercise update returns optimistic metadata when enqueue is synchronized immediately`() = runTest {
+        val account = "account"
+        val original = exercise("exercise-1", "Original", listOf("2026-07-01T08:00:00Z"))
+        val persistence = SeedOfflinePersistence().apply { completeEnqueueImmediately = true }
+        persistence.saveCatalog(account, CatalogSnapshot(exercises = listOf(original)))
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = {},
+        )
+        val input = original.generalMetadataInput().copy(name = "Optimistic edit")
+
+        val updated = repository.updateExercise(original, input)
+
+        assertEquals("Optimistic edit", updated.name)
+        assertEquals(original.userId, updated.userId)
+        assertEquals(original.trainingDates, updated.trainingDates)
+        assertTrue(persistence.operations(account).isEmpty())
+    }
+
+    @Test
+    fun `offline created exercise keeps owner and remains editable before synchronization`() = runTest {
+        val account = "https://example.test|user-1"
+        val persistence = SeedOfflinePersistence()
+        persistence.saveCatalog(account, CatalogSnapshot())
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = {},
+            ownerUserId = "user-1",
+        )
+        val created = repository.createExercise(
+            ExerciseInput("Offline press", "CHEST", "COMPOUND", 90, null, false, "BARBELL"),
+        )
+
+        val updated = repository.updateExercise(
+            created,
+            ExerciseInput("Offline press edited", "CHEST", "COMPOUND", 120, null, false, "BARBELL"),
+        )
+
+        assertEquals("user-1", created.userId)
+        assertEquals("user-1", updated.userId)
+        assertEquals("Offline press edited", updated.name)
+        assertEquals(2, persistence.operations(account).size)
+    }
+
+    @Test
+    fun `missing or unowned offline exercise never enqueues a mutation`() = runTest {
+        val account = "account"
+        val persistence = SeedOfflinePersistence()
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(exercises = listOf(exercise("system", "System", userId = null))),
+        )
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = {},
+        )
+        val input = ExerciseInput("Changed", "CHEST", "COMPOUND", 90, null, false, "OTHER")
+
+        try {
+            repository.updateExercise("missing", input)
+            throw AssertionError("Missing exercise update should fail.")
+        } catch (_: IOException) {
+            // Expected.
+        }
+        try {
+            repository.updateExercise("system", input)
+            throw AssertionError("Unowned exercise update should fail.")
+        } catch (_: IOException) {
+            // Expected.
+        }
+
+        assertTrue(persistence.operations(account).isEmpty())
+    }
+
+    @Test
+    fun `bootstrap seed keeps unconfirmed edit receipt but removes absent authoritative exercises`() = runTest {
+        val account = "account"
+        val persistence = SeedOfflinePersistence()
+        val input = ExerciseInput("Edited", "CHEST", "COMPOUND", 120, null, false, "BARBELL")
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(
+                exercises = listOf(exercise("exercise-1", "Original").copy(name = "Edited")),
+                exerciseEditReceipts = mapOf("exercise-1" to input),
+            ),
+        )
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = {},
+        )
+
+        repository.seedExerciseCatalog(listOf(exercise("exercise-1", "Stale server value")))
+        assertEquals("Edited", repository.getExercise("exercise-1").name)
+
+        repository.seedExerciseCatalog(emptyList())
+        try {
+            repository.getExercise("exercise-1")
+            throw AssertionError("An exercise absent from the authoritative catalog must be removed.")
+        } catch (_: IOException) {
+            // Expected.
+        }
+    }
+
+    @Test
+    fun `authoritative exercise seed retains only absent local exercises with pending creates`() = runTest {
+        val account = "account"
+        val pendingId = "mob_exercise_pending"
+        val orphanId = "mob_exercise_orphan"
+        val pendingInput = ExerciseInput("Pending", "CHEST", "COMPOUND")
+        val persistence = SeedOfflinePersistence()
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(
+                exercises = listOf(
+                    exercise(pendingId, "Pending"),
+                    exercise(orphanId, "Orphan"),
+                ),
+            ),
+        )
+        persistence.enqueue(
+            account,
+            CreateExerciseMutation("op_pending", pendingId, pendingInput, "user-1"),
+        )
+        val repository = ProgramsCatalogRepository.offline(
+            remote = FailingCatalogRemote(),
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { false },
+            scheduleSync = {},
+        )
+
+        repository.seedExerciseCatalog(emptyList())
+
+        assertEquals(pendingId, repository.getExercise(pendingId).id)
+        try {
+            repository.getExercise(orphanId)
+            throw AssertionError("An absent local exercise without a pending create must be removed.")
+        } catch (_: IOException) {
+            // Expected.
+        }
+    }
+
+    @Test
+    fun `catalog refresh protects captured receipt without resurrecting a concurrently consumed receipt`() = runTest {
+        val account = "account"
+        val input = ExerciseInput("Edited", "CHEST", "COMPOUND", 120, null, false, "BARBELL")
+        val persistence = SeedOfflinePersistence()
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(
+                exercises = listOf(exercise("exercise-1", "Edited")),
+                exerciseEditReceipts = mapOf("exercise-1" to input),
+            ),
+        )
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val remote = FailingCatalogRemote().apply {
+            listExercisesHandler = {
+                started.complete(Unit)
+                release.await()
+                listOf(exercise("exercise-1", "Stale server value"))
+            }
+        }
+        val repository = ProgramsCatalogRepository.offline(
+            remote = remote,
+            accountKey = account,
+            persistence = persistence,
+            networkStatus = NetworkStatus { true },
+            scheduleSync = {},
+        )
+
+        val refresh = async { repository.listExercises() }
+        started.await()
+        OfflineSyncLock.mutex.withLock {
+            val current = offlineJson.decodeFromString<CatalogSnapshot>(
+                persistence.readCache(catalogCacheKey(account))!!,
+            )
+            persistence.saveCatalog(account, current.copy(exerciseEditReceipts = emptyMap()))
+        }
+        release.complete(Unit)
+
+        assertEquals("Edited", refresh.await().single().name)
+        val stored = offlineJson.decodeFromString<CatalogSnapshot>(
+            persistence.readCache(catalogCacheKey(account))!!,
+        )
+        assertEquals("Edited", stored.exercises.single().name)
+        assertTrue(stored.exerciseEditReceipts.isEmpty())
+    }
+
     private fun workout(id: String, vararg exercises: ExerciseDto) = WorkoutDto(
         id = id,
         programId = "program-1",
@@ -119,8 +367,10 @@ class ProgramsCatalogRepositoryTest {
         id: String,
         name: String,
         trainingDates: List<String> = emptyList(),
+        userId: String? = "user-1",
     ) = ExerciseDto(
         id = id,
+        userId = userId,
         name = name,
         muscleGroup = "CHEST",
         category = "COMPOUND",
@@ -132,6 +382,7 @@ private class SeedOfflinePersistence : OfflinePersistence {
     private val caches = linkedMapOf<String, OfflineCacheUpdate>()
     private val queue = mutableListOf<StoredOfflineMutation>()
     private var nextSequence = 1L
+    var completeEnqueueImmediately = false
 
     override suspend fun readCache(cacheKey: String): String? = caches[cacheKey]?.payloadJson
 
@@ -159,6 +410,7 @@ private class SeedOfflinePersistence : OfflinePersistence {
         queue.firstOrNull { it.mutation.operationId == operationId }
 
     override suspend fun enqueue(accountKey: String, mutation: OfflineMutation) {
+        if (completeEnqueueImmediately) return
         queue += StoredOfflineMutation(
             sequence = nextSequence++,
             accountKey = accountKey,
@@ -193,6 +445,7 @@ private class SeedOfflinePersistence : OfflinePersistence {
 }
 
 private class FailingCatalogRemote : ProgramsCatalogRemoteDataSource {
+    var listExercisesHandler: (suspend () -> List<ExerciseDto>)? = null
     private fun unavailable(): Nothing = error("Remote catalog must not be used while offline.")
 
     override suspend fun listPrograms(): List<ManagedProgramDto> = unavailable()
@@ -227,7 +480,7 @@ private class FailingCatalogRemote : ProgramsCatalogRemoteDataSource {
         input: ProgramExerciseInput,
     ): ProgramExerciseDto = unavailable()
     override suspend fun deleteProgramExercise(id: String) = unavailable()
-    override suspend fun listExercises(): List<ExerciseDto> = unavailable()
+    override suspend fun listExercises(): List<ExerciseDto> = listExercisesHandler?.invoke() ?: unavailable()
     override suspend fun getExercise(id: String): ExerciseDto = unavailable()
     override suspend fun createExercise(input: ExerciseInput): ExerciseDto = unavailable()
     override suspend fun createExercise(
