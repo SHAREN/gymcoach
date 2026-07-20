@@ -725,13 +725,13 @@ export function SessionRunner({
     isWarmup: boolean;
     isDropSet: boolean;
     notes: string | null;
-  }) {
-    if (!currentPE || !currentTarget) return;
+  }): Promise<boolean> {
+    if (!currentPE || !currentTarget) return false;
     const inventory = inventoryFor(currentPE);
     const selectedEquipmentId = selectedEquipmentIdFor(currentPE, inventory);
     if (requiresEquipmentSelection(inventory, selectedEquipmentByExercise[currentPE.exerciseId])) {
       toast.error(t('equipment.selectionRequired'));
-      return;
+      return false;
     }
     const existing = setsByExercise.get(currentPE.exerciseId) ?? [];
     const allExisting = allSetsByExercise.get(currentPE.exerciseId) ?? [];
@@ -758,7 +758,7 @@ export function SessionRunner({
       });
     } catch {
       toast.error(t('setLocalSaveError'));
-      return;
+      return false;
     }
 
     vibrate(VIBRATION_PATTERNS.validate);
@@ -807,6 +807,7 @@ export function SessionRunner({
       nextExerciseIdx: nextIdx,
       navigatedImmediately,
     });
+    return true;
   }
 
   async function handleUpdateSet(

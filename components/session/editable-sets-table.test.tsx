@@ -769,6 +769,178 @@ describe('EditableSetsTable', () => {
     expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('14');
   });
 
+  it('preserves a restored draft through initial completed-set hydration', () => {
+    const restoredDraft = { weight: 42.5, reps: 7, rir: 1 };
+    const props = {
+      programExercise,
+      lastPerformance: undefined,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      restoredDraft,
+      onDraftChange: vi.fn(),
+      onSubmit: vi.fn(),
+      onUpdateSet: vi.fn(),
+    };
+    const { rerender } = render(<EditableSetsTable {...props} sets={[]} historySets={[]} />);
+
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('42.5');
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('7');
+
+    rerender(<EditableSetsTable {...props} sets={[completedSet]} historySets={[completedSet]} />);
+
+    expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('42.5');
+    expect(screen.getByRole('button', { name: 'Set 2 repetitions' })).toHaveTextContent('7');
+
+    rerender(
+      <EditableSetsTable
+        {...props}
+        programExercise={
+          { ...(programExercise as object), targetSets: 1, targetDropSets: 1 } as never
+        }
+        sets={[completedSet]}
+        historySets={[completedSet]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('80');
+    expect(screen.getByRole('button', { name: 'Set 2 repetitions' })).toHaveTextContent('10');
+  });
+
+  it('restores the next exercise without attributing the outgoing strength draft to it', async () => {
+    const onDraftChange = vi.fn();
+    let resolveSubmit: ((saved: boolean) => void) | undefined;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const commonProps = {
+      sets: [],
+      historySets: [],
+      lastPerformance: undefined,
+      readiness: null,
+      deloadActive: false,
+      unit: 'KG' as const,
+      onDraftChange,
+      onSubmit,
+      onUpdateSet: vi.fn(),
+    };
+    const nextProgramExercise = {
+      ...(programExercise as object),
+      id: 'pe-2',
+      exerciseId: 'exercise-2',
+      exercise: { id: 'exercise-2', name: 'Row', category: 'COMPOUND' },
+    } as never;
+    const firstDraft = { weight: 42.5, reps: 7, rir: 1 };
+    const nextDraft = { weight: 67.5, reps: 9, rir: 2 };
+    const { rerender } = render(
+      <EditableSetsTable
+        {...commonProps}
+        programExercise={programExercise}
+        restoredDraft={firstDraft}
+      />,
+    );
+    onDraftChange.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm set 1' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <EditableSetsTable
+        {...commonProps}
+        programExercise={nextProgramExercise}
+        restoredDraft={nextDraft}
+      />,
+    );
+    resolveSubmit?.(true);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('67.5'),
+    );
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('9');
+    expect(onDraftChange).not.toHaveBeenCalledWith('exercise-2', firstDraft);
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith('exercise-2', nextDraft));
+  });
+
+  it('re-seeds the next draft after a restored draft is actually logged', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onDraftChange = vi.fn();
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[completedSet]}
+        historySets={[completedSet]}
+        lastPerformance={
+          {
+            sessionId: 'previous-session',
+            sessionStartedAt: '2026-07-01T10:00:00.000Z',
+            gymEquipmentId: null,
+            equipmentName: null,
+            sets: [
+              { weight: 80, reps: 10, rir: 2 },
+              { weight: 85, reps: 8, rir: 2 },
+              { weight: 55, reps: 6, rir: 3 },
+            ],
+            maxWeight: 85,
+            repsAtMaxWeight: 8,
+            cardio: null,
+          } as never
+        }
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        restoredDraft={{ weight: 42.5, reps: 7, rir: 1 }}
+        onDraftChange={onDraftChange}
+        onSubmit={onSubmit}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm set 2' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Set 2 weight in KG' })).toHaveTextContent('55'),
+    );
+    expect(screen.getByRole('button', { name: 'Set 2 repetitions' })).toHaveTextContent('6');
+    expect(onDraftChange).toHaveBeenLastCalledWith('exercise-1', {
+      weight: 55,
+      reps: 6,
+      rir: 3,
+    });
+  });
+
+  it('keeps the restored strength draft when the parent reports that no set was saved', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    const onDraftChange = vi.fn();
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        historySets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        restoredDraft={{ weight: 42.5, reps: 7, rir: 1 }}
+        onDraftChange={onDraftChange}
+        onSubmit={onSubmit}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalled());
+    onDraftChange.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm set 1' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('42.5');
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('7');
+    expect(onDraftChange).not.toHaveBeenCalled();
+  });
+
   it('adds planned drop-set rows after the regular working sets', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(

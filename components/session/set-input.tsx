@@ -51,7 +51,7 @@ interface Props {
     isWarmup: boolean;
     isDropSet: boolean;
     notes: string | null;
-  }) => Promise<void>;
+  }) => Promise<boolean | void>;
 }
 
 type FormState = CardioSetDraft;
@@ -93,6 +93,8 @@ export function SetInput({
   const [form, setForm] = useState<FormState>(restoredForm ?? initial);
   const formExerciseRef = useRef(programExercise.id);
   const restoredFormExerciseRef = useRef<string | null>(restoredForm ? programExercise.id : null);
+  const resetEffectInitializedRef = useRef(false);
+  const preserveRestoredHydrationRef = useRef(Boolean(restoredForm));
   const [submitting, setSubmitting] = useState(false);
   const [quickEntry, setQuickEntry] = useState('');
   // Opt-in AI free-text parse (issue #210): a DELIBERATE action that fills the
@@ -110,18 +112,41 @@ export function SetInput({
 
   // Re-init when the exercise changes or a set changes.
   useEffect(() => {
+    if (!resetEffectInitializedRef.current) {
+      resetEffectInitializedRef.current = true;
+      return;
+    }
+
+    const exerciseChanged = formExerciseRef.current !== programExercise.id;
+    if (
+      !exerciseChanged &&
+      restoredFormExerciseRef.current === programExercise.id &&
+      preserveRestoredHydrationRef.current
+    ) {
+      preserveRestoredHydrationRef.current = false;
+      return;
+    }
+
     formExerciseRef.current = programExercise.id;
-    setForm(
-      computeInitial(
-        programExercise,
-        existingSets,
-        lastPerformance,
-        readiness,
-        deloadActive,
-        recommendation,
-        loadConstraints,
-      ),
-    );
+    if (exerciseChanged && restoredForm) {
+      restoredFormExerciseRef.current = programExercise.id;
+      preserveRestoredHydrationRef.current = true;
+      setForm(restoredForm);
+    } else {
+      if (exerciseChanged) restoredFormExerciseRef.current = null;
+      preserveRestoredHydrationRef.current = false;
+      setForm(
+        computeInitial(
+          programExercise,
+          existingSets,
+          lastPerformance,
+          readiness,
+          deloadActive,
+          recommendation,
+          loadConstraints,
+        ),
+      );
+    }
     setQuickEntry('');
     setAiText('');
     setAiHint(null);
@@ -132,6 +157,7 @@ export function SetInput({
     if (!restoredForm || restoredFormExerciseRef.current === programExercise.id) return;
     restoredFormExerciseRef.current = programExercise.id;
     formExerciseRef.current = programExercise.id;
+    preserveRestoredHydrationRef.current = true;
     setForm(restoredForm);
   }, [programExercise.id, restoredForm]);
 
@@ -255,32 +281,42 @@ export function SetInput({
 
   async function handleValidate() {
     if (cardioInvalid || submissionDisabled) return;
+    const values = isCardio
+      ? {
+          weight: 0,
+          reps: 1,
+          rir: null,
+          durationSec: durationSec!,
+          // Stored in meters; the input is km with decimals.
+          distanceM: hasDistance && distanceKm > 0 ? Math.round(distanceKm * 1000) : null,
+          isWarmup: false,
+          isDropSet: false,
+          notes: form.notes.trim() || null,
+        }
+      : {
+          weight: form.weight,
+          reps: form.reps,
+          rir: form.rir,
+          durationSec: null,
+          distanceM: null,
+          isWarmup: form.isWarmup,
+          isDropSet: form.isDropSet,
+          notes: form.notes.trim() || null,
+        };
     setSubmitting(true);
     try {
-      await onSubmit(
-        isCardio
-          ? {
-              weight: 0,
-              reps: 1,
-              rir: null,
-              durationSec: durationSec!,
-              // Stored in meters; the input is km with decimals.
-              distanceM: hasDistance && distanceKm > 0 ? Math.round(distanceKm * 1000) : null,
-              isWarmup: false,
-              isDropSet: false,
-              notes: form.notes.trim() || null,
-            }
-          : {
-              weight: form.weight,
-              reps: form.reps,
-              rir: form.rir,
-              durationSec: null,
-              distanceM: null,
-              isWarmup: form.isWarmup,
-              isDropSet: form.isDropSet,
-              notes: form.notes.trim() || null,
-            },
-      );
+      const saved = await onSubmit(values);
+      if (saved === false) return;
+      const nextForm = formAfterSubmission(values, recommendation);
+      if (formExerciseRef.current === programExercise.id) {
+        restoredFormExerciseRef.current = programExercise.id;
+        preserveRestoredHydrationRef.current = false;
+        setForm(nextForm);
+        setQuickEntry('');
+        setAiText('');
+        setAiHint(null);
+      }
+      onFormChange?.(programExercise.exerciseId, nextForm);
       // The transition animation to the rest timer is handled by the parent.
     } finally {
       setSubmitting(false);
@@ -587,6 +623,38 @@ export function SetInput({
       </CardContent>
     </Card>
   );
+}
+
+function formAfterSubmission(
+  values: Parameters<Props['onSubmit']>[0],
+  recommendation: IntraSetRecommendation | null,
+): FormState {
+  if (values.durationSec != null) {
+    return {
+      weight: 0,
+      reps: 1,
+      rir: null,
+      durationInput: formatDuration(values.durationSec),
+      distanceInput:
+        values.distanceM != null && values.distanceM > 0
+          ? String(+(values.distanceM / 1000).toFixed(2))
+          : '',
+      isWarmup: false,
+      isDropSet: false,
+      notes: '',
+    };
+  }
+
+  return {
+    weight: recommendation?.weight ?? values.weight,
+    reps: recommendation?.reps ?? values.reps,
+    rir: recommendation?.rir ?? values.rir,
+    durationInput: '',
+    distanceInput: '',
+    isWarmup: false,
+    isDropSet: false,
+    notes: '',
+  };
 }
 
 function computeInitial(
