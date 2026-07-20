@@ -46,7 +46,7 @@ private class FailoverSettingsDataSource(
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto =
         withRemote { createGym(input) }
 
-    override suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto =
+    override suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto =
         withRemote { updateGym(id, input) }
 
     override suspend fun activateGym(id: String) = withRemote { activateGym(id) }
@@ -61,6 +61,16 @@ private class FailoverSettingsDataSource(
         equipmentId: String?,
         input: SettingsGymEquipmentInput,
     ) = withRemote { saveGymEquipment(gymId, equipmentId, input) }
+
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) = withRemote { saveDumbbellsSystemProfile(gymId, input) }
+
+    override suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
+    ) = withRemote { saveBarbellSystemProfile(gymId, input) }
 
     override suspend fun deleteGymEquipment(equipmentId: String) =
         withRemote { deleteGymEquipment(equipmentId) }
@@ -98,8 +108,14 @@ private class FailoverSettingsDataSource(
     override suspend fun confirmImport(preview: SettingsImportPreview): JsonObject =
         withRemote { confirmImport(preview) }
 
-    private suspend fun <T> withRemote(block: suspend SettingsDataSource.() -> T): T =
+    private suspend fun <T> withRemote(block: suspend SettingsDataSource.() -> T): T = try {
         endpointResolver.execute { baseUrl -> remote(baseUrl).block() }
+    } catch (error: SettingsException) {
+        if (error.kind == SettingsErrorKind.AUTHENTICATION) {
+            accountStore.clearAccessToken()
+        }
+        throw error
+    }
 
     private fun remote(baseUrl: String): SettingsDataSource = synchronized(remotes) {
         remotes.getOrPut(baseUrl) { remoteFactory(baseUrl, token) }

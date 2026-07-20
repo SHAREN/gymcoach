@@ -1,33 +1,67 @@
 package org.sharteman.gymcoach.ui.settings
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import androidx.test.platform.app.InstrumentationRegistry
+import android.content.res.Configuration
+import java.util.Locale
+import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.network.ServerEndpointResolver
+import org.sharteman.gymcoach.data.network.ServerReachabilityProbe
+import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.data.settings.AndroidReleaseDto
 import org.sharteman.gymcoach.data.settings.SettingsDataSource
+import org.sharteman.gymcoach.data.settings.SettingsBarbellFamilyDto
+import org.sharteman.gymcoach.data.settings.SettingsBarbellSystemProfileDto
+import org.sharteman.gymcoach.data.settings.SettingsBarbellSystemProfileInput
+import org.sharteman.gymcoach.data.settings.SettingsDumbbellsSystemProfileDto
+import org.sharteman.gymcoach.data.settings.SettingsDumbbellsSystemProfileInput
+import org.sharteman.gymcoach.data.settings.SettingsErrorKind
+import org.sharteman.gymcoach.data.settings.SettingsException
 import org.sharteman.gymcoach.data.settings.SettingsGymDto
 import org.sharteman.gymcoach.data.settings.SettingsEquipmentImageDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentInput
 import org.sharteman.gymcoach.data.settings.SettingsGymInventoryDto
+import org.sharteman.gymcoach.data.settings.SettingsGymPlateInventoryItemDto
+import org.sharteman.gymcoach.data.settings.SettingsGymPlatePoolDto
 import org.sharteman.gymcoach.data.settings.SettingsGymInput
+import org.sharteman.gymcoach.data.settings.SettingsGymUpdateInput
 import org.sharteman.gymcoach.data.settings.SettingsGymListDto
 import org.sharteman.gymcoach.data.settings.SettingsImportFormat
 import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsProfileDto
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
+import org.sharteman.gymcoach.data.settings.SettingsRepository
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
+import org.sharteman.gymcoach.data.settings.SettingsSystemProfilesDto
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
 import org.sharteman.gymcoach.data.model.ExerciseDto
 
@@ -42,6 +76,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
+                    onAuthenticationRequired = {},
                     repository = FakeSettingsSource(),
                 )
             }
@@ -76,6 +111,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
+                    onAuthenticationRequired = {},
                     repository = FakeSettingsSource(),
                     watchDiagnosticsLabel = "Watch diagnostics test",
                     onOpenWatchDiagnostics = { opened = true },
@@ -93,13 +129,16 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun showsRetryInsteadOfEmptyProfileWhenLoadingFails() {
+    fun retryableFailureStaysOnSettingsAndRetryLoadsContent() {
+        val source = RetryableSettingsSource()
+        var authenticationRequired = false
         composeRule.setContent {
             GymCoachTheme(darkTheme = true) {
                 SettingsScreen(
                     onBack = {},
                     onOpenWebPath = {},
-                    repository = FailingSettingsSource(),
+                    onAuthenticationRequired = { authenticationRequired = true },
+                    repository = source,
                 )
             }
         }
@@ -108,6 +147,81 @@ class SettingsScreenTest {
             runCatching {
                 composeRule.onNodeWithTag("settings-retry-load").assertIsDisplayed()
             }.isSuccess
+        }
+        composeRule.runOnIdle { assertFalse(authenticationRequired) }
+        composeRule.onNodeWithTag("settings-retry-load").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.runOnIdle { assertFalse(authenticationRequired) }
+    }
+
+    @Test
+    fun authenticationFailureReturnsToLoginAndSettingsLoadAfterReauthentication() {
+        val accountStore = SecureAccountStore(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+        )
+        accountStore.clearAccount()
+        accountStore.setAccessToken(STALE_TOKEN)
+        val staleRepository = testSettingsRepository(accountStore, STALE_TOKEN) {
+            throw SettingsException(SettingsErrorKind.AUTHENTICATION, statusCode = 401)
+        }
+
+        try {
+            composeRule.setContent {
+                var authenticated by remember { mutableStateOf(true) }
+                var repository by remember { mutableStateOf<SettingsDataSource>(staleRepository) }
+                GymCoachTheme(darkTheme = true) {
+                    if (authenticated) {
+                        SettingsScreen(
+                            onBack = {},
+                            onOpenWebPath = {},
+                            onAuthenticationRequired = { authenticated = false },
+                            repository = repository,
+                        )
+                    } else {
+                        Column {
+                            Text("Login required", Modifier.testTag("settings-login-flow"))
+                            Button(
+                                onClick = {
+                                    accountStore.setAccessToken(FRESH_TOKEN)
+                                    repository = testSettingsRepository(accountStore, FRESH_TOKEN) {
+                                        FakeSettingsSource().snapshot()
+                                    }
+                                    authenticated = true
+                                },
+                                modifier = Modifier.testTag("settings-complete-login"),
+                            ) {
+                                Text("Sign in")
+                            }
+                        }
+                    }
+                }
+            }
+
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    composeRule.onNodeWithTag("settings-login-flow").assertIsDisplayed()
+                }.isSuccess
+            }
+            assertEquals(null, accountStore.getAccessToken())
+            composeRule.onNodeWithTag("settings-complete-login").performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+                }.isSuccess
+            }
+            assertEquals(FRESH_TOKEN, accountStore.getAccessToken())
+            composeRule.onNodeWithTag("settings-profile-display-name")
+                .performScrollTo()
+                .assertTextContains("Android")
+            composeRule.onNodeWithTag("settings-native-screen")
+                .performScrollToNode(hasTestTag("settings-equipment-card-equipment-1"))
+            composeRule.onNodeWithTag("settings-equipment-card-equipment-1").assertIsDisplayed()
+        } finally {
+            accountStore.clearAccount()
         }
     }
 
@@ -140,10 +254,191 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag("settings-add-equipment").performClick()
         composeRule.onNodeWithTag("settings-equipment-editor").assertIsDisplayed()
     }
+
+    @Test
+    fun rendersExactlyTwoSystemProfilesAndHidesManagedBarsFromCustomEquipment() {
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    onAuthenticationRequired = {},
+                    repository = FakeSettingsSource(),
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-native-screen")
+            .performScrollToNode(hasTestTag("settings-system-profile-dumbbells"))
+        composeRule.onNodeWithTag("settings-system-profile-dumbbells").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-system-profile-barbell").assertIsDisplayed()
+        val editDescription = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(R.string.settings_system_dumbbells_edit)
+        composeRule.onNodeWithContentDescription(editDescription).assertIsDisplayed()
+        composeRule.onAllNodesWithTag("settings-equipment-card-large-12").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("settings-equipment-card-small-6").assertCountEquals(0)
+        composeRule.onNodeWithTag("settings-native-screen")
+            .performScrollToNode(hasTestTag("settings-equipment-card-equipment-1"))
+        composeRule.onNodeWithTag("settings-equipment-card-equipment-1").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings-system-profile-barbell-edit").performClick()
+        composeRule.onNodeWithTag("settings-barbell-profile-editor").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-barbell-family-LARGE").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-barbell-family-SMALL").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-bar-LARGE-1-weight").assertTextContains("12")
+        composeRule.onNodeWithTag("settings-bar-SMALL-1-weight").performScrollTo().assertTextContains("6")
+    }
+
+    @Test
+    fun retriesSystemProfileSaveWithTheSameStablePayloadAfterConflict() {
+        val source = RetryableSystemProfileSource()
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    onAuthenticationRequired = {},
+                    repository = source,
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-native-screen")
+            .performScrollToNode(hasTestTag("settings-system-profile-dumbbells-edit"))
+        composeRule.onNodeWithTag("settings-system-profile-dumbbells-edit").performClick()
+        composeRule.onNodeWithTag("settings-save-dumbbells-profile").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-system-profile-error").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-save-dumbbells-profile").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onAllNodesWithTag("settings-dumbbells-profile-editor").assertCountEquals(0)
+            }.isSuccess
+        }
+        composeRule.runOnIdle {
+            assertEquals(2, source.inputs.size)
+            assertEquals(source.inputs[0], source.inputs[1])
+        }
+    }
+
+    @Test
+    fun rendersBothSystemProfilesAtNarrowWidth() {
+        val snapshot = FakeSettingsSource().snapshot()
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                Box(Modifier.width(320.dp)) {
+                    SystemEquipmentProfilesSection(
+                        snapshot = snapshot,
+                        gymId = "gym-1",
+                        dumbbellsEditor = null,
+                        barbellEditor = null,
+                        busy = false,
+                        error = null,
+                        onEditDumbbells = {},
+                        onEditBarbell = {},
+                        onDumbbellsChange = {},
+                        onBarbellChange = {},
+                        onDismissEditor = {},
+                        onSaveDumbbells = {},
+                        onSaveBarbell = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("settings-system-profile-dumbbells").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-system-profile-barbell").assertIsDisplayed()
+    }
+
+    @Test
+    fun providesRussianSystemProfileCopy() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val configuration = Configuration(context.resources.configuration).apply {
+            setLocale(Locale.forLanguageTag("ru"))
+        }
+        val russian = context.createConfigurationContext(configuration)
+
+        assertEquals("Гантели", russian.getString(R.string.settings_system_dumbbells_title))
+        assertEquals("Штанга", russian.getString(R.string.settings_system_barbell_title))
+        assertTrue(russian.getString(R.string.settings_system_profile_non_removable).isNotBlank())
+    }
 }
 
-private class FakeSettingsSource : SettingsDataSource {
-    fun snapshot(): SettingsSnapshot = SettingsSnapshot(
+private open class FakeSettingsSource : SettingsDataSource {
+    fun snapshot(): SettingsSnapshot {
+        val dumbbellExercise = ExerciseDto(
+            id = "exercise-dumbbell",
+            name = "Dumbbell press",
+            muscleGroup = "CHEST",
+            category = "COMPOUND",
+            equipmentType = "DUMBBELL",
+        )
+        val barbellExercise = ExerciseDto(
+            id = "exercise-barbell",
+            name = "Barbell squat",
+            muscleGroup = "QUADS",
+            category = "COMPOUND",
+            equipmentType = "BARBELL",
+        )
+        val cableExercise = ExerciseDto(
+            id = "exercise-1",
+            name = "Cable row",
+            muscleGroup = "BACK_THICKNESS",
+            category = "COMPOUND",
+            equipmentType = "CABLE",
+        )
+        val largePool = SettingsGymPlatePoolDto(
+            id = "large-pool",
+            name = "Large plates",
+            compatibilityKey = "system_barbell_large",
+            systemBarbellFamily = "LARGE",
+            plates = listOf(1.25, 2.5, 5.0, 10.0, 15.0, 20.0).map {
+                SettingsGymPlateInventoryItemDto(weightKg = it, quantity = null)
+            },
+        )
+        val smallPool = SettingsGymPlatePoolDto(
+            id = "small-pool",
+            name = "Small plates",
+            compatibilityKey = "system_barbell_small",
+            systemBarbellFamily = "SMALL",
+            plates = listOf(1.25, 2.5, 3.5, 5.0).map {
+                SettingsGymPlateInventoryItemDto(weightKg = it, quantity = null)
+            },
+        )
+        fun bar(id: String, weight: Double, family: String, pool: SettingsGymPlatePoolDto) =
+            SettingsGymEquipmentDto(
+                id = id,
+                gymId = "gym-1",
+                name = "$weight kg bar",
+                equipmentType = "BARBELL",
+                loadType = "PLATE_LOADED",
+                baseLoadKg = weight,
+                platePoolId = pool.id,
+                loadingSides = 2,
+                systemBarbellFamily = family,
+                platePool = pool,
+                exerciseLinks = listOf(barbellExercise),
+            )
+        val largeBars = listOf(
+            bar("large-12", 12.0, "LARGE", largePool),
+            bar("large-17.5", 17.5, "LARGE", largePool),
+            bar("large-20", 20.0, "LARGE", largePool),
+        )
+        val smallBar = bar("small-6", 6.0, "SMALL", smallPool)
+        return SettingsSnapshot(
         profile = SettingsProfileDto(
             email = "android@test.dev",
             displayName = "Android",
@@ -157,20 +452,13 @@ private class FakeSettingsSource : SettingsDataSource {
             activeGymId = "gym-1",
             gyms = listOf(SettingsGymDto(id = "gym-1", name = "Basement")),
         ),
-        exercises = listOf(
-            ExerciseDto(
-                id = "exercise-1",
-                name = "Cable row",
-                muscleGroup = "BACK_THICKNESS",
-                category = "COMPOUND",
-                equipmentType = "CABLE",
-            ),
-        ),
+        exercises = listOf(dumbbellExercise, barbellExercise, cableExercise),
         gymInventories = mapOf(
             "gym-1" to SettingsGymInventoryDto(
                 id = "gym-1",
                 name = "Basement",
-                equipment = listOf(
+                platePools = listOf(largePool, smallPool),
+                equipment = largeBars + smallBar + listOf(
                     SettingsGymEquipmentDto(
                         id = "equipment-1",
                         gymId = "gym-1",
@@ -182,9 +470,26 @@ private class FakeSettingsSource : SettingsDataSource {
                         ),
                     ),
                 ),
+                systemProfiles = SettingsSystemProfilesDto(
+                    dumbbells = SettingsDumbbellsSystemProfileDto(
+                        id = "system-profile-dumbbells-gym-1",
+                        weightsKg = listOf(10.0, 12.5, 20.0),
+                        exerciseLinks = listOf(dumbbellExercise),
+                    ),
+                    barbell = SettingsBarbellSystemProfileDto(
+                        id = "system-profile-barbell-gym-1",
+                        exerciseLinks = listOf(barbellExercise),
+                        families = listOf(
+                            SettingsBarbellFamilyDto("LARGE", largePool, largeBars, 2),
+                            SettingsBarbellFamilyDto("SMALL", smallPool, listOf(smallBar), 2),
+                        ),
+                    ),
+                ),
+                exerciseCoverage = listOf(dumbbellExercise, barbellExercise, cableExercise),
             ),
         ),
     )
+    }
 
     override suspend fun load(): SettingsSnapshot = snapshot()
 
@@ -192,7 +497,8 @@ private class FakeSettingsSource : SettingsDataSource {
         SettingsProfileDto(email = "android@test.dev", displayName = input.displayName)
 
     override suspend fun createGym(input: SettingsGymInput) = SettingsGymDto("gym-2", input.name)
-    override suspend fun updateGym(id: String, input: SettingsGymInput) = SettingsGymDto(id, input.name)
+    override suspend fun updateGym(id: String, input: SettingsGymUpdateInput) =
+        SettingsGymDto(id, input.name)
     override suspend fun activateGym(id: String) = Unit
     override suspend fun deleteGym(id: String) = Unit
     override suspend fun loadGymInventory(gymId: String) = snapshot().gymInventories.getValue(gymId)
@@ -200,6 +506,14 @@ private class FakeSettingsSource : SettingsDataSource {
         gymId: String,
         equipmentId: String?,
         input: SettingsGymEquipmentInput,
+    ) = Unit
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) = Unit
+    override suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
     ) = Unit
     override suspend fun deleteGymEquipment(equipmentId: String) = Unit
     override suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String) = Unit
@@ -234,6 +548,53 @@ private class FakeSettingsSource : SettingsDataSource {
     override suspend fun confirmImport(preview: SettingsImportPreview) = JsonObject(emptyMap())
 }
 
-private class FailingSettingsSource : SettingsDataSource by FakeSettingsSource() {
-    override suspend fun load(): SettingsSnapshot = error("Settings are unavailable")
+private class RetryableSystemProfileSource : FakeSettingsSource() {
+    val inputs = mutableListOf<SettingsDumbbellsSystemProfileInput>()
+
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) {
+        inputs += input
+        if (inputs.size == 1) {
+            throw SettingsException(
+                kind = SettingsErrorKind.INVALID_DATA,
+                statusCode = 409,
+                serverMessage = "System equipment profiles cannot be deleted.",
+            )
+        }
+    }
 }
+
+private class RetryableSettingsSource(
+    private val delegate: FakeSettingsSource = FakeSettingsSource(),
+) : SettingsDataSource by delegate {
+    private var attempts = 0
+
+    override suspend fun load(): SettingsSnapshot {
+        attempts += 1
+        if (attempts == 1) error("Settings are unavailable")
+        return delegate.snapshot()
+    }
+}
+
+private fun testSettingsRepository(
+    accountStore: SecureAccountStore,
+    expectedToken: String,
+    load: suspend () -> SettingsSnapshot,
+): SettingsRepository = SettingsRepository.failover(
+    accountStore = accountStore,
+    token = expectedToken,
+    endpointResolver = ServerEndpointResolver(accountStore, ServerReachabilityProbe { true }),
+    remoteFactory = { _, accessToken ->
+        object : SettingsDataSource by FakeSettingsSource() {
+            override suspend fun load(): SettingsSnapshot {
+                assertEquals(expectedToken, accessToken)
+                return load()
+            }
+        }
+    },
+)
+
+private const val STALE_TOKEN = "stale-test-token"
+private const val FRESH_TOKEN = "fresh-test-token"

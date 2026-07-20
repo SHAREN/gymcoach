@@ -7,11 +7,15 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.sharteman.gymcoach.data.network.ApiClient
+import org.sharteman.gymcoach.data.repository.GymCoachRepository
+import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.watch.domain.WatchEventEnvelopeDto
 import org.sharteman.gymcoach.watch.domain.WatchEventSource
 import org.sharteman.gymcoach.watch.domain.WatchEventType
@@ -256,6 +260,124 @@ class GymCoachDaoWatchSyncTest {
         assertEquals(2L, dao.getWatchResyncMarker(SESSION_ID)?.revision)
     }
 
+    @Test
+    fun phoneSetMutationRollsBackWhenRuntimeInsertFails() = runBlocking {
+        val session = LocalSessionEntity(
+            id = SESSION_ID,
+            workoutId = "workout_atomic_failure",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        val operation = SyncOutboxEntity(
+            operationId = "op_atomic_failure",
+            type = "UpsertSetOperation",
+            payloadJson = "{}",
+        )
+        dao.saveSession(session)
+        val set = LocalSetEntity(
+            id = "set_atomic_failure",
+            sessionId = SESSION_ID,
+            exerciseId = "exercise_atomic_failure",
+            setNumber = 1,
+            weight = 100.0,
+            reps = 8,
+            rir = 2,
+            completedAt = "2026-07-15T10:01:00Z",
+        )
+        val runtime = ActiveWorkoutRuntimeEntity(
+            sessionId = "missing_session",
+            workoutId = session.workoutId,
+            activeExerciseId = set.exerciseId,
+            revision = 2,
+            updatedAtEpochMs = 2_000,
+        )
+        val marker = WatchResyncMarkerEntity(SESSION_ID, 2, "SET_COMPLETED", 2_000, 2_000)
+
+        val failure = runCatching {
+            dao.saveSetOperationRuntimeAndMarker(set, operation, runtime, marker)
+        }.exceptionOrNull()
+
+        assertTrue(failure != null)
+        assertNull(dao.getSet(set.id))
+        assertNull(dao.getActiveWorkoutRuntime(SESSION_ID))
+        assertNull(dao.getWatchResyncMarker(SESSION_ID))
+        assertTrue(dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun phoneAddRepairsMissingRuntimeAndPersistsOneSetOperation() = runBlocking {
+        val session = LocalSessionEntity(
+            id = SESSION_ID,
+            workoutId = "workout_missing_runtime",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        dao.saveSession(session)
+        dao.saveWatchPeer(
+            WatchPeerEntity(
+                deviceId = "watch-acknowledged",
+                sessionId = SESSION_ID,
+                protocolVersion = "1.0",
+                schemaVersion = 1,
+                lastRevision = 9,
+                updatedAtEpochMs = 9_000,
+            ),
+        )
+
+        val set = repository().addSet(
+            sessionId = SESSION_ID,
+            exerciseId = "exercise_missing_runtime",
+            weight = 100.0,
+            reps = 8,
+            rir = 2,
+            notes = null,
+        )
+
+        assertEquals(set.id, dao.getSets(SESSION_ID).single().id)
+        assertEquals(10L, dao.getActiveWorkoutRuntime(SESSION_ID)?.revision)
+        assertEquals(1, dao.queuedOperations().size)
+    }
+
+    @Test
+    fun phoneDeleteRepairsStaleRuntimeAndNeverQueuesADuplicateDelete() = runBlocking {
+        val session = LocalSessionEntity(
+            id = SESSION_ID,
+            workoutId = "workout_current",
+            gymId = null,
+            startedAt = "2026-07-15T10:00:00Z",
+        )
+        val set = LocalSetEntity(
+            id = "set_stale_runtime",
+            sessionId = SESSION_ID,
+            exerciseId = "exercise_stale_runtime",
+            setNumber = 7,
+            weight = 100.0,
+            reps = 8,
+            rir = 2,
+            completedAt = "2026-07-15T10:01:00Z",
+        )
+        dao.saveSession(session)
+        dao.saveSet(set)
+        dao.saveActiveWorkoutRuntime(
+            ActiveWorkoutRuntimeEntity(
+                sessionId = SESSION_ID,
+                workoutId = "workout_stale",
+                activeExerciseId = set.exerciseId,
+                revision = 7,
+                updatedAtEpochMs = 7_000,
+            ),
+        )
+
+        val repository = repository()
+        assertTrue(repository.deleteSet(set.id))
+        assertFalse(repository.deleteSet(set.id))
+
+        assertTrue(dao.getSet(set.id)?.deleted == true)
+        assertEquals("workout_current", dao.getActiveWorkoutRuntime(SESSION_ID)?.workoutId)
+        assertEquals(8L, dao.getActiveWorkoutRuntime(SESSION_ID)?.revision)
+        assertEquals(1, dao.queuedOperations().size)
+    }
+
     private fun watchEvent(eventId: String, sessionId: String, revision: Long) = WatchEventEnvelopeDto(
         protocolVersion = WatchProtocol.VERSION,
         schemaVersion = WatchProtocol.SCHEMA_VERSION,
@@ -267,6 +389,33 @@ class GymCoachDaoWatchSyncTest {
         deviceId = "phone-account-clear",
         revision = revision,
         payload = buildJsonObject {},
+    )
+
+    private fun repository() = GymCoachRepository(
+        dao = dao,
+        accountStore = object : AccountStore {
+            override val deviceId = "phone-emulator-test"
+            override var serverUrl = "https://example.test"
+            override var userId: String? = "user-emulator-test"
+            override var userEmail: String? = "user@example.test"
+            private var token: String? = "test-token"
+
+            override fun getAccessToken() = token
+            override fun setAccessToken(token: String) {
+                this.token = token
+            }
+            override fun clearAccessToken() {
+                token = null
+            }
+            override fun clearAccount() {
+                token = null
+                userId = null
+                userEmail = null
+            }
+        },
+        api = ApiClient(),
+        scheduleSyncNow = {},
+        schedulePeriodicSync = {},
     )
 
     private fun watchAck(

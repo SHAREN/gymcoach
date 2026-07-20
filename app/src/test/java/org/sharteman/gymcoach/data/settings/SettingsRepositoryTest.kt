@@ -35,6 +35,7 @@ class SettingsRepositoryTest {
         assertEquals(expected, repository.load())
         assertEquals(listOf(PRIMARY, FALLBACK), attempts)
         assertEquals(FALLBACK, accountStore.serverUrl)
+        assertTrue(accountStore.isAuthenticated)
     }
 
     @Test
@@ -60,6 +61,7 @@ class SettingsRepositoryTest {
         assertTrue(failure is SettingsException)
         assertEquals(listOf(PRIMARY), attempts)
         assertEquals(PRIMARY, accountStore.serverUrl)
+        assertTrue(!accountStore.isAuthenticated)
     }
 
     private fun snapshot() = SettingsSnapshot(
@@ -85,6 +87,7 @@ class SettingsRepositoryTest {
         override var userId: String? = "user_1"
         override var userEmail: String? = "user@example.com"
         private var token: String? = "token"
+        val isAuthenticated: Boolean get() = token != null
 
         override fun getAccessToken() = token
         override fun setAccessToken(token: String) {
@@ -110,7 +113,7 @@ private abstract class SettingsDataSourceStub : SettingsDataSource {
     override suspend fun load(): SettingsSnapshot = unsupported()
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto = unsupported()
     override suspend fun createGym(input: SettingsGymInput): SettingsGymDto = unsupported()
-    override suspend fun updateGym(id: String, input: SettingsGymInput): SettingsGymDto = unsupported()
+    override suspend fun updateGym(id: String, input: SettingsGymUpdateInput): SettingsGymDto = unsupported()
     override suspend fun activateGym(id: String) = unsupported<Unit>()
     override suspend fun deleteGym(id: String) = unsupported<Unit>()
     override suspend fun loadGymInventory(gymId: String): SettingsGymInventoryDto = unsupported()
@@ -118,6 +121,14 @@ private abstract class SettingsDataSourceStub : SettingsDataSource {
         gymId: String,
         equipmentId: String?,
         input: SettingsGymEquipmentInput,
+    ) = unsupported<Unit>()
+    override suspend fun saveDumbbellsSystemProfile(
+        gymId: String,
+        input: SettingsDumbbellsSystemProfileInput,
+    ) = unsupported<Unit>()
+    override suspend fun saveBarbellSystemProfile(
+        gymId: String,
+        input: SettingsBarbellSystemProfileInput,
     ) = unsupported<Unit>()
     override suspend fun deleteGymEquipment(equipmentId: String) = unsupported<Unit>()
     override suspend fun setGymEquipmentImageUrl(equipmentId: String, imageUrl: String) =

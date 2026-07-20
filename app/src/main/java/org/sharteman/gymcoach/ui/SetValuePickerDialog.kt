@@ -2,9 +2,13 @@ package org.sharteman.gymcoach.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.stopScroll
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,17 +17,24 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,10 +46,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +62,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -61,6 +79,9 @@ import org.sharteman.gymcoach.training.fromDisplayWeight
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
 import java.util.Locale
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 enum class SetValuePickerKind {
@@ -68,6 +89,8 @@ enum class SetValuePickerKind {
     REPS,
     RIR,
 }
+
+private val PickerOptionHeight = 74.dp
 
 @Composable
 fun SetValuePickerDialog(
@@ -80,17 +103,30 @@ fun SetValuePickerDialog(
     onConfirm: (String) -> Unit,
 ) {
     var manualValue by rememberSaveable(kind, value) { mutableStateOf(normalizePickerInput(value)) }
+    val manualEntryActive = rememberSaveable(kind, value) { mutableStateOf(false) }
+    val suppressScrollPreviewUntilIdle = rememberSaveable(kind, value) { mutableStateOf(false) }
+    var confirmationStarted by rememberSaveable(kind, value) { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val pickerScope = rememberCoroutineScope()
     val normalizedOptions = options.filter { it.isFinite() }.distinct().sorted()
     val optionValues: List<Double?> = if (kind == SetValuePickerKind.RIR) {
         listOf(null) + normalizedOptions
     } else {
         normalizedOptions
     }
+    val openingNumericValue = parsePickerNumber(normalizePickerInput(value))
     val numericValue = parsePickerNumber(manualValue)
-    val selectedIndex = optionValues.indexOfFirst { option ->
+    val matchingIndex = optionValues.indexOfFirst { option ->
         if (option == null) manualValue.isBlank() else numericValue != null && nearlyEqual(option, numericValue)
-    }.coerceAtLeast(0)
+    }
+    val selectedIndex = matchingIndex.coerceAtLeast(0)
+    val initialWeightIndex = if (openingNumericValue == null) {
+        0
+    } else {
+        normalizedOptions.indices.minByOrNull { index ->
+            abs(normalizedOptions[index] - openingNumericValue)
+        } ?: 0
+    }
     val valid = when (kind) {
         SetValuePickerKind.WEIGHT -> numericValue != null &&
             fromDisplayWeight(numericValue, unit) in 0.0..500.0
@@ -136,7 +172,14 @@ fun SetValuePickerDialog(
         null
     }
 
+    fun confirmOnce(confirmed: String) {
+        if (confirmationStarted) return
+        confirmationStarted = true
+        onConfirm(confirmed)
+    }
+
     LaunchedEffect(kind, value, normalizedOptions) {
+        if (kind == SetValuePickerKind.WEIGHT) return@LaunchedEffect
         if (optionValues.isNotEmpty()) {
             listState.scrollToItem((selectedIndex - 2).coerceAtLeast(0))
         }
@@ -149,31 +192,67 @@ fun SetValuePickerDialog(
             decorFitsSystemWindows = false,
         ),
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Surface(
+            modifier = Modifier.fillMaxSize().testTag("set-value-picker"),
+            color = MaterialTheme.colorScheme.background,
+        ) {
             Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
                 PickerHeader(kind = kind, unit = unit, onDismiss = onDismiss)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    items(optionValues, key = { it?.toString() ?: "none" }) { option ->
-                        val selected = if (option == null) {
-                            manualValue.isBlank()
-                        } else {
-                            numericValue != null && nearlyEqual(option, numericValue)
+                if (kind == SetValuePickerKind.WEIGHT) {
+                    WeightPickerOptions(
+                        options = normalizedOptions,
+                        initialSelectedIndex = initialWeightIndex,
+                        selectedValue = numericValue,
+                        unit = unit,
+                        listState = listState,
+                        manualEntryActive = manualEntryActive,
+                        suppressScrollPreviewUntilIdle = suppressScrollPreviewUntilIdle,
+                        onScrollPreviewSuppressionEnded = {
+                            suppressScrollPreviewUntilIdle.value = false
+                        },
+                        onWeightScrollStarted = {
+                            manualEntryActive.value = false
+                        },
+                        onPreviewChange = { option ->
+                            manualEntryActive.value = false
+                            suppressScrollPreviewUntilIdle.value = false
+                            manualValue = formatPickerNumber(option)
+                        },
+                        onConfirm = { option ->
+                            val formatted = formatPickerNumber(option)
+                            manualEntryActive.value = false
+                            suppressScrollPreviewUntilIdle.value = false
+                            manualValue = formatted
+                            if (fromDisplayWeight(option, unit) in 0.0..500.0) {
+                                confirmOnce(formatted)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        items(optionValues, key = { it?.toString() ?: "none" }) { option ->
+                            val selected = if (option == null) {
+                                manualValue.isBlank()
+                            } else {
+                                numericValue != null && nearlyEqual(option, numericValue)
+                            }
+                            PickerOption(
+                                label = pickerOptionLabel(option, kind, unit),
+                                selected = selected,
+                                tag = "set-value-option-${kind.name}-${option?.let(::formatPickerNumber) ?: "none"}",
+                                onClick = {
+                                    manualValue = option?.let(::formatPickerNumber).orEmpty()
+                                },
+                            )
                         }
-                        PickerOption(
-                            label = pickerOptionLabel(option, kind, unit),
-                            selected = selected,
-                            tag = "set-value-option-${kind.name}-${option?.let(::formatPickerNumber) ?: "none"}",
-                            onClick = {
-                                manualValue = option?.let(::formatPickerNumber).orEmpty()
-                            },
-                        )
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
@@ -184,7 +263,7 @@ fun SetValuePickerDialog(
                     PickerConfirmationRow(
                         kind = kind,
                         value = manualValue,
-                        valid = valid,
+                        valid = valid && !confirmationStarted,
                         plateLoad = plateLoad,
                         unit = unit,
                         onConfirm = {
@@ -197,13 +276,20 @@ fun SetValuePickerDialog(
                                     numericValue?.roundToInt()?.toString()
                                 }
                             }
-                            if (confirmed != null) onConfirm(confirmed)
+                            if (confirmed != null) confirmOnce(confirmed)
                         },
                     )
                     if (kind != SetValuePickerKind.RIR) {
                         PickerKeypad(
                             decimal = kind == SetValuePickerKind.WEIGHT,
-                            onKey = { key -> manualValue = appendPickerKey(manualValue, key, kind) },
+                            onKey = { key ->
+                                if (kind == SetValuePickerKind.WEIGHT) {
+                                    manualEntryActive.value = true
+                                    suppressScrollPreviewUntilIdle.value = listState.isScrollInProgress
+                                    pickerScope.launch { listState.stopScroll() }
+                                }
+                                manualValue = appendPickerKey(manualValue, key, kind)
+                            },
                         )
                     }
                 }
@@ -218,7 +304,10 @@ private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -
         modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onDismiss, modifier = Modifier.width(84.dp)) {
+        TextButton(
+            onClick = onDismiss,
+            modifier = Modifier.width(84.dp).testTag("set-value-cancel"),
+        ) {
             Text(stringResource(R.string.cancel))
         }
         Text(
@@ -240,14 +329,147 @@ private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -
 }
 
 @Composable
+private fun WeightPickerOptions(
+    options: List<Double>,
+    initialSelectedIndex: Int,
+    selectedValue: Double?,
+    unit: String,
+    listState: LazyListState,
+    manualEntryActive: State<Boolean>,
+    suppressScrollPreviewUntilIdle: State<Boolean>,
+    onScrollPreviewSuppressionEnded: () -> Unit,
+    onWeightScrollStarted: () -> Unit,
+    onPreviewChange: (Double) -> Unit,
+    onConfirm: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (options.isEmpty()) {
+        Box(modifier = modifier.testTag("weight-picker-viewport"))
+        return
+    }
+
+    val targetIndex = initialSelectedIndex.coerceIn(options.indices)
+    var initialized by rememberSaveable(options, targetIndex) { mutableStateOf(false) }
+    var centeredIndex by rememberSaveable(options, targetIndex) { mutableIntStateOf(targetIndex) }
+    val currentPreviewChange by rememberUpdatedState(onPreviewChange)
+    val currentScrollPreviewSuppressionEnded by rememberUpdatedState(onScrollPreviewSuppressionEnded)
+    val currentWeightScrollStarted by rememberUpdatedState(onWeightScrollStarted)
+    val flingBehavior = rememberSnapFlingBehavior(
+        lazyListState = listState,
+        snapPosition = SnapPosition.Center,
+    )
+
+    LaunchedEffect(options, targetIndex) {
+        initialized = false
+        listState.scrollToItem(targetIndex)
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.any { item -> item.index == targetIndex }
+        }.first { it }
+        centerPickerItem(listState.layoutInfo, targetIndex)?.let { delta ->
+            listState.scrollBy(delta)
+        }
+        centeredIndex = centeredPickerOptionIndex(listState.layoutInfo) ?: targetIndex
+        initialized = true
+    }
+
+    LaunchedEffect(listState, options) {
+        var wasScrolling = false
+        snapshotFlow {
+            Triple(
+                initialized,
+                listState.isScrollInProgress,
+                centeredPickerOptionIndex(listState.layoutInfo),
+            )
+        }.collect { (isInitialized, isScrolling, index) ->
+            if (isInitialized && index != null) {
+                centeredIndex = index
+                when {
+                    suppressScrollPreviewUntilIdle.value -> {
+                        if (!isScrolling) currentScrollPreviewSuppressionEnded()
+                    }
+                    manualEntryActive.value -> {
+                        if (isScrolling && !wasScrolling) {
+                            currentWeightScrollStarted()
+                            currentPreviewChange(options[index])
+                        }
+                    }
+                    else -> currentPreviewChange(options[index])
+                }
+            }
+            wasScrolling = isScrolling
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier.testTag("weight-picker-viewport")) {
+        val centerPadding = ((maxHeight - PickerOptionHeight) / 2).coerceAtLeast(0.dp)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().testTag("weight-picker-list"),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = centerPadding),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            flingBehavior = flingBehavior,
+        ) {
+            itemsIndexed(options, key = { _, option -> option.toString() }) { _, option ->
+                PickerOption(
+                    label = pickerOptionLabel(option, SetValuePickerKind.WEIGHT, unit),
+                    selected = selectedValue != null && nearlyEqual(option, selectedValue),
+                    tag = "set-value-option-WEIGHT-${formatPickerNumber(option)}",
+                    onClick = { onConfirm(option) },
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .height(PickerOptionHeight)
+                .padding(horizontal = 10.dp)
+                .testTag("weight-picker-pointer")
+                .semantics {
+                    stateDescription = formatPickerNumber(options[centeredIndex])
+                },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(38.dp).testTag("weight-picker-pointer-left"),
+            )
+            Icon(
+                imageVector = Icons.Outlined.ChevronLeft,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(38.dp).testTag("weight-picker-pointer-right"),
+            )
+        }
+    }
+}
+
+private fun centeredPickerOptionIndex(layoutInfo: LazyListLayoutInfo): Int? {
+    val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+    return layoutInfo.visibleItemsInfo.minByOrNull { item ->
+        abs(item.offset + item.size / 2 - viewportCenter)
+    }?.index
+}
+
+private fun centerPickerItem(layoutInfo: LazyListLayoutInfo, index: Int): Float? {
+    val item = layoutInfo.visibleItemsInfo.firstOrNull { visible -> visible.index == index } ?: return null
+    val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+    return (item.offset + item.size / 2 - viewportCenter).toFloat()
+}
+
+@Composable
 private fun PickerOption(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 250.dp)
-            .height(74.dp)
+            .height(PickerOptionHeight)
             .testTag(tag)
-            .clickable(onClick = onClick),
+            .selectable(selected = selected, onClick = onClick),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(
             if (selected) 2.dp else 1.dp,
@@ -276,6 +498,41 @@ private fun PickerConfirmationRow(
     unit: String,
     onConfirm: () -> Unit,
 ) {
+    if (kind == SetValuePickerKind.WEIGHT) {
+        Row(
+            modifier = Modifier.fillMaxWidth().testTag("set-value-confirmation-row"),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 64.dp)
+                    .testTag("set-value-leading-reserve"),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (plateLoad != null) {
+                    BarbellSideDiagram(load = plateLoad, unit = unit)
+                }
+            }
+            PickerValueSurface(
+                kind = kind,
+                value = value,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 64.dp)
+                    .testTag("set-value-trailing-reserve"),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                PickerApplyButton(valid = valid, onConfirm = onConfirm)
+            }
+        }
+        return
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -286,37 +543,48 @@ private fun PickerConfirmationRow(
                 BarbellSideDiagram(load = plateLoad, unit = unit)
             }
         }
-        Surface(
-            modifier = Modifier.weight(1f).height(64.dp),
-            shape = RoundedCornerShape(8.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = if (kind == SetValuePickerKind.RIR && value.isBlank()) {
-                        stringResource(R.string.not_specified)
-                    } else {
-                        value.replace(".", pickerDecimalSeparator())
-                    },
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-        Button(
-            onClick = onConfirm,
-            enabled = valid,
-            modifier = Modifier.size(64.dp).testTag("set-value-apply"),
-            shape = RoundedCornerShape(8.dp),
-            contentPadding = PaddingValues(0.dp),
-        ) {
-            Icon(
-                Icons.Outlined.Check,
-                contentDescription = stringResource(R.string.apply_value),
-                modifier = Modifier.size(32.dp),
+        PickerValueSurface(kind = kind, value = value, modifier = Modifier.weight(1f))
+        PickerApplyButton(valid = valid, onConfirm = onConfirm)
+    }
+}
+
+@Composable
+private fun PickerValueSurface(kind: SetValuePickerKind, value: String, modifier: Modifier) {
+    Surface(
+        modifier = modifier.height(64.dp).testTag("set-value-field"),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = if (kind == SetValuePickerKind.RIR && value.isBlank()) {
+                    stringResource(R.string.not_specified)
+                } else {
+                    value.replace(".", pickerDecimalSeparator())
+                },
+                modifier = Modifier.testTag("set-value-field-text"),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold,
             )
         }
+    }
+}
+
+@Composable
+private fun PickerApplyButton(valid: Boolean, onConfirm: () -> Unit) {
+    Button(
+        onClick = onConfirm,
+        enabled = valid,
+        modifier = Modifier.size(64.dp).testTag("set-value-apply"),
+        shape = RoundedCornerShape(8.dp),
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        Icon(
+            Icons.Outlined.Check,
+            contentDescription = stringResource(R.string.apply_value),
+            modifier = Modifier.size(32.dp),
+        )
     }
 }
 
@@ -337,7 +605,10 @@ private fun PickerKeypad(decimal: Boolean, onKey: (String) -> Unit) {
                     } else {
                         Button(
                             onClick = { onKey(if (key == pickerDecimalSeparator()) "decimal" else key) },
-                            modifier = Modifier.weight(1f).height(54.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp)
+                                .testTag("set-value-key-${if (key == pickerDecimalSeparator()) "decimal" else key}"),
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(
@@ -358,7 +629,10 @@ private fun BarbellSideDiagram(load: PlateLoad, unit: String) {
     val plates = load.perSide.flatMap { group -> List(group.count) { group.plate } }
     val maxPlate = plates.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
     Column(
-        modifier = Modifier.fillMaxWidth().testTag("barbell-side-diagram"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("barbell-side-diagram")
+            .semantics { stateDescription = formatPickerNumber(load.achievedWeight) },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

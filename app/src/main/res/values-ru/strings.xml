@@ -124,6 +124,9 @@
     <string name="choose_set_count">Количество подходов</string>
     <string name="apply_set_recommendation">Применить рекомендацию к этому подходу</string>
     <string name="set_update_error">Не удалось обновить подход. Предыдущие значения сохранены.</string>
+    <string name="set_save_error">Не удалось сохранить подход. Введённые значения сохранены.</string>
+    <string name="set_delete_error">Не удалось удалить подход. Попробуйте ещё раз.</string>
+    <string name="rest_start_error">Подход сохранён, но таймер отдыха не запустился.</string>
     <string name="set_weight_description">Вес подхода %1$d</string>
     <string name="set_reps_description">Повторы подхода %1$d</string>
     <string name="set_rir_description">RIR подхода %1$d</string>
