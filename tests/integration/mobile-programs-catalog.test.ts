@@ -381,6 +381,31 @@ describe('Android programs and exercise catalog API', () => {
     expect(await db.program.count({ where: { userId: user.id } })).toBe(0);
   });
 
+  it('keeps a user-created load-profile name collision unclassified', async () => {
+    const { token } = await seedMobileUser();
+    const response = await createExercise(
+      request('http://test/api/mobile/exercises', 'POST', token, {
+        name: 'Deadlift',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        defaultRestSec: 180,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: 'User-created deadlift entry.',
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      name: 'Deadlift',
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
+  });
+
   it('replays client generated creates without duplicates and validates both headers', async () => {
     const { user, token } = await seedMobileUser();
     const programId = 'mob_program_00000000000000000000000000000001';

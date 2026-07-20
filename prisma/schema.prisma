@@ -181,6 +181,10 @@ model Exercise {
   usesBodyweight     Boolean                @default(false)
   // Determines which saved-gym inventory constrains suggested loads.
   equipmentType      EquipmentType          @default(OTHER)
+  // Server-owned proof that this row came from the built-in exercise catalog.
+  // Null means custom, imported, or otherwise unproven and must never be
+  // promoted to reviewed catalog metadata by name alone.
+  catalogOrigin      String?                @db.VarChar(64)
   // Versioned multi-muscle, movement, fatigue and joint-load classification.
   // The JSON default is explicit UNCLASSIFIED so legacy/custom writers cannot
   // silently turn missing participation into zero contribution.

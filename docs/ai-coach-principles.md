@@ -704,6 +704,15 @@ catalog entries are updated in place. Legacy/custom rows retain explicit
 `LEGACY_PRIMARY_ONLY` or `UNCLASSIFIED` state instead of inventing secondary
 participation.
 
+Catalog review provenance is server-owned. The migration may backfill it only
+when the complete stored exercise fingerprint matches the immutable built-in
+catalog snapshot, including the legacy muscle, category, rest, bodyweight,
+notes and either the catalog default or deterministic legacy-migrated equipment
+field. An exercise name alone is never proof of catalog origin. Any collision
+or partial match fails closed and keeps its legacy or unclassified profile
+until explicitly classified. This fingerprint and origin marker are
+engineering data-quality safeguards, not training-science claims.
+
 Completed qualifying working sets are aggregated once by the shared service.
 For every muscle it reports raw `directSets` and `indirectSets` plus separate
 regular, drop-set, RIR-present, RIR-missing and history-reliability breakdowns.

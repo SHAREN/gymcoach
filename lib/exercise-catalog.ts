@@ -8,6 +8,8 @@ import type { ExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 // Seeded per user: at registration (so a new account is not empty) and by the
 // demo seed. Generic, evidence-informed technique cues, no personal data.
 
+export const SYSTEM_EXERCISE_CATALOG_ORIGIN = 'SYSTEM_DEFAULT_V1' as const;
+
 interface CatalogExerciseBase {
   name: string;
   muscleGroup: MuscleGroup;
@@ -18,6 +20,7 @@ interface CatalogExerciseBase {
 }
 
 export interface CatalogExercise extends CatalogExerciseBase {
+  catalogOrigin: typeof SYSTEM_EXERCISE_CATALOG_ORIGIN;
   loadProfile: ExerciseLoadProfile;
 }
 
@@ -473,6 +476,7 @@ const BASE_EXERCISE_CATALOG: CatalogExerciseBase[] = [
 
 export const EXERCISE_CATALOG: CatalogExercise[] = BASE_EXERCISE_CATALOG.map((exercise) => ({
   ...exercise,
+  catalogOrigin: SYSTEM_EXERCISE_CATALOG_ORIGIN,
   loadProfile: catalogExerciseLoadProfile(exercise.name, exercise.muscleGroup, exercise.category),
 }));
 
@@ -482,6 +486,19 @@ export async function seedExerciseCatalog(
   prisma: PrismaClient,
   userId: string,
 ): Promise<Map<string, string>> {
+  const existing = await prisma.exercise.findMany({
+    where: { userId, name: { in: EXERCISE_CATALOG.map((exercise) => exercise.name) } },
+    select: { name: true, catalogOrigin: true },
+  });
+  const unprovenCollision = existing.find(
+    (exercise) => exercise.catalogOrigin !== SYSTEM_EXERCISE_CATALOG_ORIGIN,
+  );
+  if (unprovenCollision) {
+    throw new Error(
+      `Cannot seed the system exercise catalog because ${unprovenCollision.name} is an unproven user exercise with the same name.`,
+    );
+  }
+
   const map = new Map<string, string>();
   for (const data of EXERCISE_CATALOG) {
     const exercise = await prisma.exercise.upsert({

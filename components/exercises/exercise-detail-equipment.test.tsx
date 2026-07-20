@@ -38,6 +38,7 @@ const exercise: Exercise = {
   notes: null,
   usesBodyweight: false,
   equipmentType: 'BARBELL',
+  catalogOrigin: null,
   loadProfile: {},
   createdAt: new Date('2026-07-16T00:00:00Z'),
 };

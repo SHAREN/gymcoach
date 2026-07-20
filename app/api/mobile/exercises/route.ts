@@ -2,7 +2,7 @@ import { handleApiError, parseJsonBody } from '@/lib/api';
 import { db } from '@/lib/db';
 import { parseMobileCreateMetadata, requireMobileUserId } from '@/lib/mobile-programs-catalog';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
-import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
+import { unclassifiedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,9 +66,7 @@ export async function POST(req: Request) {
         id: metadata.clientEntityId,
         userId,
         notes: data.notes ?? null,
-        loadProfile:
-          data.loadProfile ??
-          defaultExerciseLoadProfile(data.name, data.muscleGroup, data.category),
+        loadProfile: data.loadProfile ?? unclassifiedExerciseLoadProfile(),
       },
     });
     return Response.json(exercise, { status: 201 });

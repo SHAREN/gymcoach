@@ -33,6 +33,7 @@ describe('seedExerciseCatalog', () => {
         ]),
       },
     });
+    expect(benchBefore?.catalogOrigin).toBe('SYSTEM_DEFAULT_V1');
 
     // Running again must not create duplicates (upsert on userId+name).
     await seedExerciseCatalog(db, user.id);
@@ -42,6 +43,29 @@ describe('seedExerciseCatalog', () => {
       where: { userId_name: { userId: user.id, name: 'Barbell bench press' } },
     });
     expect(benchAfter?.id).toBe(benchBefore?.id);
+  });
+
+  it('fails closed instead of promoting a colliding user exercise', async () => {
+    const user = await makeUser('seed-collision@test.dev');
+    const custom = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Barbell bench press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 90,
+        notes: 'User-created bench variation.',
+      },
+    });
+
+    await expect(seedExerciseCatalog(db, user.id)).rejects.toThrow(/unproven user exercise/);
+    expect(await db.exercise.findUnique({ where: { id: custom.id } })).toMatchObject({
+      id: custom.id,
+      catalogOrigin: null,
+      notes: 'User-created bench variation.',
+      loadProfile: { classification: 'UNCLASSIFIED' },
+    });
+    expect(await db.exercise.count({ where: { userId: user.id } })).toBe(1);
   });
 });
 
