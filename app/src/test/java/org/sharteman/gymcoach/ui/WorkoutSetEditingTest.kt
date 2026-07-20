@@ -70,6 +70,90 @@ class WorkoutSetEditingTest {
     }
 
     @Test
+    fun `restored workout drafts suppress the same initial autofill key`() {
+        val key = workoutInputAutofillKey(
+            exerciseId = "exercise-1",
+            comparableSetCount = 2,
+            recommendation = recommendation(weight = 92.5, reps = 9, rir = 1),
+            equipmentId = "equipment-1",
+            returnSuggestedWeight = null,
+            lastPerformanceSessionId = "session-1",
+        )
+
+        assertFalse(
+            shouldApplyWorkoutInputAutofill(
+                lastAppliedKey = key,
+                currentKey = key,
+                weightText = "87.5",
+                repsText = "11",
+                rirText = "3",
+            ),
+        )
+        assertFalse(
+            shouldApplyWorkoutInputAutofill(
+                lastAppliedKey = key,
+                currentKey = key,
+                weightText = "",
+                repsText = "",
+                rirText = "1",
+            ),
+        )
+    }
+
+    @Test
+    fun `restored workout drafts suppress first autofill even when recommendation key drifted`() {
+        assertTrue(
+            shouldPreserveRestoredWorkoutInputs(
+                hasAppliedAutofill = true,
+                observedAutofillKey = null,
+                weightText = "87.5",
+                repsText = "11",
+                rirText = "3",
+            ),
+        )
+        assertFalse(
+            shouldPreserveRestoredWorkoutInputs(
+                hasAppliedAutofill = true,
+                observedAutofillKey = "observed-in-this-composition",
+                weightText = "87.5",
+                repsText = "11",
+                rirText = "3",
+            ),
+        )
+    }
+
+    @Test
+    fun `new set autofill key can initialize the next workout draft`() {
+        val recommendation = recommendation(weight = 92.5, reps = 9, rir = 1)
+        val previousKey = workoutInputAutofillKey(
+            exerciseId = "exercise-1",
+            comparableSetCount = 2,
+            recommendation = recommendation,
+            equipmentId = "equipment-1",
+            returnSuggestedWeight = null,
+            lastPerformanceSessionId = "session-1",
+        )
+        val nextKey = workoutInputAutofillKey(
+            exerciseId = "exercise-1",
+            comparableSetCount = 3,
+            recommendation = recommendation,
+            equipmentId = "equipment-1",
+            returnSuggestedWeight = null,
+            lastPerformanceSessionId = "session-1",
+        )
+
+        assertTrue(
+            shouldApplyWorkoutInputAutofill(
+                lastAppliedKey = previousKey,
+                currentKey = nextKey,
+                weightText = "87.5",
+                repsText = "11",
+                rirText = "3",
+            ),
+        )
+    }
+
+    @Test
     fun `stored collisions render as stable contiguous working ordinals without rewriting rows`() {
         val storedNumbers = listOf(1, 2, 3, 3, 4, 1)
         val sets = storedNumbers.mapIndexed { index, storedNumber ->

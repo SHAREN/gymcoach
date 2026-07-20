@@ -54,12 +54,13 @@ class MainActivity : ComponentActivity() {
                     GymCoachApp(
                         repository = repository,
                         watchDiagnosticsDestination = watchDiagnosticsDestination,
-                    ) { onBack, onOpenWebPath, onAuthenticationRequired, watchDiagnosticsLabel,
-                        onOpenWatchDiagnostics ->
+                    ) { onBack, onOpenWebPath, onAuthenticationRequired, onOpenCoachingProfile,
+                        watchDiagnosticsLabel, onOpenWatchDiagnostics ->
                         SettingsScreen(
                             onBack = onBack,
                             onOpenWebPath = onOpenWebPath,
                             onAuthenticationRequired = onAuthenticationRequired,
+                            onOpenCoachingProfile = onOpenCoachingProfile,
                             appRepository = repository,
                             watchDiagnosticsLabel = watchDiagnosticsLabel,
                             onOpenWatchDiagnostics = onOpenWatchDiagnostics,

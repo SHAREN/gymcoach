@@ -129,6 +129,30 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun opensNativeCoachingProfileFromSettings() {
+        var opened = false
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    onAuthenticationRequired = {},
+                    onOpenCoachingProfile = { opened = true },
+                    repository = FakeSettingsSource(),
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching { composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed() }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-native-screen")
+            .performScrollToNode(hasTestTag("settings-open-coaching-profile"))
+        composeRule.onNodeWithTag("settings-open-coaching-profile").performClick()
+        composeRule.runOnIdle { assertTrue(opened) }
+    }
+
+    @Test
     fun retryableFailureStaysOnSettingsAndRetryLoadsContent() {
         val source = RetryableSettingsSource()
         var authenticationRequired = false

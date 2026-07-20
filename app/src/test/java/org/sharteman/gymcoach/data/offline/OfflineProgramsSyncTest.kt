@@ -13,9 +13,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ExerciseLoadProfileDto
+import org.sharteman.gymcoach.data.model.MuscleLoadDimensionDto
 import org.sharteman.gymcoach.data.model.MobileHistorySessionDto
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.TaggedLoadDimensionDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.ApiException
 import org.sharteman.gymcoach.data.network.HistoryMutationRemote
@@ -30,18 +33,61 @@ import org.sharteman.gymcoach.data.programs.WorkoutInput
 
 class OfflineProgramsSyncTest {
     @Test
-    fun `offline exercise edit preserves cached training dates`() {
+    fun `offline exercise edit preserves non-editable metadata and program targets`() {
         val trainingDates = listOf("2026-07-01T08:00:00Z", "2026-07-03T08:00:00Z")
+        val loadProfile = ExerciseLoadProfileDto(
+            version = 1,
+            algorithmVersion = "exercise-load-profile-v1",
+            classification = "CLASSIFIED",
+            provenance = "TEST",
+            confidence = "HIGH",
+            primaryMuscles = MuscleLoadDimensionDto("CLASSIFIED"),
+            secondaryMuscles = MuscleLoadDimensionDto("CLASSIFIED"),
+            movementPatterns = TaggedLoadDimensionDto("CLASSIFIED"),
+            fatigueTags = TaggedLoadDimensionDto("CLASSIFIED"),
+            jointStress = TaggedLoadDimensionDto("CLASSIFIED"),
+        )
+        val exercise = ExerciseDto(
+            id = "exercise_1",
+            userId = "user_1",
+            name = "Bench press",
+            muscleGroup = "CHEST",
+            category = "COMPOUND",
+            loadProfile = loadProfile,
+            trainingDates = trainingDates,
+        )
+        val target = ProgramExerciseDto(
+            id = "target_1",
+            workoutId = "workout_1",
+            exerciseId = exercise.id,
+            order = 1,
+            targetSets = 4,
+            targetDropSets = 1,
+            targetRepsMin = 8,
+            targetRepsMax = 12,
+            targetRIR = 2,
+            restSec = 150,
+            notes = "Keep target draft",
+            exercise = exercise,
+        )
         val snapshot = CatalogSnapshot(
-            exercises = listOf(
-                ExerciseDto(
-                    id = "exercise_1",
-                    name = "Bench press",
-                    muscleGroup = "CHEST",
-                    category = "COMPOUND",
-                    trainingDates = trainingDates,
+            programs = listOf(
+                ManagedProgramDto(
+                    id = "program_1",
+                    name = "Program",
+                    phase = "Base",
+                    workouts = listOf(
+                        WorkoutDto(
+                            id = "workout_1",
+                            programId = "program_1",
+                            name = "Workout",
+                            order = 1,
+                            exercises = listOf(target),
+                        ),
+                    ),
                 ),
             ),
+            exercises = listOf(exercise),
         )
         val mutation = UpdateExerciseMutation(
             operationId = "op_00000000000000000000000000000001",
@@ -55,12 +101,137 @@ class OfflineProgramsSyncTest {
                 usesBodyweight = false,
                 equipmentType = "BARBELL",
             ),
+            expected = ExerciseInput(
+                name = exercise.name,
+                muscleGroup = exercise.muscleGroup,
+                category = exercise.category,
+                defaultRestSec = exercise.defaultRestSec,
+                notes = exercise.notes,
+                usesBodyweight = exercise.usesBodyweight,
+                equipmentType = exercise.equipmentType,
+            ),
         )
 
-        val updated = applyCatalogMutations(snapshot, listOf(mutation)).exercises.single()
+        val result = applyCatalogMutations(snapshot, listOf(mutation))
+        val updated = result.exercises.single()
+        val updatedTarget = result.programs.single().workouts.single().exercises.single()
 
         assertEquals("Updated bench press", updated.name)
+        assertEquals("user_1", updated.userId)
+        assertEquals(loadProfile, updated.loadProfile)
         assertEquals(trainingDates, updated.trainingDates)
+        assertEquals(target.copy(exercise = updated), updatedTarget)
+    }
+
+    @Test
+    fun `offline exercise replay blocks when server metadata diverged from expected snapshot`() = runTest {
+        val persistence = InMemoryOfflinePersistence()
+        val account = "account"
+        val expected = ExerciseInput("Original", "CHEST", "COMPOUND", 90, null, false, "BARBELL")
+        val updated = expected.copy(name = "Offline edit")
+        val mutation = UpdateExerciseMutation(
+            operationId = "op_00000000000000000000000000000001",
+            exerciseId = "exercise_1",
+            input = updated,
+            expected = expected,
+        )
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(exercises = listOf(exerciseFromInput("exercise_1", expected))),
+        )
+        persistence.enqueue(account, mutation)
+        val remote = FakeCatalogRemote().apply {
+            currentExercise = exerciseFromInput("exercise_1", expected).copy(name = "Newer server edit")
+        }
+
+        val accepted = OfflineSyncEngine(persistence, NetworkStatus { true }).sync(
+            account,
+            "https://example.test",
+            "token",
+            remote,
+            HistoryMutationRemote { _, _, _ -> },
+        )
+
+        assertFalse(accepted)
+        assertEquals(0, remote.updateExerciseCalls)
+        assertEquals(OFFLINE_STATUS_BLOCKED, persistence.operation(mutation.operationId)?.status)
+    }
+
+    @Test
+    fun `offline exercise replay updates matching expected metadata with stable operation id`() = runTest {
+        val persistence = InMemoryOfflinePersistence()
+        val account = "account"
+        val expected = ExerciseInput("Original", "CHEST", "COMPOUND", 90, null, false, "BARBELL")
+        val updated = expected.copy(name = "Offline edit")
+        val mutation = UpdateExerciseMutation(
+            operationId = "op_00000000000000000000000000000001",
+            exerciseId = "exercise_1",
+            input = updated,
+            expected = expected,
+        )
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(exercises = listOf(exerciseFromInput("exercise_1", expected))),
+        )
+        persistence.enqueue(account, mutation)
+        val remote = FakeCatalogRemote().apply {
+            currentExercise = exerciseFromInput("exercise_1", expected).copy(
+                trainingDates = listOf("2026-07-01T08:00:00Z"),
+            )
+        }
+
+        assertTrue(
+            OfflineSyncEngine(persistence, NetworkStatus { true }).sync(
+                account,
+                "https://example.test",
+                "token",
+                remote,
+                HistoryMutationRemote { _, _, _ -> },
+            ),
+        )
+        assertEquals(1, remote.updateExerciseCalls)
+        assertEquals(mutation.operationId, remote.lastMetadata?.operationId)
+        assertEquals(mutation.exerciseId, remote.lastMetadata?.clientEntityId)
+        assertEquals(updated.name, remote.currentExercise?.name)
+        assertEquals(listOf("2026-07-01T08:00:00Z"), remote.currentExercise?.trainingDates)
+    }
+
+    @Test
+    fun `offline exercise replay treats already applied metadata as idempotent success`() = runTest {
+        val persistence = InMemoryOfflinePersistence()
+        val account = "account"
+        val expected = ExerciseInput("Original", "CHEST", "COMPOUND", 90, null, false, "BARBELL")
+        val updated = expected.copy(name = "Offline edit")
+        val mutation = UpdateExerciseMutation(
+            operationId = "op_00000000000000000000000000000001",
+            exerciseId = "exercise_1",
+            input = updated,
+            expected = expected,
+        )
+        persistence.saveCatalog(
+            account,
+            CatalogSnapshot(exercises = listOf(exerciseFromInput("exercise_1", expected))),
+        )
+        persistence.enqueue(account, mutation)
+        val remote = FakeCatalogRemote().apply {
+            currentExercise = exerciseFromInput("exercise_1", updated)
+        }
+
+        assertTrue(
+            OfflineSyncEngine(persistence, NetworkStatus { true }).sync(
+                account,
+                "https://example.test",
+                "token",
+                remote,
+                HistoryMutationRemote { _, _, _ -> },
+            ),
+        )
+        assertEquals(0, remote.updateExerciseCalls)
+        assertTrue(persistence.operations(account).isEmpty())
+        val cached = offlineJson.decodeFromString<CatalogSnapshot>(
+            persistence.readCache(catalogCacheKey(account))!!,
+        )
+        assertEquals(updated, cached.exerciseEditReceipts[mutation.exerciseId])
     }
 
     @Test
@@ -278,6 +449,18 @@ class OfflineProgramsSyncTest {
         workingSets = 3,
         volume = 1_000.0,
     )
+
+    private fun exerciseFromInput(id: String, input: ExerciseInput) = ExerciseDto(
+        id = id,
+        userId = "user_1",
+        name = input.name,
+        muscleGroup = input.muscleGroup,
+        category = input.category,
+        defaultRestSec = input.defaultRestSec,
+        notes = input.notes,
+        usesBodyweight = input.usesBodyweight,
+        equipmentType = input.equipmentType,
+    )
 }
 
 private class InMemoryOfflinePersistence : OfflinePersistence {
@@ -392,6 +575,8 @@ private class FakeCatalogRemote : ProgramsCatalogRemoteDataSource {
     var failure: Throwable? = null
     var lastMetadata: ClientMutationMetadata? = null
     var createHandler: (suspend (ProgramInput, ClientMutationMetadata) -> ManagedProgramDto)? = null
+    var currentExercise: ExerciseDto? = null
+    var updateExerciseCalls = 0
 
     override suspend fun listPrograms(): List<ManagedProgramDto> = emptyList()
     override suspend fun getProgram(id: String): ManagedProgramDto = error("unused")
@@ -431,12 +616,29 @@ private class FakeCatalogRemote : ProgramsCatalogRemoteDataSource {
     ): ProgramExerciseDto = error("unused")
     override suspend fun deleteProgramExercise(id: String) = Unit
     override suspend fun listExercises(): List<ExerciseDto> = emptyList()
-    override suspend fun getExercise(id: String): ExerciseDto = error("unused")
+    override suspend fun getExercise(id: String): ExerciseDto = currentExercise ?: error("unused")
     override suspend fun createExercise(input: ExerciseInput): ExerciseDto = error("unused")
     override suspend fun createExercise(
         input: ExerciseInput,
         metadata: ClientMutationMetadata,
     ): ExerciseDto = error("unused")
     override suspend fun updateExercise(id: String, input: ExerciseInput): ExerciseDto = error("unused")
+    override suspend fun updateExercise(
+        id: String,
+        input: ExerciseInput,
+        metadata: ClientMutationMetadata,
+    ): ExerciseDto {
+        updateExerciseCalls++
+        lastMetadata = metadata
+        return requireNotNull(currentExercise).copy(
+            name = input.name,
+            muscleGroup = input.muscleGroup,
+            category = input.category,
+            defaultRestSec = input.defaultRestSec,
+            notes = input.notes,
+            usesBodyweight = input.usesBodyweight,
+            equipmentType = input.equipmentType,
+        ).also { currentExercise = it }
+    }
     override suspend fun deleteExercise(id: String) = Unit
 }

@@ -40,6 +40,7 @@ object OfflineRuntime {
             persistence = current.persistence,
             networkStatus = current.networkStatus,
             scheduleSync = current.scheduleSync,
+            ownerUserId = userId,
         )
     }
 

@@ -32,8 +32,10 @@ import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.CoachingProfileDto
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
+import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySetDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
@@ -54,10 +56,20 @@ import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
+import org.sharteman.gymcoach.data.model.mergeCoachingProfilesByTimestamp
 import org.sharteman.gymcoach.data.network.MobileApi
 import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.offline.OfflineSyncLock
+import org.sharteman.gymcoach.data.offline.CatalogSnapshot
+import org.sharteman.gymcoach.data.offline.OFFLINE_DOMAIN_CATALOG
+import org.sharteman.gymcoach.data.offline.UpdateExerciseMutation
+import org.sharteman.gymcoach.data.offline.accountKey
+import org.sharteman.gymcoach.data.offline.catalogCacheKey
+import org.sharteman.gymcoach.data.offline.offlineJson
 import org.sharteman.gymcoach.data.network.ApiException
+import org.sharteman.gymcoach.data.programs.ExerciseInput
+import org.sharteman.gymcoach.data.programs.withGeneralMetadata
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.normalizeOptionalServerUrl
 import org.sharteman.gymcoach.data.security.normalizeServerUrl
@@ -305,8 +317,46 @@ class GymCoachRepository(
 
     suspend fun refreshBootstrap(): BootstrapResponse {
         val token = requireNotNull(accountStore.getAccessToken()) { "Not signed in" }
+        val capturedExerciseProtection = captureExerciseEditProtection()
         val response = endpointResolver.execute { baseUrl -> api.bootstrap(baseUrl, token) }
-        return persistBootstrap(response)
+        return persistBootstrap(response, capturedExerciseProtection)
+    }
+
+    suspend fun mergeCoachingProfileIntoBootstrap(profile: CoachingProfileDto) {
+        bootstrapCacheMutex.withLock {
+            val cachedEntity = dao.getBootstrap() ?: return@withLock
+            val cached = runCatching {
+                api.json.decodeFromString<BootstrapResponse>(cachedEntity.payloadJson)
+            }.getOrNull() ?: return@withLock
+            val merged = mergeCoachingProfilesByTimestamp(cached.profile.coachingProfile, profile)
+                ?: return@withLock
+            if (merged == cached.profile.coachingProfile) return@withLock
+            dao.saveBootstrap(
+                cachedEntity.copy(
+                    payloadJson = api.json.encodeToString(
+                        cached.copy(profile = cached.profile.copy(coachingProfile = merged)),
+                    ),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    suspend fun cacheExerciseMetadata(exercise: ExerciseDto) {
+        bootstrapCacheMutex.withLock {
+            val cachedEntity = dao.getBootstrap() ?: return@withLock
+            val cached = runCatching {
+                api.json.decodeFromString<BootstrapResponse>(cachedEntity.payloadJson)
+            }.getOrNull() ?: return@withLock
+            val updated = mergeExerciseMetadataIntoBootstrap(cached, exercise)
+            if (updated == cached) return@withLock
+            dao.saveBootstrap(
+                cachedEntity.copy(
+                    payloadJson = api.json.encodeToString(updated),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     suspend fun refreshProgress(exerciseId: String? = null): MobileProgressSnapshot =
@@ -340,8 +390,25 @@ class GymCoachRepository(
         runCatching { refreshBootstrap() }
     }
 
-    private suspend fun persistBootstrap(response: BootstrapResponse): BootstrapResponse =
+    private suspend fun persistBootstrap(
+        response: BootstrapResponse,
+        capturedExerciseProtection: Map<String, ExerciseInput> = emptyMap(),
+    ): BootstrapResponse =
         bootstrapCacheMutex.withLock {
+            val cachedProfile = dao.getBootstrap()?.let { cached ->
+                runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
+                    .getOrNull()
+                    ?.profile
+                    ?.coachingProfile
+            }
+            val protectedResponse = response.copy(
+                profile = response.profile.copy(
+                    coachingProfile = mergeCoachingProfilesByTimestamp(
+                        cachedProfile,
+                        response.profile.coachingProfile,
+                    ),
+                ),
+            )
             val queuedOperations = dao.queuedOperations()
             val pendingTargetUpdates = queuedOperations.mapNotNull { entry ->
                 runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
@@ -358,22 +425,73 @@ class GymCoachRepository(
                 emptyList()
             }
             val historyMerged = mergeLocalExerciseHistory(
-                bootstrap = response,
+                bootstrap = protectedResponse,
                 sessions = pendingFinishedSessions,
                 deletedSessionIds = targets.deletedSessionIds,
             )
             val effective = pendingTargetUpdates.fold(historyMerged) { current, operation ->
                 updateProgramExerciseTargetSets(current, operation.programExerciseId, operation.targetSets)
             }
+            val exerciseProtection = capturedExerciseProtection + captureExerciseEditProtection()
+            val protectedExerciseMetadata = exerciseProtection.entries.fold(effective) { current, entry ->
+                applyExerciseInputToBootstrap(current, entry.key, entry.value)
+            }
             dao.saveBootstrap(
                 BootstrapCacheEntity(
-                    payloadJson = api.json.encodeToString(effective),
+                    payloadJson = api.json.encodeToString(protectedExerciseMetadata),
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
-            importOpenSessions(effective)
-            effective
+            importOpenSessions(protectedExerciseMetadata)
+            consumeExerciseEditReceipts(exerciseProtection)
+            protectedExerciseMetadata
         }
+
+    private suspend fun captureExerciseEditProtection(): Map<String, ExerciseInput> =
+        OfflineSyncLock.mutex.withLock {
+            val persistence = OfflineRuntime.persistence() ?: return@withLock emptyMap()
+            val accountKey = offlineAccountKey() ?: return@withLock emptyMap()
+            val cacheKey = catalogCacheKey(accountKey)
+            val receipts = persistence.readCache(cacheKey)
+                ?.let { payload ->
+                    runCatching { offlineJson.decodeFromString<CatalogSnapshot>(payload) }.getOrNull()
+                }
+                ?.exerciseEditReceipts
+                .orEmpty()
+            val pending = persistence.operations(accountKey)
+                .mapNotNull { it.mutation as? UpdateExerciseMutation }
+                .associate { it.exerciseId to it.input }
+            receipts + pending
+        }
+
+    private suspend fun consumeExerciseEditReceipts(
+        protectedEdits: Map<String, ExerciseInput>,
+    ) = OfflineSyncLock.mutex.withLock {
+        if (protectedEdits.isEmpty()) return@withLock
+        val persistence = OfflineRuntime.persistence() ?: return@withLock
+        val accountKey = offlineAccountKey() ?: return@withLock
+        val cacheKey = catalogCacheKey(accountKey)
+        val snapshot = persistence.readCache(cacheKey)
+            ?.let { payload ->
+                runCatching { offlineJson.decodeFromString<CatalogSnapshot>(payload) }.getOrNull()
+            }
+            ?: return@withLock
+        val remainingReceipts = consumeProtectedExerciseEditReceipts(
+            snapshot.exerciseEditReceipts,
+            protectedEdits,
+        )
+        if (remainingReceipts == snapshot.exerciseEditReceipts) return@withLock
+        persistence.saveCache(
+            accountKey,
+            OFFLINE_DOMAIN_CATALOG,
+            cacheKey,
+            offlineJson.encodeToString(snapshot.copy(exerciseEditReceipts = remainingReceipts)),
+        )
+    }
+
+    private fun offlineAccountKey(): String? = accountStore.userId?.let { userId ->
+        accountKey(accountStore.primaryServerUrl, userId)
+    }
 
     suspend fun createWebSessionCookies(): List<String> {
         return prepareWebSession().cookies
@@ -1832,6 +1950,61 @@ internal fun updateProgramExerciseTargetSets(
         },
     )
     return bootstrap.copy(
+        activeProgram = bootstrap.activeProgram?.let { program ->
+            program.copy(workouts = program.workouts.map(::updateWorkout))
+        },
+        openSessions = bootstrap.openSessions.map { session ->
+            session.copy(workout = session.workout?.let(::updateWorkout))
+        },
+    )
+}
+
+internal fun applyExerciseInputToBootstrap(
+    bootstrap: BootstrapResponse,
+    exerciseId: String,
+    input: ExerciseInput,
+): BootstrapResponse = updateBootstrapExercise(bootstrap, exerciseId) { current ->
+    current.withGeneralMetadata(input)
+}
+
+internal fun mergeExerciseMetadataIntoBootstrap(
+    bootstrap: BootstrapResponse,
+    updated: ExerciseDto,
+): BootstrapResponse = updateBootstrapExercise(bootstrap, updated.id) { current ->
+    updated.copy(
+        userId = updated.userId ?: current.userId,
+        loadProfile = updated.loadProfile ?: current.loadProfile,
+        trainingDates = updated.trainingDates.ifEmpty { current.trainingDates },
+    )
+}
+
+internal fun consumeProtectedExerciseEditReceipts(
+    receipts: Map<String, ExerciseInput>,
+    protectedEdits: Map<String, ExerciseInput>,
+): Map<String, ExerciseInput> = receipts.filterNot { (exerciseId, input) ->
+    protectedEdits[exerciseId] == input
+}
+
+private fun updateBootstrapExercise(
+    bootstrap: BootstrapResponse,
+    exerciseId: String,
+    update: (ExerciseDto) -> ExerciseDto,
+): BootstrapResponse {
+    fun updateExercise(current: ExerciseDto): ExerciseDto =
+        if (current.id == exerciseId) update(current) else current
+
+    fun updateWorkout(workout: WorkoutDto): WorkoutDto = workout.copy(
+        exercises = workout.exercises.map { target ->
+            if (target.exerciseId == exerciseId) {
+                target.copy(exercise = updateExercise(target.exercise))
+            } else {
+                target
+            }
+        },
+    )
+
+    return bootstrap.copy(
+        catalog = bootstrap.catalog.map(::updateExercise),
         activeProgram = bootstrap.activeProgram?.let { program ->
             program.copy(workouts = program.workouts.map(::updateWorkout))
         },

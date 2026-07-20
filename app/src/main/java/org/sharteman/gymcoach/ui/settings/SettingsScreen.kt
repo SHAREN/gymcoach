@@ -103,6 +103,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenWebPath: (String) -> Unit,
     onAuthenticationRequired: () -> Unit,
+    onOpenCoachingProfile: () -> Unit = {},
     appRepository: GymCoachRepository? = null,
     repository: SettingsDataSource = SettingsRepository.create(LocalContext.current),
     watchDiagnosticsLabel: String? = null,
@@ -477,6 +478,17 @@ fun SettingsScreen(
                             }
                         },
                     )
+                }
+                item {
+                    OutlinedButton(
+                        onClick = onOpenCoachingProfile,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .testTag("settings-open-coaching-profile"),
+                    ) {
+                        Text(stringResource(R.string.coaching_profile_open))
+                    }
                 }
                 item {
                     PreferencesSection(

@@ -40,6 +40,8 @@ import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.CoachingFieldDto
+import org.sharteman.gymcoach.data.model.CoachingProfileDto
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
 import org.sharteman.gymcoach.data.model.DeleteSessionOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -580,6 +582,45 @@ class GymCoachRepositorySyncTest {
 
         assertTrue(result.isSuccess)
         assertEquals(1, fixture.api.readinessRequests.size)
+    }
+
+    @Test
+    fun staleBootstrapCannotReplaceNewerCachedCoachingProfileFields() = runTest {
+        val fixture = fixture()
+        val initial = bootstrap().copy(
+            profile = bootstrap().profile.copy(
+                coachingProfile = CoachingProfileDto(
+                    updatedAt = "2026-07-18T10:00:00.000Z",
+                    healthStatus = CoachingFieldDto(
+                        state = "KNOWN",
+                        value = "NO_SIGNIFICANT_ISSUES",
+                        updatedAt = "2026-07-18T10:00:00.000Z",
+                    ),
+                ),
+            ),
+        )
+        fixture.api.bootstrapResponse = initial
+        fixture.repository.refreshBootstrap()
+        fixture.repository.mergeCoachingProfileIntoBootstrap(
+            requireNotNull(initial.profile.coachingProfile).copy(
+                updatedAt = "2026-07-18T12:00:00.000Z",
+                healthStatus = CoachingFieldDto(
+                    state = "KNOWN",
+                    value = "TRAIN_WITH_LIMITATIONS",
+                    updatedAt = "2026-07-18T12:00:00.000Z",
+                ),
+            ),
+        )
+
+        fixture.api.bootstrapResponse = initial.copy(serverTime = "2026-07-18T12:01:00.000Z")
+        val refreshed = fixture.repository.refreshBootstrap()
+        val cached = fixture.api.json.decodeFromString<BootstrapResponse>(
+            requireNotNull(fixture.dao.getBootstrap()).payloadJson,
+        )
+
+        assertEquals("TRAIN_WITH_LIMITATIONS", refreshed.profile.coachingProfile?.healthStatus?.value)
+        assertEquals("TRAIN_WITH_LIMITATIONS", cached.profile.coachingProfile?.healthStatus?.value)
+        assertEquals("2026-07-18T12:00:00.000Z", cached.profile.coachingProfile?.healthStatus?.updatedAt)
     }
 
     @Test
