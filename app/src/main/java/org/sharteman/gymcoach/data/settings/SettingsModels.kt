@@ -3,6 +3,7 @@ package org.sharteman.gymcoach.data.settings
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.CoachingProfileDto
 
 @Serializable
 data class SettingsProfileDto(
@@ -13,6 +14,7 @@ data class SettingsProfileDto(
     val heightCm: Int? = null,
     val goal: String? = null,
     val weeklyFrequency: Int? = null,
+    val coachingProfile: CoachingProfileDto? = null,
     val unit: String = "KG",
 )
 
@@ -32,6 +34,7 @@ data class SettingsGymExerciseConfigDto(
     val id: String? = null,
     val gymId: String? = null,
     val exerciseId: String,
+    val preferredEquipmentId: String? = null,
     val isAvailable: Boolean = true,
     val weightOptions: List<Double> = emptyList(),
     val dumbbellWeights: List<Double> = emptyList(),
@@ -70,6 +73,7 @@ data class SettingsGymEquipmentDto(
     val imageUrl: String? = null,
     val image: SettingsEquipmentImageDto? = null,
     val exerciseLinks: List<ExerciseDto> = emptyList(),
+    val preferredExerciseIds: List<String> = emptyList(),
 )
 
 @Serializable

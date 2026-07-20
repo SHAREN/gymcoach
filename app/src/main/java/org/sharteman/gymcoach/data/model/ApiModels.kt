@@ -62,6 +62,7 @@ data class ProfileDto(
     val bodyweight: Double? = null,
     val unit: String = "KG",
     val activeGymId: String? = null,
+    val coachingProfile: CoachingProfileDto? = null,
     val deloadActive: Boolean = false,
 )
 
@@ -149,6 +150,7 @@ data class GymEquipmentDto(
     val baseLoadKg: Double = 0.0,
     val platePoolId: String? = null,
     val loadingSides: Int = 2,
+    val systemBarbellFamily: String? = null,
     val exerciseLinks: List<GymEquipmentExerciseDto> = emptyList(),
     val platePool: GymPlatePoolDto? = null,
 )
@@ -165,6 +167,7 @@ data class GymPlatePoolDto(
     val gymId: String,
     val name: String,
     val compatibilityKey: String,
+    val systemBarbellFamily: String? = null,
     val plates: List<GymPlateInventoryItemDto> = emptyList(),
 )
 
@@ -181,7 +184,9 @@ data class GymExerciseConfigDto(
     val id: String? = null,
     val gymId: String,
     val exerciseId: String,
+    val preferredEquipmentId: String? = null,
     val isAvailable: Boolean = true,
+    val systemProfileSupported: Boolean? = null,
     val weightOptions: List<Double> = emptyList(),
     val dumbbellWeights: List<Double> = emptyList(),
     val plateWeights: List<Double> = emptyList(),
@@ -276,11 +281,20 @@ data class ExerciseHistorySetDto(
 data class ReturnRecommendationDto(
     val mode: String,
     val exerciseGapDays: Int? = null,
+    val returnGapDays: Int? = null,
     val muscleGapDays: Int? = null,
     val targetSets: Int,
     val targetRIR: Int,
     val suggestedWeight: Double? = null,
     val weightCeiling: Double? = null,
+    val startFraction: Double? = null,
+    val calibrationRequired: Boolean = false,
+    val historySessionCount: Int = 0,
+    val recentHistorySessionCount: Int = 0,
+    val longTermHistorySessionCount: Int = 0,
+    val nonComparableHistorySessionCount: Int = 0,
+    val historyBasis: String = "none",
+    val confidence: String = "low",
 )
 
 @Serializable

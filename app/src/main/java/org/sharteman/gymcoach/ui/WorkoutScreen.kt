@@ -100,6 +100,7 @@ import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
 import org.sharteman.gymcoach.data.model.PerformanceSetDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
@@ -409,6 +410,7 @@ fun WorkoutScreen(
                     exercise = target,
                     completedRows = completedWorkingRows,
                     plannedRows = plannedRows,
+                    returnRecommendation = returnRecommendation,
                 )
             }
             if (!inventory.isAvailable || inventory.equipment.isNotEmpty()) {
@@ -857,6 +859,7 @@ private fun ExerciseSummaryCard(
     exercise: ProgramExerciseDto,
     completedRows: Int,
     plannedRows: Int,
+    returnRecommendation: ReturnRecommendationDto? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -918,6 +921,91 @@ private fun ExerciseSummaryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (returnRecommendation != null && returnRecommendation.mode != "normal") {
+                ReturnCalibrationEvidence(returnRecommendation)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReturnCalibrationEvidence(recommendation: ReturnRecommendationDto) {
+    val evidence = returnCalibrationEvidence(recommendation) ?: return
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("return-calibration-evidence"),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                stringResource(R.string.return_calibration_title),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                stringResource(
+                    when (evidence.confidence) {
+                        "high" -> R.string.return_confidence_high
+                        "medium" -> R.string.return_confidence_medium
+                        else -> R.string.return_confidence_low
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                when (evidence.historyBasis) {
+                    "recent-and-long-term" -> stringResource(
+                        R.string.return_history_recent_and_long_term,
+                        evidence.recentHistorySessionCount,
+                        evidence.longTermHistorySessionCount,
+                    )
+                    "recent-exact" -> stringResource(
+                        R.string.return_history_recent,
+                        evidence.recentHistorySessionCount,
+                    )
+                    "long-term-exact" -> stringResource(
+                        R.string.return_history_long_term,
+                        evidence.longTermHistorySessionCount,
+                    )
+                    else -> stringResource(R.string.return_history_none)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            evidence.returnGapDays?.let { returnGapDays ->
+                Text(
+                    if (evidence.followsPriorGap) {
+                        stringResource(R.string.return_prior_gap, returnGapDays)
+                    } else {
+                        stringResource(R.string.return_gap, returnGapDays)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            if (evidence.nonComparableHistorySessionCount > 0) {
+                Text(
+                    stringResource(
+                        R.string.return_non_comparable_history,
+                        evidence.nonComparableHistorySessionCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            Text(
+                stringResource(
+                    R.string.return_calibration_targets,
+                    recommendation.targetSets,
+                    recommendation.targetRIR,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
         }
     }
 }

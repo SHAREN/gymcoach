@@ -75,6 +75,10 @@ fun resolveExerciseInventory(
         return ExerciseInventory(true, "no-gym", emptyList(), false, emptyList(), constraints)
     }
 
+    val exerciseConfig = gym.exerciseConfigs.firstOrNull {
+        it.exerciseId == programExercise.exerciseId
+    }
+
     val linkedEquipment = gym.equipment
         .filter { equipment ->
             equipment.exerciseLinks.any { link -> link.exerciseId == programExercise.exerciseId }
@@ -84,6 +88,8 @@ fun resolveExerciseInventory(
         val requiresSelection = linkedEquipment.size > 1
         val resolvedEquipmentId = selectedEquipmentId
             ?.takeIf { id -> linkedEquipment.any { it.equipmentId == id } }
+            ?: exerciseConfig?.preferredEquipmentId
+                ?.takeIf { id -> linkedEquipment.any { it.equipmentId == id } }
             ?: linkedEquipment.singleOrNull()?.equipmentId
         val selected = linkedEquipment.firstOrNull { it.equipmentId == resolvedEquipmentId }
         val constraints = LoadConstraints(
@@ -102,6 +108,35 @@ fun resolveExerciseInventory(
         )
     }
 
+    if (
+        gym.inventoryMode == "EQUIPMENT_FIRST" &&
+        exerciseConfig?.systemProfileSupported != null &&
+        (equipmentType == "DUMBBELL" || equipmentType == "BARBELL")
+    ) {
+        if (
+            equipmentType == "DUMBBELL" &&
+            exerciseConfig.systemProfileSupported == true &&
+            gym.dumbbellWeights.isNotEmpty()
+        ) {
+            val weights = uniquePositive(gym.dumbbellWeights)
+            val constraints = LoadConstraints(
+                equipmentType = equipmentType,
+                isAvailable = true,
+                dumbbellWeights = weights,
+            )
+            return ExerciseInventory(
+                true,
+                "shared-dumbbells",
+                emptyList(),
+                false,
+                weights,
+                constraints,
+            )
+        }
+        val constraints = LoadConstraints(equipmentType = equipmentType, isAvailable = false)
+        return ExerciseInventory(false, "none", emptyList(), false, emptyList(), constraints)
+    }
+
     if (equipmentType == "DUMBBELL" && gym.dumbbellWeights.isNotEmpty()) {
         val weights = uniquePositive(gym.dumbbellWeights)
         val constraints = LoadConstraints(
@@ -112,9 +147,7 @@ fun resolveExerciseInventory(
         return ExerciseInventory(true, "shared-dumbbells", emptyList(), false, weights, constraints)
     }
 
-    val legacyConfig = gym.exerciseConfigs.firstOrNull {
-        it.exerciseId == programExercise.exerciseId
-    }
+    val legacyConfig = exerciseConfig
     if (legacyConfig != null) {
         val constraints = LoadConstraints(
             equipmentType = equipmentType,
