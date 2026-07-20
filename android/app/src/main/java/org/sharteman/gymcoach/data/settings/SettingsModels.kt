@@ -1,5 +1,7 @@
 package org.sharteman.gymcoach.data.settings
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -172,8 +174,10 @@ data class SettingsDumbbellsSystemProfileInput(
     val exerciseIds: List<String>,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class SettingsSystemBarInput(
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
     val equipmentId: String? = null,
     val weightKg: Double,
 )
