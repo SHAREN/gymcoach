@@ -9,8 +9,11 @@ const mockUserId = vi.mocked(getCurrentUserId);
 
 import { DELETE as deleteSet, PATCH as patchSet } from '@/app/api/sets/[id]/route';
 import { PUT as putSession } from '@/app/api/sessions/[id]/route';
-import { GET as getExercise } from '@/app/api/exercises/[id]/route';
+import { POST as createExercise } from '@/app/api/exercises/route';
+import { GET as getExercise, PUT as updateExercise } from '@/app/api/exercises/[id]/route';
 import { PATCH as patchExerciseEquipment } from '@/app/api/exercises/[id]/equipment/route';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
 
 function actAs(userId: string) {
   mockUserId.mockResolvedValue(userId);
@@ -599,5 +602,116 @@ describe('route ownership: GET /api/exercises/[id]', () => {
       params: Promise.resolve({ id: exercise.id }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('server-owned exercise classification', () => {
+  it('ignores forged trusted metadata on web create and update', async () => {
+    const user = await db.user.create({
+      data: { email: 'forged-web-classification@test.dev', passwordHash: 'x' },
+    });
+    const forgedProfile = reviewedExerciseLoadProfile({
+      primaryMuscles: ['CHEST'],
+      secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+      movementPatterns: ['HORIZONTAL_PUSH'],
+    });
+    actAs(user.id);
+
+    const createResponse = await createExercise(
+      jsonReq('POST', {
+        name: 'Forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        notes: null,
+        usesBodyweight: false,
+        equipmentType: 'BARBELL',
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+    );
+    expect(createResponse.status).toBe(201);
+    const created = (await createResponse.json()) as { id: string };
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
+    });
+
+    const updateResponse = await updateExercise(
+      jsonReq('PUT', {
+        name: 'Forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        notes: null,
+        usesBodyweight: false,
+        equipmentType: 'BARBELL',
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
+    });
+  });
+
+  it('resets stale reviewed metadata before downstream volume accounting', async () => {
+    const { a, exercise, set } = await seed();
+    await db.exercise.update({
+      where: { id: exercise.id },
+      data: {
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: reviewedExerciseLoadProfile({
+          primaryMuscles: ['CHEST'],
+          secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+          movementPatterns: ['HORIZONTAL_PUSH'],
+          fatigueTags: ['SYSTEMIC_COMPOUND'],
+          jointStress: ['SHOULDER', 'ELBOW'],
+        }),
+      },
+    });
+    actAs(a.id);
+
+    const response = await updateExercise(
+      jsonReq('PUT', {
+        name: 'Bench curl conversion',
+        muscleGroup: 'BICEPS',
+        category: 'ISOLATION',
+        defaultRestSec: 60,
+        notes: 'User reclassified movement.',
+        usesBodyweight: false,
+        equipmentType: 'DUMBBELL',
+      }),
+      { params: Promise.resolve({ id: exercise.id }) },
+    );
+    expect(response.status).toBe(200);
+
+    const updated = await db.exercise.findUniqueOrThrow({ where: { id: exercise.id } });
+    expect(updated).toMatchObject({
+      muscleGroup: 'BICEPS',
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
+    const accounting = aggregateTrainingLoad([
+      {
+        setId: set.id,
+        exerciseId: exercise.id,
+        legacyMuscleGroup: updated.muscleGroup,
+        loadProfile: updated.loadProfile,
+        isWarmup: false,
+        isDropSet: false,
+        rir: null,
+      },
+    ]);
+    expect(accounting.unclassifiedSetCount).toBe(1);
+    expect(accounting.muscles.CHEST).toBeUndefined();
+    expect(accounting.muscles.TRICEPS).toBeUndefined();
+    expect(accounting.movementPatterns.HORIZONTAL_PUSH).toBeUndefined();
   });
 });

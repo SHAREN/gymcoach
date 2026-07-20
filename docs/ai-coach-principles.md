@@ -713,6 +713,17 @@ or partial match fails closed and keeps its legacy or unclassified profile
 until explicitly classified. This fingerprint and origin marker are
 engineering data-quality safeguards, not training-science claims.
 
+Client exercise create and update payloads cannot write `catalogOrigin` or
+`loadProfile`. A change to any catalog fingerprint field, including name,
+muscle group, category, rest, bodyweight, notes or equipment type, clears the
+server-owned origin and resets the profile to explicit `UNCLASSIFIED` before
+downstream accounting. Backup version 14 exports catalog origin, but import
+rederives reviewed catalog metadata only from the same complete fingerprint.
+Legacy profiles are canonicalized from their stored primary muscle, while a
+reviewed profile without a proven catalog fingerprint becomes unclassified.
+These reset and restore rules are engineering integrity safeguards, not
+training-science classifications or new volume formulas.
+
 Completed qualifying working sets are aggregated once by the shared service.
 For every muscle it reports raw `directSets` and `indirectSets` plus separate
 regular, drop-set, RIR-present, RIR-missing and history-reliability breakdowns.

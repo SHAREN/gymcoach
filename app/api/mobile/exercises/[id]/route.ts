@@ -2,6 +2,7 @@ import { ApiError, handleApiError, parseJsonBody } from '@/lib/api';
 import { db } from '@/lib/db';
 import { requireMobileUserId, requireOwnedExercise } from '@/lib/mobile-programs-catalog';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
+import { classificationMetadataAfterClientUpdate } from '@/lib/exercise-classification';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -36,12 +37,19 @@ export async function PUT(req: Request, props: Params) {
   try {
     const { id } = await props.params;
     const userId = await requireMobileUserId(req);
-    await requireOwnedExercise(id, userId);
+    const exercise = await requireOwnedExercise(id, userId);
     const data = await parseJsonBody(req, exerciseInputSchema);
     return Response.json(
       await db.exercise.update({
         where: { id },
-        data: { ...data, notes: data.notes ?? null },
+        data: {
+          ...data,
+          notes: data.notes ?? null,
+          ...classificationMetadataAfterClientUpdate(exercise, {
+            ...data,
+            notes: data.notes ?? null,
+          }),
+        },
       }),
     );
   } catch (error) {

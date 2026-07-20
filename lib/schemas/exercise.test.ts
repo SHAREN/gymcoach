@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { exerciseEquipmentUpdateSchema, exerciseInputSchema } from './exercise';
+import { reviewedExerciseLoadProfile } from './exercise-load-profile';
 
 describe('exerciseInputSchema', () => {
   const valid = { name: 'Bench press', muscleGroup: 'CHEST', category: 'COMPOUND' };
@@ -38,6 +39,20 @@ describe('exerciseInputSchema', () => {
   it('enforces the default-rest-time range', () => {
     expect(exerciseInputSchema.safeParse({ ...valid, defaultRestSec: 5 }).success).toBe(false);
     expect(exerciseInputSchema.safeParse({ ...valid, defaultRestSec: 601 }).success).toBe(false);
+  });
+
+  it('strips server-owned catalog origin and load-profile provenance', () => {
+    const parsed = exerciseInputSchema.parse({
+      ...valid,
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: reviewedExerciseLoadProfile({
+        primaryMuscles: ['CHEST'],
+        secondaryMuscles: ['TRICEPS'],
+      }),
+    });
+
+    expect(parsed).not.toHaveProperty('catalogOrigin');
+    expect(parsed).not.toHaveProperty('loadProfile');
   });
 });
 

@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getCurrentUserId } from '@/lib/auth';
 import { applyCoachingProfilePatch } from '@/lib/schemas/coaching-profile';
 import { Prisma } from '@/lib/prisma-client';
+import { EXERCISE_CATALOG, seedExerciseCatalog } from '@/lib/exercise-catalog';
 
 // Backup export/restore completeness (issue #168): the export must carry every
 // user-owned model/field, the restore must be a lossless, ownership-scoped
@@ -427,6 +428,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const pullup = dump.exercises.find((e: { name: string }) => e.name === 'Pull-up');
     expect(pullup.usesBodyweight).toBe(true);
     expect(pullup.equipmentType).toBe('BODYWEIGHT');
+    expect(pullup.catalogOrigin).toBeNull();
     expect(pullup.loadProfile).toMatchObject({
       version: 1,
       classification: 'UNCLASSIFIED',
@@ -582,6 +584,93 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     const activeGymB = await db.gym.findFirst({ where: { id: profileB?.activeGymId ?? '' } });
     expect(activeGymB?.name).toBe('Basement');
     expect(profileB?.email).toBe('b@test.dev');
+  });
+
+  it('round-trips catalog origin and keeps later catalog seeding idempotent', async () => {
+    const source = await db.user.create({
+      data: { email: 'catalog-backup-source@test.dev', passwordHash: 'x' },
+    });
+    await seedExerciseCatalog(db, source.id);
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    const exportedBench = dump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    expect(exportedBench).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
+    });
+
+    const target = await db.user.create({
+      data: { email: 'catalog-backup-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    expect((await postBackup(jsonReq({ payload: dump, confirmReplace: true }))).status).toBe(200);
+    const restoredBeforeSeed = await db.exercise.findUniqueOrThrow({
+      where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+    });
+    expect(restoredBeforeSeed).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
+    });
+
+    await seedExerciseCatalog(db, target.id);
+    const restoredAfterSeed = await db.exercise.findUniqueOrThrow({
+      where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+    });
+    expect(restoredAfterSeed.id).toBe(restoredBeforeSeed.id);
+    expect(await db.exercise.count({ where: { userId: target.id } })).toBe(EXERCISE_CATALOG.length);
+  });
+
+  it('rederives legacy catalog origin and neutralizes malformed reviewed metadata', async () => {
+    const source = await db.user.create({
+      data: { email: 'catalog-backup-legacy-source@test.dev', passwordHash: 'x' },
+    });
+    await seedExerciseCatalog(db, source.id);
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    const legacyDump = structuredClone(dump);
+    const legacyBench = legacyDump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    delete legacyBench.catalogOrigin;
+
+    const target = await db.user.create({
+      data: { email: 'catalog-backup-legacy-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    expect((await postBackup(jsonReq({ payload: legacyDump, confirmReplace: true }))).status).toBe(
+      200,
+    );
+    expect(
+      await db.exercise.findUniqueOrThrow({
+        where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+      }),
+    ).toMatchObject({
+      catalogOrigin: 'SYSTEM_DEFAULT_V1',
+      loadProfile: { classification: 'REVIEWED', provenance: 'SYSTEM_CATALOG_REVIEW' },
+    });
+
+    const malformedDump = structuredClone(dump);
+    const malformedBench = malformedDump.exercises.find(
+      (exercise: { name: string }) => exercise.name === 'Barbell bench press',
+    );
+    malformedBench.defaultRestSec = 90;
+    expect(
+      (await postBackup(jsonReq({ payload: malformedDump, confirmReplace: true }))).status,
+    ).toBe(200);
+    expect(
+      await db.exercise.findUniqueOrThrow({
+        where: { userId_name: { userId: target.id, name: 'Barbell bench press' } },
+      }),
+    ).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        provenance: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
+      },
+    });
   });
 
   it('round-trips ordered membership timestamps and accepts legacy v9 name-only rows', async () => {

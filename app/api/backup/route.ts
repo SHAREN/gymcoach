@@ -33,9 +33,10 @@ import { resolveEquipmentType } from '@/lib/gym-loads';
 import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 import {
   exerciseLoadProfileSchema,
-  legacyPrimaryExerciseLoadProfile,
   normalizeExerciseLoadProfile,
 } from '@/lib/schemas/exercise-load-profile';
+import { deriveBackupExerciseClassification } from '@/lib/exercise-classification';
+import { SYSTEM_EXERCISE_CATALOG_ORIGIN } from '@/lib/exercise-catalog';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -55,7 +56,7 @@ import {
 //   profile). email/createdAt ride along for
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
-//   usesBodyweight and the versioned load profile.
+//   usesBodyweight, server-owned catalog origin and the versioned load profile.
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / SessionExercise / Set: all user content incl durable exercise
 //   membership, durationSec, distanceM, avgHr.
@@ -214,6 +215,7 @@ export async function GET(req: Request) {
         notes: e.notes,
         usesBodyweight: e.usesBodyweight,
         equipmentType: e.equipmentType,
+        catalogOrigin: e.catalogOrigin,
         loadProfile: normalizeExerciseLoadProfile(e.loadProfile, e.muscleGroup),
       })),
       gyms: gyms.map((gym) => ({
@@ -427,6 +429,10 @@ const importSchema = z.object({
         usesBodyweight: z.boolean().optional(),
         // v3; absent in older backups.
         equipmentType: z.nativeEnum(EquipmentType).optional(),
+        // v14; absent from earlier v14 exports created before catalog-origin
+        // preservation was added. Import rederives it only from a complete
+        // immutable catalog fingerprint.
+        catalogOrigin: z.literal(SYSTEM_EXERCISE_CATALOG_ORIGIN).nullable().optional(),
         // v14; absent in older backups, which retain their legacy primary
         // muscle as low-confidence migration evidence.
         loadProfile: exerciseLoadProfileSchema.optional(),
@@ -900,6 +906,19 @@ export async function POST(req: Request) {
         // 3. Recreate the exercises; we keep a name -> id index to link them.
         const exerciseIdByName = new Map<string, string>();
         for (const e of payload.exercises) {
+          const notes = e.notes ?? null;
+          const usesBodyweight = e.usesBodyweight ?? false;
+          const equipmentType = e.equipmentType ?? EquipmentType.OTHER;
+          const classification = deriveBackupExerciseClassification({
+            name: e.name,
+            muscleGroup: e.muscleGroup,
+            category: e.category,
+            defaultRestSec: e.defaultRestSec,
+            notes,
+            usesBodyweight,
+            equipmentType,
+            loadProfile: e.loadProfile,
+          });
           const created = await tx.exercise.create({
             data: {
               userId,
@@ -907,10 +926,10 @@ export async function POST(req: Request) {
               muscleGroup: e.muscleGroup,
               category: e.category,
               defaultRestSec: e.defaultRestSec,
-              notes: e.notes ?? null,
-              usesBodyweight: e.usesBodyweight ?? false,
-              equipmentType: e.equipmentType ?? 'OTHER',
-              loadProfile: e.loadProfile ?? legacyPrimaryExerciseLoadProfile(e.muscleGroup),
+              notes,
+              usesBodyweight,
+              equipmentType,
+              ...classification,
             },
           });
           exerciseIdByName.set(e.name, created.id);

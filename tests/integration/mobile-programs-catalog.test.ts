@@ -322,11 +322,10 @@ describe('Android programs and exercise catalog API', () => {
       ).status,
     ).toBe(200);
     expect(await db.exercise.findUnique({ where: { id: exercise.id } })).toMatchObject({
+      catalogOrigin: null,
       loadProfile: {
-        classification: 'REVIEWED',
-        secondaryMuscles: {
-          entries: expect.arrayContaining([expect.objectContaining({ muscleGroup: 'TRICEPS' })]),
-        },
+        classification: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
       },
     });
 
@@ -403,6 +402,54 @@ describe('Android programs and exercise catalog API', () => {
         classification: 'UNCLASSIFIED',
         secondaryMuscles: { state: 'UNKNOWN', entries: [] },
       },
+    });
+  });
+
+  it('ignores forged trusted metadata on mobile create and update', async () => {
+    const { token } = await seedMobileUser('mobile-forged-classification@test.dev');
+    const forgedProfile = reviewedExerciseLoadProfile({
+      primaryMuscles: ['CHEST'],
+      secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+      movementPatterns: ['HORIZONTAL_PUSH'],
+    });
+    const createResponse = await createExercise(
+      request('http://test/api/mobile/exercises', 'POST', token, {
+        name: 'Mobile forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: null,
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+    );
+    expect(createResponse.status).toBe(201);
+    const created = (await createResponse.json()) as { id: string };
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
+    });
+
+    const updateResponse = await updateExercise(
+      request(`http://test/api/mobile/exercises/${created.id}`, 'PUT', token, {
+        name: 'Mobile forged press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 120,
+        equipmentType: 'BARBELL',
+        usesBodyweight: false,
+        notes: null,
+        catalogOrigin: 'SYSTEM_DEFAULT_V1',
+        loadProfile: forgedProfile,
+      }),
+      params(created.id),
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await db.exercise.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      catalogOrigin: null,
+      loadProfile: { classification: 'UNCLASSIFIED', provenance: 'UNCLASSIFIED' },
     });
   });
 

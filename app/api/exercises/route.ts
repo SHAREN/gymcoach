@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
-import { unclassifiedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
+import { clientExerciseClassificationMetadata } from '@/lib/exercise-classification';
 
 export async function GET() {
   try {
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
         ...data,
         userId,
         notes: data.notes ?? null,
-        loadProfile: data.loadProfile ?? unclassifiedExerciseLoadProfile(),
+        ...clientExerciseClassificationMetadata(),
       },
     });
     return NextResponse.json(exercise, { status: 201 });
