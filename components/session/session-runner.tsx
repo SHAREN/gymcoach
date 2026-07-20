@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
@@ -45,7 +45,14 @@ import {
   SUPERSET_TRANSITION_REST_SEC,
 } from '@/lib/supersets';
 import { isReadinessAutoRegulationEnabled } from '@/lib/preferences';
-import { flushPendingSets, queueSet } from '@/lib/sync';
+import {
+  flushPendingSets,
+  queueSet,
+  retryPendingSet,
+  retrySessionSets,
+  SET_SYNC_EVENT,
+  type FlushScope,
+} from '@/lib/sync';
 import {
   hasUnsyncedSets,
   hydrateFromServerSets,
@@ -77,7 +84,6 @@ import {
   DROP_SET_TRANSITION_REST_SEC,
   isPlannedExerciseComplete,
   nextPlannedSetIsDropSet,
-  projectSetsToTarget,
   remainingPlannedSets,
 } from '@/lib/planned-sets';
 
@@ -167,36 +173,8 @@ type Mode =
 function sortExerciseSets(sets: PendingSet[]): PendingSet[] {
   return sets.sort(
     (a, b) =>
-      a.setNumber - b.setNumber || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId),
+      a.createdAt - b.createdAt || a.setNumber - b.setNumber || a.localId.localeCompare(b.localId),
   );
-}
-
-function projectSessionSets(
-  sets: readonly PendingSet[],
-  targetsByExerciseId: ReadonlyMap<string, ProgramExerciseWithExercise>,
-): { visible: PendingSet[]; overflow: PendingSet[] } {
-  const byExercise = new Map<string, PendingSet[]>();
-  for (const set of sets) {
-    const exerciseSets = byExercise.get(set.exerciseId) ?? [];
-    exerciseSets.push(set);
-    byExercise.set(set.exerciseId, exerciseSets);
-  }
-
-  const visible: PendingSet[] = [];
-  const overflow: PendingSet[] = [];
-  for (const [exerciseId, exerciseSets] of byExercise) {
-    sortExerciseSets(exerciseSets);
-    const target = targetsByExerciseId.get(exerciseId);
-    if (!target) {
-      visible.push(...exerciseSets);
-      continue;
-    }
-    const projected = projectSetsToTarget(target, exerciseSets);
-    visible.push(...projected.visible);
-    overflow.push(...projected.overflow);
-  }
-
-  return { visible, overflow };
 }
 
 export function sameEquipmentIdentity(
@@ -240,6 +218,14 @@ export function resolveSelectedEquipmentId(
   ) {
     return requestedId;
   }
+  if (
+    inventory.preferredEquipmentId &&
+    inventory.equipment.some(
+      (equipment) => equipment.equipmentId === inventory.preferredEquipmentId,
+    )
+  ) {
+    return inventory.preferredEquipmentId;
+  }
   if (inventory.source === 'equipment' && inventory.equipment.length === 1) {
     return inventory.equipment[0]!.equipmentId;
   }
@@ -259,12 +245,24 @@ export function buildSetValueCorrectionPatch(values: {
   weight: number;
   reps: number;
   rir: number | null;
-}): Pick<PendingSet, 'weight' | 'reps' | 'rir' | 'status' | 'attempts' | 'lastError'> {
+}): Pick<
+  PendingSet,
+  | 'weight'
+  | 'reps'
+  | 'rir'
+  | 'status'
+  | 'attempts'
+  | 'lastError'
+  | 'lastHttpStatus'
+  | 'nextAttemptAt'
+> {
   return {
     ...values,
     status: 'pending',
     attempts: 0,
     lastError: null,
+    lastHttpStatus: null,
+    nextAttemptAt: null,
   };
 }
 
@@ -273,7 +271,13 @@ export function buildSetEquipmentChangePatch(
   gymEquipmentId: string | null,
 ): Pick<
   PendingSet,
-  'gymEquipmentId' | 'equipmentSnapshotAction' | 'status' | 'attempts' | 'lastError'
+  | 'gymEquipmentId'
+  | 'equipmentSnapshotAction'
+  | 'status'
+  | 'attempts'
+  | 'lastError'
+  | 'lastHttpStatus'
+  | 'nextAttemptAt'
 > {
   return {
     gymEquipmentId,
@@ -281,6 +285,8 @@ export function buildSetEquipmentChangePatch(
     status: 'pending',
     attempts: 0,
     lastError: null,
+    lastHttpStatus: null,
+    nextAttemptAt: null,
   };
 }
 
@@ -350,11 +356,6 @@ export function SessionRunner({
     () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
     [effectiveProgramExercises],
   );
-  const effectiveProgramExerciseByExerciseId = useMemo(
-    () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
-    [effectiveProgramExercises],
-  );
-
   const initialProgramExerciseId =
     (initialExerciseId
       ? programExercises.find((pe) => pe.exerciseId === initialExerciseId)?.id
@@ -373,6 +374,10 @@ export function SessionRunner({
   // preference lives in localStorage, so it is read after mount; until then we
   // assume the default (on) so the first render matches the server output.
   const [autoRegulate, setAutoRegulate] = useState(true);
+  const syncScope = useMemo<Required<Pick<FlushScope, 'ownerId' | 'sessionId'>>>(
+    () => ({ ownerId: session.userId, sessionId: session.id }),
+    [session.id, session.userId],
+  );
 
   const selectedIndex = programExercises.findIndex((pe) => pe.id === selectedProgramExerciseId);
   const currentIdx = selectedIndex >= 0 ? selectedIndex : 0;
@@ -407,35 +412,56 @@ export function SessionRunner({
   // the suggestion falls back to pure programmed progression (pre-#55 behavior).
   const effectiveReadiness = readinessForSuggestion(readiness, autoRegulate);
 
-  // Hydrate IndexedDB with the server sets, then enable auto-sync.
+  const refreshSessionSets = useCallback(
+    async (options: { flushFirst?: boolean; force?: boolean } = {}) => {
+      if (options.flushFirst && typeof navigator !== 'undefined' && navigator.onLine) {
+        await flushPendingSets({ ...syncScope, force: options.force });
+      }
+      if (typeof navigator === 'undefined' || !navigator.onLine) return;
+      const response = await fetch(`/api/sessions/${session.id}`, { cache: 'no-store' }).catch(
+        () => null,
+      );
+      if (!response?.ok) return;
+      const fresh = (await response.json()) as { sets?: PrismaSet[] };
+      if (Array.isArray(fresh.sets)) {
+        await hydrateFromServerSets(session.id, fresh.sets, { ownerId: session.userId });
+      }
+    },
+    [session.id, session.userId, syncScope],
+  );
+
+  // Hydrate IndexedDB with the server sets, then enable foreground refresh
+  // triggers. Hydration never removes a durable row merely because a GET omits it.
   useEffect(() => {
     setAutoRegulate(isReadinessAutoRegulationEnabled());
     let cancelled = false;
     void (async () => {
-      let serverSets = session.sets;
-      let pruneMissingSynced = false;
-
-      if (typeof navigator !== 'undefined' && navigator.onLine) {
-        await flushPendingSets();
-        const response = await fetch(`/api/sessions/${session.id}`, { cache: 'no-store' }).catch(
-          () => null,
-        );
-        if (response?.ok) {
-          const fresh = (await response.json()) as { sets?: PrismaSet[] };
-          if (Array.isArray(fresh.sets)) {
-            serverSets = fresh.sets;
-            pruneMissingSynced = true;
-          }
-        }
+      try {
+        await hydrateFromServerSets(session.id, session.sets, { ownerId: session.userId });
+        if (!cancelled) setHydrated(true);
+        await refreshSessionSets({ flushFirst: true });
+      } catch {
+        if (!cancelled) toast.error(t('setLocalSaveError'));
       }
-
-      await hydrateFromServerSets(session.id, serverSets, { pruneMissingSynced });
-      if (!cancelled) setHydrated(true);
     })();
+    const onOnline = () => void refreshSessionSets({ flushFirst: true, force: true });
+    const onFocus = () => void refreshSessionSets();
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent<FlushScope>).detail;
+      if (detail?.ownerId && detail.ownerId !== session.userId) return;
+      if (detail?.sessionId && detail.sessionId !== session.id) return;
+      void refreshSessionSets();
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener(SET_SYNC_EVENT, onSync);
     void acquireWakeLock();
     const cleanupVisibility = bindWakeLockToVisibility();
     return () => {
       cancelled = true;
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(SET_SYNC_EVENT, onSync);
       void releaseWakeLock();
       cleanupVisibility();
     };
@@ -446,17 +472,21 @@ export function SessionRunner({
   const liveSets = useLiveQuery(
     async () => {
       const db = getDB();
-      const items = await db.pendingSets.where('sessionId').equals(session.id).toArray();
+      const items = await db.pendingSets
+        .where('sessionId')
+        .equals(session.id)
+        .and((set) => set.ownerId == null || set.ownerId === session.userId)
+        .toArray();
       items.sort(
         (a, b) =>
           a.exerciseId.localeCompare(b.exerciseId) ||
-          a.setNumber - b.setNumber ||
           a.createdAt - b.createdAt ||
+          a.setNumber - b.setNumber ||
           a.localId.localeCompare(b.localId),
       );
       return items;
     },
-    [session.id],
+    [session.id, session.userId],
     [] as PendingSet[],
   );
 
@@ -472,22 +502,8 @@ export function SessionRunner({
     return out;
   }, [liveSets]);
 
-  const setsByExercise = useMemo(() => {
-    const out = new Map<string, PendingSet[]>();
-    for (const [exerciseId, exerciseSets] of allSetsByExercise) {
-      const target = effectiveProgramExerciseByExerciseId.get(exerciseId);
-      out.set(
-        exerciseId,
-        target ? projectSetsToTarget(target, exerciseSets).visible : exerciseSets,
-      );
-    }
-    return out;
-  }, [allSetsByExercise, effectiveProgramExerciseByExerciseId]);
-
-  const visibleSets = useMemo(
-    () => projectSessionSets(liveSets, effectiveProgramExerciseByExerciseId).visible,
-    [effectiveProgramExerciseByExerciseId, liveSets],
-  );
+  const setsByExercise = allSetsByExercise;
+  const visibleSets = liveSets;
 
   const programExerciseByExerciseId = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
@@ -651,25 +667,31 @@ export function SessionRunner({
     }
     const existing = setsByExercise.get(currentPE.exerciseId) ?? [];
     const allExisting = allSetsByExercise.get(currentPE.exerciseId) ?? [];
-    const setNumber = (allExisting.at(-1)?.setNumber ?? 0) + 1;
+    const setNumber = Math.max(0, ...allExisting.map((set) => set.setNumber)) + 1;
 
     // Optimistic write: immediate insert into IndexedDB (status pending),
     // instant display via useLiveQuery, and a background POST attempt.
-    await queueSet({
-      localId: generateLocalId(),
-      sessionId: session.id,
-      exerciseId: currentPE.exerciseId,
-      setNumber,
-      weight: values.weight,
-      reps: values.reps,
-      rir: values.rir,
-      durationSec: values.durationSec,
-      distanceM: values.distanceM,
-      notes: values.notes,
-      isWarmup: values.isWarmup,
-      isDropSet: values.isDropSet,
-      gymEquipmentId: selectedEquipmentId,
-    });
+    try {
+      await queueSet({
+        localId: generateLocalId(),
+        ownerId: session.userId,
+        sessionId: session.id,
+        exerciseId: currentPE.exerciseId,
+        setNumber,
+        weight: values.weight,
+        reps: values.reps,
+        rir: values.rir,
+        durationSec: values.durationSec,
+        distanceM: values.distanceM,
+        notes: values.notes,
+        isWarmup: values.isWarmup,
+        isDropSet: values.isDropSet,
+        gymEquipmentId: selectedEquipmentId,
+      });
+    } catch {
+      toast.error(t('setLocalSaveError'));
+      return;
+    }
 
     vibrate(VIBRATION_PATTERNS.validate);
 
@@ -730,7 +752,7 @@ export function SessionRunner({
       // racing the original values.
       let current = (await db.pendingSets.get(set.localId)) ?? set;
       if (!current.serverId && current.status === 'syncing') {
-        await flushPendingSets();
+        await flushPendingSets({ ...syncScope, force: true });
         current = (await db.pendingSets.get(set.localId)) ?? current;
       }
 
@@ -738,7 +760,7 @@ export function SessionRunner({
 
       // The queue chooses POST for a new local row and PATCH once serverId is
       // present. Offline edits remain pending and sync on reconnect.
-      void flushPendingSets();
+      void flushPendingSets(syncScope);
       toast.success(t('setUpdated'));
     } catch (error) {
       toast.error(t('setUpdateError'));
@@ -767,7 +789,7 @@ export function SessionRunner({
     try {
       let current = (await db.pendingSets.get(set.localId)) ?? set;
       if (!current.serverId && current.status === 'syncing') {
-        await flushPendingSets();
+        await flushPendingSets({ ...syncScope, force: true });
         current = (await db.pendingSets.get(set.localId)) ?? current;
       }
 
@@ -775,7 +797,7 @@ export function SessionRunner({
         set.localId,
         buildSetEquipmentChangePatch(current, gymEquipmentId),
       );
-      void flushPendingSets();
+      void flushPendingSets(syncScope);
       toast.success(t('setUpdated'));
     } catch (error) {
       toast.error(t('setUpdateError'));
@@ -814,7 +836,7 @@ export function SessionRunner({
     try {
       let current = (await db.pendingSets.get(set.localId)) ?? set;
       if (!current.serverId && (current.status === 'pending' || current.status === 'syncing')) {
-        await flushPendingSets();
+        await flushPendingSets({ ...syncScope, force: true });
         current = (await db.pendingSets.get(set.localId)) ?? current;
       }
 
@@ -841,39 +863,50 @@ export function SessionRunner({
     }
   }
 
+  async function handleRetrySet(set: PendingSet): Promise<void> {
+    try {
+      await retryPendingSet(set.localId, syncScope);
+      await refreshSessionSets();
+    } catch {
+      toast.error(t('setRetryError'));
+    }
+  }
+
   async function handleFinishSession() {
     setClosing(true);
     try {
       // Attempt one last flush before closing, to minimize the residual queue.
       if (typeof navigator !== 'undefined' && navigator.onLine) {
-        await flushPendingSets();
+        await flushPendingSets({ ...syncScope, force: true });
       }
       const db = getDB();
-      const persistedSets = await db.pendingSets.where('sessionId').equals(session.id).toArray();
-      const projection = projectSessionSets(persistedSets, effectiveProgramExerciseByExerciseId);
-      if (hasUnsyncedSets(projection.visible)) {
-        toast.error(t('finishSyncError'));
+      const persistedSets = await db.pendingSets
+        .where('sessionId')
+        .equals(session.id)
+        .and((set) => set.ownerId == null || set.ownerId === session.userId)
+        .toArray();
+      const unsyncedSets = persistedSets.filter(
+        (set) => set.status !== 'synced' || set.serverId == null,
+      );
+      if (hasUnsyncedSets(unsyncedSets)) {
+        const failedCount = unsyncedSets.filter((set) => set.status === 'failed').length;
+        const pendingCount = unsyncedSets.length - failedCount;
+        toast.error(t('finishSyncError', { pending: pendingCount, failed: failedCount }), {
+          action: {
+            label: t('retrySync'),
+            onClick: () => void retrySessionSets(syncScope),
+          },
+        });
         return;
       }
-      const overflowSets = projection.overflow;
-      if (overflowSets.some((set) => !set.serverId)) {
-        toast.error(t('finishError'));
-        return;
-      }
-      const discardSetIds = [
-        ...new Set(overflowSets.flatMap((set) => (set.serverId ? [set.serverId] : []))),
-      ];
       const res = await fetch(`/api/sessions/${session.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ finish: true, discardSetIds }),
+        body: JSON.stringify({ finish: true }),
       });
       if (!res.ok) {
         toast.error(t('finishError'));
         return;
-      }
-      if (overflowSets.length > 0) {
-        await db.pendingSets.bulkDelete(overflowSets.map((set) => set.localId));
       }
       toast.success(t('finished'));
       router.replace('/');
@@ -885,7 +918,7 @@ export function SessionRunner({
 
   function handlePauseSession() {
     if (typeof navigator !== 'undefined' && navigator.onLine) {
-      void flushPendingSets();
+      void flushPendingSets(syncScope);
     }
     toast.success(t('controls.paused'));
     router.replace('/');
@@ -1087,6 +1120,7 @@ export function SessionRunner({
               sets={currentSets}
               isInputActive={mode.kind === 'input'}
               onDeleteSet={handleDeleteSet}
+              onRetrySet={handleRetrySet}
               priorSets={lastPerf?.sets}
             />
             {!hydrated ? null : mode.kind === 'input' ? (
@@ -1136,6 +1170,7 @@ export function SessionRunner({
               onUpdateSet={handleUpdateSet}
               onChangeSetEquipment={handleChangeSetEquipment}
               onDeleteSet={handleDeleteSet}
+              onRetrySet={handleRetrySet}
               onTargetSetsChange={handleTargetSetsChange}
             />
             {mode.kind === 'rest' && (
@@ -1214,6 +1249,7 @@ function resolveSessionExerciseInventory(
     inventoryMode: sessionGym.inventoryMode,
     exercise: pe.exercise,
     linkedEquipment,
+    preferredEquipmentId: config?.preferredEquipmentId ?? null,
     legacyConfig: config,
     sharedDumbbellWeights: sessionGym.dumbbellWeights,
     legacyPlateWeights: sessionGym.plateWeights,

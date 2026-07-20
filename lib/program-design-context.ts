@@ -16,6 +16,13 @@ import {
   type EquipmentLoadProfile,
   type ResolvedEquipmentLoadProfile,
 } from '@/lib/gym-loads';
+import {
+  hasKnownLimitations,
+  knownCoachingValue,
+  summarizeCoachingLimitations,
+  type CoachingLimitation,
+  type CoachingProfile,
+} from '@/lib/schemas/coaching-profile';
 
 const sourceProgramInclude = {
   workouts: {
@@ -50,6 +57,7 @@ export type RecoveryLevel = 'recovering' | 'watch' | 'reduce_load';
 
 export interface ProgramDesignQuestion {
   id:
+    | 'goal'
     | 'trainingExperience'
     | 'weeklyFrequency'
     | 'sessionDurationMin'
@@ -98,6 +106,16 @@ export interface ProgramDesignContext {
     techniqueAndRirFamiliarity: string | null;
     changesSinceLastProgram: string | null;
     postBlockAssessment: PostBlockAssessment | null;
+  };
+  answerSources: {
+    goal: 'request' | 'profile' | 'unknown';
+    trainingExperience: 'request' | 'profile' | 'unknown';
+    weeklyFrequency: 'request' | 'profile' | 'legacy-profile' | 'unknown';
+    sessionDurationMin: 'request' | 'profile' | 'unknown';
+    healthStatus: 'request' | 'profile' | 'unknown';
+    availableDays: 'request' | 'profile' | 'unknown';
+    limitations: 'request' | 'profile' | 'unknown';
+    equipmentAccess: 'request' | 'active-gym' | 'unknown';
   };
   missingQuestions: ProgramDesignQuestion[];
   recommendedQuestions: ProgramDesignQuestion[];
@@ -170,10 +188,16 @@ export interface ProgramDesignContext {
       muscleGroup: string;
       mode: string;
       exerciseGapDays: number | null;
+      returnGapDays: number | null;
       muscleGapDays: number | null;
       targetSets: number;
       targetRIR: number;
       suggestedWeight: number | null;
+      historyBasis: string;
+      confidence: string;
+      recentHistorySessionCount: number;
+      longTermHistorySessionCount: number;
+      nonComparableHistorySessionCount: number;
     }>;
     unavailableMetrics: string[];
   };
@@ -182,6 +206,13 @@ export interface ProgramDesignContext {
   conditioning: CoachPayload['conditioning'];
   gym: ActiveGymSummary | null;
   availableExercises: AvailableExercise[];
+  exerciseConstraints: Array<{
+    source: 'profile' | 'request';
+    kind: CoachingLimitation['kind'] | 'REQUEST_EXCLUSION';
+    label: string;
+    affectedExerciseNames: string[];
+    details: string | null;
+  }>;
   dataQuality: {
     sessionsInTwoWeeks: number;
     exercisesWithRecentProgress: number;
@@ -237,7 +268,9 @@ interface ActiveGymSummary {
   exerciseConfigs: Array<{
     exerciseId: string;
     exerciseName: string;
+    preferredEquipmentId: string | null;
     isAvailable: boolean;
+    systemProfileSupported: boolean | null;
     weightOptions: number[];
     dumbbellWeights: number[];
     plateWeights: number[];
@@ -275,6 +308,8 @@ interface AvailableExercise {
   defaultRestSec: number;
   notes: string | null;
   isAvailableInActiveGym: boolean | null;
+  isAllowedByProfile: boolean;
+  limitationReasons: string[];
   availabilitySource: string | null;
   requiresEquipmentSelection: boolean;
   equipmentOptions: ResolvedEquipmentLoadProfile[];
@@ -347,6 +382,36 @@ export async function buildProgramDesignContext({
   const source = sourceRow ? mapSourceProgram(sourceRow) : null;
   const activeGym = userContext?.activeGym ?? null;
   const gym = activeGym ? mapGym(activeGym) : null;
+  const coachingProfile = coach.userProfile.coachingProfile;
+  const requestLimitationsProvided =
+    nonEmpty(answers.limitations) != null || answers.excludedExercises !== undefined;
+  const exerciseConstraints: ProgramDesignContext['exerciseConstraints'] =
+    requestLimitationsProvided
+      ? (answers.excludedExercises ?? []).map((exerciseName) => ({
+          source: 'request' as const,
+          kind: 'REQUEST_EXCLUSION' as const,
+          label: 'Excluded for this program request',
+          affectedExerciseNames: [exerciseName],
+          details: null,
+        }))
+      : coachingProfile.limitations.state === 'KNOWN'
+        ? coachingProfile.limitations.value.entries.map((entry) => ({
+            source: 'profile' as const,
+            kind: entry.kind,
+            label: entry.label,
+            affectedExerciseNames: entry.affectedExerciseNames,
+            details: entry.details ?? null,
+          }))
+        : [];
+  const constraintReasonsByExerciseName = new Map<string, string[]>();
+  for (const constraint of exerciseConstraints) {
+    for (const exerciseName of constraint.affectedExerciseNames) {
+      const key = exerciseName.toLocaleLowerCase();
+      const reasons = constraintReasonsByExerciseName.get(key) ?? [];
+      reasons.push(`${constraint.kind}: ${constraint.label}`);
+      constraintReasonsByExerciseName.set(key, reasons);
+    }
+  }
   const configByExercise = new Map(
     gym?.exerciseConfigs.map((config) => [config.exerciseId, config]) ?? [],
   );
@@ -359,12 +424,15 @@ export async function buildProgramDesignContext({
           linkedEquipment: activeGym.equipment
             .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === exercise.id))
             .map(toEquipmentLoadProfile),
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           legacyConfig: config,
           sharedDumbbellWeights: activeGym.dumbbellWeights,
           legacyPlateWeights: activeGym.plateWeights,
           legacyBarWeights: activeGym.barWeights,
         })
       : null;
+    const limitationReasons =
+      constraintReasonsByExerciseName.get(exercise.name.toLocaleLowerCase()) ?? [];
     return {
       id: exercise.id,
       name: exercise.name,
@@ -375,6 +443,8 @@ export async function buildProgramDesignContext({
       defaultRestSec: exercise.defaultRestSec,
       notes: exercise.notes,
       isAvailableInActiveGym: resolved?.isAvailable ?? null,
+      isAllowedByProfile: limitationReasons.length === 0,
+      limitationReasons,
       availabilitySource: resolved?.source ?? null,
       requiresEquipmentSelection: resolved?.requiresEquipmentSelection ?? false,
       equipmentOptions: resolved?.equipment ?? [],
@@ -387,23 +457,47 @@ export async function buildProgramDesignContext({
     };
   });
 
-  const durationSamples = [coach.weekCurrent, coach.weekPrevious]
-    .filter((week): week is NonNullable<typeof week> => week != null)
-    .flatMap((week) => week.sessions.map((session) => session.durationMin))
-    .filter((value): value is number => value != null && value > 0);
-  const inferredDuration = durationSamples.length >= 3 ? median(durationSamples) : null;
-  const resolvedWeeklyFrequency = answers.weeklyFrequency ?? coach.userProfile.weeklyFrequency;
-  const resolvedLimitations = nonEmpty(answers.limitations);
+  const profileTrainingLevel = knownCoachingValue(coachingProfile.trainingLevel);
+  const profileAvailableDays = knownCoachingValue(coachingProfile.availableWeekdays);
+  const profileDuration = knownCoachingValue(coachingProfile.maximumSessionDurationMin);
+  const profileHealthStatus = knownCoachingValue(coachingProfile.healthStatus);
+  const resolvedGoal = nonEmpty(goal) ?? profileGoalDescription(coach.userProfile.goal);
+  const resolvedTrainingExperience = answers.trainingExperience ?? profileTrainingLevel;
+  const resolvedAvailableDays = answers.availableDays ?? profileAvailableDays;
+  const resolvedSessionDuration = answers.sessionDurationMin ?? profileDuration;
+  const resolvedWeeklyFrequency =
+    answers.weeklyFrequency ?? resolvedAvailableDays?.length ?? coach.userProfile.weeklyFrequency;
+  const resolvedLimitations =
+    nonEmpty(answers.limitations) ??
+    (answers.excludedExercises !== undefined
+      ? answers.excludedExercises.length > 0
+        ? `Exclude: ${answers.excludedExercises.join(', ')}`
+        : 'none'
+      : summarizeCoachingLimitations(coachingProfile));
   const resolvedEquipmentAccess = nonEmpty(answers.equipmentAccess);
-  const resolvedHealthStatus = answers.healthStatus ?? null;
+  const resolvedGoalPriorities =
+    nonEmpty(answers.goalPriorities) ?? summarizeProfilePriorities(coachingProfile);
+  const resolvedConcurrentTraining =
+    nonEmpty(answers.concurrentTraining) ?? summarizeOutsideActivities(coachingProfile);
+  const resolvedPreferences =
+    nonEmpty(answers.preferences) ?? summarizeExercisePreferences(coachingProfile);
+  const resolvedHealthStatus = answers.healthStatus ?? profileHealthStatus;
+  const limitationsKnown = requestLimitationsProvided
+    ? resolvedHealthStatus === 'TRAIN_WITH_LIMITATIONS'
+      ? (answers.excludedExercises?.length ?? 0) > 0
+      : true
+    : resolvedHealthStatus === 'TRAIN_WITH_LIMITATIONS'
+      ? coachingProfile.limitations.state === 'KNOWN' &&
+        coachingProfile.limitations.value.entries.length > 0
+      : hasKnownLimitations(coachingProfile);
   const missingQuestions = buildMissingQuestions({
     mode,
-    trainingExperience: answers.trainingExperience ?? null,
-    weeklyFrequency: resolvedWeeklyFrequency,
-    sessionDurationMin: answers.sessionDurationMin ?? inferredDuration,
-    availableDays: answers.availableDays ?? null,
+    goal: resolvedGoal,
+    trainingExperience: resolvedTrainingExperience,
+    sessionDurationMin: resolvedSessionDuration,
+    availableDays: resolvedAvailableDays,
     healthStatus: resolvedHealthStatus,
-    limitations: resolvedLimitations,
+    limitationsKnown,
     equipmentAccess: gym || resolvedEquipmentAccess ? 'known' : null,
     postBlockAssessment: answers.postBlockAssessment ?? null,
   });
@@ -441,25 +535,59 @@ export async function buildProgramDesignContext({
     methodologyVersion: PROGRAM_DESIGN_METHODOLOGY_VERSION,
     generatedAt: new Date().toISOString(),
     mode,
-    goal,
+    goal: resolvedGoal ?? '',
     sourceProgramId: mode === 'NEW_PROGRAM' ? null : (source?.id ?? null),
     answers: {
-      trainingExperience: answers.trainingExperience ?? null,
+      trainingExperience: resolvedTrainingExperience,
       weeklyFrequency: resolvedWeeklyFrequency,
-      sessionDurationMin: answers.sessionDurationMin ?? inferredDuration,
+      sessionDurationMin: resolvedSessionDuration,
       healthStatus: resolvedHealthStatus,
       phaseLengthWeeks: answers.phaseLengthWeeks ?? 6,
-      availableDays: answers.availableDays ?? null,
+      availableDays: resolvedAvailableDays,
       scheduleConstraints: nonEmpty(answers.scheduleConstraints),
       limitations: resolvedLimitations,
       equipmentAccess: resolvedEquipmentAccess,
-      preferences: nonEmpty(answers.preferences),
+      preferences: resolvedPreferences,
       recentTrainingBackground: nonEmpty(answers.recentTrainingBackground),
-      goalPriorities: nonEmpty(answers.goalPriorities),
-      concurrentTraining: nonEmpty(answers.concurrentTraining),
+      goalPriorities: resolvedGoalPriorities,
+      concurrentTraining: resolvedConcurrentTraining,
       techniqueAndRirFamiliarity: nonEmpty(answers.techniqueAndRirFamiliarity),
       changesSinceLastProgram: nonEmpty(answers.changesSinceLastProgram),
       postBlockAssessment: answers.postBlockAssessment ?? null,
+    },
+    answerSources: {
+      goal: nonEmpty(goal) ? 'request' : resolvedGoal ? 'profile' : 'unknown',
+      trainingExperience: answers.trainingExperience
+        ? 'request'
+        : profileTrainingLevel
+          ? 'profile'
+          : 'unknown',
+      weeklyFrequency: answers.weeklyFrequency
+        ? 'request'
+        : answers.availableDays
+          ? 'request'
+          : profileAvailableDays
+            ? 'profile'
+            : coach.userProfile.weeklyFrequency
+              ? 'legacy-profile'
+              : 'unknown',
+      sessionDurationMin: answers.sessionDurationMin
+        ? 'request'
+        : profileDuration
+          ? 'profile'
+          : 'unknown',
+      healthStatus: answers.healthStatus ? 'request' : profileHealthStatus ? 'profile' : 'unknown',
+      availableDays: answers.availableDays
+        ? 'request'
+        : profileAvailableDays
+          ? 'profile'
+          : 'unknown',
+      limitations: requestLimitationsProvided
+        ? 'request'
+        : limitationsKnown
+          ? 'profile'
+          : 'unknown',
+      equipmentAccess: resolvedEquipmentAccess ? 'request' : gym ? 'active-gym' : 'unknown',
     },
     missingQuestions,
     recommendedQuestions,
@@ -507,6 +635,7 @@ export async function buildProgramDesignContext({
     conditioning: coach.conditioning,
     gym,
     availableExercises,
+    exerciseConstraints,
     dataQuality: {
       sessionsInTwoWeeks: sessionsLogged,
       exercisesWithRecentProgress: coach.recentProgress.length,
@@ -566,7 +695,9 @@ function mapGym(gym: ActiveGymRow): ActiveGymSummary {
     exerciseConfigs: gym.exerciseConfigs.map((config) => ({
       exerciseId: config.exerciseId,
       exerciseName: config.exercise.name,
+      preferredEquipmentId: config.preferredEquipmentId,
       isAvailable: config.isAvailable,
+      systemProfileSupported: config.systemProfileSupported,
       weightOptions: config.weightOptions,
       dumbbellWeights: config.dumbbellWeights,
       plateWeights: config.plateWeights,
@@ -803,22 +934,28 @@ async function buildReturnRecommendations({
       muscleGroup: pe.exercise.muscleGroup,
       mode: recommendation.mode,
       exerciseGapDays: recommendation.exerciseGapDays,
+      returnGapDays: recommendation.returnGapDays,
       muscleGapDays: recommendation.muscleGapDays,
       targetSets: recommendation.targetSets,
       targetRIR: recommendation.targetRIR,
       suggestedWeight: recommendation.suggestedWeight,
+      historyBasis: recommendation.historyBasis,
+      confidence: recommendation.confidence,
+      recentHistorySessionCount: recommendation.recentHistorySessionCount,
+      longTermHistorySessionCount: recommendation.longTermHistorySessionCount,
+      nonComparableHistorySessionCount: recommendation.nonComparableHistorySessionCount,
     };
   });
 }
 
 function buildMissingQuestions(input: {
   mode: ProgramDesignMode;
+  goal: string | null;
   trainingExperience: TrainingExperience | null;
-  weeklyFrequency: number | null;
   sessionDurationMin: number | null;
   availableDays: number[] | null;
   healthStatus: ProgramHealthStatus | null;
-  limitations: string | null;
+  limitationsKnown: boolean;
   equipmentAccess: string | null;
   postBlockAssessment: PostBlockAssessment | null;
 }): ProgramDesignQuestion[] {
@@ -831,12 +968,12 @@ function buildMissingQuestions(input: {
       input: 'select',
       required: true,
       options: [
-        { value: 'NO_RELEVANT_CONCERNS', label: 'No relevant health or pain concerns' },
+        { value: 'NO_SIGNIFICANT_ISSUES', label: 'No significant issues for ordinary training' },
         {
-          value: 'CLEARED_WITH_LIMITATIONS',
-          label: 'Cleared for ordinary training with known limitations',
+          value: 'TRAIN_WITH_LIMITATIONS',
+          label: 'Train with known limitations',
         },
-        { value: 'NEEDS_MEDICAL_CLEARANCE', label: 'Medical clearance is needed' },
+        { value: 'MEDICAL_CLEARANCE_REQUIRED', label: 'Medical clearance is required' },
       ],
     });
   }
@@ -851,16 +988,6 @@ function buildMissingQuestions(input: {
         { value: 'INTERMEDIATE', label: 'Intermediate' },
         { value: 'ADVANCED', label: 'Advanced' },
       ],
-    });
-  }
-  if (!input.weeklyFrequency) {
-    questions.push({
-      id: 'weeklyFrequency',
-      prompt: 'How many training days per week are realistically available?',
-      input: 'number',
-      required: true,
-      min: 1,
-      max: 7,
     });
   }
   if (!input.availableDays) {
@@ -880,6 +1007,15 @@ function buildMissingQuestions(input: {
       ],
     });
   }
+  if (!input.limitationsKnown) {
+    questions.push({
+      id: 'limitations',
+      prompt:
+        'Are there current pain, injury, movement, or exercise constraints? Name every affected exercise so GymCoach can enforce the restriction, or enter "none" when there are none.',
+      input: 'text',
+      required: true,
+    });
+  }
   if (!input.sessionDurationMin) {
     questions.push({
       id: 'sessionDurationMin',
@@ -890,10 +1026,10 @@ function buildMissingQuestions(input: {
       max: 240,
     });
   }
-  if (!input.limitations) {
+  if (!input.goal) {
     questions.push({
-      id: 'limitations',
-      prompt: 'Are there current movement or load constraints? Enter "none" when there are none.',
+      id: 'goal',
+      prompt: 'What is the primary training goal for this program?',
       input: 'text',
       required: true,
     });
@@ -1007,7 +1143,7 @@ function buildRecommendedQuestions(input: {
 }
 
 function programSafety(healthStatus: ProgramHealthStatus | null): ProgramDesignContext['safety'] {
-  if (healthStatus === 'NEEDS_MEDICAL_CLEARANCE') {
+  if (healthStatus === 'MEDICAL_CLEARANCE_REQUIRED') {
     return {
       healthStatus,
       canGenerateProgram: false,
@@ -1021,6 +1157,58 @@ function programSafety(healthStatus: ProgramHealthStatus | null): ProgramDesignC
     canGenerateProgram: healthStatus != null,
     blockingReasons: [],
   };
+}
+
+function profileGoalDescription(goal: string | null): string | null {
+  switch (goal) {
+    case 'HYPERTROPHY':
+      return 'Build muscle and hypertrophy';
+    case 'STRENGTH':
+      return 'Improve strength';
+    case 'FAT_LOSS':
+      return 'Support fat loss while training';
+    case 'RECOMP':
+      return 'Body recomposition';
+    case 'GENERAL_FITNESS':
+      return 'Improve general fitness';
+    default:
+      return null;
+  }
+}
+
+function summarizeProfilePriorities(profile: CoachingProfile): string | null {
+  const parts: string[] = [];
+  const muscles = knownCoachingValue(profile.priorityMuscles);
+  const movements = knownCoachingValue(profile.priorityStrengthMovements);
+  if (muscles?.length) parts.push(`Priority muscles: ${muscles.join(', ')}`);
+  if (movements?.length) parts.push(`Priority strength movements: ${movements.join(', ')}`);
+  return parts.length > 0 ? parts.join('; ') : null;
+}
+
+function summarizeOutsideActivities(profile: CoachingProfile): string | null {
+  const activities = knownCoachingValue(profile.outsideActivities);
+  if (!activities?.length) return null;
+  return activities
+    .map((activity) => {
+      const workload = [
+        activity.sessionsPerWeek != null ? `${activity.sessionsPerWeek} sessions/week` : null,
+        activity.minutesPerWeek != null ? `${activity.minutesPerWeek} min/week` : null,
+        activity.intensity ? `${activity.intensity.toLocaleLowerCase()} intensity` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      return `${activity.type}: ${activity.name}${workload ? ` (${workload})` : ''}${activity.details ? ` - ${activity.details}` : ''}`;
+    })
+    .join('; ');
+}
+
+function summarizeExercisePreferences(profile: CoachingProfile): string | null {
+  const liked = knownCoachingValue(profile.likedExercises);
+  const disliked = knownCoachingValue(profile.dislikedExercises);
+  const parts: string[] = [];
+  if (liked?.length) parts.push(`Liked exercises: ${liked.join(', ')}`);
+  if (disliked?.length) parts.push(`Disliked exercises: ${disliked.join(', ')}`);
+  return parts.length > 0 ? parts.join('; ') : null;
 }
 
 function distinctHistoryWeeks(progress: CoachPayload['recentProgress']): number {
@@ -1042,14 +1230,6 @@ function trendPct(values: number[]): number | null {
   const last = values.at(-1)!;
   if (!(first > 0)) return null;
   return round(((last - first) / first) * 100, 1);
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return Math.round(
-    sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!,
-  );
 }
 
 function mean(values: number[]): number {

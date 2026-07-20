@@ -8,6 +8,8 @@ const cableARow = {
   rir: 3,
   isDropSet: false,
   gymEquipmentId: 'cable-a',
+  equipmentNameSnapshot: 'Cable A',
+  equipmentLoadSnapshot: { gymEquipmentId: 'cable-a' },
   completedAt: new Date('2026-05-01T10:00:00.000Z'),
   session: { startedAt: new Date('2026-05-01T10:00:00.000Z'), gymId: 'gym-1' },
 };
@@ -24,6 +26,8 @@ const nullGymARow = {
   sessionId: 'session-null-a',
   weight: 30,
   gymEquipmentId: null,
+  equipmentNameSnapshot: null,
+  equipmentLoadSnapshot: null,
   completedAt: new Date('2026-07-14T10:00:00.000Z'),
   session: { startedAt: new Date('2026-07-14T10:00:00.000Z'), gymId: 'gym-a' },
 };
@@ -32,6 +36,8 @@ const nullGymBRow = {
   sessionId: 'session-null-b',
   weight: 60,
   gymEquipmentId: null,
+  equipmentNameSnapshot: null,
+  equipmentLoadSnapshot: null,
   completedAt: new Date('2026-06-20T10:00:00.000Z'),
   session: { startedAt: new Date('2026-06-20T10:00:00.000Z'), gymId: 'gym-b' },
 };
@@ -40,8 +46,19 @@ const nullNoGymRow = {
   sessionId: 'session-no-gym',
   weight: 70,
   gymEquipmentId: null,
+  equipmentNameSnapshot: null,
+  equipmentLoadSnapshot: null,
   completedAt: new Date('2026-06-10T10:00:00.000Z'),
   session: { startedAt: new Date('2026-06-10T10:00:00.000Z'), gymId: null },
+};
+const deletedGymBRow = {
+  ...nullGymBRow,
+  sessionId: 'session-deleted-gym-b',
+  weight: 200,
+  equipmentNameSnapshot: 'Deleted Cable',
+  equipmentLoadSnapshot: { gymEquipmentId: 'deleted-cable' },
+  completedAt: new Date('2026-09-01T10:00:00.000Z'),
+  session: { startedAt: new Date('2026-09-01T10:00:00.000Z'), gymId: 'gym-b' },
 };
 
 vi.mock('@/lib/db', () => ({
@@ -50,9 +67,14 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
         if (!('exerciseId' in where)) return [];
         const gymId = (where.session as { gymId?: string | null } | undefined)?.gymId;
-        return [cableBRow, cableARow, nullGymARow, nullGymBRow, nullNoGymRow].filter(
-          (row) => gymId === undefined || row.session.gymId === gymId,
-        );
+        return [
+          deletedGymBRow,
+          cableBRow,
+          cableARow,
+          nullGymARow,
+          nullGymBRow,
+          nullNoGymRow,
+        ].filter((row) => gymId === undefined || row.session.gymId === gymId);
       }),
       findFirst: vi.fn(async () => ({ completedAt: cableBRow.completedAt })),
     },
@@ -131,6 +153,7 @@ describe('equipment-specific return-to-training history', () => {
     expect(cableA).toMatchObject({ mode: 'exercise-reintro', exerciseGapDays: 75 });
     expect(cableA?.weightCeiling).not.toBe(cableB?.weightCeiling);
     expect(cableB).toMatchObject({ mode: 'normal', exerciseGapDays: 5 });
+    expect(cableA?.nonComparableHistorySessionCount).toBe(5);
   });
 
   it('keeps null-equipment return history scoped to its gym', async () => {
@@ -200,6 +223,54 @@ describe('equipment-specific return-to-training history', () => {
       gymId: null,
       gymEquipmentId: null,
       recommendation: { exerciseGapDays: 35 },
+    });
+  });
+
+  it('does not treat deleted equipment snapshots as manual null-equipment history', async () => {
+    const recommendations = await getReturnToTrainingRecommendationsByEquipment({
+      userId: 'user-1',
+      programExercises: [
+        {
+          id: 'pe-1',
+          exerciseId: 'pressdown',
+          targetSets: 3,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise: {
+            name: 'Cable pressdown',
+            category: 'ISOLATION',
+            equipmentType: 'CABLE',
+            usesBodyweight: false,
+            muscleGroup: 'TRICEPS',
+          },
+        },
+      ],
+      excludeSessionId: 'current-session',
+      now: new Date('2026-09-15T10:00:00.000Z'),
+      gym: {
+        id: 'gym-b',
+        inventoryMode: 'LEGACY',
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+        exerciseConfigs: [
+          {
+            exerciseId: 'pressdown',
+            isAvailable: true,
+            weightOptions: [10, 20, 30, 40, 50, 60],
+            dumbbellWeights: [],
+            plateWeights: [],
+            barWeights: [],
+          },
+        ],
+        equipment: [],
+      },
+    });
+
+    expect(recommendations['pe-1']?.[0]?.recommendation).toMatchObject({
+      historySessionCount: 1,
+      nonComparableHistorySessionCount: 5,
+      historyBasis: 'long-term-exact',
     });
   });
 });

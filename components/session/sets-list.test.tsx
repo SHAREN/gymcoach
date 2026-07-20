@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
 import { SetsList } from './sets-list';
@@ -85,5 +85,33 @@ describe('SetsList PR badge', () => {
     );
     expect(screen.queryByText('Weight PR')).toBeNull();
     expect(screen.queryByText('e1RM PR')).toBeNull();
+  });
+
+  it('keeps overflow and a failed cardio-style row visible with retry recovery', () => {
+    const onRetrySet = vi.fn();
+    const first = pendingSet({ localId: 'a', setNumber: 1 });
+    const failed = pendingSet({
+      localId: 'b',
+      setNumber: 1,
+      status: 'failed',
+      serverId: null,
+      attempts: 1,
+      lastError: 'Invalid set.',
+    });
+    render(
+      <SetsList
+        programExercise={{ ...pe, targetSets: 1 }}
+        sets={[first, failed]}
+        isInputActive={true}
+        onDeleteSet={() => {}}
+        onRetrySet={onRetrySet}
+      />,
+    );
+
+    expect(screen.getByText('Set 2')).toBeInTheDocument();
+    expect(screen.getByText('Extra completed set')).toBeInTheDocument();
+    expect(screen.getByText('Sync failed: Invalid set.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry set 2' }));
+    expect(onRetrySet).toHaveBeenCalledWith(failed);
   });
 });

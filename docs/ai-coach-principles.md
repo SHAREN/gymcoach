@@ -139,19 +139,31 @@ facts. Important current fallbacks:
 
 Source-backed intake principles require the goal, training experience, a
 realistic schedule, session-duration limit, actual equipment and a current
-safety/constraint status. The product implements this with required weekly
-frequency, specific available weekdays and one structured safety status. This
-required/optional split is an engineering product rule, not a clinical
-screening instrument.
+safety/constraint status. Source-backed personalization also benefits from
+priorities, exercise preferences, recurring cardio, sport or physical work and
+ordinary sleep, stress and recovery context. Static baseline recovery does not
+replace a current readiness check-in.
 
-`NEEDS_MEDICAL_CLEARANCE` blocks automatic program generation. A trainee who is
-cleared for ordinary training with known limitations MUST describe those
-approved limitations. GymCoach does not diagnose, rehabilitate or decide return
-after illness, injury, surgery or unusual pain. A next mesocycle or current
-revision also requires the post-block recovery checklist. Goal priorities,
-schedule constraints, preferences, concurrent activity, recent external
-training, RIR familiarity and changes since the source program are recommended
-questions: missing answers lower specificity but do not authorize invention.
+The product implements these principles with a versioned structured coaching
+profile. Every field is explicitly `UNKNOWN`, `KNOWN` or, where meaningful,
+`NOT_APPLICABLE`, with server-owned update timestamps. `UNKNOWN` MUST NOT be
+normalized to healthy, unrestricted, experienced or available. Exact available
+weekdays determine feasible frequency; historical attendance and duration MUST
+NOT fill missing schedule or maximum-duration answers. These state names, JSON
+shape, field bounds, exact-day gate and provenance rules are engineering
+heuristics, not a clinical screening instrument.
+
+`MEDICAL_CLEARANCE_REQUIRED` blocks automatic new-program, next-mesocycle and
+current-revision generation. `TRAIN_WITH_LIMITATIONS` requires structured
+limitations. Every exercise named under pain, injury, forbidden or discouraged
+movement/exercise information is a hard exercise-selection constraint. The
+validator MUST reject it and MUST NOT silently substitute a related movement.
+GymCoach does not diagnose, rehabilitate or decide return after illness, injury,
+surgery or unusual pain. A next mesocycle or current revision also requires the
+post-block recovery checklist. Goal priorities, schedule constraints,
+preferences, concurrent activity, recent external training, RIR familiarity
+and changes since the source program are recommended questions: missing answers
+lower specificity but do not authorize invention.
 
 ## 5. Current deterministic calculations
 
@@ -234,22 +246,74 @@ Current windows and ratios:
 - baseline primary-muscle volume: the preceding 56 days, normalized to 28 days;
 - recent primary-muscle activity must be within 14 days;
 - maintained-volume ratio: at least 70% of the normalized baseline;
-- start fraction when the muscle stayed trained: 85%;
-- start fraction after a broader muscle break: 75%.
+- recent exact-equipment session window: 14 days;
+- recent-biased long-term anchor: median capacity from up to the latest eight
+  older valid exact-equipment sessions, with no age cutoff;
+- established-history floor: 85% of the strongest rolling three-session median
+  across all older exact-equipment history;
+- recent exact capacity weight: 75%;
+- long-term exact anchor weight: 25%;
+- when at least three older exact sessions exist, bound the recent anchor to
+  75-125% of the long-term anchor before weighting;
+- when recent evidence exists, one or two older exact sessions are never
+  numerically blended: with a recent sample of one or two sessions, every sparse
+  older capacity must fall within 75-125% of the recent median to confirm use of
+  the recent median alone; otherwise the load falls back to current-equipment
+  calibration; three or more recent sessions use their median alone when older
+  history remains sparse;
+- without recent exact evidence, one or two older exact sessions retain the
+  existing low-confidence long-term-only anchor because no current signal is
+  available to contradict them;
+- start fraction for a return gap over 42 but under 84 days: 85%;
+- start fraction for a return gap from 84 through 167 days: 80%;
+- start fraction for a return gap of at least 168 days: 75%;
+- broader muscle return start fractions: 75% under 84 days, 70% from 84
+  through 167 days and 65% at 168 days or longer.
+
+Only valid non-warm-up, non-drop working sessions with positive repetitions
+participate in exact-load history. Same-exercise history remains eligible
+regardless of age, but its load anchor is scoped to the current gym and exact
+physical equipment identity. A live `gymEquipmentId = null` row is comparable
+to a manual or legacy null-equipment path only when it has no frozen equipment
+name or load-profile snapshot. Deleted or unlinked equipment, another physical
+machine and related exercises may lower confidence or inform muscle readiness,
+but their loads MUST NOT be converted into a current exact weight.
+
+A valid recent exact-equipment session is the primary current-capability signal
+even when it is the only recent observation. If it occurred within 14 days and
+immediately followed a gap over 42 days, the original gap remains the
+`returnGapDays` for one calibration session instead of being erased by the new
+timestamp. Older exact history supplies a robust sanity bound when enough
+observations exist. A stable three-session block anywhere in the available
+history supplies a bounded floor, so a later run of weak calibration sessions
+cannot erase an established exact-equipment history. Sample count, missing RIR,
+non-comparable equipment history and progressively longer gaps change `low`,
+`medium` or `high` confidence, not history eligibility.
+
+The base confidence tier is `high` only with at least two recent exact sessions
+and at least three older exact sessions. It is `medium` with at least one recent
+exact session or at least three older exact sessions, and otherwise `low`. Any
+missing RIR in eligible exact history or any non-comparable equipment history
+lowers one tier (`high` to `medium`, otherwise to `low`). A return gap from 84
+through 167 days lowers one additional tier; a gap of at least 168 days lowers
+two; a gap from 43 through 83 days adds no confidence penalty. Sample, data and
+gap penalties are cumulative and cannot lower confidence below `low`. A
+conflict between a recent sample of one or two sessions and one or two older
+sessions forces confidence to `low` before the data and gap penalties.
 
 Current modes:
 
-| Mode               | Trigger                                                                        | Session-only targets                                                  |
-| ------------------ | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `normal`           | Cardio, no history at all, or exercise gap at most 42 days                     | Authored program                                                      |
-| `exercise-reintro` | Same exercise absent for more than 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3                                          |
-| `new-exercise`     | Muscle has history but this exercise does not                                  | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
-| `muscle-reintro`   | Primary muscle has no history or a gap over 42 days                            | 1 set, at least RIR 4                                                 |
+| Mode               | Trigger                                                                          | Session-only targets                                                  |
+| ------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `normal`           | Cardio, no history at all, or no active exact-exercise return gap over 42 days   | Authored program                                                      |
+| `exercise-reintro` | Exact exercise has a return gap over 42 days while the muscle has recent history | Up to 2 sets, at least RIR 3                                          |
+| `new-exercise`     | Muscle has history but this exercise does not                                    | Up to 2 sets when muscle is maintained, otherwise broad-return limits |
+| `muscle-reintro`   | Primary muscle has no history or a gap over 42 days                              | 1 set, at least RIR 4                                                 |
 
 Drop sets are disabled during return calibration. These changes apply only to
 the active session and MUST NOT silently rewrite the saved program.
 
-For each of up to the last three sessions of the same exercise:
+For every valid exact-equipment session, calculate one session capacity:
 
 ```text
 effectiveLoad = externalWeight
@@ -257,21 +321,52 @@ effectiveLoad = bodyweight + externalWeight  (bodyweight exercise)
 
 setCapacity = effectiveLoad * (1 + clamp(reps + RIR, 1, 30) / 30)
 sessionCapacity = max(setCapacity for non-drop working sets)
-historicalCapacity = median(sessionCapacity)
+```
 
+The recent and long-term anchors are then built from those session capacities.
+The recent-biased median is combined with an 85%-scaled floor from the strongest
+rolling three-session median across all older history. The recent anchor is
+bounded only when at least three older sessions provide a robust comparison,
+then the anchors are weighted 75/25. One or two older sessions are consistency
+context only and never enter that blend. If both recent and older samples are
+sparse, all older capacities must agree with the recent median inside the same
+75-125% band; agreement preserves the recent-only anchor, while disagreement
+uses current-equipment calibration rather than guessing which observation is
+wrong. With no recent evidence, fewer than three older sessions likewise remain
+eligible as the low-confidence long-term-only anchor. Long-term exact history
+remains eligible regardless of age; at least three older sessions are required
+before it is treated as robust enough to bound and blend with recent evidence.
+Without exact comparable history, the application uses calibration or the
+lightest current-equipment load and does not borrow another machine's number.
+
+```text
+historicalCapacity = robust weighted anchors, confirmed recent-only anchor,
+                     long-term-only anchor (low-confidence when sparse),
+                     or no precise anchor on sparse conflict
 targetCapacityReps = targetRepsMin + returnTargetRIR
 weightCeiling = historicalCapacity / (1 + targetCapacityReps / 30)
 suggestedWeight = weightCeiling * startFraction
 ```
 
-If RIR is absent, the current return estimate uses zero. The external load is
-then separated from bodyweight, rounded down to available gym equipment and
-never allowed above the calculated ceiling.
+If RIR is absent, the capacity estimate uses zero and confidence is reduced. It
+MUST NOT create an upward adjustment. The external load is then separated from
+bodyweight, rounded down to available gym equipment and never allowed above the
+calculated ceiling. Web and Android receive the same structured confidence,
+recent/long-term counts, non-comparable count and gap evidence. The first set
+remains session-only calibration; subsequent sets use recorded RIR and cannot
+increase above the return ceiling. If the calculated non-bodyweight ceiling is
+below the lightest attainable current-equipment load, that lightest load becomes
+both the starting load and session ceiling instead of emitting an impossible
+zero-kilogram option.
 
-The Epley equation, median-of-three rule, windows, ratios and 85%/75% fractions
-are engineering heuristics. The source-backed invariant is conservative
-reintroduction with low volume, RIR 3-4, no forced failure and movement-specific
-calibration.
+The Epley equation, all windows and gap bands, latest-eight median, rolling
+three-session floor, 85% floor ratio, 75/25 weighting, 75-125% bound,
+confidence tiers, return-episode rule, equipment-floor behavior, volume ratios
+and all 85/80/75% or 75/70/65% fractions are engineering heuristics. The
+source-backed invariants are gradual individualized reintroduction, low initial
+volume and effort, no forced failure, current RIR/RPE calibration and
+movement/equipment specificity. The sources do not establish a universal
+detraining curve or an exact return percentage.
 
 ### 5.4 Autoregulation between sets
 
@@ -364,6 +459,8 @@ server-built `ProgramDesignContext`. It includes:
 - actual RIR minus programmed RIR, excluding warm-ups and drop sets;
 - readiness, sleep, soreness, deload and post-block recovery signals;
 - exercise-specific return-to-training ceilings;
+- normalized structured coaching-profile facts with request/profile provenance;
+- hard named-exercise constraints from self-reported limitations;
 - required questions, recommended questions, a safety gate and data confidence.
 
 Objective performance trends and completed training have higher decision weight
@@ -380,10 +477,14 @@ blocks an increase in total primary-muscle sets relative to the source program.
 Program validation currently checks required answers, unavailable equipment,
 compound failure and drop-set warnings, weekly and per-session primary-muscle
 volume, frequency distribution, available weekday assignments, estimated
-session duration, active-gym state, the medical-clearance gate, and attempts to
-raise volume during under-recovery. The final user-edited draft MUST be rebuilt
-against fresh context and validated again immediately before it is saved. MCP
-write tools follow the same rule.
+session duration, active-gym state, the medical-clearance gate, named limitation
+constraints, and attempts to raise volume during under-recovery. Maximum session
+duration is a hard product feasibility limit without a hidden tolerance.
+Exact-name constraint matching and the absence of a tolerance are engineering
+rules; the source-backed principle is to respect the trainee's stated safety and
+feasibility constraints. The final user-edited draft MUST be rebuilt against
+fresh context and validated again immediately before it is saved. MCP write
+tools follow the same rule.
 
 Session RPE and actual recovery time between attempts are now first-class set
 and session records. They are persisted by the web and Android APIs, included in
@@ -450,7 +551,7 @@ need for a deload.
 
 The MCP preserves `weekCurrent` and `weekPrevious` as exact UTC ISO calendar
 weeks. A null previous week means only that no session was logged in that one
-calendar week. Context schema version 4 adds a separate rolling history with
+calendar week. Context schema version 4 added a separate rolling history with
 these engineering windows and calculations:
 
 - 56 days of coverage and exact details for up to the latest 12 strength
@@ -465,6 +566,11 @@ these engineering windows and calculations:
 - working sets, ordinary working sets, drop sets, recorded-RIR coverage and
   ordinary sets whose recorded RIR is 0-4;
 - direct set totals by the exercise's stored primary muscle.
+
+Context schema version 5 preserves those calculations and adds the normalized
+structured coaching profile. Its field states, timestamps and hard named
+exercise constraints are shared with web program design; missing values remain
+missing and medical-clearance status blocks generation.
 
 The 56/7/42/28-day windows, the 12-session cap, the ratio calculations and the
 RIR 0-4 bucket are engineering heuristics. The returned ratios have no alarm
@@ -542,6 +648,12 @@ The following deterministic domain rules are engineering heuristics:
   machines with the same nominal number are equivalent;
 - when several physical machines support one exercise, their attainable loads
   remain separate until the trainee selects the concrete equipment instance.
+- one validated preferred equipment item may be stored per gym and exercise;
+  it initializes future workouts, while an explicit selection or already
+  recorded set in the current session remains authoritative;
+- plate-loaded displays use the selected item's exact empty bar or carriage
+  load, compatible plate quantities and equally loaded side count. A generic
+  bar weight must not replace a known concrete equipment profile.
 
 Workout history preserves `Set.weight` and the displayed/selected load as the
 primary historical facts. It also stores the concrete equipment ID, equipment
@@ -557,73 +669,6 @@ the edited weight using that frozen multiplier. Replacing or clearing equipment
 requires the explicit `REPLACE` or `CLEAR` equipment snapshot action; merely
 resending an unchanged equipment ID does not refresh history from current gym
 configuration.
-
-### 5.10 Imported-track pace / heart-rate change estimate
-
-Implementation: `lib/cardio.ts` and
-`components/history/track-decoupling.tsx`.
-
-Source-backed principles:
-
-- during prolonged aerobic exercise, heart rate can rise while external effort
-  remains similar;
-- speed or distance is an external-load observation and heart rate is an
-  internal-load observation;
-- their relationship can be affected by heat, humidity, hydration, terrain,
-  stress, medication, illness and sensor error;
-- heart rate lags rapid changes in high-intensity interval work, so a simple
-  halves comparison is not appropriate evidence for intervals;
-- timestamp, cumulative-distance and heart-rate data can describe an observed
-  change, but cannot prove its cause, workout quality, pacing quality, fatigue
-  or aerobic fitness.
-
-GymCoach exposes an optional descriptive estimate only when the stored track
-passes conservative data-quality gates. The current deterministic calculation
-uses the whole valid stored span and splits it at the exact elapsed-time
-midpoint:
-
-```text
-halfMeanSpeed = halfDistance / halfElapsedTime
-halfMeanHr = trapezoidal time-weighted mean of interpolated HR samples
-halfHrCost = halfMeanHr / halfMeanSpeed
-changePct = (secondHalfHrCost / firstHalfHrCost - 1) * 100
-```
-
-A positive value means recorded heart-rate cost relative to speed was higher in
-the second half. A negative value means it was lower. The sign and magnitude do
-not create an automatic `steady`, `faded`, `improved`, good-fitness or
-poor-fitness classification. GymCoach does not use a 5 percent verdict.
-
-The midpoint distance and heart rate are linearly interpolated. Heart rate is
-integrated over time with the trapezoidal rule so clustered samples do not
-receive extra weight. These formula choices are engineering heuristics, not a
-universal physiological standard.
-
-Current engineering validity gates:
-
-- the stored analysis span is at least 20 minutes;
-- timestamps are finite, within the existing 24-hour track bound and strictly
-  increasing in stored order; duplicate or out-of-order timestamps invalidate
-  the estimate rather than being sorted;
-- distance and heart rate both cover the first and last timestamps;
-- consecutive usable distance or heart-rate observations are no more than 120
-  seconds apart;
-- cumulative distance is finite, nonnegative, within the existing 1000 km
-  storage bound and never decreases or resets;
-- a cumulative-distance plateau longer than 30 seconds invalidates the
-  estimate as a likely pause or missing movement signal;
-- each equal-time half has positive elapsed time and positive distance;
-- recorded HR uses the existing sanitized track range of 40 to 250 bpm. This
-  is a storage-quality bound, not a diagnosis or individual physiological zone.
-
-The 20-minute minimum, 120-second maximum gap, 30-second stationary allowance,
-linear interpolation, time weighting and exact formula are all engineering
-heuristics. Missing endpoint coverage, long gaps, invalid values, distance
-resets and degenerate spans return no estimate. The UI states that the readout
-should be considered only for a known continuous, steady, mostly level aerobic
-effort and lists intervals, hills, pauses, heat, hydration, stress, medication
-and sensor error as limitations. Track fields alone do not establish that those
-applicability conditions were met.
 
 ## 6. LLM coach contract
 
@@ -805,8 +850,19 @@ rules. The implementation requires specific weekdays and a safety status, adds
 recommended questions for priorities, preferences, concurrent activity and
 missing recent context, exposes rolling history, session RPE/rest, physical gym
 inventory and personal volume targets, and adds source-linked
-`REVISE_CURRENT` parity to MCP. `NEEDS_MEDICAL_CLEARANCE` blocks generation and
+`REVISE_CURRENT` parity to MCP. `MEDICAL_CLEARANCE_REQUIRED` blocks generation and
 is a referral boundary, not a diagnosis or treatment recommendation.
+
+The structured coaching-profile implementation on 2026-07-18 reconciled this
+same fifth review with the current eight-source notebook state already recorded
+in task `gymcoach-3cz`. Source-backed requirements are the safety status,
+training experience, real schedule, maximum duration, actual equipment,
+limitations and optional personalization/recovery context. The exact values
+`NO_SIGNIFICANT_ISSUES`, `TRAIN_WITH_LIMITATIONS` and
+`MEDICAL_CLEARANCE_REQUIRED`; the `UNKNOWN` / `KNOWN` / `NOT_APPLICABLE` states;
+the versioned JSON storage, timestamps, field limits, exact exercise-name hard
+gate and request-over-profile provenance are engineering heuristics. No new
+physiological formula or threshold was introduced.
 
 A sixth review on 2026-07-13 used the same `ИИ тренер` notebook and its 11
 sources for four distinct questions about selecting the first working-set load,
@@ -871,24 +927,75 @@ standard, shared-pool schema, or exact cross-machine conversion. Universal
 compatible plate pools, nullable quantities, per-machine multipliers, and the
 attainable-load algorithm are therefore documented engineering heuristics.
 
-A tenth review on 2026-07-17 used the same `ИИ тренер` notebook with eight
-sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`. Four separate
-questions covered source-backed interpretation of pace-relative heart-rate
-change, edge cases and confounders, translation into a sampling-robust product
-rule, and an adversarial review of every numerical gate. A supplemental citation
-audit challenged claims about 15, 20 and 30 minute durations, 5 bpm stability,
-a 5 percent decoupling threshold, sample gaps and HR rejection bounds.
+A tenth review on 2026-07-16 used the same `ИИ тренер` notebook, its current
+eight sources and conversation
+`c5d0e231-94f4-4b10-a11b-f2954b962943`. Four independent questions covered
+source-backed return principles, risks and competing interpretations,
+deterministic product translation, and an adversarial challenge to the proposed
+6/12/24-week bands, 75/25 weighting, 75-125% bound and 85/80/75% start
+fractions. A cited follow-up explicitly challenged every candidate constant.
 
-Source-backed findings were that cardiovascular drift can occur during
-prolonged aerobic exercise, external pace and internal HR do not fully describe
-psychophysiological stress, intervals violate the simple steady-load
-interpretation, and environment, hydration, stress, medication and sensor
-quality can alter the observation. Track data alone cannot establish cause,
-fitness, fatigue, workout quality or steady effort. The notebook did not support
-a 5 percent decoupling verdict or any exact software coverage threshold.
+Source-backed findings were that detraining is gradual and individual; longer
+training history may improve retention and reacquisition qualitatively; daily
+capacity varies; current RIR/RPE is more useful for calibration than blindly
+reusing an old maximum; introductory return training should reduce stress and
+avoid repeated failure; and machine, free-weight and related-exercise loads are
+not exactly interchangeable. Pain, injury and post-illness return remain
+outside ordinary automatic load generation.
 
-Equal elapsed-time halves, midpoint interpolation, trapezoidal HR weighting,
-the HR-cost ratio, the 20-minute minimum, 120-second sample-gap limit, 30-second
-stationary allowance and the unavailable-data gates are therefore documented
-engineering heuristics. The existing 40 to 250 bpm stored-track range remains a
-data-sanitization boundary rather than a source-backed physiological rule.
+The sources did not establish a universal percentage curve for 6, 12 or 24
+weeks, a recent-session window, a minimum sample count, an all-history statistic,
+the 75/25 blend, the 75-125% bound, confidence tiers, the one-session return
+episode rule, the 85/80/75% and 75/70/65% fractions or the RIR 3/4 product
+thresholds. These remain bounded engineering heuristics. The adversarial answer also proposed a
+72-hour lockout and absolute stale-history caps without direct source support;
+GymCoach does not adopt those generated values. Instead it preserves low
+session volume, conservative equipment-rounded starts, a hard ceiling and
+immediate RIR-based adjustment while clearly exposing confidence and evidence.
+
+## Aerobic decoupling evidence and product boundaries
+
+The `ИИ тренер` notebook review also found that cardiovascular drift can occur
+during prolonged aerobic exercise, but pace and heart rate alone do not establish
+cause, fitness, fatigue, workout quality or steady effort. Intervals, hydration,
+environment, stress, medication and sensor quality can change the observation.
+
+Equal elapsed-time halves, midpoint interpolation, trapezoidal heart-rate
+weighting, the HR-cost ratio, minimum-duration and sample-gap gates are bounded
+engineering heuristics. The sources do not establish a universal decoupling
+percentage or exact software coverage threshold. GymCoach must present missing
+or unsuitable data conservatively and must not diagnose fatigue or health state
+from the metric.
+
+An eleventh review on 2026-07-16 reused the same notebook, all eight current
+sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`. Separate
+questions covered sparse older-history blending, PR and weak-record risks,
+deterministic product translation and an adversarial challenge to sample and
+confidence thresholds. The sources support current readiness, RIR/RPE
+autoregulation, conservative non-failure return and exact movement/equipment
+specificity. They do not specify any `n=1`, `n=2` or `n=3` cutoff, sparse-sample
+weight, clamp, confidence tier or calendar penalty. Excluding sparse older loads
+from numerical blending and using conflicting small samples only to require
+calibration are therefore engineering heuristics, not universal training
+science. Follow-up questions corrected two generated overstatements: the
+sources do not say every one-session return is dangerous, and they do not
+directly prescribe zero numerical weight for sparse older history.
+
+A twelfth review on 2026-07-16 used the same `ИИ тренер` notebook, its eight
+current sources and conversation `c5d0e231-94f4-4b10-a11b-f2954b962943`.
+Four independent questions covered source-backed equipment specificity,
+equipment-change risks, deterministic preferred-equipment rules and an
+adversarial review of base load, plate quantities, loading sides and warm-up
+floors.
+
+Source-backed findings were that free weights, machines and pulley systems are
+not load-equivalent; actual implement or carriage mass matters; available
+hardware constrains practical progression; and accurate equipment-specific
+records are necessary for interpreting training history. The sources did not
+define a per-gym preference schema, a deletion fallback, equal-side inventory
+algorithm, finite-quantity decomposition, immutable database snapshot format
+or universal numerical warm-up floor. Those remain engineering heuristics.
+The adversarial review also corrected an overstatement about a 20 kg fallback:
+the direction of the physical loading error depends on the implementation, but
+using any fallback instead of a known 10 kg bar corrupts the loading instruction
+and historical record.

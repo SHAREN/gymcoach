@@ -45,6 +45,19 @@ export default async function ExercisesPage() {
         name: true,
         gymId: true,
         equipmentType: true,
+        loadType: true,
+        baseLoadKg: true,
+        loadingSides: true,
+        preferredForConfigs: { select: { exerciseId: true } },
+        platePool: {
+          select: {
+            name: true,
+            plates: {
+              orderBy: { weightKg: 'asc' },
+              select: { id: true, weightKg: true, quantity: true },
+            },
+          },
+        },
         gym: { select: { name: true } },
         exerciseLinks: { select: { exerciseId: true } },
       },
@@ -69,6 +82,12 @@ export default async function ExercisesPage() {
           gymName: item.gym.name,
           equipmentType: item.equipmentType,
           exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
+          preferredExerciseIds: item.preferredForConfigs.map((config) => config.exerciseId),
+          loadType: item.loadType,
+          baseLoadKg: item.baseLoadKg,
+          loadingSides: item.loadingSides,
+          platePoolName: item.platePool?.name ?? null,
+          plates: item.platePool?.plates ?? [],
         }))}
       />
     </main>

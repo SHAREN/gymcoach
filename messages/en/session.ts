@@ -27,9 +27,13 @@ export const session = {
   setDeleteError: 'Could not delete the set.',
   setUpdated: 'Set updated.',
   setUpdateError: 'Could not update the set.',
+  setLocalSaveError: 'Could not save the set on this device. The workout did not advance.',
+  setRetryError: 'Could not retry this set yet.',
   finished: 'Session finished.',
   finishError: 'Could not finish the session.',
-  finishSyncError: 'Some sets are not saved yet. Check the connection and try again.',
+  finishSyncError:
+    'Cannot finish: {pending} pending and {failed} failed sets still need server confirmation.',
+  retrySync: 'Retry sets',
   controls: {
     open: 'Manage {name}',
     cancel: 'Cancel',
@@ -97,6 +101,23 @@ export const session = {
     bodyweightStart: 'Start with bodyweight and no added load.',
     chooseLoad: 'Choose a deliberately light calibration load for the first set.',
     ceiling: 'Do not exceed the history-based ceiling today: {weight}.',
+    confidence: {
+      low: 'History confidence: low.',
+      medium: 'History confidence: medium.',
+      high: 'History confidence: high.',
+    },
+    historyRecentAndLongTerm:
+      '{recent} recent exact-equipment session(s) are primary and checked against {longTerm} older exact-equipment session(s).',
+    historyRecent:
+      '{recent} recent exact-equipment session(s) provide the current capability signal; older exact history is sparse.',
+    historyLongTerm:
+      'No recent exact-equipment session is available. The load anchor uses {longTerm} older exact-equipment session(s).',
+    historyNone: 'No exact current-equipment load history is available.',
+    returnGap: 'Return conservatism uses a {days}-day exact-exercise gap.',
+    priorReturnGap:
+      'The latest exact session was recent, but it followed a {days}-day gap, so calibration remains active.',
+    nonComparableHistory:
+      '{count} session(s) from other or unlinked equipment were not converted into this load.',
     calibrate:
       'Record an honest RIR after the first set. The next-set recommendation will adapt from the result.',
   },
@@ -203,6 +224,13 @@ export const session = {
     applyValue: 'Apply value',
     repsShort: 'reps',
     cancel: 'Cancel',
+    extra: 'Extra completed set',
+    sync: {
+      pending: 'Pending sync',
+      syncing: 'Syncing',
+      synced: 'Saved on server',
+      failed: 'Sync failed',
+    },
     manualWeight: 'Manual weight',
     manualReps: 'Manual repetitions',
     keypad: 'Numeric keypad',
@@ -227,6 +255,16 @@ export const session = {
       equipmentSelect: 'Choose replacement equipment',
       equipmentReplace: 'Replace equipment snapshot',
       equipmentClear: 'Clear legacy equipment snapshot',
+      syncTitle: 'Set {number} persistence',
+      syncAttempts: '{count, plural, one {# attempt} other {# attempts}}',
+      syncRetry: 'Retry',
+      deleteSet: 'Delete set',
+      syncStatus: {
+        pending: 'Pending server confirmation',
+        syncing: 'Sync in progress',
+        synced: 'Confirmed by the server',
+        failed: 'Server rejected this row',
+      },
     },
     metrics: {
       open: 'Choose calculated columns',
@@ -291,6 +329,14 @@ export const session = {
     bodyweight: 'BW',
     note: 'note',
     delete: 'Delete the set',
+    retrySet: 'Retry set {number}',
+    extra: 'Extra completed set',
+    sync: {
+      pending: 'Pending sync',
+      syncing: 'Syncing',
+      synced: 'Saved on server',
+      failed: 'Sync failed',
+    },
     current: 'Set {number} · in progress',
     upcoming: 'Set {number} · upcoming',
     weightPr: 'Weight PR',

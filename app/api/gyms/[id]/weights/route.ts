@@ -14,7 +14,7 @@ export async function PATCH(req: Request, props: Params) {
     const userId = await requireApiUserId(req);
     const input = await parseJsonBody(req, gymWeightUpdateSchema);
     const [gym, exercise] = await Promise.all([
-      db.gym.findFirst({ where: { id, userId }, select: { id: true } }),
+      db.gym.findFirst({ where: { id, userId }, select: { id: true, inventoryMode: true } }),
       db.exercise.findFirst({
         where: { id: input.exerciseId, userId },
         select: { id: true, name: true, equipmentType: true },
@@ -26,6 +26,12 @@ export async function PATCH(req: Request, props: Params) {
     const equipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name);
     await db.$transaction(async (tx) => {
       if (input.scope === 'equipment') {
+        if (gym.inventoryMode === 'EQUIPMENT_FIRST') {
+          throw new ApiError(
+            409,
+            'Edit gym-wide Dumbbells and Barbell values through their system profiles.',
+          );
+        }
         if (equipmentType === 'BARBELL') {
           await tx.gym.update({
             where: { id },
@@ -54,8 +60,13 @@ export async function PATCH(req: Request, props: Params) {
             : { weightOptions: input.weightOptions };
       await tx.gymExerciseConfig.upsert({
         where: { gymId_exerciseId: { gymId: id, exerciseId: exercise.id } },
-        update: overrides,
-        create: { gymId: id, exerciseId: exercise.id, ...overrides },
+        update: { ...overrides, isEquipmentMirror: false },
+        create: {
+          gymId: id,
+          exerciseId: exercise.id,
+          ...overrides,
+          isEquipmentMirror: false,
+        },
       });
     });
 

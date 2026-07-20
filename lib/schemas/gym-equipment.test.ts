@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gymBarbellSystemProfileInputSchema,
+  gymDumbbellsSystemProfileInputSchema,
   gymEquipmentImageSchema,
   gymEquipmentInputSchema,
   gymEquipmentUpsertSchema,
@@ -23,6 +25,7 @@ describe('gym equipment schemas', () => {
       exerciseIds: ['exercise-1'],
       markExercisesAvailable: true,
     });
+    expect(parsed.preferredExerciseIds).toBeUndefined();
   });
 
   it('normalizes a compatible universal plate pool while preserving unknown quantities', () => {
@@ -67,9 +70,21 @@ describe('gym equipment schemas', () => {
     expect(parsed.selectedLoadMultiplier).toBe(0.5);
   });
 
+  it('requires every preferred exercise to remain linked', () => {
+    expect(
+      gymEquipmentInputSchema.safeParse({
+        name: 'EZ bar',
+        equipmentType: 'BARBELL',
+        exerciseIds: ['exercise-1'],
+        preferredExerciseIds: ['exercise-2'],
+      }).success,
+    ).toBe(false);
+  });
+
   it('requires one safe equipment image source', () => {
-    expect(gymEquipmentImageSchema.safeParse({ imageUrl: 'http://unsafe.test/image.jpg' }).success)
-      .toBe(false);
+    expect(
+      gymEquipmentImageSchema.safeParse({ imageUrl: 'http://unsafe.test/image.jpg' }).success,
+    ).toBe(false);
     expect(
       gymEquipmentImageSchema.safeParse({ imageBase64: 'abcd', mimeType: 'image/gif' }).success,
     ).toBe(false);
@@ -83,5 +98,34 @@ describe('gym equipment schemas', () => {
     expect(
       gymEquipmentImageSchema.safeParse({ imageBase64: 'abcd', mimeType: 'image/jpeg' }).success,
     ).toBe(true);
+  });
+
+  it('rejects duplicate system-profile weights and requires both barbell families', () => {
+    expect(() =>
+      gymDumbbellsSystemProfileInputSchema.parse({
+        weightsKg: [10, 10],
+        exerciseIds: [],
+      }),
+    ).toThrow(/Duplicate weights/);
+
+    expect(() =>
+      gymBarbellSystemProfileInputSchema.parse({
+        exerciseIds: [],
+        families: [
+          {
+            family: 'LARGE',
+            loadingSides: 2,
+            bars: [{ weightKg: 20 }],
+            plates: [{ weightKg: 5, quantity: null }],
+          },
+          {
+            family: 'LARGE',
+            loadingSides: 2,
+            bars: [{ weightKg: 10 }],
+            plates: [{ weightKg: 2.5, quantity: null }],
+          },
+        ],
+      }),
+    ).toThrow(/one large and one small/);
   });
 });

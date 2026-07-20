@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CoachPayload } from '@/lib/coach';
 import { summarizeCoachPayload } from './coach-context';
+import { emptyCoachingProfile } from '@/lib/schemas/coaching-profile';
 
 // summarizeCoachPayload only reshapes the payload buildCoachPayload already
 // assembled - these tests pin that mapping (and the only derived number, the
@@ -16,6 +17,7 @@ function emptyPayload(): CoachPayload {
       bodyweight: null,
       goal: null,
       weeklyFrequency: null,
+      coachingProfile: emptyCoachingProfile(),
       coachNote: null,
     },
     weekCurrent: { weekStart: '2026-06-08T00:00:00.000Z', sessions: [] },

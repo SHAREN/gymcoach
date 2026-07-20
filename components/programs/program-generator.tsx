@@ -46,6 +46,20 @@ type GenerationResponse =
       sourceProgramId: string | null;
     };
 
+function parseExerciseNames(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .split(/[\n,]/u)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item) return false;
+      const key = item.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 export function ProgramGenerator() {
   const t = useTranslations('programs');
   const common = useTranslations('common');
@@ -220,12 +234,7 @@ export function ProgramGenerator() {
             placeholder={t('generator.placeholder')}
           />
           <div>
-            <Button
-              type="button"
-              onClick={generate}
-              disabled={generating || goal.trim().length < 10}
-              className="min-h-tap"
-            >
+            <Button type="button" onClick={generate} disabled={generating} className="min-h-tap">
               {generating ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
@@ -275,6 +284,8 @@ export function ProgramGenerator() {
                     sessionDuration: t('generator.sessionDuration'),
                     limitations: t('generator.limitations'),
                     limitationsPlaceholder: t('generator.limitationsPlaceholder'),
+                    excludedExercises: t('generator.excludedExercises'),
+                    excludedExercisesPlaceholder: t('generator.excludedExercisesPlaceholder'),
                     equipmentAccess: t('generator.equipmentAccess'),
                     equipmentAccessPlaceholder: t('generator.equipmentAccessPlaceholder'),
                     postBlockAssessment: t('generator.postBlockAssessment'),
@@ -507,6 +518,8 @@ function ProgramDesignQuestionField({
     sessionDuration: string;
     limitations: string;
     limitationsPlaceholder: string;
+    excludedExercises: string;
+    excludedExercisesPlaceholder: string;
     equipmentAccess: string;
     equipmentAccessPlaceholder: string;
     postBlockAssessment: string;
@@ -532,11 +545,13 @@ function ProgramDesignQuestionField({
             <SelectValue placeholder={labels.healthStatus} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="NO_RELEVANT_CONCERNS">{labels.healthNoConcerns}</SelectItem>
-            <SelectItem value="CLEARED_WITH_LIMITATIONS">
+            <SelectItem value="NO_SIGNIFICANT_ISSUES">{labels.healthNoConcerns}</SelectItem>
+            <SelectItem value="TRAIN_WITH_LIMITATIONS">
               {labels.healthClearedLimitations}
             </SelectItem>
-            <SelectItem value="NEEDS_MEDICAL_CLEARANCE">{labels.healthNeedsClearance}</SelectItem>
+            <SelectItem value="MEDICAL_CLEARANCE_REQUIRED">
+              {labels.healthNeedsClearance}
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -710,16 +725,60 @@ function ProgramDesignQuestionField({
       </fieldset>
     );
   }
+  return <LimitationsQuestionField answers={answers} onChange={onChange} labels={labels} />;
+}
+
+function LimitationsQuestionField({
+  answers,
+  onChange,
+  labels,
+}: {
+  answers: ProgramDesignAnswers;
+  onChange: (answers: ProgramDesignAnswers) => void;
+  labels: {
+    limitations: string;
+    limitationsPlaceholder: string;
+    excludedExercises: string;
+    excludedExercisesPlaceholder: string;
+  };
+}) {
+  const [excludedExercisesInput, setExcludedExercisesInput] = useState(
+    answers.excludedExercises?.join(', ') ?? '',
+  );
+
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor="program-limitations">{labels.limitations}</Label>
-      <Textarea
-        id="program-limitations"
-        rows={2}
-        value={answers.limitations ?? ''}
-        placeholder={labels.limitationsPlaceholder}
-        onChange={(event) => onChange({ ...answers, limitations: event.target.value })}
-      />
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="program-limitations">{labels.limitations}</Label>
+        <Textarea
+          id="program-limitations"
+          rows={2}
+          value={answers.limitations ?? ''}
+          placeholder={labels.limitationsPlaceholder}
+          onChange={(event) =>
+            onChange({
+              ...answers,
+              limitations: event.target.value,
+              excludedExercises: answers.excludedExercises ?? [],
+            })
+          }
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="program-excluded-exercises">{labels.excludedExercises}</Label>
+        <Input
+          id="program-excluded-exercises"
+          value={excludedExercisesInput}
+          placeholder={labels.excludedExercisesPlaceholder}
+          onChange={(event) => {
+            setExcludedExercisesInput(event.target.value);
+            onChange({
+              ...answers,
+              excludedExercises: parseExerciseNames(event.target.value),
+            });
+          }}
+        />
+      </div>
     </div>
   );
 }

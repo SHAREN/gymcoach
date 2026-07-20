@@ -22,6 +22,9 @@ export const exercises = {
   physicalEquipment: 'Available on physical equipment',
   physicalEquipmentDescription:
     'Choose the saved machines or stations that can perform this exercise. Availability is derived per gym.',
+  activeGym: 'Active gym',
+  makePreferred: 'Use {equipment} by default in this gym',
+  preferred: 'Preferred',
   defaultRest: 'Default rest (seconds)',
   bodyweight: 'Bodyweight exercise',
   bodyweightDescription:
@@ -72,6 +75,15 @@ export const exercises = {
     openChart: 'Progress chart',
     noHistory: 'No completed sets for this exercise yet.',
     openSession: 'Open workout',
+    edit: 'Edit exercise',
+    activeGymEquipment: 'Active gym equipment',
+    noActiveGym: 'Choose an active gym to assign concrete equipment for this exercise.',
+    noEquipment: 'No physical equipment is linked to this exercise in {gym}.',
+    openGymSettings: 'Open gym settings',
+    compatibleEquipment: 'Compatible equipment',
+    baseLoad: 'Empty load: {weight} kg',
+    loadingSides: '{count, plural, one {# loading side} other {# loading sides}}',
+    platePool: 'Plate pool: {name}',
   },
   muscleGroups: {
     chest: 'Chest',

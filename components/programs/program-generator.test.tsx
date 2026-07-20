@@ -12,6 +12,82 @@ afterEach(() => {
 });
 
 describe('ProgramGenerator', () => {
+  it('allows an empty request goal so the server can use the saved profile goal', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 'needs-input',
+          questions: [],
+          methodologyVersion: 'test',
+          sourceProgramId: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    render(<ProgramGenerator />);
+
+    const generate = screen.getByRole('button', { name: /Generate/i });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { goal: string };
+    expect(body.goal).toBe('');
+  });
+
+  it('submits request limitation names as deterministic exercise exclusions', async () => {
+    const user = userEvent.setup();
+    const needsLimitations = {
+      status: 'needs-input',
+      questions: [
+        {
+          id: 'limitations',
+          prompt: 'Name current constraints and every affected exercise.',
+          input: 'text',
+          required: true,
+        },
+      ],
+      methodologyVersion: 'test',
+      sourceProgramId: null,
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(needsLimitations), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(needsLimitations), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    render(<ProgramGenerator />);
+    await user.click(screen.getByRole('button', { name: /Generate/i }));
+
+    await user.type(
+      await screen.findByLabelText('Training movement or load constraints'),
+      'Self-reported request constraint',
+    );
+    await user.type(
+      screen.getByLabelText('Affected exercise names'),
+      'Bench press, Overhead press, bench PRESS',
+    );
+    await user.click(screen.getByRole('button', { name: /Generate/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as {
+      answers: { limitations: string; excludedExercises: string[] };
+    };
+    expect(body.answers.limitations).toBe('Self-reported request constraint');
+    expect(body.answers.excludedExercises).toEqual(['Bench press', 'Overhead press']);
+  });
+
   it('shows drop sets and clears stale validation after editing the draft', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(

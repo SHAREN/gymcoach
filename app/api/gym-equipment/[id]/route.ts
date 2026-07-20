@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { deleteOwnedGymEquipment, upsertOwnedGymEquipment } from '@/lib/gym-equipment';
 import { gymEquipmentInputSchema } from '@/lib/schemas/gym-equipment';
+import { rejectOwnedSystemProfileMutation } from '@/lib/gym-system-profiles';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -12,6 +13,7 @@ export async function PUT(req: Request, props: Params) {
   const { id } = await props.params;
   try {
     const userId = await requireApiUserId(req);
+    await rejectOwnedSystemProfileMutation(userId, id);
     const current = await db.gymEquipment.findFirst({
       where: { id, gym: { userId } },
       select: { gymId: true },

@@ -50,6 +50,7 @@ function recommendation(
     recommendation: {
       mode: 'normal',
       exerciseGapDays: 5,
+      returnGapDays: 5,
       muscleGapDays: 5,
       muscleMaintained: true,
       recentMuscleSets: 6,
@@ -59,8 +60,14 @@ function recommendation(
       targetRIR: 2,
       weightCeiling: suggestedWeight,
       suggestedWeight,
+      startFraction: null,
       calibrationRequired: false,
       historySessionCount: 3,
+      recentHistorySessionCount: 3,
+      longTermHistorySessionCount: 0,
+      nonComparableHistorySessionCount: 0,
+      historyBasis: 'recent-exact',
+      confidence: 'high',
     },
   };
 }

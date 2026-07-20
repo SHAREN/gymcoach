@@ -177,6 +177,32 @@ describe('saved gym load constraints', () => {
     ]);
   });
 
+  it('initializes multiple equipment options from the validated preferred item', () => {
+    const base = {
+      equipmentType: 'BARBELL' as const,
+      loadType: 'PLATE_LOADED' as const,
+      weightOptions: [],
+      selectedLoadMultiplier: 1,
+      loadingSides: 2,
+      platePoolId: 'plates',
+      plates: [{ weightKg: 5, quantity: 4 }],
+    };
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'curl', name: 'EZ curl', equipmentType: 'BARBELL' },
+      preferredEquipmentId: 'ez-bar',
+      linkedEquipment: [
+        { ...base, equipmentId: 'standard-bar', equipmentName: 'Standard bar', baseLoadKg: 20 },
+        { ...base, equipmentId: 'ez-bar', equipmentName: 'EZ bar', baseLoadKg: 10 },
+      ],
+    });
+
+    expect(resolved.preferredEquipmentId).toBe('ez-bar');
+    expect(resolved.constraints.equipmentId).toBe('ez-bar');
+    expect(resolved.weightOptions).toEqual([10, 20, 30]);
+    expect(resolved.requiresEquipmentSelection).toBe(true);
+  });
+
   it('marks equipment-first exercises unavailable after links and legacy config are removed', () => {
     const resolved = resolveExerciseInventory({
       inventoryMode: 'EQUIPMENT_FIRST',
@@ -188,5 +214,79 @@ describe('saved gym load constraints', () => {
     expect(resolved.source).toBe('none');
     expect(resolved.isAvailable).toBe(false);
     expect(resolved.weightOptions).toEqual([]);
+  });
+
+  it('honors explicit Dumbbells system-profile membership before the shared-weight fallback', () => {
+    const supported = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'press', name: 'Dumbbell press', equipmentType: 'DUMBBELL' },
+      linkedEquipment: [],
+      legacyConfig: {
+        isAvailable: true,
+        systemProfileSupported: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
+      sharedDumbbellWeights: [10, 12.5, 20],
+    });
+    const removed = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'press', name: 'Dumbbell press', equipmentType: 'DUMBBELL' },
+      linkedEquipment: [],
+      legacyConfig: {
+        isAvailable: true,
+        systemProfileSupported: false,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
+      sharedDumbbellWeights: [10, 12.5, 20],
+    });
+
+    expect(supported.weightOptions).toEqual([10, 12.5, 20]);
+    expect(removed).toMatchObject({ source: 'none', isAvailable: false, weightOptions: [] });
+  });
+
+  it('never constructs a load by mixing large and small diameter families', () => {
+    const resolved = resolveExerciseInventory({
+      inventoryMode: 'EQUIPMENT_FIRST',
+      exercise: { id: 'squat', name: 'Barbell squat', equipmentType: 'BARBELL' },
+      preferredEquipmentId: 'large-12',
+      linkedEquipment: [
+        {
+          equipmentId: 'large-12',
+          equipmentName: 'Large 12 kg bar',
+          equipmentType: 'BARBELL',
+          loadType: 'PLATE_LOADED',
+          weightOptions: [],
+          selectedLoadMultiplier: 1,
+          baseLoadKg: 12,
+          loadingSides: 2,
+          platePoolId: 'large-pool',
+          plates: [{ weightKg: 10, quantity: 2 }],
+        },
+        {
+          equipmentId: 'small-6',
+          equipmentName: 'Small 6 kg bar',
+          equipmentType: 'BARBELL',
+          loadType: 'PLATE_LOADED',
+          weightOptions: [],
+          selectedLoadMultiplier: 1,
+          baseLoadKg: 6,
+          loadingSides: 2,
+          platePoolId: 'small-pool',
+          plates: [{ weightKg: 3.5, quantity: 2 }],
+        },
+      ],
+    });
+
+    expect(resolved.weightOptions).toEqual([12, 32]);
+    expect(
+      resolved.equipment.find((item) => item.equipmentId === 'small-6')?.attainableLoads,
+    ).toEqual([6, 13]);
+    expect(resolved.equipment.every((item) => !item.attainableLoads.includes(19))).toBe(true);
   });
 });

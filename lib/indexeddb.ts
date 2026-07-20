@@ -19,6 +19,10 @@ export interface PendingSet {
   // optimistic display before server confirmation.
   localId: string;
 
+  // Authenticated owner that created or hydrated the row. Optional only for
+  // records written by older app versions; current writes always set it.
+  ownerId?: string;
+
   // Reference to the current session. When the sync succeeds, the server set
   // is created under this sessionId.
   sessionId: string;
@@ -52,9 +56,16 @@ export interface PendingSet {
   // with the UI state and avoids double-POST on retry.
   serverId: string | null;
   syncedAt: number | null;
+  // Set once a session GET has independently returned this server id. This is
+  // evidence for reconciliation, not permission to discard an active row.
+  serverObservedAt?: number | null;
   // Counter of failed attempts (for possible backoff).
   attempts: number;
   lastError: string | null;
+  lastHttpStatus?: number | null;
+  // Retryable failures wait until this epoch time unless the user explicitly
+  // requests an immediate retry.
+  nextAttemptAt?: number | null;
 }
 
 class GymCoachDB extends Dexie {
@@ -66,6 +77,10 @@ class GymCoachDB extends Dexie {
       // Primary key: localId. Secondary indexes: sessionId (to filter
       // a session's sets), status (to scan the pending ones).
       pendingSets: 'localId, sessionId, status, createdAt',
+    });
+    this.version(2).stores({
+      pendingSets:
+        'localId, sessionId, status, createdAt, ownerId, [ownerId+status], [ownerId+sessionId]',
     });
   }
 }

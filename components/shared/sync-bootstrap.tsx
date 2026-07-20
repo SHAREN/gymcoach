@@ -7,11 +7,11 @@ import { bindAutoSync, pruneSyncedSets } from '@/lib/sync';
 // Lives in the (app)/ layout, so it is active on all protected routes.
 // - On mount: flush if online + listener for the 'online' event.
 // - On mount: prune synced sets older than 7 days to keep Dexie lean.
-export function SyncBootstrap() {
+export function SyncBootstrap({ userId }: { userId: string }) {
   useEffect(() => {
-    const cleanup = bindAutoSync();
+    const cleanup = bindAutoSync(userId);
     void pruneSyncedSets();
     return cleanup;
-  }, []);
+  }, [userId]);
   return null;
 }

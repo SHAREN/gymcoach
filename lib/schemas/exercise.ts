@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MuscleGroup, ExerciseCategory, EquipmentType } from '@/lib/prisma-client';
+import { databaseIdSchema } from '@/lib/schemas/database-id';
 
 export const muscleGroupValues = Object.values(MuscleGroup) as [MuscleGroup, ...MuscleGroup[]];
 export const exerciseCategoryValues = Object.values(ExerciseCategory) as [
@@ -26,8 +27,21 @@ export const exerciseInputSchema = z.object({
 export type ExerciseInput = z.infer<typeof exerciseInputSchema>;
 
 export const exerciseEquipmentLinksSchema = z.object({
-  equipmentIds: z.array(z.string().cuid()).max(1000),
+  equipmentIds: z.array(databaseIdSchema).max(1000),
 });
+
+export const exerciseGymEquipmentSelectionSchema = z.object({
+  gymId: databaseIdSchema,
+  equipmentIds: z.array(databaseIdSchema).max(500),
+  preferredEquipmentId: databaseIdSchema.nullable().optional(),
+});
+
+export const exerciseEquipmentUpdateSchema = z.union([
+  exerciseEquipmentLinksSchema,
+  z.object({
+    gyms: z.array(exerciseGymEquipmentSelectionSchema).max(100),
+  }),
+]);
 
 export const MUSCLE_GROUP_LABELS: Record<MuscleGroup, string> = {
   CHEST: 'Chest',

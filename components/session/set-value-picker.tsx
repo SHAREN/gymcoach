@@ -7,7 +7,7 @@ import type { WeightUnit } from '@/lib/prisma-client';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { computeBestPlateLoad, type PlateLoad } from '@/lib/plates';
+import { computeBestPlateLoad, computeEquipmentPlateLoad, type PlateLoad } from '@/lib/plates';
 import { plateConfigForUnit } from '@/lib/preferences';
 import { roundWeight, toDisplayWeight } from '@/lib/units';
 
@@ -52,12 +52,29 @@ export function SetValuePicker({
   const plateLoad = useMemo(() => {
     if (
       kind !== 'weight' ||
-      loadConstraints?.equipmentType !== 'BARBELL' ||
+      !loadConstraints ||
       !Number.isFinite(numericValue) ||
       numericValue <= 0
     ) {
       return null;
     }
+    const selectedEquipment = loadConstraints.equipmentId
+      ? loadConstraints.equipmentOptions?.find(
+          (item) => item.equipmentId === loadConstraints.equipmentId,
+        )
+      : null;
+    if (selectedEquipment?.loadType === 'PLATE_LOADED') {
+      return computeEquipmentPlateLoad(
+        numericValue,
+        roundWeight(toDisplayWeight(selectedEquipment.baseLoadKg, unit), 2),
+        (selectedEquipment.plates ?? []).map((plate) => ({
+          plate: roundWeight(toDisplayWeight(plate.weightKg, unit), 2),
+          quantity: plate.quantity,
+        })),
+        selectedEquipment.loadingSides,
+      );
+    }
+    if (loadConstraints.equipmentType !== 'BARBELL') return null;
     const fallback = plateConfigForUnit(unit);
     const bars = loadConstraints.barWeights?.length
       ? loadConstraints.barWeights.map((weight) => roundWeight(toDisplayWeight(weight, unit), 2))

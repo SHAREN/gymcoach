@@ -1,16 +1,28 @@
 import { z } from 'zod';
 import { generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { databaseIdSchema } from '@/lib/schemas/database-id';
+import {
+  coachingHealthStatusSchema,
+  coachingTrainingLevelSchema,
+} from '@/lib/schemas/coaching-profile';
 
 export const programDesignModeSchema = z.enum(['NEW_PROGRAM', 'NEXT_MESOCYCLE', 'REVISE_CURRENT']);
 
-export const trainingExperienceSchema = z.enum(['BEGINNER', 'INTERMEDIATE', 'ADVANCED']);
+export const trainingExperienceSchema = coachingTrainingLevelSchema;
 
-export const programHealthStatusSchema = z.enum([
-  'NO_RELEVANT_CONCERNS',
-  'CLEARED_WITH_LIMITATIONS',
-  'NEEDS_MEDICAL_CLEARANCE',
-]);
+const LEGACY_HEALTH_STATUS = {
+  NO_RELEVANT_CONCERNS: 'NO_SIGNIFICANT_ISSUES',
+  CLEARED_WITH_LIMITATIONS: 'TRAIN_WITH_LIMITATIONS',
+  NEEDS_MEDICAL_CLEARANCE: 'MEDICAL_CLEARANCE_REQUIRED',
+} as const;
+
+export const programHealthStatusSchema = z.preprocess(
+  (value) =>
+    typeof value === 'string' && value in LEGACY_HEALTH_STATUS
+      ? LEGACY_HEALTH_STATUS[value as keyof typeof LEGACY_HEALTH_STATUS]
+      : value,
+  coachingHealthStatusSchema,
+);
 
 export const availableTrainingDaysSchema = z
   .array(z.number().int().min(1).max(7))
@@ -35,6 +47,13 @@ export const programDesignAnswersSchema = z.object({
   availableDays: availableTrainingDaysSchema.optional(),
   scheduleConstraints: z.string().trim().max(1000).optional(),
   limitations: z.string().trim().max(1000).optional(),
+  excludedExercises: z
+    .array(z.string().trim().min(1).max(120))
+    .max(50)
+    .refine(
+      (values) => new Set(values.map((value) => value.toLocaleLowerCase())).size === values.length,
+    )
+    .optional(),
   equipmentAccess: z.string().trim().max(1000).optional(),
   preferences: z.string().trim().max(1000).optional(),
   recentTrainingBackground: z.string().trim().max(1500).optional(),
@@ -46,7 +65,7 @@ export const programDesignAnswersSchema = z.object({
 });
 
 export const programDesignRequestSchema = z.object({
-  goal: z.string().trim().min(10, 'Describe your goal in a bit more detail.').max(2000),
+  goal: z.string().trim().max(2000).default(''),
   mode: programDesignModeSchema.default('NEW_PROGRAM'),
   sourceProgramId: databaseIdSchema.optional(),
   answers: programDesignAnswersSchema.optional(),
@@ -54,7 +73,7 @@ export const programDesignRequestSchema = z.object({
 
 export const generatedProgramBuildInputSchema = z.object({
   program: generatedProgramSchema,
-  goal: z.string().trim().min(10).max(2000),
+  goal: z.string().trim().max(2000).default(''),
   mode: programDesignModeSchema.default('NEW_PROGRAM'),
   sourceProgramId: databaseIdSchema.nullable().optional(),
   answers: programDesignAnswersSchema.optional(),

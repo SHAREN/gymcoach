@@ -78,7 +78,15 @@ const legacyMobileEquipmentLoadSnapshotSchema = z
       .strict()
       .nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if ((snapshot.loadType === 'PLATE_LOADED') === (snapshot.platePool !== null)) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['platePool'],
+      message: 'Plate-loaded snapshots require a plate pool, and other load types forbid one.',
+    });
+  });
 
 export function frozenSetLoadSnapshotVersion(
   equipmentLoadSnapshot: Prisma.JsonValue | null,
@@ -88,8 +96,42 @@ export function frozenSetLoadSnapshotVersion(
   return null;
 }
 
+export function assertLegacySetEquipmentSnapshotConsistency(input: {
+  weight: number;
+  selectedLoadKg: number | null;
+  selectedLoadMultiplierSnapshot: number | null;
+  nominalResistanceKg: number | null;
+  equipmentLoadSnapshot: unknown;
+}): void {
+  if (storedSnapshotVersion(input.equipmentLoadSnapshot) !== 1) return;
+
+  const parsed = legacyMobileEquipmentLoadSnapshotSchema.safeParse(input.equipmentLoadSnapshot);
+  if (!parsed.success) {
+    throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
+  }
+
+  const snapshot = parsed.data;
+  const expectedNominalResistanceKg =
+    snapshot.loadType === 'SELECTORIZED'
+      ? round(snapshot.selectedLoadKg * snapshot.selectedLoadMultiplier)
+      : null;
+  const platePoolMatchesLoadType =
+    (snapshot.loadType === 'PLATE_LOADED') === (snapshot.platePool !== null);
+  if (
+    input.weight !== snapshot.selectedLoadKg ||
+    input.selectedLoadKg !== snapshot.selectedLoadKg ||
+    input.selectedLoadMultiplierSnapshot !== snapshot.selectedLoadMultiplier ||
+    input.nominalResistanceKg !== snapshot.nominalResistanceKg ||
+    snapshot.nominalResistanceKg !== expectedNominalResistanceKg ||
+    !platePoolMatchesLoadType
+  ) {
+    throw new ApiError(400, 'The recorded equipment snapshot fields are inconsistent.');
+  }
+}
+
 type StoredSetEquipmentSnapshot = Pick<
   Set,
+  | 'weight'
   | 'gymEquipmentId'
   | 'equipmentNameSnapshot'
   | 'selectedLoadKg'
@@ -355,7 +397,10 @@ function requireSupportedFrozenLoadSnapshot(
     const legacy = legacyMobileEquipmentLoadSnapshotSchema.safeParse(
       existing.equipmentLoadSnapshot,
     );
-    if (legacy.success) return legacy.data;
+    if (legacy.success) {
+      assertLegacySetEquipmentSnapshotConsistency(existing);
+      return legacy.data;
+    }
   }
   throw new ApiError(400, 'The recorded equipment snapshot is unsupported or invalid.');
 }
@@ -378,6 +423,13 @@ function round(value: number): number {
 function snapshotLoadType(snapshot: Prisma.JsonValue | null): string | null {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   return typeof snapshot.loadType === 'string' ? snapshot.loadType : null;
+}
+
+function storedSnapshotVersion(snapshot: unknown): number | null {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof (snapshot as { version?: unknown }).version === 'number'
+    ? ((snapshot as { version: number }).version ?? null)
+    : null;
 }
 
 function updateMutableLoadFacts(

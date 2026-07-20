@@ -136,7 +136,7 @@ describe('HistoryStrengthSetEditor', () => {
     expect(options.queryByText('25 kg')).not.toBeInTheDocument();
   });
 
-  it('keeps a legacy frozen row manual and never falls back to current equipment loads', async () => {
+  it('keeps a legacy row manual while normalizing a new row to current equipment', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
     render(
@@ -163,6 +163,13 @@ describe('HistoryStrengthSetEditor', () => {
       />,
     );
 
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'New set 2 weight in KG' })).toHaveTextContent(
+        '15',
+      ),
+    );
+    expect(screen.getByRole('button', { name: 'Add historical set 2' })).toBeEnabled();
+
     fireEvent.click(screen.getByRole('button', { name: 'Edit set 1 weight in KG' }));
     const options = within(screen.getByTestId('set-value-options'));
     expect(options.queryByText('15 kg')).not.toBeInTheDocument();
@@ -180,6 +187,21 @@ describe('HistoryStrengthSetEditor', () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ weight: 30, reps: 10, rir: 2 }),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add historical set 2' }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith('/api/sessions/session-1/historical-sets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          exerciseId: 'exercise-1',
+          gymEquipmentId: 'cable-a',
+          weight: 15,
+          reps: 10,
+          rir: 2,
+        }),
       }),
     );
   });

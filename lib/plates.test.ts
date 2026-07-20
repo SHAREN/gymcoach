@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeBestPlateLoad,
+  computeEquipmentPlateLoad,
   computePlateLoad,
   DEFAULT_BAR_WEIGHT,
   DEFAULT_PLATES,
@@ -114,6 +115,59 @@ describe('computePlateLoad', () => {
       perSide: [
         { plate: 20, count: 1 },
         { plate: 2.5, count: 1 },
+      ],
+    });
+  });
+
+  it('uses a 10 kg concrete bar, finite plate quantities and the configured side count', () => {
+    const load = computeEquipmentPlateLoad(
+      40,
+      10,
+      [
+        { plate: 10, quantity: 2 },
+        { plate: 5, quantity: 4 },
+      ],
+      2,
+    );
+
+    expect(load).toMatchObject({
+      exact: true,
+      barWeight: 10,
+      loadingSides: 2,
+      achievedWeight: 40,
+      remainder: 0,
+      perSide: [
+        { plate: 10, count: 1 },
+        { plate: 5, count: 1 },
+      ],
+    });
+    expect(computeEquipmentPlateLoad(50, 10, [{ plate: 10, quantity: 2 }], 2)).toMatchObject({
+      exact: false,
+      achievedWeight: 30,
+      remainder: 20,
+    });
+  });
+
+  it('decomposes a four-sided 10 kg implement with the same per-side result as Android', () => {
+    expect(
+      computeEquipmentPlateLoad(
+        70,
+        10,
+        [
+          { plate: 10, quantity: 4 },
+          { plate: 5, quantity: 8 },
+        ],
+        4,
+      ),
+    ).toMatchObject({
+      exact: true,
+      barWeight: 10,
+      loadingSides: 4,
+      achievedWeight: 70,
+      remainder: 0,
+      perSide: [
+        { plate: 10, count: 1 },
+        { plate: 5, count: 1 },
       ],
     });
   });

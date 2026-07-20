@@ -125,15 +125,13 @@ describe('profileUpdateSchema', () => {
   describe('coachNote (#188: trimmed, bounded by COACH_NOTE_MAX_LEN)', () => {
     it('accepts a note exactly at COACH_NOTE_MAX_LEN', () => {
       expect(
-        profileUpdateSchema.safeParse({ coachNote: 'x'.repeat(COACH_NOTE_MAX_LEN) })
-          .success,
+        profileUpdateSchema.safeParse({ coachNote: 'x'.repeat(COACH_NOTE_MAX_LEN) }).success,
       ).toBe(true);
     });
 
     it('rejects a note one character over COACH_NOTE_MAX_LEN', () => {
       expect(
-        profileUpdateSchema.safeParse({ coachNote: 'x'.repeat(COACH_NOTE_MAX_LEN + 1) })
-          .success,
+        profileUpdateSchema.safeParse({ coachNote: 'x'.repeat(COACH_NOTE_MAX_LEN + 1) }).success,
       ).toBe(false);
     });
 
@@ -172,6 +170,22 @@ describe('profileUpdateSchema', () => {
     it('clears with null', () => {
       expect(profileUpdateSchema.parse({ displayName: null }).displayName).toBeNull();
     });
+  });
+
+  it('accepts a bounded partial coaching-profile patch and rejects raw health text', () => {
+    expect(
+      profileUpdateSchema.safeParse({
+        coachingProfile: {
+          healthStatus: { state: 'KNOWN', value: 'NO_SIGNIFICANT_ISSUES' },
+          availableWeekdays: { state: 'KNOWN', value: [1, 3, 5] },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      profileUpdateSchema.safeParse({
+        coachingProfile: { healthStatus: 'healthy' },
+      }).success,
+    ).toBe(false);
   });
 
   it('exposes COACH_NOTE_MAX_LEN as the shared 500-char limit', () => {

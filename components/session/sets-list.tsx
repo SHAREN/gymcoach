@@ -1,20 +1,31 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Check, Circle, CircleDot, CloudOff, Loader2, Trash2, Trophy } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  Circle,
+  CircleDot,
+  CloudOff,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  Trophy,
+} from 'lucide-react';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import type { PendingSet } from '@/lib/indexeddb';
 import { detectPRs, type PRType } from '@/lib/records';
 import { formatCardioSet } from '@/lib/cardio';
-import { targetDropSets } from '@/lib/planned-sets';
+import { projectSetsToTarget, targetDropSets } from '@/lib/planned-sets';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
   sets: PendingSet[];
   isInputActive: boolean;
   onDeleteSet: (set: PendingSet) => void;
+  onRetrySet?: (set: PendingSet) => void;
   // Prior (previous-session) non-warmup sets for this exercise, used as the
   // baseline for PR detection. Optional: absent on the very first session.
   // This is the most recent session's data (from getLastPerformances), so a
@@ -26,9 +37,19 @@ interface Props {
 const PR_LABEL_KEYS = { weight: 'weightPr', e1rm: 'oneRmPr' } as const;
 const PR_TITLE_KEYS = { weight: 'weightPrTitle', e1rm: 'oneRmPrTitle' } as const;
 
-export function SetsList({ programExercise, sets, isInputActive, onDeleteSet, priorSets }: Props) {
+export function SetsList({
+  programExercise,
+  sets,
+  isInputActive,
+  onDeleteSet,
+  onRetrySet,
+  priorSets,
+}: Props) {
   const t = useTranslations('session.setsList');
   const completedNonWarmup = sets.filter((s) => !s.isWarmup);
+  const extraLocalIds = new Set(
+    projectSetsToTarget(programExercise, sets).overflow.map((set) => set.localId),
+  );
   const totalRows = Math.max(
     programExercise.targetSets + targetDropSets(programExercise),
     completedNonWarmup.length + 1,
@@ -52,7 +73,15 @@ export function SetsList({ programExercise, sets, isInputActive, onDeleteSet, pr
   return (
     <div className="rounded-lg border border-border">
       {sets.map((s, i) => (
-        <RowDone key={s.localId} set={s} prs={prsFor(s, i)} onDelete={() => onDeleteSet(s)} />
+        <RowDone
+          key={s.localId}
+          set={s}
+          displayNumber={i + 1}
+          extra={extraLocalIds.has(s.localId)}
+          prs={prsFor(s, i)}
+          onRetry={onRetrySet ? () => onRetrySet(s) : undefined}
+          onDelete={() => onDeleteSet(s)}
+        />
       ))}
 
       {Array.from({ length: totalRows - sets.length }, (_, i) => {
@@ -70,51 +99,91 @@ export function SetsList({ programExercise, sets, isInputActive, onDeleteSet, pr
   );
 }
 
-function RowDone({ set, prs, onDelete }: { set: PendingSet; prs: PRType[]; onDelete: () => void }) {
+function RowDone({
+  set,
+  displayNumber,
+  extra,
+  prs,
+  onRetry,
+  onDelete,
+}: {
+  set: PendingSet;
+  displayNumber: number;
+  extra: boolean;
+  prs: PRType[];
+  onRetry?: () => void;
+  onDelete: () => void;
+}) {
   const t = useTranslations('session.setsList');
   const weightLabel = set.weight === 0 ? t('bodyweight') : `${set.weight} kg`;
   // Cardio sets (issue #133) render as duration/distance, never weight x reps.
   const isCardio = set.durationSec != null;
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 last:border-b-0">
-      <div className="flex min-w-0 items-center gap-2">
-        <SyncIcon status={set.status} />
-        <span className="text-sm font-medium">
-          {t('set', { number: set.setNumber })}
-          {set.isWarmup ? t('warmup') : ''}
-          {set.isDropSet ? t('drop') : ''}
-        </span>
-        <span className="truncate text-sm text-muted-foreground">
-          {isCardio ? (
-            formatCardioSet(set.durationSec!, set.distanceM)
-          ) : (
-            <>
-              {weightLabel} × {set.reps}
-              {set.rir != null && ` · RIR ${set.rir}`}
-            </>
+    <div className="border-b border-border px-3 py-2 last:border-b-0">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <SyncIcon status={set.status} />
+          <span className="text-sm font-medium">
+            {t('set', { number: displayNumber })}
+            {set.isWarmup ? t('warmup') : ''}
+            {set.isDropSet ? t('drop') : ''}
+          </span>
+          <span className="truncate text-sm text-muted-foreground">
+            {isCardio ? (
+              formatCardioSet(set.durationSec!, set.distanceM)
+            ) : (
+              <>
+                {weightLabel} × {set.reps}
+                {set.rir != null && ` · RIR ${set.rir}`}
+              </>
+            )}
+          </span>
+          {prs.map((pr) => (
+            <Badge key={pr} className="gap-1 text-xs" title={t(PR_TITLE_KEYS[pr])}>
+              <Trophy className="size-3" />
+              {t(PR_LABEL_KEYS[pr])}
+            </Badge>
+          ))}
+          {set.notes && (
+            <Badge variant="secondary" className="text-xs">
+              {t('note')}
+            </Badge>
           )}
-        </span>
-        {prs.map((pr) => (
-          <Badge key={pr} className="gap-1 text-xs" title={t(PR_TITLE_KEYS[pr])}>
-            <Trophy className="size-3" />
-            {t(PR_LABEL_KEYS[pr])}
-          </Badge>
-        ))}
-        {set.notes && (
-          <Badge variant="secondary" className="text-xs">
-            {t('note')}
-          </Badge>
-        )}
+        </div>
+        <div className="flex items-center gap-1">
+          {set.status !== 'synced' && onRetry && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRetry}
+              aria-label={t('retrySet', { number: displayNumber })}
+              className="size-8 text-muted-foreground"
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDelete}
+            aria-label={t('delete')}
+            className="size-8 text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onDelete}
-        aria-label={t('delete')}
-        className="size-8 text-muted-foreground hover:text-destructive"
-      >
-        <Trash2 className="size-3.5" />
-      </Button>
+      {(extra || set.status !== 'synced') && (
+        <div className="mt-1 flex flex-wrap gap-2 text-xs">
+          {extra && <span className="rounded-full bg-muted px-2 py-0.5">{t('extra')}</span>}
+          {set.status !== 'synced' && (
+            <span className={set.status === 'failed' ? 'text-destructive' : 'text-amber-600'}>
+              {t(`sync.${set.status}`)}
+              {set.lastError ? `: ${set.lastError}` : ''}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -123,7 +192,8 @@ function SyncIcon({ status }: { status: PendingSet['status'] }) {
   if (status === 'synced') return <Check className="size-4 flex-shrink-0 text-primary" />;
   if (status === 'syncing')
     return <Loader2 className="size-4 flex-shrink-0 animate-spin text-muted-foreground" />;
-  if (status === 'failed') return <CloudOff className="size-4 flex-shrink-0 text-amber-500" />;
+  if (status === 'failed')
+    return <AlertTriangle className="size-4 flex-shrink-0 text-destructive" />;
   // 'pending'
   return <CloudOff className="size-4 flex-shrink-0 text-muted-foreground" />;
 }

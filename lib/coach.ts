@@ -24,6 +24,8 @@ import {
 import { COACH_SYSTEM_PROMPT } from '@/lib/prompts/coach-system-prompt';
 import { exerciseRecords, type ExerciseRecord } from '@/lib/records';
 import { getLlmProvider } from '@/lib/llm';
+import { normalizeCoachingProfile, type CoachingProfile } from '@/lib/schemas/coaching-profile';
+import { createCoachAuditPrompt } from '@/lib/coach-audit';
 
 // ============================================================
 // Structured payload sent to the coach
@@ -43,6 +45,7 @@ export interface CoachPayload {
     bodyweight: number | null;
     goal: string | null;
     weeklyFrequency: number | null;
+    coachingProfile: CoachingProfile;
     // The user's own free-text note to the coach (issue #188): their current
     // context to weigh (injuries, illness, life constraints). Null = no note.
     // Input signal only; the output contract (the <adjustments> block) is
@@ -292,6 +295,8 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
       goal: true,
       weeklyFrequency: true,
       coachNote: true,
+      coachingProfile: true,
+      coachingProfileUpdatedAt: true,
       deloadUntil: true,
     },
   });
@@ -454,6 +459,10 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
       bodyweight,
       goal: user?.goal ?? null,
       weeklyFrequency: user?.weeklyFrequency ?? null,
+      coachingProfile: normalizeCoachingProfile(
+        user?.coachingProfile,
+        user?.coachingProfileUpdatedAt,
+      ),
       coachNote: user?.coachNote ?? null,
     },
     weekCurrent: currentWeek,
@@ -469,9 +478,7 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
     },
     conditioning,
     records,
-    recentProgress: recentProgress.sort((a, b) =>
-      a.exerciseName.localeCompare(b.exerciseName),
-    ),
+    recentProgress: recentProgress.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName)),
   };
 }
 
@@ -716,10 +723,7 @@ async function fetchRecordsSummary(
 
   return records
     .slice()
-    .sort(
-      (a, b) =>
-        (lastTrained.get(b.exerciseName) ?? 0) - (lastTrained.get(a.exerciseName) ?? 0),
-    )
+    .sort((a, b) => (lastTrained.get(b.exerciseName) ?? 0) - (lastTrained.get(a.exerciseName) ?? 0))
     .slice(0, COACH_RECORDS_CAP)
     .map((r: ExerciseRecord) => ({
       exerciseName: r.exerciseName,
@@ -820,10 +824,7 @@ async function fetchFatigueSummary(
 // The most recent readiness check-in, but only if it is recent enough to be
 // relevant (within the last 7 days). Returns null otherwise. This is an INPUT
 // signal for the coach; it does not change the coach output contract.
-async function fetchLatestReadiness(
-  userId: string,
-  now: Date,
-): Promise<ReadinessSummary | null> {
+async function fetchLatestReadiness(userId: string, now: Date): Promise<ReadinessSummary | null> {
   const sevenDaysAgo = addDays(now, -7);
   const checkin = await db.readinessCheckin.findFirst({
     where: { userId, createdAt: { gte: sevenDaysAgo } },
@@ -831,13 +832,15 @@ async function fetchLatestReadiness(
   });
   if (!checkin) return null;
 
-  const daysAgo = Math.floor(
-    (now.getTime() - checkin.createdAt.getTime()) / (1000 * 60 * 60 * 24),
-  );
+  const daysAgo = Math.floor((now.getTime() - checkin.createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
   // soreness is stored as JSON; coerce to a plain { group: 1-5 } map defensively.
   let soreness: Record<string, number> | null = null;
-  if (checkin.soreness && typeof checkin.soreness === 'object' && !Array.isArray(checkin.soreness)) {
+  if (
+    checkin.soreness &&
+    typeof checkin.soreness === 'object' &&
+    !Array.isArray(checkin.soreness)
+  ) {
     const entries = Object.entries(checkin.soreness as Record<string, unknown>).filter(
       ([, v]) => typeof v === 'number',
     ) as Array<[string, number]>;
@@ -960,7 +963,11 @@ export async function buildCurrentSessionContext(
   let readinessToday: CurrentSessionContext['readinessToday'] = null;
   if (checkin) {
     let soreness: Record<string, number> | null = null;
-    if (checkin.soreness && typeof checkin.soreness === 'object' && !Array.isArray(checkin.soreness)) {
+    if (
+      checkin.soreness &&
+      typeof checkin.soreness === 'object' &&
+      !Array.isArray(checkin.soreness)
+    ) {
       const entries = Object.entries(checkin.soreness as Record<string, unknown>).filter(
         ([, v]) => typeof v === 'number',
       ) as Array<[string, number]>;
@@ -988,7 +995,7 @@ export async function buildCurrentSessionContext(
 export interface CoachCompletion {
   markdown: string;
   modelUsed: string;
-  promptText: string; // JSON payload sent, for auditing
+  auditPrompt: string;
 }
 
 // Builds the prompt and delegates to the active LLM provider (Anthropic SDK or
@@ -1005,5 +1012,5 @@ export async function callCoach(payload: CoachPayload): Promise<CoachCompletion>
     maxTokens: 8000,
   });
 
-  return { markdown: text, modelUsed, promptText: userMessage };
+  return { markdown: text, modelUsed, auditPrompt: createCoachAuditPrompt() };
 }

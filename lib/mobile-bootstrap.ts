@@ -7,15 +7,17 @@ import {
   type LastPerformance,
 } from '@/lib/last-performance';
 import { ensureMobileEquipmentSnapshotRevision } from '@/lib/mobile-equipment-snapshot';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { READINESS_RECENCY_HOURS } from '@/lib/progression';
 import {
   getReturnToTrainingRecommendations,
   getReturnToTrainingRecommendationsByEquipment,
   type EquipmentReturnRecommendation,
 } from '@/lib/return-to-training-history';
+import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 4;
-export const MOBILE_CALCULATION_VERSION = '2026-07-15-equipment-v1';
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 6;
+export const MOBILE_CALCULATION_VERSION = '2026-07-16-return-history-v2';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
 interface MobileExerciseHistoryRow {
@@ -119,6 +121,10 @@ export function mergeMobileEquipmentReturnRecommendations(
 }
 
 export async function buildMobileBootstrap(userId: string) {
+  const ownedGymIds = await db.gym.findMany({ where: { userId }, select: { id: true } });
+  await db.$transaction(async (tx) => {
+    for (const gym of ownedGymIds) await ensureGymSystemProfiles(tx, userId, gym.id);
+  });
   const exerciseHistoryRowsPromise = db.$queryRaw<MobileExerciseHistoryRow[]>`
       WITH exercise_sessions AS (
         SELECT DISTINCT
@@ -180,6 +186,8 @@ export async function buildMobileBootstrap(userId: string) {
         bodyweight: true,
         unit: true,
         activeGymId: true,
+        coachingProfile: true,
+        coachingProfileUpdatedAt: true,
         deloadUntil: true,
       },
     }),
@@ -219,6 +227,7 @@ export async function buildMobileBootstrap(userId: string) {
             baseLoadKg: true,
             platePoolId: true,
             loadingSides: true,
+            systemBarbellFamily: true,
             exerciseLinks: true,
             platePool: { include: { plates: { orderBy: { weightKg: 'asc' } } } },
           },
@@ -301,7 +310,8 @@ export async function buildMobileBootstrap(userId: string) {
                 await getReturnToTrainingRecommendations({
                   userId,
                   programExercises: workout.exercises,
-                  excludeSessionId: null,
+                  excludeSessionId:
+                    openSessions.find((session) => session.workoutId === workout.id)?.id ?? null,
                   now,
                   bodyweight: user.bodyweight,
                   gym: activeGym,
@@ -324,16 +334,20 @@ export async function buildMobileBootstrap(userId: string) {
               return gym ? [gym] : [];
             });
             const recommendationsByGym = await Promise.all(
-              (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) =>
-                getReturnToTrainingRecommendationsByEquipment({
+              (workoutGyms.length > 0 ? workoutGyms : [null]).map((gym) => {
+                const gymId = gym?.id ?? null;
+                return getReturnToTrainingRecommendationsByEquipment({
                   userId,
                   programExercises: workout.exercises,
-                  excludeSessionId: null,
+                  excludeSessionId:
+                    openSessions.find(
+                      (session) => session.workoutId === workout.id && session.gymId === gymId,
+                    )?.id ?? null,
                   now,
                   bodyweight: user.bodyweight,
                   gym,
-                }),
-              ),
+                });
+              }),
             );
             return [
               workout.id,
@@ -410,6 +424,10 @@ export async function buildMobileBootstrap(userId: string) {
       bodyweight: user.bodyweight,
       unit: user.unit,
       activeGymId: user.activeGymId,
+      coachingProfile: normalizeCoachingProfile(
+        user.coachingProfile,
+        user.coachingProfileUpdatedAt,
+      ),
       deloadActive: isDeloadActive(user.deloadUntil, new Date()),
     },
     activeProgram,

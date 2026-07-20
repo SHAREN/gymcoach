@@ -13,7 +13,7 @@ export interface HydrationReconciliation {
 }
 
 export interface HydrationReconciliationOptions {
-  pruneMissingSynced?: boolean;
+  ownerId?: string;
 }
 
 export function localSetIdsForDeletion(
@@ -37,10 +37,12 @@ function pendingSetFromServer(
   sessionId: string,
   serverSet: PrismaSet,
   localId = `srv_${serverSet.id}`,
+  ownerId?: string,
 ): PendingSet {
   const completedAt = new Date(serverSet.completedAt).getTime();
   return {
     localId,
+    ownerId,
     sessionId,
     exerciseId: serverSet.exerciseId,
     setNumber: serverSet.setNumber,
@@ -62,8 +64,11 @@ function pendingSetFromServer(
     status: 'synced',
     serverId: serverSet.id,
     syncedAt: completedAt,
+    serverObservedAt: Date.now(),
     attempts: 0,
     lastError: null,
+    lastHttpStatus: null,
+    nextAttemptAt: null,
   };
 }
 
@@ -78,7 +83,9 @@ export function reconcileHydratedSets(
   const serverIds = new Set(serverSets.map((set) => set.id));
 
   for (const serverSet of serverSets) {
-    const matches = existing.filter((set) => set.serverId === serverSet.id);
+    const matches = existing.filter(
+      (set) => set.serverId === serverSet.id || set.localId === serverSet.id,
+    );
     const chosen =
       matches.find((set) => set.status !== 'synced') ??
       matches.find((set) => !set.localId.startsWith('srv_')) ??
@@ -88,17 +95,30 @@ export function reconcileHydratedSets(
       if (duplicate.localId !== chosen?.localId) deleteLocalIds.add(duplicate.localId);
     }
 
+    const preservesPendingServerUpdate =
+      chosen?.serverId === serverSet.id && chosen.status !== 'synced';
     records.push(
-      chosen && chosen.status !== 'synced'
-        ? chosen
-        : pendingSetFromServer(sessionId, serverSet, chosen?.localId),
+      preservesPendingServerUpdate
+        ? {
+            ...chosen,
+            ownerId: options.ownerId ?? chosen.ownerId,
+            serverObservedAt: Date.now(),
+          }
+        : pendingSetFromServer(sessionId, serverSet, chosen?.localId, options.ownerId),
     );
   }
 
   for (const localSet of existing) {
-    if (localSet.serverId && serverIds.has(localSet.serverId)) continue;
-    if (options.pruneMissingSynced && localSet.status === 'synced') {
-      deleteLocalIds.add(localSet.localId);
+    if (
+      (localSet.serverId && serverIds.has(localSet.serverId)) ||
+      serverIds.has(localSet.localId)
+    ) {
+      continue;
+    }
+    // A GET may have raced a successful POST or may be a stale cached read.
+    // Absence is never acknowledgement that a durable local row should vanish.
+    if (options.ownerId && localSet.ownerId == null) {
+      records.push({ ...localSet, ownerId: options.ownerId });
     }
   }
 
@@ -112,7 +132,10 @@ export async function hydrateFromServerSets(
 ): Promise<void> {
   const db = getDB();
   await db.transaction('rw', db.pendingSets, async () => {
-    const existing = await db.pendingSets.where('sessionId').equals(sessionId).toArray();
+    const sessionRows = await db.pendingSets.where('sessionId').equals(sessionId).toArray();
+    const existing = options.ownerId
+      ? sessionRows.filter((set) => set.ownerId == null || set.ownerId === options.ownerId)
+      : sessionRows;
     const reconciliation = reconcileHydratedSets(sessionId, existing, serverSets, options);
     if (reconciliation.deleteLocalIds.length > 0) {
       await db.pendingSets.bulkDelete(reconciliation.deleteLocalIds);

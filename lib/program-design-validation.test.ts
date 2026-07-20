@@ -3,6 +3,7 @@ import { summarizeMcpTrainingHistory } from '@/lib/mcp/training-history';
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import type { ProgramDesignContext } from '@/lib/program-design-context';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
+import { emptyCoachingProfile } from '@/lib/schemas/coaching-profile';
 
 function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignContext {
   return {
@@ -15,7 +16,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       trainingExperience: 'INTERMEDIATE',
       weeklyFrequency: 3,
       sessionDurationMin: 75,
-      healthStatus: 'NO_RELEVANT_CONCERNS',
+      healthStatus: 'NO_SIGNIFICANT_ISSUES',
       phaseLengthWeeks: 6,
       availableDays: [1, 3, 5],
       scheduleConstraints: null,
@@ -29,9 +30,23 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       changesSinceLastProgram: null,
       postBlockAssessment: null,
     },
+    answerSources: {
+      goal: 'request',
+      trainingExperience: 'request',
+      weeklyFrequency: 'request',
+      sessionDurationMin: 'request',
+      healthStatus: 'request',
+      availableDays: 'request',
+      limitations: 'request',
+      equipmentAccess: 'active-gym',
+    },
     missingQuestions: [],
     recommendedQuestions: [],
-    safety: { healthStatus: 'NO_RELEVANT_CONCERNS', canGenerateProgram: true, blockingReasons: [] },
+    safety: {
+      healthStatus: 'NO_SIGNIFICANT_ISSUES',
+      canGenerateProgram: true,
+      blockingReasons: [],
+    },
     profile: {
       displayName: null,
       sex: null,
@@ -39,6 +54,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
       bodyweight: 80,
       goal: 'HYPERTROPHY',
       weeklyFrequency: 3,
+      coachingProfile: emptyCoachingProfile(),
       coachNote: null,
     },
     recovery: {
@@ -106,6 +122,8 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         defaultRestSec: 120,
         notes: null,
         isAvailableInActiveGym: true,
+        isAllowedByProfile: true,
+        limitationReasons: [],
         availabilitySource: 'legacy-config',
         requiresEquipmentSelection: false,
         equipmentOptions: [],
@@ -124,6 +142,8 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         defaultRestSec: 60,
         notes: null,
         isAvailableInActiveGym: false,
+        isAllowedByProfile: true,
+        limitationReasons: [],
         availabilitySource: 'none',
         requiresEquipmentSelection: false,
         equipmentOptions: [],
@@ -133,6 +153,7 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
         barWeights: [],
       },
     ],
+    exerciseConstraints: [],
     dataQuality: {
       sessionsInTwoWeeks: 0,
       exercisesWithRecentProgress: 0,
@@ -262,10 +283,16 @@ describe('program-design validation', () => {
             muscleGroup: 'CHEST',
             mode: 'exercise-reintro',
             exerciseGapDays: 60,
+            returnGapDays: 60,
             muscleGapDays: 5,
             targetSets: 2,
             targetRIR: 3,
             suggestedWeight: 60,
+            historyBasis: 'long-term-exact',
+            confidence: 'medium',
+            recentHistorySessionCount: 0,
+            longTermHistorySessionCount: 3,
+            nonComparableHistorySessionCount: 0,
           },
         ],
       },
@@ -329,7 +356,7 @@ describe('program-design validation', () => {
       program([]),
       context({
         safety: {
-          healthStatus: 'NEEDS_MEDICAL_CLEARANCE',
+          healthStatus: 'MEDICAL_CLEARANCE_REQUIRED',
           canGenerateProgram: false,
           blockingReasons: ['Medical clearance is required.'],
         },
@@ -337,6 +364,68 @@ describe('program-design validation', () => {
     );
     expect(result.valid).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toContain('medical-clearance-required');
+  });
+
+  it('treats named profile limitations as hard exercise-selection constraints', () => {
+    const result = validateProgramDesign(
+      program([
+        {
+          name: 'Bench press',
+          muscleGroup: 'CHEST',
+          category: 'COMPOUND',
+          equipmentType: 'BARBELL',
+          targetSets: 3,
+          targetRepsMin: 6,
+          targetRepsMax: 10,
+          targetRIR: 3,
+          restSec: 150,
+        },
+      ]),
+      context({
+        exerciseConstraints: [
+          {
+            source: 'profile',
+            kind: 'PAIN',
+            label: 'Self-reported pressing constraint',
+            affectedExerciseNames: ['Bench press'],
+            details: null,
+          },
+        ],
+      }),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'profile-limitation-conflict', severity: 'error' }),
+      ]),
+    );
+  });
+
+  it('enforces maximum session duration without a hidden tolerance', () => {
+    const result = validateProgramDesign(
+      program([
+        {
+          name: 'Bench press',
+          muscleGroup: 'CHEST',
+          category: 'COMPOUND',
+          equipmentType: 'BARBELL',
+          targetSets: 4,
+          targetRepsMin: 6,
+          targetRepsMax: 10,
+          targetRIR: 2,
+          restSec: 150,
+        },
+      ]),
+      context({ answers: { ...context().answers, sessionDurationMin: 12 } }),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'session-too-long', severity: 'error' }),
+      ]),
+    );
   });
 
   it('rejects a workout assigned outside the available weekdays', () => {

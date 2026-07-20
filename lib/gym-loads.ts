@@ -42,8 +42,10 @@ export interface ResolveExerciseInventoryInput {
   inventoryMode: GymInventoryMode;
   exercise: { id: string; name: string; equipmentType: EquipmentType };
   linkedEquipment: EquipmentLoadProfile[];
+  preferredEquipmentId?: string | null;
   legacyConfig?: {
     isAvailable: boolean;
+    systemProfileSupported?: boolean | null;
     weightOptions: number[];
     dumbbellWeights: number[];
     plateWeights: number[];
@@ -61,6 +63,7 @@ export interface ResolvedExerciseInventory {
   requiresEquipmentSelection: boolean;
   weightOptions: number[];
   constraints: GymLoadConstraints;
+  preferredEquipmentId?: string | null;
 }
 
 export function resolveEquipmentType(
@@ -288,6 +291,7 @@ export function resolveExerciseInventory({
   inventoryMode,
   exercise,
   linkedEquipment,
+  preferredEquipmentId = null,
   legacyConfig = null,
   sharedDumbbellWeights = [],
   legacyPlateWeights = [],
@@ -296,23 +300,60 @@ export function resolveExerciseInventory({
   const equipment = linkedEquipment.map((item) => resolveEquipmentLoadProfile(item));
   if (equipment.length > 0) {
     const requiresEquipmentSelection = equipment.length > 1;
-    const weightOptions = requiresEquipmentSelection ? [] : equipment[0]!.attainableLoads;
+    const resolvedPreferredEquipmentId = preferredEquipmentId
+      ? (equipment.find((item) => item.equipmentId === preferredEquipmentId)?.equipmentId ?? null)
+      : null;
+    const selectedEquipment =
+      equipment.find((item) => item.equipmentId === resolvedPreferredEquipmentId) ??
+      (equipment.length === 1 ? equipment[0]! : null);
+    const weightOptions = selectedEquipment?.attainableLoads ?? [];
     return {
       isAvailable: true,
       source: 'equipment',
       equipment,
       requiresEquipmentSelection,
       weightOptions,
+      preferredEquipmentId: resolvedPreferredEquipmentId,
       constraints: {
         equipmentType: resolveEquipmentType(exercise.equipmentType, exercise.name),
         isAvailable: true,
         equipmentOptions: equipment,
-        equipmentId: requiresEquipmentSelection ? null : equipment[0]!.equipmentId,
+        equipmentId: selectedEquipment?.equipmentId ?? null,
       },
     };
   }
 
   const equipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name);
+  if (
+    inventoryMode === 'EQUIPMENT_FIRST' &&
+    legacyConfig?.systemProfileSupported != null &&
+    (equipmentType === 'DUMBBELL' || equipmentType === 'BARBELL')
+  ) {
+    if (
+      equipmentType === 'DUMBBELL' &&
+      legacyConfig.systemProfileSupported &&
+      sharedDumbbellWeights.length > 0
+    ) {
+      const weights = uniquePositive(sharedDumbbellWeights);
+      return {
+        isAvailable: true,
+        source: 'shared-dumbbells',
+        equipment: [],
+        requiresEquipmentSelection: false,
+        weightOptions: weights,
+        constraints: { equipmentType, isAvailable: true, dumbbellWeights: weights },
+      };
+    }
+    const constraints = { equipmentType, isAvailable: false } satisfies GymLoadConstraints;
+    return {
+      isAvailable: false,
+      source: 'none',
+      equipment: [],
+      requiresEquipmentSelection: false,
+      weightOptions: [],
+      constraints,
+    };
+  }
   if (equipmentType === 'DUMBBELL' && sharedDumbbellWeights.length > 0) {
     const weights = uniquePositive(sharedDumbbellWeights);
     return {

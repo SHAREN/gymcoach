@@ -25,6 +25,9 @@ export const exercises = {
   physicalEquipment: 'Доступно на физическом оборудовании',
   physicalEquipmentDescription:
     'Выберите сохранённые тренажёры или станции, на которых можно выполнять это упражнение. Доступность определяется отдельно для каждого зала.',
+  activeGym: 'Активный зал',
+  makePreferred: 'Использовать «{equipment}» по умолчанию в этом зале',
+  preferred: 'По умолчанию',
   defaultRest: 'Отдых по умолчанию (секунды)',
   bodyweight: 'Упражнение с собственным весом',
   bodyweightDescription:
@@ -75,6 +78,16 @@ export const exercises = {
     openChart: 'График прогресса',
     noHistory: 'Для этого упражнения пока нет выполненных подходов.',
     openSession: 'Открыть тренировку',
+    edit: 'Изменить упражнение',
+    activeGymEquipment: 'Оборудование активного зала',
+    noActiveGym: 'Выберите активный зал, чтобы назначить конкретное оборудование.',
+    noEquipment: 'В зале «{gym}» с этим упражнением не связано оборудование.',
+    openGymSettings: 'Открыть настройки зала',
+    compatibleEquipment: 'Совместимое оборудование',
+    baseLoad: 'Пустой вес: {weight} кг',
+    loadingSides:
+      '{count, plural, one {# нагружаемая сторона} few {# нагружаемые стороны} many {# нагружаемых сторон} other {# нагружаемой стороны}}',
+    platePool: 'Группа блинов: {name}',
   },
   muscleGroups: {
     chest: 'Грудь',

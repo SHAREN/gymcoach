@@ -2,7 +2,16 @@ import { Buffer } from 'node:buffer';
 import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
 import { getExerciseMedia } from '@/lib/exercise-media';
-import { resolveExerciseInventory, type EquipmentLoadProfile } from '@/lib/gym-loads';
+import {
+  resolveEquipmentType,
+  resolveExerciseInventory,
+  type EquipmentLoadProfile,
+} from '@/lib/gym-loads';
+import {
+  ensureGymSystemProfiles,
+  gymSystemProfileId,
+  rejectOwnedSystemProfileMutation,
+} from '@/lib/gym-system-profiles';
 import type { Prisma } from '@/lib/prisma-client';
 import type { GymEquipmentInput, GymPlatePoolInput } from '@/lib/schemas/gym-equipment';
 
@@ -11,8 +20,9 @@ export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type UpsertGymEquipmentInput = GymEquipmentInput & {
-  // REST and older Android clients still consume GymExerciseConfig. New
-  // equipment-first callers can omit this legacy mirror and rely on links.
+  // REST and older Android clients may request an availability-only
+  // GymExerciseConfig mirror. Equipment-first callers omit it and rely on
+  // physical links and their own load profiles.
   markExercisesAvailable?: boolean;
 };
 
@@ -38,11 +48,13 @@ const equipmentSelection = {
   baseLoadKg: true,
   platePoolId: true,
   loadingSides: true,
+  systemBarbellFamily: true,
   platePool: {
     select: {
       id: true,
       name: true,
       compatibilityKey: true,
+      systemBarbellFamily: true,
       plates: { orderBy: { weightKg: 'asc' as const } },
     },
   },
@@ -64,6 +76,9 @@ const equipmentSelection = {
         },
       },
     },
+  },
+  preferredForConfigs: {
+    select: { exerciseId: true },
   },
 } as const;
 
@@ -90,6 +105,7 @@ export async function listOwnedGyms(userId: string) {
 
 export async function getOwnedGymInventory(userId: string, baseUrl: string, gymId?: string) {
   const gym = await resolveOwnedGym(userId, gymId);
+  await db.$transaction((tx) => ensureGymSystemProfiles(tx, userId, gym.id));
   const [details, exercises] = await Promise.all([
     db.gym.findUnique({
       where: { id: gym.id },
@@ -132,6 +148,13 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
   ]);
   if (!details) throw new Error('Gym not found.');
 
+  const equipmentViews = details.equipment.map((item) => ({
+    ...withoutPreferredConfigRelation(item),
+    image: equipmentImage(item, baseUrl),
+    exerciseLinks: item.exerciseLinks.map((link) => link.exercise),
+    preferredExerciseIds: item.preferredForConfigs.map((config) => config.exerciseId),
+  }));
+
   const configByExercise = new Map(
     details.exerciseConfigs.map((config) => [config.exerciseId, config]),
   );
@@ -170,6 +193,32 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
     }
   }
 
+  const supportedDumbbellExercises = exercises.filter((exercise) => {
+    const config = configByExercise.get(exercise.id);
+    return (
+      config?.systemProfileSupported === true &&
+      resolveEquipmentType(exercise.equipmentType, exercise.name) === 'DUMBBELL'
+    );
+  });
+  const supportedBarbellExercises = exercises.filter((exercise) => {
+    const config = configByExercise.get(exercise.id);
+    return (
+      config?.systemProfileSupported === true &&
+      resolveEquipmentType(exercise.equipmentType, exercise.name) === 'BARBELL'
+    );
+  });
+  const familyView = (family: 'LARGE' | 'SMALL') => {
+    const pool = details.platePools.find((item) => item.systemBarbellFamily === family);
+    if (!pool) throw new Error(`Missing ${family} system barbell pool.`);
+    const bars = equipmentViews.filter((item) => item.systemBarbellFamily === family);
+    return {
+      family,
+      pool,
+      bars,
+      loadingSides: bars[0]?.loadingSides ?? 2,
+    };
+  };
+
   return {
     gym: {
       id: details.id,
@@ -181,11 +230,21 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
         barWeightsKg: details.barWeights,
       },
       platePools: details.platePools,
-      equipment: details.equipment.map((item) => ({
-        ...item,
-        image: equipmentImage(item, baseUrl),
-        exerciseLinks: item.exerciseLinks.map((link) => link.exercise),
-      })),
+      equipment: equipmentViews,
+      systemProfiles: {
+        dumbbells: {
+          id: gymSystemProfileId(details.id, 'DUMBBELLS'),
+          kind: 'DUMBBELLS' as const,
+          weightsKg: details.dumbbellWeights,
+          exerciseLinks: supportedDumbbellExercises,
+        },
+        barbell: {
+          id: gymSystemProfileId(details.id, 'BARBELL'),
+          kind: 'BARBELL' as const,
+          exerciseLinks: supportedBarbellExercises,
+          families: [familyView('LARGE'), familyView('SMALL')],
+        },
+      },
       exerciseCoverage: exercises.map((exercise) => {
         const config = configByExercise.get(exercise.id);
         const media = getExerciseMedia(exercise.name);
@@ -193,6 +252,7 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
           inventoryMode: details.inventoryMode,
           exercise,
           linkedEquipment: equipmentByExercise.get(exercise.id) ?? [],
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           legacyConfig: config,
           sharedDumbbellWeights: details.dumbbellWeights,
           legacyPlateWeights: details.plateWeights,
@@ -211,6 +271,7 @@ export async function getOwnedGymInventory(userId: string, baseUrl: string, gymI
           plateWeightsKg: config?.plateWeights ?? [],
           barWeightsKg: config?.barWeights ?? [],
           equipmentIds: equipmentIdsByExercise.get(exercise.id) ?? [],
+          preferredEquipmentId: config?.preferredEquipmentId ?? null,
           builtInMedia: media
             ? {
                 frames: media.frames.map((frame) => new URL(frame, baseUrl).toString()),
@@ -249,17 +310,20 @@ export async function updateOwnedGymFreeWeights(
   ) {
     throw new Error('Provide at least one free-weight inventory list.');
   }
-  return db.gym.update({
-    where: { id: gym.id },
-    data: patch,
-    select: {
-      id: true,
-      name: true,
-      dumbbellWeights: true,
-      plateWeights: true,
-      barWeights: true,
-      updatedAt: true,
-    },
+  return db.$transaction(async (tx) => {
+    await ensureGymSystemProfiles(tx, userId, gym.id);
+    return tx.gym.update({
+      where: { id: gym.id },
+      data: patch,
+      select: {
+        id: true,
+        name: true,
+        dumbbellWeights: true,
+        plateWeights: true,
+        barWeights: true,
+        updatedAt: true,
+      },
+    });
   });
 }
 
@@ -269,7 +333,11 @@ export async function upsertOwnedGymEquipment(
   input: UpsertGymEquipmentInput,
 ) {
   const gym = await resolveOwnedGym(userId, gymId);
+  if (input.equipmentId) await rejectOwnedSystemProfileMutation(userId, input.equipmentId);
   const requestedExerciseIds = input.exerciseIds ? [...new Set(input.exerciseIds)] : undefined;
+  const requestedPreferredExerciseIds = input.preferredExerciseIds
+    ? [...new Set(input.preferredExerciseIds)]
+    : undefined;
   const current = input.equipmentId
     ? await db.gymEquipment.findFirst({
         where: { id: input.equipmentId, gymId: gym.id },
@@ -282,7 +350,9 @@ export async function upsertOwnedGymEquipment(
           baseLoadKg: true,
           platePoolId: true,
           loadingSides: true,
-          exerciseLinks: { select: { exerciseId: true } },
+          systemBarbellFamily: true,
+          exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
+          preferredForConfigs: { select: { exerciseId: true } },
         },
       })
     : await db.gymEquipment.findFirst({
@@ -296,12 +366,19 @@ export async function upsertOwnedGymEquipment(
           baseLoadKg: true,
           platePoolId: true,
           loadingSides: true,
-          exerciseLinks: { select: { exerciseId: true } },
+          systemBarbellFamily: true,
+          exerciseLinks: { select: { exerciseId: true, mirrorsLegacyConfig: true } },
+          preferredForConfigs: { select: { exerciseId: true } },
         },
       });
   if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
+  if (current?.systemBarbellFamily) {
+    throw new ApiError(409, 'System Barbell members must be edited through the Barbell profile.');
+  }
 
   const previousExerciseIds = current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
+  const previousPreferredExerciseIds =
+    current?.preferredForConfigs.map((config) => config.exerciseId) ?? [];
   const exerciseIds = requestedExerciseIds ?? previousExerciseIds;
   const exercises = exerciseIds.length
     ? await db.exercise.findMany({
@@ -311,6 +388,20 @@ export async function upsertOwnedGymEquipment(
     : [];
   if (exercises.length !== exerciseIds.length) {
     throw new ApiError(400, 'One or more exercise IDs do not belong to the trainee.');
+  }
+  const preferredExerciseIds =
+    requestedPreferredExerciseIds ??
+    previousPreferredExerciseIds.filter((exerciseId) => exerciseIds.includes(exerciseId));
+  if (preferredExerciseIds.some((exerciseId) => !exerciseIds.includes(exerciseId))) {
+    throw new ApiError(400, 'Preferred exercises must remain linked to the equipment.');
+  }
+  const exerciseById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  if (
+    preferredExerciseIds.some(
+      (exerciseId) => exerciseById.get(exerciseId)?.equipmentType !== input.equipmentType,
+    )
+  ) {
+    throw new ApiError(400, 'Preferred equipment type must match every preferred exercise.');
   }
   const inferredLoadType =
     input.loadType ??
@@ -387,12 +478,38 @@ export async function upsertOwnedGymEquipment(
           data: requestedExerciseIds.map((exerciseId) => ({
             equipmentId: item.id,
             exerciseId,
+            mirrorsLegacyConfig: input.markExercisesAvailable === true,
           })),
         });
       }
+    } else if (input.markExercisesAvailable !== undefined) {
+      await tx.gymEquipmentExercise.updateMany({
+        where: { equipmentId: item.id },
+        data: { mirrorsLegacyConfig: input.markExercisesAvailable },
+      });
     }
-    if (input.markExercisesAvailable === true) {
-      await reconcileLegacyExerciseConfigs(tx, gym.id, [...previousExerciseIds, ...exerciseIds]);
+    await tx.gymExerciseConfig.updateMany({
+      where: { preferredEquipmentId: item.id },
+      data: { preferredEquipmentId: null },
+    });
+    for (const exerciseId of preferredExerciseIds) {
+      await tx.gymExerciseConfig.upsert({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId } },
+        update: { preferredEquipmentId: item.id, isEquipmentMirror: false },
+        create: {
+          gymId: gym.id,
+          exerciseId,
+          isAvailable: true,
+          preferredEquipmentId: item.id,
+          isEquipmentMirror: false,
+        },
+      });
+    }
+    if (requestedExerciseIds !== undefined || input.markExercisesAvailable !== undefined) {
+      await reconcileLegacyExerciseConfigMirrors(tx, gym.id, [
+        ...previousExerciseIds,
+        ...exerciseIds,
+      ]);
     }
     return item;
   });
@@ -414,22 +531,33 @@ export async function upsertOwnedGymEquipment(
       name: exercise.name,
       exerciseEquipmentType: exercise.equipmentType,
     }));
-  return { equipment: saved, mismatchedExercises };
+  return {
+    equipment: {
+      ...withoutPreferredConfigRelation(saved),
+      preferredExerciseIds: saved.preferredForConfigs.map((config) => config.exerciseId),
+    },
+    mismatchedExercises,
+  };
 }
 
 export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
+  await rejectOwnedSystemProfileMutation(userId, equipmentId);
   const equipment = await db.gymEquipment.findFirst({
     where: { id: equipmentId, gym: { userId } },
     select: {
       id: true,
       gymId: true,
+      systemBarbellFamily: true,
       exerciseLinks: { select: { exerciseId: true } },
     },
   });
   if (!equipment) throw new ApiError(404, 'Gym equipment not found.');
+  if (equipment.systemBarbellFamily) {
+    throw new ApiError(409, 'System Barbell members must be edited through the Barbell profile.');
+  }
   await db.$transaction(async (tx) => {
     await tx.gymEquipment.delete({ where: { id: equipment.id } });
-    await reconcileLegacyExerciseConfigs(
+    await reconcileLegacyExerciseConfigMirrors(
       tx,
       equipment.gymId,
       equipment.exerciseLinks.map((link) => link.exerciseId),
@@ -438,7 +566,7 @@ export async function deleteOwnedGymEquipment(userId: string, equipmentId: strin
   return { ok: true };
 }
 
-async function reconcileLegacyExerciseConfigs(
+export async function reconcileLegacyExerciseConfigMirrors(
   tx: Prisma.TransactionClient,
   gymId: string,
   affectedExerciseIds: string[],
@@ -446,37 +574,89 @@ async function reconcileLegacyExerciseConfigs(
   const exerciseIds = [...new Set(affectedExerciseIds)];
   if (exerciseIds.length === 0) return;
 
-  const remainingLinks = await tx.gymEquipmentExercise.findMany({
+  const gym = await tx.gym.findUnique({
+    where: { id: gymId },
+    select: { inventoryMode: true },
+  });
+  if (!gym) return;
+
+  const remainingMirrorLinks = await tx.gymEquipmentExercise.findMany({
     where: {
       exerciseId: { in: exerciseIds },
+      mirrorsLegacyConfig: true,
       equipment: { gymId },
     },
-    select: {
-      exerciseId: true,
-      equipment: { select: { weightOptions: true } },
-    },
+    select: { exerciseId: true },
   });
-  const linkedWeightsByExercise = new Map<string, number[]>();
-  for (const link of remainingLinks) {
-    const weights = linkedWeightsByExercise.get(link.exerciseId) ?? [];
-    weights.push(...link.equipment.weightOptions);
-    linkedWeightsByExercise.set(link.exerciseId, weights);
-  }
+  const mirroredExerciseIds = new Set(remainingMirrorLinks.map((link) => link.exerciseId));
 
   for (const exerciseId of exerciseIds) {
-    const linkedWeights = linkedWeightsByExercise.get(exerciseId);
-    if (!linkedWeights) {
-      await tx.gymExerciseConfig.deleteMany({ where: { gymId, exerciseId } });
+    if (!mirroredExerciseIds.has(exerciseId)) {
+      await tx.gymExerciseConfig.updateMany({
+        where: {
+          gymId,
+          exerciseId,
+          isEquipmentMirror: true,
+          systemProfileSupported: { not: null },
+        },
+        data: { isEquipmentMirror: false },
+      });
+      await tx.gymExerciseConfig.deleteMany({
+        where: {
+          gymId,
+          exerciseId,
+          isEquipmentMirror: true,
+          systemProfileSupported: null,
+        },
+      });
       continue;
     }
+    if (gym.inventoryMode !== 'EQUIPMENT_FIRST') continue;
 
-    const weightOptions = [...new Set(linkedWeights)].sort((left, right) => left - right);
-    await tx.gymExerciseConfig.upsert({
-      where: { gymId_exerciseId: { gymId, exerciseId } },
-      update: { isAvailable: true, weightOptions },
-      create: { gymId, exerciseId, isAvailable: true, weightOptions },
+    await tx.gymExerciseConfig.createMany({
+      data: {
+        gymId,
+        exerciseId,
+        isAvailable: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+        isEquipmentMirror: true,
+      },
+      skipDuplicates: true,
+    });
+    await tx.gymExerciseConfig.updateMany({
+      where: { gymId, exerciseId, isEquipmentMirror: true },
+      data: {
+        isAvailable: true,
+        weightOptions: [],
+        dumbbellWeights: [],
+        plateWeights: [],
+        barWeights: [],
+      },
     });
   }
+}
+
+export async function reconcileAllLegacyExerciseConfigMirrorsForGym(
+  tx: Prisma.TransactionClient,
+  gymId: string,
+) {
+  const [mirrorLinks, mirrorConfigs] = await Promise.all([
+    tx.gymEquipmentExercise.findMany({
+      where: { mirrorsLegacyConfig: true, equipment: { gymId } },
+      select: { exerciseId: true },
+    }),
+    tx.gymExerciseConfig.findMany({
+      where: { gymId, isEquipmentMirror: true },
+      select: { exerciseId: true },
+    }),
+  ]);
+  await reconcileLegacyExerciseConfigMirrors(tx, gymId, [
+    ...mirrorLinks.map((link) => link.exerciseId),
+    ...mirrorConfigs.map((config) => config.exerciseId),
+  ]);
 }
 
 export async function upsertOwnedGymPlatePool(
@@ -488,7 +668,7 @@ export async function upsertOwnedGymPlatePool(
   const current = input.poolId
     ? await db.gymPlatePool.findFirst({
         where: { id: input.poolId, gymId: gym.id },
-        select: { id: true },
+        select: { id: true, systemBarbellFamily: true },
       })
     : await db.gymPlatePool.findFirst({
         where: {
@@ -498,9 +678,12 @@ export async function upsertOwnedGymPlatePool(
             { compatibilityKey: input.compatibilityKey },
           ],
         },
-        select: { id: true },
+        select: { id: true, systemBarbellFamily: true },
       });
   if (input.poolId && !current) throw new ApiError(404, 'Gym plate pool not found.');
+  if (current?.systemBarbellFamily) {
+    throw new ApiError(409, 'System Barbell pools must be edited through the Barbell profile.');
+  }
 
   const pool = await db.$transaction(async (tx) => {
     const saved = current
@@ -540,9 +723,16 @@ export async function upsertOwnedGymPlatePool(
 export async function deleteOwnedGymPlatePool(userId: string, poolId: string) {
   const pool = await db.gymPlatePool.findFirst({
     where: { id: poolId, gym: { userId } },
-    select: { id: true, _count: { select: { equipment: true } } },
+    select: {
+      id: true,
+      systemBarbellFamily: true,
+      _count: { select: { equipment: true } },
+    },
   });
   if (!pool) throw new ApiError(404, 'Gym plate pool not found.');
+  if (pool.systemBarbellFamily) {
+    throw new ApiError(409, 'System Barbell pools cannot be deleted.');
+  }
   if (pool._count.equipment > 0) {
     throw new ApiError(409, 'Detach plate-loaded equipment before deleting this plate pool.');
   }
@@ -700,6 +890,13 @@ function equipmentImage(
     };
   }
   return item.imageUrl ? { kind: 'external', url: item.imageUrl, mimeType: null } : null;
+}
+
+function withoutPreferredConfigRelation<
+  T extends { preferredForConfigs: Array<{ exerciseId: string }> },
+>(item: T): Omit<T, 'preferredForConfigs'> {
+  const { preferredForConfigs: _preferredForConfigs, ...rest } = item;
+  return rest;
 }
 
 function matchesImageSignature(buffer: Buffer, mimeType: GymEquipmentImageMimeType): boolean {

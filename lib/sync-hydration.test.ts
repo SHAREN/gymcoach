@@ -83,23 +83,47 @@ describe('reconcileHydratedSets', () => {
       [serverSet('server-1')],
     );
 
-    expect(result.records[0]).toEqual(edited);
+    expect(result.records[0]).toMatchObject({
+      ...edited,
+      serverObservedAt: expect.any(Number),
+    });
     expect(result.deleteLocalIds).toEqual(['srv_server-1']);
   });
 
-  it('removes stale synced rows while retaining unsynced local records', () => {
+  it('acknowledges an unknown-outcome POST by matching the exact client id', () => {
+    const unknownOutcome = localSet({
+      localId: 'loc_unknown_outcome',
+      serverId: null,
+      status: 'pending',
+      syncedAt: null,
+    });
+    const result = reconcileHydratedSets(
+      'session-1',
+      [unknownOutcome],
+      [serverSet('loc_unknown_outcome')],
+      { ownerId: 'user-1' },
+    );
+
+    expect(result.records[0]).toMatchObject({
+      localId: 'loc_unknown_outcome',
+      ownerId: 'user-1',
+      status: 'synced',
+      serverId: 'loc_unknown_outcome',
+    });
+    expect(result.deleteLocalIds).toEqual([]);
+  });
+
+  it('never prunes omitted local rows from a potentially stale server snapshot', () => {
     const pending = localSet({
       localId: 'pending-2',
       serverId: null,
       status: 'pending',
       setNumber: 2,
     });
-    const result = reconcileHydratedSets('session-1', [localSet(), pending], [], {
-      pruneMissingSynced: true,
-    });
+    const result = reconcileHydratedSets('session-1', [localSet(), pending], []);
 
     expect(result.records).toEqual([]);
-    expect(result.deleteLocalIds).toEqual(['local-1']);
+    expect(result.deleteLocalIds).toEqual([]);
   });
 
   it('does not prune a recently synced row when the server snapshot may be stale', () => {

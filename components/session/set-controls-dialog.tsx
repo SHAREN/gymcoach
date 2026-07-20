@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Loader2, Minus, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import type { PendingSetStatus } from '@/lib/indexeddb';
 import { useTranslations } from 'next-intl';
 import type { ResolvedEquipmentLoadProfile } from '@/lib/gym-loads';
 import { Button } from '@/components/ui/button';
@@ -34,6 +35,16 @@ interface Props {
     onReplace: (equipmentId: string) => void;
     onClear: () => void;
   } | null;
+  sync?: {
+    setNumber: number;
+    status: PendingSetStatus;
+    error: string | null;
+    attempts: number;
+    canRetry: boolean;
+    canDelete: boolean;
+    onRetry: () => void;
+    onDelete: () => void;
+  } | null;
 }
 
 export function SetControlsDialog({
@@ -48,6 +59,7 @@ export function SetControlsDialog({
   onIncrease,
   onUndo,
   equipment = null,
+  sync = null,
 }: Props) {
   const t = useTranslations('session.editableSets.setControls');
   const [replacementId, setReplacementId] = useState('');
@@ -154,6 +166,48 @@ export function SetControlsDialog({
                 {t('equipmentClear')}
               </Button>
             )}
+          </div>
+        )}
+
+        {sync && (
+          <div data-testid="set-sync-recovery" className="space-y-3 rounded-md border p-3">
+            <div>
+              <p className="text-sm font-semibold">{t('syncTitle', { number: sync.setNumber })}</p>
+              <p
+                className={`text-xs ${sync.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
+              >
+                {t(`syncStatus.${sync.status}`)}
+                {sync.attempts > 0 ? ` · ${t('syncAttempts', { count: sync.attempts })}` : ''}
+              </p>
+              {sync.error && (
+                <p className="mt-1 break-words text-xs text-destructive">{sync.error}</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={sync.onRetry}
+                disabled={busy || !sync.canRetry}
+              >
+                {busy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                {t('syncRetry')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={sync.onDelete}
+                disabled={busy || !sync.canDelete}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                {t('deleteSet')}
+              </Button>
+            </div>
           </div>
         )}
 

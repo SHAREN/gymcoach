@@ -115,13 +115,13 @@ command publisher; the watch core implements active workout, set and rest
 flows, offline replay, heart-rate summaries, exercise/workout summaries and
 compact Russian/English diagnostics.
 
-The current local evidence on branch `codex/huawei-watch-companion` is:
+The current integrated local evidence is:
 
-- 77/77 Huawei watch JavaScript/core tests passed.
+- 81/81 Huawei watch JavaScript/core tests passed.
 - 15 shared schemas and 15 examples validated.
 - Production watch HAP and the separate Previewer harness both build successfully with official DevEco Studio/Hvigor.
-- The official round Lite Wearable Previewer renders the UI and accepts navigation, set start/completion and rest controls.
-- Android `testDebugUnitTest`, `lintDebug`, `assembleDebug` and release Kotlin compilation pass with Huawei Wear Engine `5.0.3.304`.
+- The integration Previewer project renders the Russian home and workout/rest flows and supports navigation and locale switching. The accepted frozen rest-countdown limitation is tracked separately.
+- Android `testDebugUnitTest` passes 237 tests; `lintDebug`, `assembleDebug` and release Kotlin compilation also pass with Huawei Wear Engine `5.0.3.304`.
 - 6/6 Room migration tests passed on an API 34 Android emulator, including migration 8 to 9.
 
 DevEco Studio `6.1.1.280` is installed with its bundled SDK. The official watch

@@ -41,6 +41,12 @@ export interface PlateLoad {
   // True when the target is below the bar, or no full pair of any plate fits.
   // The UI uses this to show "cannot load this exactly".
   exact: boolean;
+  loadingSides: number;
+}
+
+export interface EquipmentPlateInventoryItem {
+  plate: number;
+  quantity: number | null;
 }
 
 export function computeBestPlateLoad(
@@ -80,6 +86,10 @@ function clean(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
+function toPlateUnits(value: number): number {
+  return Math.round(clean(value) * 1000);
+}
+
 // Greedy plate decomposition. Given a target weight (display unit), a bar
 // weight, and an available plate set (per side), return the plates to load on
 // each side. For the standard kg/lb inventories the denominations are regular
@@ -108,6 +118,7 @@ export function computePlateLoad(
       achievedWeight: barWeight,
       remainder,
       exact: clean(targetWeight) === clean(barWeight),
+      loadingSides: 2,
     };
   }
 
@@ -134,5 +145,80 @@ export function computePlateLoad(
     achievedWeight,
     remainder,
     exact: remainder === 0,
+    loadingSides: 2,
+  };
+}
+
+export function computeEquipmentPlateLoad(
+  targetWeight: number,
+  baseLoad: number,
+  availablePlates: EquipmentPlateInventoryItem[],
+  loadingSides: number,
+): PlateLoad {
+  const sides = Number.isInteger(loadingSides) && loadingSides > 0 ? loadingSides : 2;
+  const base = clean(Math.max(0, baseLoad));
+  if (!Number.isFinite(targetWeight) || targetWeight <= base) {
+    return {
+      barWeight: base,
+      perSide: [],
+      achievedWeight: base,
+      remainder: Number.isFinite(targetWeight) ? clean(Math.max(0, targetWeight - base)) : 0,
+      exact: clean(targetWeight) === base,
+      loadingSides: sides,
+    };
+  }
+
+  const normalized = [
+    ...new Map(
+      availablePlates
+        .filter((item) => Number.isFinite(item.plate) && item.plate > 0)
+        .map((item) => [clean(item.plate), { plate: clean(item.plate), quantity: item.quantity }]),
+    ).values(),
+  ].sort((left, right) => right.plate - left.plate);
+  const maxAddedUnits = Math.max(0, toPlateUnits(targetWeight - base));
+  const reachable = new Uint8Array(maxAddedUnits + 1);
+  const previousAmount = new Int32Array(maxAddedUnits + 1).fill(-1);
+  const previousPlate = new Int16Array(maxAddedUnits + 1).fill(-1);
+  reachable[0] = 1;
+
+  normalized.forEach((item, plateIndex) => {
+    const increment = toPlateUnits(item.plate * sides);
+    if (increment <= 0) return;
+    const groups =
+      item.quantity == null
+        ? Math.floor(maxAddedUnits / increment)
+        : Math.floor(Math.max(0, item.quantity) / sides);
+    for (let copy = 0; copy < groups; copy += 1) {
+      for (let current = maxAddedUnits - increment; current >= 0; current -= 1) {
+        if (!reachable[current] || reachable[current + increment]) continue;
+        reachable[current + increment] = 1;
+        previousAmount[current + increment] = current;
+        previousPlate[current + increment] = plateIndex;
+      }
+    }
+  });
+
+  let bestAddedUnits = maxAddedUnits;
+  while (bestAddedUnits > 0 && !reachable[bestAddedUnits]) bestAddedUnits -= 1;
+  const countByPlate = new Map<number, number>();
+  for (let current = bestAddedUnits; current > 0; ) {
+    const plateIndex = previousPlate[current]!;
+    const previous = previousAmount[current]!;
+    if (plateIndex < 0 || previous < 0) break;
+    const plate = normalized[plateIndex]!.plate;
+    countByPlate.set(plate, (countByPlate.get(plate) ?? 0) + 1);
+    current = previous;
+  }
+  const achievedWeight = clean(base + bestAddedUnits / 1000);
+  const remainder = clean(targetWeight - achievedWeight);
+  return {
+    barWeight: base,
+    perSide: [...countByPlate.entries()]
+      .map(([plate, count]) => ({ plate, count }))
+      .sort((left, right) => right.plate - left.plate),
+    achievedWeight,
+    remainder,
+    exact: remainder === 0,
+    loadingSides: sides,
   };
 }

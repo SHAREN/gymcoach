@@ -185,6 +185,7 @@ export function ExercisesView({
         open={createOpen}
         onOpenChange={setCreateOpen}
         mode="create"
+        activeGymId={activeGymId}
         equipmentChoices={equipmentChoices}
       />
     </div>

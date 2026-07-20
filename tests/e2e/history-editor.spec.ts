@@ -83,6 +83,8 @@ async function createFinishedEquipmentSession(page: Page) {
   return {
     sessionId: session.id as string,
     finishedAt: finished.finishedAt as string,
+    exerciseId: exercise.id as string,
+    equipmentId: equipment.id as string,
   };
 }
 
@@ -155,4 +157,49 @@ test('completed strength history supports edit, add, delete, and reload on mobil
   expect(session.finishedAt).toBe(finishedAt);
   expect(session.sets).toHaveLength(1);
   expect(session.sets[0]).toMatchObject({ weight: 20, reps: 10, rir: 2 });
+});
+
+test('a new history row uses the current machine load scale after equipment changes', async ({
+  page,
+}) => {
+  const registerResponse = await page.request.post('/api/auth/register', {
+    headers: { 'x-forwarded-for': '10.111.0.78' },
+    data: {
+      displayName: 'History Equipment Change E2E',
+      email: `e2e-history-equipment-${Date.now()}@test.dev`,
+      password: 'supersecret',
+    },
+  });
+  expect(registerResponse.ok()).toBeTruthy();
+
+  const { sessionId, exerciseId, equipmentId } = await createFinishedEquipmentSession(page);
+  const updateEquipment = await page.request.put(`/api/gym-equipment/${equipmentId}`, {
+    data: {
+      name: 'E2E Historical Cable',
+      equipmentType: 'CABLE',
+      loadType: 'SELECTORIZED',
+      weightOptions: [15, 25],
+      selectedLoadMultiplier: 0.5,
+      exerciseIds: [exerciseId],
+    },
+  });
+  expect(updateEquipment.ok()).toBeTruthy();
+
+  await page.goto(`/history/${sessionId}`);
+  await page.getByRole('button', { name: 'Edit set 1 weight in KG' }).click();
+  await expect(page.getByTestId('set-value-options').getByText('10 kg')).toBeVisible();
+  await expect(page.getByTestId('set-value-options').getByText('20 kg')).toBeVisible();
+  await expect(page.getByTestId('set-value-options').getByText('15 kg')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await expect(page.getByRole('button', { name: 'New set 2 weight in KG' })).toContainText('15');
+  await expect(page.getByRole('button', { name: 'Add historical set 2' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Add historical set 2' }).click();
+  await expect(page.getByRole('button', { name: 'Edit set 2 weight in KG' })).toContainText('15');
+
+  const persisted = await page.request.get(`/api/sessions/${sessionId}`);
+  expect(persisted.ok()).toBeTruthy();
+  const session = await persisted.json();
+  expect(session.sets).toHaveLength(2);
+  expect(session.sets[1]).toMatchObject({ weight: 15, reps: 10, rir: 2 });
 });

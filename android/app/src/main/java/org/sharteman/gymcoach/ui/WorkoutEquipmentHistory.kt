@@ -52,6 +52,34 @@ internal fun selectReturnRecommendationForEquipment(
         )
     }
 
+internal data class ReturnCalibrationEvidence(
+    val confidence: String,
+    val historyBasis: String,
+    val recentHistorySessionCount: Int,
+    val longTermHistorySessionCount: Int,
+    val nonComparableHistorySessionCount: Int,
+    val returnGapDays: Int?,
+    val followsPriorGap: Boolean,
+)
+
+internal fun returnCalibrationEvidence(
+    recommendation: ReturnRecommendationDto?,
+): ReturnCalibrationEvidence? = recommendation
+    ?.takeIf { it.mode != "normal" }
+    ?.let {
+        ReturnCalibrationEvidence(
+            confidence = it.confidence,
+            historyBasis = it.historyBasis,
+            recentHistorySessionCount = it.recentHistorySessionCount,
+            longTermHistorySessionCount = it.longTermHistorySessionCount,
+            nonComparableHistorySessionCount = it.nonComparableHistorySessionCount,
+            returnGapDays = it.returnGapDays,
+            followsPriorGap = it.returnGapDays != null &&
+                it.exerciseGapDays != null &&
+                it.returnGapDays > it.exerciseGapDays,
+        )
+    }
+
 internal fun resolveWorkoutEquipmentId(
     exercise: ProgramExerciseDto,
     gym: GymDto?,

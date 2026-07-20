@@ -12,49 +12,55 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(cuid())
-  email              String              @unique
-  passwordHash       String
+  id                       String              @id @default(cuid())
+  email                    String              @unique
+  passwordHash             String
   // Bodyweight in kg, used to compute the effective tonnage on bodyweight
   // exercises (Set.weight = added load, always >= 0; the input schemas clamp
   // it). Null = not filled in yet, so no bodyweight bonus is applied
   // (backward-safe).
-  bodyweight         Float?
+  bodyweight               Float?
   // Optional profile, used to tailor the AI coach output to the user.
-  displayName        String?
-  sex                Sex?
-  heightCm           Int?
-  goal               TrainingGoal?
-  weeklyFrequency    Int?
+  displayName              String?
+  sex                      Sex?
+  heightCm                 Int?
+  goal                     TrainingGoal?
+  weeklyFrequency          Int?
   // Preferred weight unit for display and input. Data is always stored in kg;
   // this only affects the presentation layer. Default keeps existing users on kg.
-  unit               WeightUnit          @default(KG)
+  unit                     WeightUnit          @default(KG)
   // End of the user's planned deload week (issue #112). While this timestamp
   // is in the future, load suggestions apply the planned-deload step-down.
   // Null or in the past = no planned deload (backward-safe additive column).
-  deloadUntil        DateTime?
+  deloadUntil              DateTime?
   // Free-text note the user writes to their AI coach (issue #188): their own
   // current context for the coach to weigh - injuries, illness, life
   // constraints ("shoulder is bothering me, go easy on pressing"). Input-side
   // only and correctable by the user. Null = no note (backward-safe additive
   // column); the set/clear route bounds it to 500 chars.
-  coachNote          String?
-  createdAt          DateTime            @default(now())
-  programs           Program[]
-  sessions           Session[]
-  exercises          Exercise[]
-  conversations      Conversation[]
-  readinessCheckins  ReadinessCheckin[]
-  exerciseGoals      ExerciseGoal[]
-  bodyweightEntries  BodyweightEntry[]
-  bodyMeasurements   BodyMeasurement[]
-  volumeTargets      VolumeTarget[]
-  gyms               Gym[]               @relation("GymOwner")
-  mcpAccessTokens    McpAccessToken[]
-  mobileAccessTokens MobileAccessToken[]
-  mobileMutations    MobileMutation[]
-  activeGymId        String?
-  activeGym          Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
+  coachNote                String?
+  // Versioned self-reported coaching profile. The JSON contract uses explicit
+  // UNKNOWN / KNOWN / NOT_APPLICABLE field states and server-owned per-field
+  // timestamps. Null is preserved for older rows and normalizes to UNKNOWN,
+  // never to a healthy or cleared state.
+  coachingProfile          Json?
+  coachingProfileUpdatedAt DateTime?
+  createdAt                DateTime            @default(now())
+  programs                 Program[]
+  sessions                 Session[]
+  exercises                Exercise[]
+  conversations            Conversation[]
+  readinessCheckins        ReadinessCheckin[]
+  exerciseGoals            ExerciseGoal[]
+  bodyweightEntries        BodyweightEntry[]
+  bodyMeasurements         BodyMeasurement[]
+  volumeTargets            VolumeTarget[]
+  gyms                     Gym[]               @relation("GymOwner")
+  mcpAccessTokens          McpAccessToken[]
+  mobileAccessTokens       MobileAccessToken[]
+  mobileMutations          MobileMutation[]
+  activeGymId              String?
+  activeGym                Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
 
 // Personal access tokens for remote MCP clients such as ChatGPT. Only a
@@ -160,27 +166,27 @@ model Message {
 }
 
 model Exercise {
-  id                String                 @id @default(cuid())
-  userId            String
-  user              User                   @relation(fields: [userId], references: [id])
-  name              String
-  muscleGroup       MuscleGroup
-  category          ExerciseCategory
-  defaultRestSec    Int                    @default(90)
-  notes             String?
+  id                 String                 @id @default(cuid())
+  userId             String
+  user               User                   @relation(fields: [userId], references: [id])
+  name               String
+  muscleGroup        MuscleGroup
+  category           ExerciseCategory
+  defaultRestSec     Int                    @default(90)
+  notes              String?
   // For bodyweight exercises (pull-ups, dips, push-ups...): the effective
   // tonnage includes User.bodyweight. Set.weight remains the added load (0 by
   // default, always >= 0 - the input schemas clamp it; negative loads for
   // assistance machines are deliberately not supported, see issue #118).
-  usesBodyweight    Boolean                @default(false)
+  usesBodyweight     Boolean                @default(false)
   // Determines which saved-gym inventory constrains suggested loads.
-  equipmentType     EquipmentType          @default(OTHER)
-  createdAt         DateTime               @default(now())
-  programExercises  ProgramExercise[]
-  sets              Set[]
-  goals             ExerciseGoal[]
-  gymConfigs        GymExerciseConfig[]
-  gymEquipmentLinks GymEquipmentExercise[]
+  equipmentType      EquipmentType          @default(OTHER)
+  createdAt          DateTime               @default(now())
+  programExercises   ProgramExercise[]
+  sets               Set[]
+  goals              ExerciseGoal[]
+  gymConfigs         GymExerciseConfig[]
+  gymEquipmentLinks  GymEquipmentExercise[]
   sessionMemberships SessionExercise[]
 
   @@unique([userId, name])
@@ -206,6 +212,11 @@ enum EquipmentLoadType {
   FIXED
   SELECTORIZED
   PLATE_LOADED
+}
+
+enum BarbellDiameterFamily {
+  LARGE
+  SMALL
 }
 
 enum MuscleGroup {
@@ -311,23 +322,23 @@ enum SetAutoregulationMode {
 }
 
 model Session {
-  id         String    @id @default(cuid())
-  userId     String
-  user       User      @relation(fields: [userId], references: [id])
-  programId  String?
-  program    Program?  @relation(fields: [programId], references: [id])
-  workoutId  String?
-  workout    Workout?  @relation(fields: [workoutId], references: [id])
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-  notes      String?
+  id                  String            @id @default(cuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id])
+  programId           String?
+  program             Program?          @relation(fields: [programId], references: [id])
+  workoutId           String?
+  workout             Workout?          @relation(fields: [workoutId], references: [id])
+  startedAt           DateTime          @default(now())
+  finishedAt          DateTime?
+  notes               String?
   // Whole-session effort rating captured at finish (1 easy to 10 maximal).
-  sessionRpe Int?
+  sessionRpe          Int?
   // The gym is frozen when the session starts so later switching gyms does
   // not change the inventory used by an in-progress or historical workout.
-  gymId      String?
-  gym        Gym?      @relation(fields: [gymId], references: [id], onDelete: SetNull)
-  sets       Set[]
+  gymId               String?
+  gym                 Gym?              @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  sets                Set[]
   exerciseMemberships SessionExercise[]
 
   @@index([userId, startedAt])
@@ -342,30 +353,35 @@ model SessionExercise {
   exerciseId String
   exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
   addedAt    DateTime @default(now())
+  // Stable per-session insertion order. addedAt remains the primary display
+  // order; ordinal resolves equal timestamps across backup/import ID changes.
+  // The insert trigger compacts a session before this PostgreSQL Int can overflow.
+  ordinal    Int
 
   @@id([sessionId, exerciseId])
+  @@unique([sessionId, ordinal])
   @@index([exerciseId])
 }
 
 model Gym {
-  id              String              @id @default(cuid())
-  userId          String
-  user            User                @relation("GymOwner", fields: [userId], references: [id], onDelete: Cascade)
-  name            String
+  id                String                            @id @default(cuid())
+  userId            String
+  user              User                              @relation("GymOwner", fields: [userId], references: [id], onDelete: Cascade)
+  name              String
   // Existing gyms stay in LEGACY mode after migration. Newly created gyms use
   // equipment links and normalized inventory as the primary source of truth.
-  inventoryMode   GymInventoryMode    @default(EQUIPMENT_FIRST)
+  inventoryMode     GymInventoryMode                  @default(EQUIPMENT_FIRST)
   // All inventory values are stored in kg, matching Set.weight.
-  dumbbellWeights Float[]             @default([])
-  plateWeights    Float[]             @default([])
-  barWeights      Float[]             @default([])
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  activeForUsers  User[]              @relation("ActiveGym")
-  sessions        Session[]
-  exerciseConfigs GymExerciseConfig[]
-  equipment       GymEquipment[]
-  platePools      GymPlatePool[]
+  dumbbellWeights   Float[]                           @default([])
+  plateWeights      Float[]                           @default([])
+  barWeights        Float[]                           @default([])
+  createdAt         DateTime                          @default(now())
+  updatedAt         DateTime                          @updatedAt
+  activeForUsers    User[]                            @relation("ActiveGym")
+  sessions          Session[]
+  exerciseConfigs   GymExerciseConfig[]
+  equipment         GymEquipment[]
+  platePools        GymPlatePool[]
   snapshotRevisions MobileEquipmentSnapshotRevision[]
 
   @@unique([userId, name])
@@ -373,61 +389,78 @@ model Gym {
 }
 
 model GymExerciseConfig {
-  id              String   @id @default(cuid())
-  gymId           String
-  gym             Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  exerciseId      String
-  exercise        Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
-  isAvailable     Boolean  @default(true)
+  id                     String        @id @default(cuid())
+  gymId                  String
+  gym                    Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  exerciseId             String
+  exercise               Exercise      @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  isAvailable            Boolean       @default(true)
   // Optional explicit machine/cable pin stack or other exercise-specific
   // loads. Empty means use the normal category increment.
-  weightOptions   Float[]  @default([])
+  weightOptions          Float[]       @default([])
   // Optional per-exercise overrides for the gym's shared free-weight inventory.
   // Empty means inherit the corresponding list from Gym.
-  dumbbellWeights Float[]  @default([])
-  plateWeights    Float[]  @default([])
-  barWeights      Float[]  @default([])
+  dumbbellWeights        Float[]       @default([])
+  plateWeights           Float[]       @default([])
+  barWeights             Float[]       @default([])
+  // True only for an availability-only compatibility row generated from
+  // explicitly marked physical equipment links. Manual configs stay false.
+  isEquipmentMirror      Boolean       @default(false)
+  // Null belongs to backups and clients created before system free-weight
+  // profiles. True/false is the owner's explicit Dumbbells or Barbell profile
+  // membership for the matching exercise type.
+  systemProfileSupported Boolean?
+  // One concrete default for this exercise in this gym. Alternative linked
+  // equipment remains available for explicit workout selection.
+  preferredEquipmentId   String?
+  preferredEquipment     GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
 
   @@unique([gymId, exerciseId])
   @@index([exerciseId])
+  @@index([preferredEquipmentId])
 }
 
 model GymEquipment {
-  id            String                 @id @default(cuid())
-  gymId         String
-  gym           Gym                    @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  name          String
-  equipmentType EquipmentType
-  description   String?
-  manufacturer  String?
-  modelName     String?
-  quantity      Int                    @default(1)
-  loadType      EquipmentLoadType      @default(NONE)
+  id                     String                 @id @default(cuid())
+  gymId                  String
+  gym                    Gym                    @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name                   String
+  equipmentType          EquipmentType
+  description            String?
+  manufacturer           String?
+  modelName              String?
+  quantity               Int                    @default(1)
+  loadType               EquipmentLoadType      @default(NONE)
   // Displayed stack positions or fixed item loads in kg. These values remain
   // the primary logged fact for selectorized equipment.
-  weightOptions Float[]                @default([])
+  weightOptions          Float[]                @default([])
   // Nominal resistance = selected/displayed load * this per-machine value.
   // It is an estimate, not a cross-machine equivalence rule.
-  selectedLoadMultiplier Float         @default(1)
+  selectedLoadMultiplier Float                  @default(1)
   // Empty bar, carriage, sled, or other starting load for plate-loaded items.
-  baseLoadKg    Float                  @default(0)
-  platePoolId   String?
-  platePool     GymPlatePool?          @relation(fields: [platePoolId], references: [id], onDelete: SetNull)
+  baseLoadKg             Float                  @default(0)
+  platePoolId            String?
+  platePool              GymPlatePool?          @relation(fields: [platePoolId], references: [id], onDelete: SetNull)
   // Number of equally loaded sleeves/sides. Two models normal barbell, Smith,
   // and common leg-press loading while still allowing single-sleeve machines.
-  loadingSides  Int                    @default(2)
+  loadingSides           Int                    @default(2)
+  // Concrete bars managed by the non-removable Barbell aggregate. Other
+  // equipment, including custom plate-loaded stations, remains null.
+  systemBarbellFamily    BarbellDiameterFamily?
   // An external HTTPS image may be stored without fetching it server-side.
-  imageUrl      String?
+  imageUrl               String?
   // Uploaded images are stored in Postgres so Docker rebuilds do not lose them.
-  imageData     Bytes?
-  imageMimeType String?
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
-  exerciseLinks GymEquipmentExercise[]
-  performedSets Set[]
+  imageData              Bytes?
+  imageMimeType          String?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  exerciseLinks          GymEquipmentExercise[]
+  preferredForConfigs    GymExerciseConfig[]    @relation("PreferredGymEquipment")
+  performedSets          Set[]
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
+  @@index([gymId, systemBarbellFamily])
   @@index([platePoolId])
 }
 
@@ -435,18 +468,22 @@ model GymEquipment {
 // machine, barbell, and leg press can reuse the same pool; incompatible sleeve
 // standards use different pools.
 model GymPlatePool {
-  id               String                  @id @default(cuid())
-  gymId            String
-  gym              Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  name             String
-  compatibilityKey String
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
-  plates           GymPlateInventoryItem[]
-  equipment        GymEquipment[]
+  id                  String                  @id @default(cuid())
+  gymId               String
+  gym                 Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name                String
+  compatibilityKey    String
+  // Exactly one pool per family backs the system Barbell aggregate. Null pools
+  // stay ordinary custom compatibility groups.
+  systemBarbellFamily BarbellDiameterFamily?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  plates              GymPlateInventoryItem[]
+  equipment           GymEquipment[]
 
   @@unique([gymId, name])
   @@unique([gymId, compatibilityKey])
+  @@unique([gymId, systemBarbellFamily])
   @@index([gymId, updatedAt])
 }
 
@@ -466,10 +503,13 @@ model GymPlateInventoryItem {
 // A physical station can support several exercises, and the same exercise can
 // be available through different stations in one or more gyms.
 model GymEquipmentExercise {
-  equipmentId String
-  equipment   GymEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  exerciseId  String
-  exercise    Exercise     @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  equipmentId         String
+  equipment           GymEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  exerciseId          String
+  exercise            Exercise     @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  // REST compatibility links may request a legacy availability mirror. MCP
+  // and direct exercise-link edits remain link-only by default.
+  mirrorsLegacyConfig Boolean      @default(false)
 
   @@id([equipmentId, exerciseId])
   @@index([exerciseId])
@@ -503,51 +543,51 @@ model MobileEquipmentSnapshotRevision {
 }
 
 model Set {
-  id          String   @id @default(cuid())
-  sessionId   String
-  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  exerciseId  String
-  exercise    Exercise @relation(fields: [exerciseId], references: [id])
-  gymEquipmentId String?
-  gymEquipment   GymEquipment? @relation(fields: [gymEquipmentId], references: [id], onDelete: SetNull)
-  equipmentNameSnapshot String?
+  id                             String        @id @default(cuid())
+  sessionId                      String
+  session                        Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId                     String
+  exercise                       Exercise      @relation(fields: [exerciseId], references: [id])
+  gymEquipmentId                 String?
+  gymEquipment                   GymEquipment? @relation(fields: [gymEquipmentId], references: [id], onDelete: SetNull)
+  equipmentNameSnapshot          String?
   // The displayed stack value or entered external load. Set.weight remains the
   // canonical historical load for existing calculations and imports.
-  selectedLoadKg Float?
+  selectedLoadKg                 Float?
   selectedLoadMultiplierSnapshot Float?
   // Nominal estimate only. It must not be used to equate different machines.
-  nominalResistanceKg Float?
+  nominalResistanceKg            Float?
   // Versioned configuration snapshot for future load-profile evolution.
-  equipmentLoadSnapshot Json?
-  setNumber   Int
-  weight      Float
-  reps        Int
-  rir         Int?
+  equipmentLoadSnapshot          Json?
+  setNumber                      Int
+  weight                         Float
+  reps                           Int
+  rir                            Int?
   // Cardio sets (issue #133, additive): duration in seconds (>= 1 when set)
   // and optional distance in meters. NULL on strength sets - existing rows
   // are untouched and lifting flows never write these.
-  durationSec Int?
-  distanceM   Float?
+  durationSec                    Int?
+  distanceM                      Float?
   // Average heart rate in bpm (issue #152, additive): the extra signal a TCX
   // file import carries over manual logging. 40..250 when present (enforced
   // by every writer), NULL on strength sets and on cardio logged without it.
-  avgHr       Int?
+  avgHr                          Int?
   // Maximum (peak) heart rate in bpm (issue #203, additive): the companion HR
   // metric watches record, carried in the same TCX exports. 40..250 when
   // present (enforced by every writer), NULL on strength sets and on cardio
   // logged without it.
-  maxHr       Int?
+  maxHr                          Int?
   // Downsampled pace/HR track of an imported cardio activity (issue #254,
   // additive): a JSON array of up to a few hundred points
   // [{ t, d?, hr? }] where t = seconds from the start, d = cumulative meters,
   // hr = bpm. NULL on strength sets and on cardio logged without a track.
-  track       Json?
-  notes       String?
-  isWarmup    Boolean  @default(false)
-  isDropSet   Boolean  @default(false)
+  track                          Json?
+  notes                          String?
+  isWarmup                       Boolean       @default(false)
+  isDropSet                      Boolean       @default(false)
   // Actual recovery time since the previous attempt of this exercise.
-  recoverySec Int?
-  completedAt DateTime @default(now())
+  recoverySec                    Int?
+  completedAt                    DateTime      @default(now())
 
   @@index([exerciseId, completedAt])
   @@index([gymEquipmentId, completedAt])

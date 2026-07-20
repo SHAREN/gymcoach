@@ -56,6 +56,9 @@ export async function generateProgram(
     sourceProgramId: request.sourceProgramId,
     answers: request.answers,
   });
+  if (context.safety.blockingReasons.length > 0) {
+    throw new LlmError(400, context.safety.blockingReasons.join(' '));
+  }
   if (context.missingQuestions.length > 0) {
     return {
       status: 'needs-input',
@@ -63,10 +66,6 @@ export async function generateProgram(
       methodologyVersion: context.methodologyVersion,
       sourceProgramId: context.sourceProgramId,
     };
-  }
-
-  if (!context.safety.canGenerateProgram) {
-    throw new LlmError(400, context.safety.blockingReasons.join(' '));
   }
 
   const provider = getLlmProvider();

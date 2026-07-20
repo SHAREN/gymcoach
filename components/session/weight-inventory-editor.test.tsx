@@ -6,6 +6,7 @@ const baseGym = {
   id: 'gym-1',
   userId: 'user-1',
   name: 'Olymp',
+  inventoryMode: 'LEGACY',
   dumbbellWeights: [10, 12, 14],
   plateWeights: [1.25, 5, 10, 20],
   barWeights: [20],
@@ -68,6 +69,24 @@ describe('WeightInventoryEditor', () => {
       plateWeights: [1.25, 2.5, 5, 10, 20],
     });
     expect(onSaved).toHaveBeenCalledWith(baseGym);
+  });
+
+  it('does not offer a shared legacy scope in equipment-first mode', () => {
+    render(
+      <WeightInventoryEditor
+        open
+        gym={{ ...baseGym, inventoryMode: 'EQUIPMENT_FIRST' } as never}
+        exercise={barbellExercise as never}
+        unit="KG"
+        onOpenChange={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'All barbell exercises in this gym' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('This exercise only')).toBeInTheDocument();
   });
 
   it('keeps inherited bars inherited when only plates are overridden', async () => {

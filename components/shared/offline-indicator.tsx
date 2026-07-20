@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 // The component is silent during initial hydration (before IndexedDB has been
 // opened) to avoid a "0 pending" flash.
 
-export function OfflineIndicator() {
+export function OfflineIndicator({ userId }: { userId: string }) {
   const t = useTranslations('common.offline');
   const [online, setOnline] = useState<boolean | null>(null);
   const [flushing, setFlushing] = useState(false);
@@ -38,12 +38,19 @@ export function OfflineIndicator() {
   const pendingCount = useLiveQuery(
     async () => {
       try {
-        return await getDB().pendingSets.where('status').anyOf(['pending', 'syncing', 'failed']).count();
+        return await getDB()
+          .pendingSets.where('ownerId')
+          .equals(userId)
+          .and(
+            (set) =>
+              set.status === 'pending' || set.status === 'syncing' || set.status === 'failed',
+          )
+          .count();
       } catch {
         return 0;
       }
     },
-    [],
+    [userId],
     0,
   );
 
@@ -55,7 +62,7 @@ export function OfflineIndicator() {
   async function handleManualSync() {
     setFlushing(true);
     try {
-      await flushPendingSets();
+      await flushPendingSets({ ownerId: userId, force: true });
     } finally {
       setFlushing(false);
     }
@@ -80,11 +87,7 @@ export function OfflineIndicator() {
       className="h-7 gap-1.5 px-2 text-xs"
       aria-label={t('syncNow')}
     >
-      {flushing ? (
-        <RotateCw className="size-3.5 animate-spin" />
-      ) : (
-        <Wifi className="size-3.5" />
-      )}
+      {flushing ? <RotateCw className="size-3.5 animate-spin" /> : <Wifi className="size-3.5" />}
       <span>{t('syncing', { count: pendingCount })}</span>
     </Button>
   );

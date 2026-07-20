@@ -422,12 +422,14 @@ export function SetInput({
                     weightKg={form.weight}
                     unit={unit}
                     barWeightsKg={loadConstraints?.barWeights}
+                    loadConstraints={loadConstraints}
                   />
                   <PlateCalculator
                     weightKg={form.weight}
                     unit={unit}
                     barWeightsKg={loadConstraints?.barWeights}
                     plateWeightsKg={loadConstraints?.plateWeights}
+                    loadConstraints={loadConstraints}
                   />
                 </div>
               </div>

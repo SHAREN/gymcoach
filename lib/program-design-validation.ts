@@ -27,6 +27,15 @@ export function validateProgramDesign(
   const exerciseByName = new Map(
     context.availableExercises.map((exercise) => [exercise.name.toLocaleLowerCase(), exercise]),
   );
+  const limitationByExerciseName = new Map<string, string[]>();
+  for (const constraint of context.exerciseConstraints) {
+    for (const exerciseName of constraint.affectedExerciseNames) {
+      const key = exerciseName.toLocaleLowerCase();
+      const reasons = limitationByExerciseName.get(key) ?? [];
+      reasons.push(`${constraint.kind}: ${constraint.label}`);
+      limitationByExerciseName.set(key, reasons);
+    }
+  }
   const returnByName = new Map(
     context.history.returnToTraining.map((item) => [item.exerciseName.toLocaleLowerCase(), item]),
   );
@@ -84,6 +93,10 @@ export function validateProgramDesign(
       const known = exerciseByName.get(exercise.name.toLocaleLowerCase());
       const muscleGroup = known?.muscleGroup ?? exercise.muscleGroup;
       const category = known?.category ?? exercise.category;
+      const limitationReasons = [
+        ...(known?.limitationReasons ?? []),
+        ...(limitationByExerciseName.get(exercise.name.toLocaleLowerCase()) ?? []),
+      ].filter((reason, index, reasons) => reasons.indexOf(reason) === index);
       const dropSets = exercise.targetDropSets ?? 0;
       const totalSets = exercise.targetSets + dropSets;
       weeklySetsByMuscle[muscleGroup] = (weeklySetsByMuscle[muscleGroup] ?? 0) + totalSets;
@@ -127,6 +140,14 @@ export function validateProgramDesign(
           code: 'equipment-unavailable',
           severity: 'error',
           message: `${exercise.name} is marked unavailable in the active gym.`,
+          path: `workouts.${workoutIndex}.exercises.${exerciseIndex}.name`,
+        });
+      }
+      if (limitationReasons.length > 0) {
+        issues.push({
+          code: 'profile-limitation-conflict',
+          severity: 'error',
+          message: `${exercise.name} conflicts with a self-reported exercise constraint: ${limitationReasons.join('; ')}. Remove it and ask the trainee to choose any substitution explicitly.`,
           path: `workouts.${workoutIndex}.exercises.${exerciseIndex}.name`,
         });
       }
@@ -182,10 +203,10 @@ export function validateProgramDesign(
     }
     const minutes = Math.ceil(seconds / 60);
     estimatedSessionMinutes.push({ workoutName: workout.name, minutes });
-    if (context.answers.sessionDurationMin && minutes > context.answers.sessionDurationMin * 1.15) {
+    if (context.answers.sessionDurationMin && minutes > context.answers.sessionDurationMin) {
       issues.push({
         code: 'session-too-long',
-        severity: 'warning',
+        severity: 'error',
         message: `${workout.name} is estimated at about ${minutes} minutes, above the trainee's ${context.answers.sessionDurationMin}-minute limit.`,
         path: `workouts.${workoutIndex}`,
       });

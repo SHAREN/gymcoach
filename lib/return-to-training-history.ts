@@ -33,15 +33,20 @@ type ProgramExerciseForReturn = Pick<
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
   id?: Gym['id'];
   inventoryMode?: Gym['inventoryMode'];
-  exerciseConfigs: Pick<
-    GymExerciseConfig,
-    | 'exerciseId'
-    | 'isAvailable'
-    | 'weightOptions'
-    | 'dumbbellWeights'
-    | 'plateWeights'
-    | 'barWeights'
-  >[];
+  exerciseConfigs: Array<
+    Pick<
+      GymExerciseConfig,
+      | 'exerciseId'
+      | 'isAvailable'
+      | 'weightOptions'
+      | 'dumbbellWeights'
+      | 'plateWeights'
+      | 'barWeights'
+    > & {
+      preferredEquipmentId?: string | null;
+      systemProfileSupported?: boolean | null;
+    }
+  >;
   equipment?: Array<{
     id: string;
     name: string;
@@ -77,6 +82,8 @@ interface ExerciseHistoryRow {
   rir: number | null;
   isDropSet: boolean;
   gymEquipmentId: string | null;
+  equipmentNameSnapshot: string | null;
+  equipmentLoadSnapshot: unknown;
   completedAt: Date;
   session: { startedAt: Date; gymId: string | null };
 }
@@ -124,16 +131,23 @@ export async function getReturnToTrainingRecommendations({
   return Object.fromEntries(
     programExercises.map((pe) => {
       const rows = historyData.exerciseRows.get(pe.exerciseId) ?? [];
-      const latestEquipmentId = rows[0]?.gymEquipmentId ?? null;
-      const matchingRows = rows.filter((row) => row.gymEquipmentId === latestEquipmentId);
+      const targets = equipmentTargetsFor(pe, gym);
+      const exactTarget = targets.length === 1 ? targets[0] : null;
+      const matchingRows = exactTarget
+        ? rows.filter(
+            (row) =>
+              row.session.gymId === exactTarget.gymId &&
+              isComparableEquipmentHistory(row, exactTarget.gymEquipmentId),
+          )
+        : [];
       return [
         pe.id,
         calculateReturnRecommendation({
           programExercise: pe,
-          history: buildReturnHistory(pe, matchingRows, historyData),
+          history: buildReturnHistory(pe, matchingRows, rows, historyData),
           now,
           bodyweight,
-          loadConstraints: loadConstraintsFor(pe, gym),
+          loadConstraints: loadConstraintsFor(pe, gym, exactTarget?.gymEquipmentId),
         }),
       ];
     }),
@@ -160,8 +174,6 @@ export async function getReturnToTrainingRecommendationsByEquipment({
     programExercises,
     excludeSessionId,
     now,
-    exerciseGymId: gym?.id ?? null,
-    filterExerciseHistoryByGym: true,
   });
 
   return Object.fromEntries(
@@ -176,8 +188,10 @@ export async function getReturnToTrainingRecommendationsByEquipment({
             pe,
             (historyData.exerciseRows.get(pe.exerciseId) ?? []).filter(
               (row) =>
-                row.session.gymId === target.gymId && row.gymEquipmentId === target.gymEquipmentId,
+                row.session.gymId === target.gymId &&
+                isComparableEquipmentHistory(row, target.gymEquipmentId),
             ),
+            historyData.exerciseRows.get(pe.exerciseId) ?? [],
             historyData,
           ),
           now,
@@ -194,12 +208,10 @@ async function loadReturnHistoryData({
   programExercises,
   excludeSessionId,
   now,
-  exerciseGymId = null,
-  filterExerciseHistoryByGym = false,
-}: Pick<ReturnRecommendationQuery, 'userId' | 'programExercises' | 'excludeSessionId' | 'now'> & {
-  exerciseGymId?: string | null;
-  filterExerciseHistoryByGym?: boolean;
-}): Promise<ReturnHistoryData> {
+}: Pick<
+  ReturnRecommendationQuery,
+  'userId' | 'programExercises' | 'excludeSessionId' | 'now'
+>): Promise<ReturnHistoryData> {
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
   const muscleGroups = [...new Set(programExercises.map((item) => item.exercise.muscleGroup))];
   const excludedSession = excludeSessionId ? { id: { not: excludeSessionId } } : {};
@@ -215,15 +227,16 @@ async function loadReturnHistoryData({
           where: {
             exerciseId,
             isWarmup: false,
+            isDropSet: false,
+            reps: { gt: 0 },
+            weight: { gte: 0 },
             completedAt: { lt: now },
             session: {
               userId,
               ...excludedSession,
-              ...(filterExerciseHistoryByGym ? { gymId: exerciseGymId } : {}),
             },
           },
           orderBy: { completedAt: 'desc' },
-          take: 60,
           select: {
             sessionId: true,
             setNumber: true,
@@ -232,6 +245,8 @@ async function loadReturnHistoryData({
             rir: true,
             isDropSet: true,
             gymEquipmentId: true,
+            equipmentNameSnapshot: true,
+            equipmentLoadSnapshot: true,
             completedAt: true,
             session: { select: { startedAt: true, gymId: true } },
           },
@@ -245,6 +260,7 @@ async function loadReturnHistoryData({
           where: {
             isWarmup: false,
             isDropSet: false,
+            reps: { gt: 0 },
             completedAt: { lt: now },
             session: { userId, ...excludedSession },
             exercise: { muscleGroup, category: { not: 'CARDIO' } },
@@ -259,6 +275,7 @@ async function loadReturnHistoryData({
       where: {
         isWarmup: false,
         isDropSet: false,
+        reps: { gt: 0 },
         completedAt: { gte: baselineStart, lt: now },
         session: { userId, ...excludedSession },
         exercise: {
@@ -294,9 +311,16 @@ async function loadReturnHistoryData({
 function buildReturnHistory(
   pe: ProgramExerciseForReturn,
   rows: ExerciseHistoryRow[],
+  allExerciseRows: ExerciseHistoryRow[],
   data: ReturnHistoryData,
 ): ReturnTrainingHistory {
   const baselineSets = data.baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
+  const comparableSessionIds = new Set(rows.map((row) => row.sessionId));
+  const nonComparableSessionIds = new Set(
+    allExerciseRows
+      .filter((row) => !comparableSessionIds.has(row.sessionId))
+      .map((row) => row.sessionId),
+  );
   return {
     exerciseLastPerformedAt: rows[0]?.completedAt ?? null,
     muscleLastPerformedAt: data.latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
@@ -304,6 +328,7 @@ function buildReturnHistory(
     baselineMuscleSetsPer28Days:
       baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
     exerciseSessions: groupHistoricalSessions(rows),
+    nonComparableExerciseSessions: nonComparableSessionIds.size,
   };
 }
 
@@ -315,10 +340,9 @@ function groupHistoricalSessions(rows: ExerciseHistoryRow[]): ReturnHistorySessi
   for (const row of rows) {
     let session = sessions.get(row.sessionId);
     if (!session) {
-      if (sessions.size >= 3) continue;
       session = {
         sessionId: row.sessionId,
-        performedAt: row.session.startedAt,
+        performedAt: row.completedAt,
         sets: [],
       };
       sessions.set(row.sessionId, session);
@@ -339,6 +363,18 @@ function groupHistoricalSessions(rows: ExerciseHistoryRow[]): ReturnHistorySessi
       .sort((left, right) => left.setNumber - right.setNumber)
       .map(({ weight, reps, rir, isDropSet }) => ({ weight, reps, rir, isDropSet })),
   }));
+}
+
+function isComparableEquipmentHistory(
+  row: ExerciseHistoryRow,
+  gymEquipmentId: string | null,
+): boolean {
+  if (gymEquipmentId != null) return row.gymEquipmentId === gymEquipmentId;
+  return (
+    row.gymEquipmentId == null &&
+    row.equipmentNameSnapshot == null &&
+    row.equipmentLoadSnapshot == null
+  );
 }
 
 function loadConstraintsFor(
@@ -371,6 +407,7 @@ function loadConstraintsFor(
       equipmentType: pe.exercise.equipmentType,
     },
     linkedEquipment,
+    preferredEquipmentId: config?.preferredEquipmentId ?? null,
     legacyConfig: config,
     sharedDumbbellWeights: gym.dumbbellWeights,
     legacyPlateWeights: gym.plateWeights,

@@ -12,6 +12,43 @@ beforeEach(() => {
 });
 
 describe('PUT /api/sessions/[id] finish overflow', () => {
+  it('preserves every completed row when finishing without an explicit discard', async () => {
+    const user = await db.user.create({
+      data: { email: 'session-finish-preserve@test.dev', passwordHash: 'x' },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Session finish preserve bench',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+      },
+    });
+    const session = await db.session.create({ data: { userId: user.id } });
+    await db.set.createMany({
+      data: [1, 2, 3, 4].map((setNumber) => ({
+        sessionId: session.id,
+        exerciseId: exercise.id,
+        setNumber,
+        weight: 100,
+        reps: 8,
+      })),
+    });
+    mockUserId.mockResolvedValue(user.id);
+
+    const response = await updateSession(
+      new Request(`http://test.local/api/sessions/${session.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ finish: true }),
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await db.set.count({ where: { sessionId: session.id } })).toBe(4);
+  });
+
   it('deletes only the explicitly discarded sets from the owned session', async () => {
     const user = await db.user.create({
       data: { email: 'session-finish-owner@test.dev', passwordHash: 'x' },

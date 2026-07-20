@@ -100,6 +100,13 @@ async function seedUser(email: string, password = 'secret123') {
       exerciseLinks: { create: { exerciseId: exercise.id } },
     },
   });
+  await db.gymExerciseConfig.create({
+    data: {
+      gymId: gym.id,
+      exerciseId: exercise.id,
+      preferredEquipmentId: equipment.id,
+    },
+  });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
   const programExercise = await db.programExercise.findFirstOrThrow({
     where: { workoutId: program.workouts[0]!.id },
@@ -323,8 +330,15 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 4,
-      profile: { email: seeded.user.email, activeGymId: seeded.gym.id },
+      schemaVersion: 6,
+      profile: {
+        email: seeded.user.email,
+        activeGymId: seeded.gym.id,
+        coachingProfile: {
+          version: 1,
+          healthStatus: { state: 'UNKNOWN', value: null },
+        },
+      },
       activeProgram: { name: 'Offline block' },
       exerciseHistoryByExerciseId: {},
     });
@@ -335,6 +349,12 @@ describe('Android mobile API', () => {
     });
     expect(body.gyms[0]).toMatchObject({
       inventoryMode: 'EQUIPMENT_FIRST',
+      exerciseConfigs: [
+        expect.objectContaining({
+          exerciseId: seeded.exercise.id,
+          preferredEquipmentId: seeded.equipment.id,
+        }),
+      ],
       equipment: [
         expect.objectContaining({
           id: seeded.equipment.id,
@@ -344,6 +364,84 @@ describe('Android mobile API', () => {
         }),
       ],
     });
+  });
+
+  it('keeps an open return session out of its own mobile history and exposes evidence fields', async () => {
+    const seeded = await seedUser('mobile-return-history@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const currentTime = new Date();
+    const daysAgo = (days: number) => new Date(currentTime.getTime() - days * 86_400_000);
+
+    for (const [index, age] of [180, 210, 240].entries()) {
+      await db.session.create({
+        data: {
+          userId: seeded.user.id,
+          workoutId: seeded.workout.id,
+          programId: seeded.workout.programId,
+          gymId: seeded.gym.id,
+          startedAt: daysAgo(age),
+          finishedAt: new Date(daysAgo(age).getTime() + 3_600_000),
+          sets: {
+            create: {
+              exerciseId: seeded.exercise.id,
+              gymEquipmentId: seeded.equipment.id,
+              setNumber: 1,
+              weight: [60, 70, 80][index]!,
+              reps: 8,
+              rir: 2,
+              completedAt: new Date(daysAgo(age).getTime() + 60_000),
+            },
+          },
+        },
+      });
+    }
+    const openSession = await db.session.create({
+      data: {
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        programId: seeded.workout.programId,
+        gymId: seeded.gym.id,
+        startedAt: currentTime,
+      },
+    });
+    await db.set.create({
+      data: {
+        sessionId: openSession.id,
+        exerciseId: seeded.exercise.id,
+        gymEquipmentId: seeded.equipment.id,
+        setNumber: 1,
+        weight: 100,
+        reps: 5,
+        rir: 0,
+        completedAt: new Date(currentTime.getTime() - 1_000),
+      },
+    });
+
+    const response = await bootstrap(
+      new Request('http://test.local/api/mobile/bootstrap', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const recommendation = body.returnRecommendationsByEquipmentByWorkout[seeded.workout.id][
+      seeded.programExercise.id
+    ].find(
+      (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
+    ).recommendation;
+
+    expect(body.calculationVersion).toBe('2026-07-16-return-history-v2');
+    expect(recommendation).toMatchObject({
+      mode: 'muscle-reintro',
+      historyBasis: 'long-term-exact',
+      historySessionCount: 3,
+      recentHistorySessionCount: 0,
+      longTermHistorySessionCount: 3,
+      confidence: 'low',
+      startFraction: 0.65,
+    });
+    expect(recommendation.exerciseGapDays).toBeGreaterThanOrEqual(179);
+    expect(recommendation.suggestedWeight).toBeGreaterThan(20);
   });
 
   it('returns up to 12 recent completed sessions per exercise', async () => {

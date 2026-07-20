@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
+  BarbellDiameterFamily,
   ExerciseCategory,
   EquipmentLoadType,
   EquipmentType,
@@ -26,6 +27,11 @@ import {
 } from '@/lib/cardio';
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { sorenessSchema } from '@/lib/schemas/readiness';
+import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment';
+import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
+import { resolveEquipmentType } from '@/lib/gym-loads';
+import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -41,15 +47,16 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 //
 // Exported models and fields:
 // - User: profile fields (displayName, bodyweight, sex, heightCm, goal,
-//   weeklyFrequency, unit, deloadUntil). email/createdAt ride along for
+//   weeklyFrequency, unit, deloadUntil, coachNote and the versioned coaching
+//   profile). email/createdAt ride along for
 //   reference but are NEVER imported (they identify the importing account).
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / SessionExercise / Set: all user content incl durable exercise
 //   membership, durationSec, distanceM, avgHr.
-// - CoachSession, ExerciseGoal, BodyweightEntry, ReadinessCheckin,
-//   Conversation / Message: all user content.
+// - CoachSession response and non-sensitive audit metadata, ExerciseGoal,
+//   BodyweightEntry, ReadinessCheckin, Conversation / Message: user content.
 //
 // Intentionally excluded:
 // - User.id / email / passwordHash / createdAt (identity + credentials of the
@@ -58,7 +65,7 @@ import { sorenessSchema } from '@/lib/schemas/readiness';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 9;
+const VERSION = 13;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -93,6 +100,9 @@ export async function GET(req: Request) {
           heightCm: true,
           goal: true,
           weeklyFrequency: true,
+          coachNote: true,
+          coachingProfile: true,
+          coachingProfileUpdatedAt: true,
           unit: true,
           deloadUntil: true,
           activeGymId: true,
@@ -120,7 +130,7 @@ export async function GET(req: Request) {
         include: {
           sets: { orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }] },
           exerciseMemberships: {
-            orderBy: [{ addedAt: 'asc' }, { exerciseId: 'asc' }],
+            orderBy: [{ addedAt: 'asc' }, { ordinal: 'asc' }],
             include: { exercise: { select: { name: true } } },
           },
         },
@@ -159,7 +169,12 @@ export async function GET(req: Request) {
             orderBy: { name: 'asc' },
             include: { plates: { orderBy: { weightKg: 'asc' } } },
           },
-          exerciseConfigs: { include: { exercise: { select: { name: true } } } },
+          exerciseConfigs: {
+            include: {
+              exercise: { select: { name: true } },
+              preferredEquipment: { select: { name: true } },
+            },
+          },
         },
       }),
     ]);
@@ -178,6 +193,11 @@ export async function GET(req: Request) {
         heightCm: user.heightCm,
         goal: user.goal,
         weeklyFrequency: user.weeklyFrequency,
+        coachNote: user.coachNote,
+        coachingProfile: normalizeCoachingProfile(
+          user.coachingProfile,
+          user.coachingProfileUpdatedAt,
+        ),
         unit: user.unit,
         deloadUntil: user.deloadUntil?.toISOString() ?? null,
         activeGymName: gyms.find((gym) => gym.id === user.activeGymId)?.name ?? null,
@@ -200,6 +220,7 @@ export async function GET(req: Request) {
         platePools: gym.platePools.map((pool) => ({
           name: pool.name,
           compatibilityKey: pool.compatibilityKey,
+          systemBarbellFamily: pool.systemBarbellFamily,
           plates: pool.plates.map((plate) => ({
             weightKg: plate.weightKg,
             quantity: plate.quantity,
@@ -218,10 +239,14 @@ export async function GET(req: Request) {
           baseLoadKg: item.baseLoadKg,
           platePoolCompatibilityKey: item.platePool?.compatibilityKey ?? null,
           loadingSides: item.loadingSides,
+          systemBarbellFamily: item.systemBarbellFamily,
           imageUrl: item.imageUrl,
           imageMimeType: item.imageMimeType,
           imageBase64: item.imageData ? Buffer.from(item.imageData).toString('base64') : null,
           exerciseNames: item.exerciseLinks.map((link) => link.exercise.name),
+          legacyMirrorExerciseNames: item.exerciseLinks
+            .filter((link) => link.mirrorsLegacyConfig)
+            .map((link) => link.exercise.name),
         })),
         exerciseConfigs: gym.exerciseConfigs.map((config) => ({
           exerciseName: config.exercise.name,
@@ -230,6 +255,9 @@ export async function GET(req: Request) {
           dumbbellWeights: config.dumbbellWeights,
           plateWeights: config.plateWeights,
           barWeights: config.barWeights,
+          isEquipmentMirror: config.isEquipmentMirror,
+          systemProfileSupported: config.systemProfileSupported,
+          preferredEquipmentName: config.preferredEquipment?.name ?? null,
         })),
       })),
       programs: programs.map((p) => ({
@@ -274,6 +302,7 @@ export async function GET(req: Request) {
         exerciseMemberships: s.exerciseMemberships.map((membership) => ({
           exerciseName: membership.exercise.name,
           addedAt: membership.addedAt.toISOString(),
+          ordinal: membership.ordinal,
         })),
         sets: s.sets.map((set) => ({
           exerciseName: exercises.find((e) => e.id === set.exerciseId)?.name ?? null,
@@ -300,7 +329,7 @@ export async function GET(req: Request) {
       coachSessions: coachSessions.map((c) => ({
         weekStart: c.weekStart.toISOString(),
         weekEnd: c.weekEnd.toISOString(),
-        prompt: c.prompt,
+        prompt: sanitizeCoachAuditPrompt(c.prompt),
         response: c.response,
         appliedAt: c.appliedAt?.toISOString() ?? null,
         createdAt: c.createdAt.toISOString(),
@@ -462,6 +491,9 @@ const importSchema = z.object({
             z.object({
               exerciseName: z.string().max(120),
               addedAt: dateString,
+              // v10; v9 structured memberships keep their exported array
+              // order when this stable tie-breaker is absent.
+              ordinal: z.number().int().min(0).max(2_147_483_647).optional(),
             }),
           )
           .max(500)
@@ -517,6 +549,8 @@ const importSchema = z.object({
       heightCm: z.number().int().min(100).max(250).nullable().optional(),
       goal: z.nativeEnum(TrainingGoal).nullable().optional(),
       weeklyFrequency: z.number().int().min(1).max(14).nullable().optional(),
+      coachNote: z.string().trim().min(1).max(500).nullable().optional(),
+      coachingProfile: coachingProfileSchema.optional(),
       unit: z.nativeEnum(WeightUnit).optional(),
       deloadUntil: dateString.nullable().optional(),
       activeGymName: z.string().max(80).nullable().optional(),
@@ -540,6 +574,7 @@ const importSchema = z.object({
                 .min(1)
                 .max(80)
                 .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
               plates: z
                 .array(
                   z.object({
@@ -567,6 +602,7 @@ const importSchema = z.object({
               baseLoadKg: z.number().min(0).max(5000).optional(),
               platePoolCompatibilityKey: z.string().max(80).nullable().optional(),
               loadingSides: z.number().int().min(1).max(8).optional(),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
               imageUrl: z
                 .string()
                 .url()
@@ -579,6 +615,7 @@ const importSchema = z.object({
               imageMimeType: z.enum(GYM_EQUIPMENT_IMAGE_MIME_TYPES).nullable().optional(),
               imageBase64: z.string().max(7_100_000).nullable().optional(),
               exerciseNames: z.array(z.string().max(120)).max(100),
+              legacyMirrorExerciseNames: z.array(z.string().max(120)).max(100).optional(),
             }),
           )
           .max(1000)
@@ -592,6 +629,9 @@ const importSchema = z.object({
               dumbbellWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               plateWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
               barWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
+              isEquipmentMirror: z.boolean().optional(),
+              systemProfileSupported: z.boolean().nullable().optional(),
+              preferredEquipmentName: z.string().trim().min(1).max(120).nullable().optional(),
             }),
           )
           .max(2000),
@@ -660,6 +700,133 @@ const importBodySchema = z.object({
   confirmReplace: z.literal(true),
 });
 
+function validateImportedLegacyEquipmentSnapshots(
+  sessions: Array<{
+    sets: Array<{
+      weight: number;
+      selectedLoadKg?: number | null;
+      selectedLoadMultiplier?: number | null;
+      nominalResistanceKg?: number | null;
+      equipmentLoadSnapshot?: Record<string, unknown> | null;
+    }>;
+  }>,
+) {
+  for (const session of sessions) {
+    for (const set of session.sets) {
+      assertLegacySetEquipmentSnapshotConsistency({
+        weight: set.weight,
+        selectedLoadKg: set.selectedLoadKg ?? null,
+        selectedLoadMultiplierSnapshot: set.selectedLoadMultiplier ?? null,
+        nominalResistanceKg: set.nominalResistanceKg ?? null,
+        equipmentLoadSnapshot: set.equipmentLoadSnapshot ?? null,
+      });
+    }
+  }
+}
+
+function validateImportedMembershipOrdinals(
+  sessions: Array<{ exerciseMemberships?: Array<{ ordinal?: number }> }>,
+) {
+  for (const session of sessions) {
+    const seen = new Set<number>();
+    for (const membership of session.exerciseMemberships ?? []) {
+      if (membership.ordinal === undefined) continue;
+      if (seen.has(membership.ordinal)) {
+        throw new ApiError(400, 'Session exercise membership ordinals must be unique.');
+      }
+      seen.add(membership.ordinal);
+    }
+  }
+}
+
+function validateImportedPreferredEquipment(
+  exercises: Array<{ name: string; equipmentType?: EquipmentType }>,
+  gyms: Array<{
+    equipment?: Array<{
+      name: string;
+      equipmentType: EquipmentType;
+      exerciseNames: string[];
+    }>;
+    exerciseConfigs: Array<{
+      exerciseName: string;
+      preferredEquipmentName?: string | null;
+    }>;
+  }>,
+) {
+  const exerciseTypeByName = new Map(
+    exercises.map((exercise) => {
+      const equipmentType = exercise.equipmentType ?? EquipmentType.OTHER;
+      return [exercise.name, resolveEquipmentType(equipmentType, exercise.name)];
+    }),
+  );
+  for (const gym of gyms) {
+    for (const config of gym.exerciseConfigs) {
+      if (!config.preferredEquipmentName) continue;
+      const equipment = gym.equipment?.find((item) => item.name === config.preferredEquipmentName);
+      if (
+        !equipment ||
+        !equipment.exerciseNames.includes(config.exerciseName) ||
+        equipment.equipmentType !== exerciseTypeByName.get(config.exerciseName)
+      ) {
+        throw new ApiError(
+          400,
+          'Preferred equipment must be linked to an exercise with a compatible equipment type.',
+        );
+      }
+    }
+  }
+}
+
+function validateImportedSystemBarbellFamilies(
+  gyms: Array<{
+    platePools?: Array<{
+      compatibilityKey: string;
+      systemBarbellFamily?: BarbellDiameterFamily | null;
+    }>;
+    equipment?: Array<{
+      equipmentType: EquipmentType;
+      loadType?: EquipmentLoadType;
+      platePoolCompatibilityKey?: string | null;
+      systemBarbellFamily?: BarbellDiameterFamily | null;
+    }>;
+  }>,
+) {
+  for (const gym of gyms) {
+    const poolsByCompatibilityKey = new Map(
+      (gym.platePools ?? []).map((pool) => [pool.compatibilityKey, pool]),
+    );
+    const familyCounts = new Map<BarbellDiameterFamily, number>();
+    for (const pool of gym.platePools ?? []) {
+      if (!pool.systemBarbellFamily) continue;
+      familyCounts.set(
+        pool.systemBarbellFamily,
+        (familyCounts.get(pool.systemBarbellFamily) ?? 0) + 1,
+      );
+    }
+    if ([...familyCounts.values()].some((count) => count > 1)) {
+      throw new ApiError(400, 'A gym may contain only one plate pool per Barbell family.');
+    }
+
+    for (const equipment of gym.equipment ?? []) {
+      if (!equipment.systemBarbellFamily) continue;
+      const pool = equipment.platePoolCompatibilityKey
+        ? poolsByCompatibilityKey.get(equipment.platePoolCompatibilityKey)
+        : null;
+      if (
+        equipment.equipmentType !== EquipmentType.BARBELL ||
+        (equipment.loadType ?? EquipmentLoadType.FIXED) !== EquipmentLoadType.PLATE_LOADED ||
+        !pool ||
+        pool.systemBarbellFamily !== equipment.systemBarbellFamily
+      ) {
+        throw new ApiError(
+          400,
+          'A system Barbell member must reference a plate pool from the same family.',
+        );
+      }
+    }
+  }
+}
+
 // POST /api/backup: clears the current user's data and recreates it from the
 // payload. Atomic: everything runs in a Prisma transaction, so a failure
 // rolls back to the pre-import state.
@@ -669,6 +836,10 @@ export async function POST(req: Request) {
     const { payload } = await parseJsonBody(req, importBodySchema, {
       maxBytes: MAX_BACKUP_BYTES,
     });
+    validateImportedLegacyEquipmentSnapshots(payload.sessions);
+    validateImportedMembershipOrdinals(payload.sessions);
+    validateImportedPreferredEquipment(payload.exercises, payload.gyms ?? []);
+    validateImportedSystemBarbellFamilies(payload.gyms ?? []);
 
     await db.$transaction(
       async (tx) => {
@@ -701,6 +872,15 @@ export async function POST(req: Request) {
               ...(p.heightCm !== undefined ? { heightCm: p.heightCm } : {}),
               ...(p.goal !== undefined ? { goal: p.goal } : {}),
               ...(p.weeklyFrequency !== undefined ? { weeklyFrequency: p.weeklyFrequency } : {}),
+              ...(p.coachNote !== undefined ? { coachNote: p.coachNote } : {}),
+              ...(p.coachingProfile !== undefined
+                ? {
+                    coachingProfile: p.coachingProfile as Prisma.InputJsonValue,
+                    coachingProfileUpdatedAt: p.coachingProfile.updatedAt
+                      ? new Date(p.coachingProfile.updatedAt)
+                      : null,
+                  }
+                : {}),
               ...(p.unit !== undefined ? { unit: p.unit } : {}),
               ...(p.deloadUntil !== undefined
                 ? { deloadUntil: p.deloadUntil ? new Date(p.deloadUntil) : null }
@@ -743,6 +923,8 @@ export async function POST(req: Request) {
                     dumbbellWeights: config.dumbbellWeights,
                     plateWeights: config.plateWeights,
                     barWeights: config.barWeights,
+                    isEquipmentMirror: config.isEquipmentMirror ?? false,
+                    systemProfileSupported: config.systemProfileSupported ?? null,
                   },
                 ]
               : [];
@@ -779,6 +961,7 @@ export async function POST(req: Request) {
                 gymId: created.id,
                 name: pool.name,
                 compatibilityKey: pool.compatibilityKey,
+                systemBarbellFamily: pool.systemBarbellFamily ?? null,
                 plates: {
                   createMany: {
                     data: [
@@ -821,6 +1004,7 @@ export async function POST(req: Request) {
                   ? (poolIdByCompatibilityKey.get(item.platePoolCompatibilityKey) ?? null)
                   : null,
                 loadingSides: item.loadingSides ?? 2,
+                systemBarbellFamily: item.systemBarbellFamily ?? null,
                 imageUrl: decoded ? null : (item.imageUrl ?? null),
                 imageData: decoded?.bytes,
                 imageMimeType: decoded?.mimeType ?? null,
@@ -835,15 +1019,36 @@ export async function POST(req: Request) {
                 }),
               ),
             ];
+            const legacyMirrorExerciseNames = new Set(item.legacyMirrorExerciseNames ?? []);
             if (exerciseIds.length > 0) {
               await tx.gymEquipmentExercise.createMany({
                 data: exerciseIds.map((exerciseId) => ({
                   equipmentId: equipment.id,
                   exerciseId,
+                  mirrorsLegacyConfig: item.exerciseNames.some(
+                    (name) =>
+                      exerciseIdByName.get(name) === exerciseId &&
+                      legacyMirrorExerciseNames.has(name),
+                  ),
                 })),
               });
             }
           }
+          for (const config of gym.exerciseConfigs) {
+            if (!config.preferredEquipmentName) continue;
+            const exerciseId = exerciseIdByName.get(config.exerciseName);
+            const preferredEquipmentId = equipmentIdByGymAndName.get(
+              `${gym.name}\u0000${config.preferredEquipmentName}`,
+            );
+            if (!exerciseId || !preferredEquipmentId) {
+              throw new ApiError(400, 'Preferred equipment could not be restored.');
+            }
+            await tx.gymExerciseConfig.update({
+              where: { gymId_exerciseId: { gymId: created.id, exerciseId } },
+              data: { preferredEquipmentId, isEquipmentMirror: false },
+            });
+          }
+          await ensureGymSystemProfiles(tx, userId, created.id);
           gymIdByName.set(gym.name, created.id);
         }
         const activeGymId = payload.profile?.activeGymName
@@ -928,15 +1133,25 @@ export async function POST(req: Request) {
           });
           if (s.exerciseMemberships !== undefined) {
             const seenExerciseIds = new Set<string>();
+            const usedOrdinals = new Set(
+              s.exerciseMemberships.flatMap((membership) =>
+                membership.ordinal === undefined ? [] : [membership.ordinal],
+              ),
+            );
+            let nextFallbackOrdinal = 0;
             const membershipRows = s.exerciseMemberships.flatMap((membership) => {
               const exerciseId = exerciseIdByName.get(membership.exerciseName);
               if (!exerciseId || seenExerciseIds.has(exerciseId)) return [];
               seenExerciseIds.add(exerciseId);
+              while (usedOrdinals.has(nextFallbackOrdinal)) nextFallbackOrdinal += 1;
+              const ordinal = membership.ordinal ?? nextFallbackOrdinal++;
+              usedOrdinals.add(ordinal);
               return [
                 {
                   sessionId: session.id,
                   exerciseId,
                   addedAt: new Date(membership.addedAt),
+                  ordinal,
                 },
               ];
             });
@@ -982,9 +1197,20 @@ export async function POST(req: Request) {
           });
           if (setRows.length > 0) await tx.set.createMany({ data: setRows });
           if (s.exerciseMemberships === undefined) {
+            const existingMemberships = await tx.sessionExercise.findMany({
+              where: { sessionId: session.id },
+              select: { exerciseId: true, ordinal: true },
+            });
+            const seenExerciseIds = new Set(
+              existingMemberships.map((membership) => membership.exerciseId),
+            );
+            let nextOrdinal =
+              Math.max(-1, ...existingMemberships.map((membership) => membership.ordinal)) + 1;
             const membershipRows = (s.exerciseNames ?? []).flatMap((exerciseName) => {
               const exerciseId = exerciseIdByName.get(exerciseName);
-              return exerciseId ? [{ sessionId: session.id, exerciseId }] : [];
+              if (!exerciseId || seenExerciseIds.has(exerciseId)) return [];
+              seenExerciseIds.add(exerciseId);
+              return [{ sessionId: session.id, exerciseId, ordinal: nextOrdinal++ }];
             });
             if (membershipRows.length > 0) {
               await tx.sessionExercise.createMany({ data: membershipRows, skipDuplicates: true });
@@ -998,7 +1224,7 @@ export async function POST(req: Request) {
               userId,
               weekStart: new Date(c.weekStart),
               weekEnd: new Date(c.weekEnd),
-              prompt: c.prompt,
+              prompt: sanitizeCoachAuditPrompt(c.prompt),
               response: c.response,
               appliedAt: c.appliedAt ? new Date(c.appliedAt) : null,
               createdAt: new Date(c.createdAt),

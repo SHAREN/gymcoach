@@ -11,9 +11,9 @@ beforeEach(() => {
   mockUserId.mockReset();
 });
 
-async function seedSession() {
+async function seedSession(email = 'web-set-idempotency@test.dev') {
   const user = await db.user.create({
-    data: { email: 'web-set-idempotency@test.dev', passwordHash: 'x' },
+    data: { email, passwordHash: 'x' },
   });
   const exercise = await db.exercise.create({
     data: {
@@ -25,6 +25,11 @@ async function seedSession() {
   });
   const session = await db.session.create({ data: { userId: user.id } });
   return { user, exercise, session };
+}
+
+async function seedSecondSession(userId: string, exerciseId: string) {
+  const session = await db.session.create({ data: { userId } });
+  return { exerciseId, session };
 }
 
 function request(exerciseId: string, reps = 8) {
@@ -74,5 +79,28 @@ describe('POST /api/sessions/[id]/sets idempotency', () => {
 
     expect(conflicting.status).toBe(409);
     expect(await db.set.count({ where: { sessionId: session.id } })).toBe(1);
+  });
+
+  it('does not let a client id replay cross sessions or owners', async () => {
+    const owner = await seedSession();
+    const ownerSecond = await seedSecondSession(owner.user.id, owner.exercise.id);
+    mockUserId.mockResolvedValue(owner.user.id);
+    await postSet(request(owner.exercise.id), {
+      params: Promise.resolve({ id: owner.session.id }),
+    });
+
+    const crossSession = await postSet(request(ownerSecond.exerciseId), {
+      params: Promise.resolve({ id: ownerSecond.session.id }),
+    });
+    expect(crossSession.status).toBe(409);
+    expect(await db.set.count({ where: { sessionId: ownerSecond.session.id } })).toBe(0);
+
+    const stranger = await seedSession('web-set-idempotency-stranger@test.dev');
+    mockUserId.mockResolvedValue(stranger.user.id);
+    const crossOwner = await postSet(request(stranger.exercise.id), {
+      params: Promise.resolve({ id: stranger.session.id }),
+    });
+    expect(crossOwner.status).toBe(409);
+    expect(await db.set.count({ where: { sessionId: stranger.session.id } })).toBe(0);
   });
 });
