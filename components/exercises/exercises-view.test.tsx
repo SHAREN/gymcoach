@@ -44,9 +44,19 @@ function exercise(over: Partial<Exercise>): Exercise {
 }
 
 const exercises: Exercise[] = [
-  exercise({ id: 'e1', name: 'Barbell Bench Press', muscleGroup: 'CHEST' }),
-  exercise({ id: 'e2', name: 'Back Squat', muscleGroup: 'QUADS' }),
-  exercise({ id: 'e3', name: 'Romanian Deadlift', muscleGroup: 'HAMSTRINGS' }),
+  exercise({
+    id: 'e1',
+    name: 'Barbell Bench Press',
+    muscleGroup: 'CHEST',
+    equipmentType: 'BARBELL',
+  }),
+  exercise({ id: 'e2', name: 'Back Squat', muscleGroup: 'QUADS', equipmentType: 'BARBELL' }),
+  exercise({
+    id: 'e3',
+    name: 'Romanian Deadlift',
+    muscleGroup: 'HAMSTRINGS',
+    equipmentType: 'DUMBBELL',
+  }),
 ];
 
 describe('ExercisesView search (issue #238)', () => {
@@ -85,8 +95,18 @@ describe('ExercisesView search (issue #238)', () => {
     expect(screen.queryByText('Barbell', { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText('rest 120s')).not.toBeInTheDocument();
     expect(screen.queryByText(/This note should not appear/)).not.toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('Training days: 2')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit exercise' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a zero-day count accessible while showing only the compact number', () => {
+    render(<ExercisesView exercises={[exercises[1]!]} gyms={[]} activeGymId={null} />);
+
+    expect(screen.getByRole('link', { name: 'Back Squat Training days: 0' })).toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('Training days: 0')).not.toBeInTheDocument();
   });
 
   it('shows every exercise when the query is empty', () => {
@@ -157,6 +177,65 @@ describe('ExercisesView search (issue #238)', () => {
     expect(screen.getByText('Cable tower')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Cable tower' })).not.toBeChecked();
     expect(screen.queryByRole('button', { name: 'Edit exercise' })).not.toBeInTheDocument();
+  });
+});
+
+describe('ExercisesView shared exercise filters', () => {
+  it('starts with all muscles and all equipment', () => {
+    render(<ExercisesView exercises={exercises} gyms={[]} activeGymId={null} />);
+
+    expect(screen.getByRole('combobox', { name: 'Muscle group' })).toHaveTextContent('All muscles');
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'All equipment',
+    );
+  });
+
+  it('composes muscle, equipment, name search and gym availability', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(
+      <ExercisesView
+        exercises={exercises}
+        gyms={[
+          {
+            id: 'olymp',
+            name: 'Olymp',
+            exerciseConfigs: [{ exerciseId: 'e2', isAvailable: false }],
+          },
+        ]}
+        activeGymId="olymp"
+      />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'Hamstrings' }));
+    await user.click(screen.getByRole('combobox', { name: 'Equipment type' }));
+    await user.click(screen.getByRole('option', { name: 'Dumbbells' }));
+    await user.type(screen.getByLabelText('Search exercises by name'), 'romanian');
+
+    expect(screen.getByText('Romanian Deadlift')).toBeInTheDocument();
+    expect(screen.queryByText('Barbell Bench Press')).not.toBeInTheDocument();
+    expect(screen.queryByText('Back Squat')).not.toBeInTheDocument();
+  });
+
+  it('resets muscle and equipment together and shows a clear filtered empty state', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<ExercisesView exercises={exercises} gyms={[]} activeGymId={null} />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'Chest' }));
+    await user.click(screen.getByRole('combobox', { name: 'Equipment type' }));
+    await user.click(screen.getByRole('option', { name: 'Dumbbells' }));
+
+    expect(screen.getByText('No exercises match')).toBeInTheDocument();
+    expect(
+      screen.getByText('No exercises match the current search and filters. Change or reset them.'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+
+    expect(screen.getByText('Barbell Bench Press')).toBeInTheDocument();
+    expect(screen.getByText('Back Squat')).toBeInTheDocument();
+    expect(screen.getByText('Romanian Deadlift')).toBeInTheDocument();
   });
 });
 

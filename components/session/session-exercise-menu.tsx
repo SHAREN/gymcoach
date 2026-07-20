@@ -21,12 +21,17 @@ import {
   Unlink2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Exercise, MuscleGroup, ProgramExercise } from '@/lib/prisma-client';
+import type { EquipmentType, Exercise, MuscleGroup, ProgramExercise } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { ExerciseFilters } from '@/components/exercises/exercise-filters';
+import { ExerciseTrainingDays } from '@/components/exercises/exercise-training-days';
+import { useExerciseTrainingDays } from '@/components/exercises/use-exercise-training-days';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { filterExercises } from '@/lib/exercise-filters';
+import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
 import { getExerciseMedia } from '@/lib/exercise-media';
 import { meaningfulProgramNote } from '@/lib/program-notes';
 import { targetDropSets } from '@/lib/planned-sets';
@@ -52,6 +57,7 @@ interface Props {
   programExercise: SessionProgramExercise;
   programExercises: SessionProgramExercise[];
   catalog: Exercise[];
+  trainingDatesByExercise?: TrainingDatesByExercise;
   loggedSetCount: number;
   onChanged: (options?: { selectProgramExerciseId?: string }) => void;
   onOpenHelp: (exerciseId: string) => void;
@@ -74,6 +80,7 @@ export function SessionExerciseMenu({
   programExercise,
   programExercises,
   catalog,
+  trainingDatesByExercise = {},
   loggedSetCount,
   onChanged,
   onOpenHelp,
@@ -84,6 +91,10 @@ export function SessionExerciseMenu({
   const [view, setView] = useState<View>('main');
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
+  const [selectedMuscleGroup, setSelectedMuscleGroup] = useState<MuscleGroup | null>(
+    programExercise.exercise.muscleGroup,
+  );
+  const [selectedEquipmentType, setSelectedEquipmentType] = useState<EquipmentType | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [repsMinDraft, setRepsMinDraft] = useState(programExercise.targetRepsMin);
   const [repsMaxDraft, setRepsMaxDraft] = useState(programExercise.targetRepsMax);
@@ -107,33 +118,35 @@ export function SessionExerciseMenu({
     () => new Set(programExercises.map((item) => item.exerciseId)),
     [programExercises],
   );
+  const trainedDaysByExercise = useExerciseTrainingDays(trainingDatesByExercise);
 
   const pickerExercises = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    const source =
-      view === 'replace'
-        ? catalog.filter(
-            (exercise) =>
-              exercise.muscleGroup === programExercise.exercise.muscleGroup &&
-              exercise.id !== programExercise.exerciseId,
-          )
-        : catalog.filter((exercise) => !existingExerciseIds.has(exercise.id));
-
-    if (!normalizedQuery) return source;
-    return source.filter((exercise) => {
-      const localized = exerciseName(exercise.name).toLocaleLowerCase();
-      return (
-        localized.includes(normalizedQuery) ||
-        exercise.name.toLocaleLowerCase().includes(normalizedQuery)
+    if (view === 'replace') {
+      return filterExercises(
+        catalog,
+        {
+          query,
+          muscleGroup: selectedMuscleGroup,
+          equipmentType: selectedEquipmentType,
+          excludedExerciseIds: new Set([programExercise.exerciseId]),
+        },
+        exerciseName,
       );
-    });
+    }
+
+    return filterExercises(
+      catalog,
+      { query, excludedExerciseIds: existingExerciseIds },
+      exerciseName,
+    );
   }, [
     catalog,
     exerciseName,
     existingExerciseIds,
-    programExercise.exercise.muscleGroup,
     programExercise.exerciseId,
     query,
+    selectedEquipmentType,
+    selectedMuscleGroup,
     view,
   ]);
 
@@ -143,6 +156,8 @@ export function SessionExerciseMenu({
     if (!openState) {
       setView('main');
       setQuery('');
+      setSelectedMuscleGroup(programExercise.exercise.muscleGroup);
+      setSelectedEquipmentType(null);
       setPendingReplacement(null);
     }
   }
@@ -153,7 +168,12 @@ export function SessionExerciseMenu({
       setRepsMinDraft(programExercise.targetRepsMin);
       setRepsMaxDraft(programExercise.targetRepsMax);
     }
-    if (nextView === 'replace' || nextView === 'add') setQuery('');
+    if (nextView === 'replace') {
+      setQuery('');
+      setSelectedMuscleGroup(programExercise.exercise.muscleGroup);
+      setSelectedEquipmentType(null);
+    }
+    if (nextView === 'add') setQuery('');
     setView(nextView);
   }
 
@@ -538,11 +558,16 @@ export function SessionExerciseMenu({
               onBack={() => setView('main')}
             />
             {view === 'replace' && (
-              <p className="text-sm text-muted-foreground">
-                {exerciseT(
-                  `muscleGroups.${muscleGroupMessageKeys[programExercise.exercise.muscleGroup as MuscleGroup]}`,
-                )}
-              </p>
+              <ExerciseFilters
+                muscleGroup={selectedMuscleGroup}
+                equipmentType={selectedEquipmentType}
+                onMuscleGroupChange={setSelectedMuscleGroup}
+                onEquipmentTypeChange={setSelectedEquipmentType}
+                onReset={() => {
+                  setSelectedMuscleGroup(null);
+                  setSelectedEquipmentType(null);
+                }}
+              />
             )}
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -551,6 +576,7 @@ export function SessionExerciseMenu({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t('searchExercises')}
+                aria-label={t('searchExercises')}
                 className="pl-9"
               />
             </div>
@@ -566,6 +592,9 @@ export function SessionExerciseMenu({
                     muscleLabel={exerciseT(
                       `muscleGroups.${muscleGroupMessageKeys[exercise.muscleGroup]}`,
                     )}
+                    trainedDays={
+                      view === 'replace' ? (trainedDaysByExercise[exercise.id] ?? 0) : undefined
+                    }
                     disabled={busy}
                     onClick={() =>
                       view === 'replace' ? requestReplacement(exercise) : void addExercise(exercise)
@@ -738,12 +767,14 @@ function ExerciseChoice({
   exercise,
   displayName,
   muscleLabel,
+  trainedDays,
   disabled,
   onClick,
 }: {
   exercise: Exercise;
   displayName: string;
   muscleLabel: string;
+  trainedDays?: number;
   disabled: boolean;
   onClick: () => void;
 }) {
@@ -769,9 +800,12 @@ function ExerciseChoice({
           abbreviation(displayName)
         )}
       </span>
-      <span className="min-w-0">
+      <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{displayName}</span>
-        <span className="block text-xs text-muted-foreground">{muscleLabel}</span>
+        <span className="mt-0.5 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{muscleLabel}</span>
+          {trainedDays !== undefined && <ExerciseTrainingDays count={trainedDays} />}
+        </span>
       </span>
     </button>
   );

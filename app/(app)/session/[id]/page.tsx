@@ -9,6 +9,7 @@ import {
 import { getReturnToTrainingRecommendationsByEquipment } from '@/lib/return-to-training-history';
 import { READINESS_RECENCY_HOURS, type ReadinessSignal } from '@/lib/progression';
 import { isDeloadActive } from '@/lib/deload';
+import { getFinishedExerciseTrainingDates } from '@/lib/exercise-usage';
 import { SessionRunner, type SerializedLastPerformance } from '@/components/session/session-runner';
 
 interface Props {
@@ -78,21 +79,23 @@ export default async function SessionRunPage(props: Props) {
 
   const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
   const performanceTargets = buildEquipmentPerformanceTargets(exerciseIds, session.gym);
-  const [lastPerformances, user, latestCheckin, catalog] = await Promise.all([
-    getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
-    db.user.findUnique({
-      where: { id: auth.userId },
-      select: { unit: true, deloadUntil: true, bodyweight: true },
-    }),
-    db.readinessCheckin.findFirst({
-      where: { userId: auth.userId },
-      orderBy: { createdAt: 'desc' },
-    }),
-    db.exercise.findMany({
-      where: { userId: auth.userId },
-      orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
-    }),
-  ]);
+  const [lastPerformances, user, latestCheckin, catalog, trainingDatesByExercise] =
+    await Promise.all([
+      getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
+      db.user.findUnique({
+        where: { id: auth.userId },
+        select: { unit: true, deloadUntil: true, bodyweight: true },
+      }),
+      db.readinessCheckin.findFirst({
+        where: { userId: auth.userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.exercise.findMany({
+        where: { userId: auth.userId },
+        orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
+      }),
+      getFinishedExerciseTrainingDates(auth.userId),
+    ]);
 
   const lastPerfRecord: Record<string, SerializedLastPerformance[]> = {};
   for (const performance of lastPerformances) {
@@ -125,6 +128,7 @@ export default async function SessionRunPage(props: Props) {
       unit={user?.unit ?? 'KG'}
       initialExerciseId={searchParams.exerciseId}
       catalog={catalog}
+      trainingDatesByExercise={trainingDatesByExercise}
     />
   );
 }

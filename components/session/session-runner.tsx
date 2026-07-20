@@ -86,12 +86,17 @@ import {
   nextPlannedSetIsDropSet,
   remainingPlannedSets,
 } from '@/lib/planned-sets';
+<<<<<<< HEAD
 import {
   consumeSessionDetailReturnState,
   saveSessionDetailReturnState,
   type CardioSetDraft,
   type StrengthSetDraft,
 } from '@/lib/session-detail-return-state';
+import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
+=======
+import type { TrainingDatesByExercise } from '@/lib/exercise-training-days';
+>>>>>>> 3217568d8ee7d8b6b929823476ba364da4971161
 
 export interface SerializedLastPerformance {
   sessionId?: string;
@@ -163,6 +168,7 @@ type SessionRunnerProps = {
   unit: WeightUnit;
   initialExerciseId?: string;
   catalog: Exercise[];
+  trainingDatesByExercise: TrainingDatesByExercise;
 };
 
 type Mode =
@@ -305,6 +311,7 @@ export function SessionRunner({
   unit,
   initialExerciseId,
   catalog,
+  trainingDatesByExercise,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -1187,6 +1194,7 @@ export function SessionRunner({
           programExercise={currentPE}
           programExercises={programExercises}
           catalog={catalog}
+          trainingDatesByExercise={trainingDatesByExercise}
           loggedSetCount={currentSets.filter((set) => !set.isWarmup).length}
           onChanged={handleProgramChanged}
           onOpenHelp={openExerciseDetails}
