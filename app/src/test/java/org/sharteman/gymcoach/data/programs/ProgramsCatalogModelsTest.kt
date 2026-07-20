@@ -4,6 +4,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,5 +56,21 @@ class ProgramsCatalogModelsTest {
         assertTrue(encoded.contains("\"targetDropSets\":2"))
         assertTrue(encoded.contains("\"tempo\":\"3-1-1-0\""))
         assertTrue(encoded.contains("\"supersetGroup\":3"))
+    }
+
+    @Test
+    fun `exercise mutation serializes only client editable classification fields`() {
+        val encoded = json.encodeToString(
+            ExerciseInput(
+                name = "Bench press",
+                muscleGroup = "CHEST",
+                category = "COMPOUND",
+                equipmentType = "BARBELL",
+            ),
+        )
+
+        assertTrue(encoded.contains("\"muscleGroup\":\"CHEST\""))
+        assertFalse(encoded.contains("catalogOrigin"))
+        assertFalse(encoded.contains("loadProfile"))
     }
 }
