@@ -108,6 +108,7 @@ function runBeadsExport(repo) {
     cwd: repo,
     encoding: 'utf8',
     windowsHide: true,
+    maxBuffer: 100 * 1024 * 1024,
   });
   if (result.error || result.status !== 0) {
     reject(`bd export failed: ${result.error?.message ?? (result.stderr || result.stdout).trim()}`);
