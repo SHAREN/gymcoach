@@ -6,8 +6,7 @@ import {
   type TrainingLoadAggregation,
   type TrainingLoadSetInput,
 } from '@/lib/training-load-aggregation';
-import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
-import { ExerciseCategory } from '@/lib/prisma-client';
+import { deriveServerExerciseClassification } from '@/lib/exercise-classification';
 
 export interface ProgramDesignIssue {
   code: string;
@@ -118,7 +117,15 @@ export function validateProgramDesign(
       const totalSets = exercise.targetSets + dropSets;
       const loadProfile =
         known?.loadProfile ??
-        defaultExerciseLoadProfile(exercise.name, muscleGroup, category as ExerciseCategory);
+        deriveServerExerciseClassification({
+          name: exercise.name,
+          muscleGroup: exercise.muscleGroup,
+          category: exercise.category,
+          defaultRestSec: exercise.restSec,
+          notes: null,
+          usesBodyweight: false,
+          equipmentType: exercise.equipmentType ?? 'OTHER',
+        }).loadProfile;
       for (let setIndex = 0; setIndex < totalSets; setIndex += 1) {
         const loadInput: TrainingLoadSetInput = {
           setId: `draft:${workoutIndex}:${exerciseIndex}:${setIndex}`,

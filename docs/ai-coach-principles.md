@@ -724,6 +724,15 @@ reviewed profile without a proven catalog fingerprint becomes unclassified.
 These reset and restore rules are engineering integrity safeguards, not
 training-science classifications or new volume formulas.
 
+Program generation, built-in template persistence and MCP program writes use
+the same server-owned full-fingerprint derivation. A known exercise name alone
+cannot grant reviewed provenance. Default catalog exercises require the full
+stored catalog identity; explicitly reviewed system-template aliases also
+require their complete versioned muscle, category, rest, notes, bodyweight and
+equipment identity. An existing exercise keeps valid metadata when that
+identity is unchanged, while any changed or mismatched identity fails safe to
+explicit `UNCLASSIFIED` unless it exactly matches another canonical fingerprint.
+
 Completed qualifying working sets are aggregated once by the shared service.
 For every muscle it reports raw `directSets` and `indirectSets` plus separate
 regular, drop-set, RIR-present, RIR-missing and history-reliability breakdowns.

@@ -9,6 +9,7 @@ import {
   unclassifiedExerciseLoadProfile,
   type ExerciseLoadProfile,
 } from '@/lib/schemas/exercise-load-profile';
+import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
 
 export interface ExerciseClassificationIdentity {
   name: string;
@@ -41,6 +42,15 @@ export function classificationMetadataAfterClientUpdate(
     : {};
 }
 
+export function classificationMetadataAfterServerUpdate(
+  current: ExerciseClassificationIdentity,
+  next: ExerciseClassificationIdentity,
+): Partial<ServerExerciseClassificationMetadata> {
+  return exerciseClassificationIdentityChanged(current, next)
+    ? deriveServerExerciseClassification(next)
+    : {};
+}
+
 export function exerciseClassificationIdentityChanged(
   current: ExerciseClassificationIdentity,
   next: ExerciseClassificationIdentity,
@@ -61,12 +71,9 @@ export function deriveBackupExerciseClassification(
     loadProfile?: ExerciseLoadProfile;
   },
 ): ServerExerciseClassificationMetadata {
-  const catalogExercise = findCatalogExerciseByFingerprint(input);
-  if (catalogExercise) {
-    return {
-      catalogOrigin: SYSTEM_EXERCISE_CATALOG_ORIGIN,
-      loadProfile: catalogExercise.loadProfile,
-    };
+  const serverClassification = deriveServerExerciseClassification(input);
+  if (serverClassification.loadProfile.classification === 'REVIEWED') {
+    return serverClassification;
   }
 
   if (input.loadProfile?.classification === 'LEGACY_PRIMARY_ONLY') {
@@ -82,6 +89,23 @@ export function deriveBackupExerciseClassification(
     catalogOrigin: null,
     loadProfile: legacyPrimaryExerciseLoadProfile(input.muscleGroup),
   };
+}
+
+export function deriveServerExerciseClassification(
+  input: ExerciseClassificationIdentity,
+): ServerExerciseClassificationMetadata {
+  const catalogExercise = findCatalogExerciseByFingerprint(input);
+  if (catalogExercise) {
+    return {
+      catalogOrigin: SYSTEM_EXERCISE_CATALOG_ORIGIN,
+      loadProfile: catalogExercise.loadProfile,
+    };
+  }
+
+  const mappedProfile = defaultExerciseLoadProfile(input);
+  return mappedProfile.classification === 'REVIEWED'
+    ? { catalogOrigin: null, loadProfile: mappedProfile }
+    : clientExerciseClassificationMetadata();
 }
 
 export function findCatalogExerciseByFingerprint(

@@ -1,4 +1,4 @@
-import { ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
+import { EquipmentType, ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
 import {
   reviewedExerciseLoadProfile,
   type ExerciseLoadProfile,
@@ -14,6 +14,40 @@ type CatalogLoadProfile = {
   movementPatterns: MovementPattern[];
   fatigueTags?: FatigueTag[];
   jointStress?: JointStressTag[];
+};
+
+export interface ExerciseLoadProfileIdentity {
+  name: string;
+  muscleGroup: MuscleGroup;
+  category: ExerciseCategory;
+  defaultRestSec: number;
+  notes?: string | null;
+  usesBodyweight: boolean;
+  equipmentType: EquipmentType;
+}
+
+const REVIEWED_NON_CATALOG_IDENTITIES: Record<
+  string,
+  Omit<ExerciseLoadProfileIdentity, 'name' | 'equipmentType'> & {
+    equipmentTypes: readonly EquipmentType[];
+  }
+> = {
+  Deadlift: {
+    muscleGroup: MuscleGroup.BACK_THICKNESS,
+    category: ExerciseCategory.COMPOUND,
+    defaultRestSec: 180,
+    notes: null,
+    usesBodyweight: false,
+    equipmentTypes: [EquipmentType.OTHER, EquipmentType.BARBELL],
+  },
+  'Romanian Deadlift': {
+    muscleGroup: MuscleGroup.HAMSTRINGS,
+    category: ExerciseCategory.COMPOUND,
+    defaultRestSec: 120,
+    notes: null,
+    usesBodyweight: false,
+    equipmentTypes: [EquipmentType.OTHER, EquipmentType.BARBELL],
+  },
 };
 
 const PUSH_JOINTS: JointStressTag[] = ['SHOULDER', 'ELBOW', 'WRIST'];
@@ -264,17 +298,27 @@ export function catalogExerciseLoadProfile(
 }
 
 export function defaultExerciseLoadProfile(
-  name: string,
-  _muscleGroup: MuscleGroup,
-  _category: ExerciseCategory,
+  input: ExerciseLoadProfileIdentity,
 ): ExerciseLoadProfile {
-  const mapped = CORE_CATALOG_LOAD_PROFILES[name];
-  return mapped
-    ? reviewedExerciseLoadProfile({
-        ...mapped,
-        fatigueTags: mapped.fatigueTags ?? [],
-        jointStress: mapped.jointStress ?? [],
-        confidence: 'MEDIUM',
-      })
-    : unclassifiedExerciseLoadProfile();
+  const identity = REVIEWED_NON_CATALOG_IDENTITIES[input.name];
+  const mapped = CORE_CATALOG_LOAD_PROFILES[input.name];
+  if (
+    !identity ||
+    !mapped ||
+    identity.muscleGroup !== input.muscleGroup ||
+    identity.category !== input.category ||
+    identity.defaultRestSec !== input.defaultRestSec ||
+    (identity.notes ?? null) !== (input.notes ?? null) ||
+    identity.usesBodyweight !== input.usesBodyweight ||
+    !identity.equipmentTypes.includes(input.equipmentType)
+  ) {
+    return unclassifiedExerciseLoadProfile();
+  }
+
+  return reviewedExerciseLoadProfile({
+    ...mapped,
+    fatigueTags: mapped.fatigueTags ?? [],
+    jointStress: mapped.jointStress ?? [],
+    confidence: 'MEDIUM',
+  });
 }

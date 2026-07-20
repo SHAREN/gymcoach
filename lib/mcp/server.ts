@@ -7,7 +7,7 @@ import { generatedExerciseSchema, generatedProgramSchema } from '@/lib/schemas/p
 import { programInputSchema } from '@/lib/schemas/program';
 import { programDesignAnswersSchema, programDesignModeSchema } from '@/lib/schemas/program-design';
 import { buildProgramDesignContext } from '@/lib/program-design-context';
-import { defaultExerciseLoadProfile } from '@/lib/exercise-load-catalog';
+import { deriveServerExerciseClassification } from '@/lib/exercise-classification';
 import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import {
@@ -1047,7 +1047,15 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
             category: input.category,
             equipmentType: input.equipmentType ?? 'OTHER',
             defaultRestSec: input.restSec,
-            loadProfile: defaultExerciseLoadProfile(input.name, input.muscleGroup, input.category),
+            ...deriveServerExerciseClassification({
+              name: input.name,
+              muscleGroup: input.muscleGroup,
+              category: input.category,
+              equipmentType: input.equipmentType ?? 'OTHER',
+              defaultRestSec: input.restSec,
+              notes: null,
+              usesBodyweight: false,
+            }),
           },
         });
         const last = await tx.programExercise.findFirst({

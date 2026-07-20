@@ -165,6 +165,7 @@ describe('buildProgramFromGenerated', () => {
     });
 
     expect(exercise).toMatchObject({ muscleGroup: 'BACK_THICKNESS' });
+    expect(exercise?.catalogOrigin).toBeNull();
     expect(exercise?.loadProfile).toMatchObject({
       classification: 'REVIEWED',
       movementPatterns: {
@@ -175,6 +176,46 @@ describe('buildProgramFromGenerated', () => {
           expect.objectContaining({ value: 'AXIAL_LOAD' }),
           expect.objectContaining({ value: 'LUMBAR_ISOMETRIC' }),
         ]),
+      },
+    });
+  });
+
+  it('does not review a generated exercise from a mismatched catalog name', async () => {
+    const user = await makeUser('deadlift-mismatch@test.dev');
+    const programId = await buildProgramFromGenerated(user.id, {
+      name: 'Mismatched deadlift block',
+      phase: 'Test',
+      workouts: [
+        {
+          name: 'Push',
+          exercises: [
+            {
+              name: 'Deadlift',
+              muscleGroup: 'CHEST',
+              category: 'ISOLATION',
+              targetSets: 3,
+              targetRepsMin: 8,
+              targetRepsMax: 12,
+              targetRIR: 2,
+              restSec: 60,
+            },
+          ],
+        },
+      ],
+    });
+    const exercise = await db.exercise.findFirstOrThrow({
+      where: { userId: user.id, programExercises: { some: { workout: { programId } } } },
+    });
+
+    expect(exercise).toMatchObject({
+      name: 'Deadlift',
+      muscleGroup: 'CHEST',
+      category: 'ISOLATION',
+      catalogOrigin: null,
+      loadProfile: {
+        classification: 'UNCLASSIFIED',
+        provenance: 'UNCLASSIFIED',
+        secondaryMuscles: { state: 'UNKNOWN', entries: [] },
       },
     });
   });
