@@ -872,7 +872,7 @@ function testCurrentHarnessDiffIsExceptionEligible() {
     root,
     'diff',
     '--name-only',
-    'bce854ab095480e3ff0f15fb3b032bc194af487a..HEAD',
+    'bce854ab095480e3ff0f15fb3b032bc194af487a..0caa65f6bac5c73a90c0014c4a9026487e4d337b',
   ).split(/\r?\n/);
   assert.equal(paths.length > 0, true);
   assert.deepEqual(
