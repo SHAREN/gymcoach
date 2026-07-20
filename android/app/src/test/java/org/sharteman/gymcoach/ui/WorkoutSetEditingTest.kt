@@ -69,6 +69,95 @@ class WorkoutSetEditingTest {
         assertFalse(recommendationCanApply(appliedKey = null, currentKey = null))
     }
 
+    @Test
+    fun `stored collisions render as stable contiguous working ordinals without rewriting rows`() {
+        val storedNumbers = listOf(1, 2, 3, 3, 4, 1)
+        val sets = storedNumbers.mapIndexed { index, storedNumber ->
+            displaySet(
+                id = "set-$index",
+                setNumber = storedNumber,
+                completedAt = "2026-07-15T10:0${index}:00Z",
+            )
+        }
+
+        val displayed = displayedWorkoutSets(sets)
+
+        assertEquals((1..6).toList(), displayed.map { it.workingNumber })
+        assertEquals(storedNumbers, displayed.map { it.set.setNumber })
+        assertEquals(sets.map { it.id }, displayed.map { it.set.id })
+    }
+
+    @Test
+    fun `warmup drop and deleted rows preserve markers without creating working number gaps`() {
+        val displayed = displayedWorkoutSets(
+            listOf(
+                displaySet("warmup", 9, "2026-07-15T10:00:00Z", isWarmup = true),
+                displaySet("working-raw-4", 4, "2026-07-15T10:01:00Z"),
+                displaySet("drop", 1, "2026-07-15T10:02:00Z", isDropSet = true),
+                displaySet("working-raw-1", 1, "2026-07-15T10:03:00Z"),
+                displaySet("deleted", 2, "2026-07-15T10:04:00Z", deleted = true),
+            ),
+        )
+
+        assertEquals(listOf("warmup", "working-raw-4", "drop", "working-raw-1"), displayed.map { it.set.id })
+        assertEquals(listOf(null, 1, null, 2), displayed.map { it.workingNumber })
+        assertTrue(displayed.first().set.isWarmup)
+        assertTrue(displayed[2].set.isDropSet)
+    }
+
+    @Test
+    fun `equal completion timestamps use stored number then immutable id as deterministic tie breakers`() {
+        val completedAt = "2026-07-15T10:00:00Z"
+        val displayed = displayedWorkoutSets(
+            listOf(
+                displaySet("set-b", 2, completedAt),
+                displaySet("set-c", 1, completedAt),
+                displaySet("set-a", 2, completedAt),
+            ),
+        )
+
+        assertEquals(listOf("set-c", "set-a", "set-b"), displayed.map { it.set.id })
+        assertEquals(listOf(1, 2, 3), displayed.map { it.workingNumber })
+    }
+
+    @Test
+    fun `completed drop marker cannot skip the next working ordinal or create another planned drop`() {
+        val displayed = displayedWorkoutSets(
+            listOf(displaySet("drop", 7, "2026-07-15T10:00:00Z", isDropSet = true)),
+        )
+
+        val upcoming = upcomingWorkoutSets(
+            displayedSets = displayed,
+            targetWorkingSets = 2,
+            targetDropSets = 1,
+            activeIsWarmup = false,
+            activeIsDropSet = false,
+        )
+
+        assertEquals(
+            listOf(UpcomingWorkoutSet(rowNumber = 2, performanceIndex = 1, isDropSet = false)),
+            upcoming,
+        )
+    }
+
+    @Test
+    fun `active drop marker preserves all remaining contiguous working rows`() {
+        val displayed = displayedWorkoutSets(
+            listOf(displaySet("working", 9, "2026-07-15T10:00:00Z")),
+        )
+
+        val upcoming = upcomingWorkoutSets(
+            displayedSets = displayed,
+            targetWorkingSets = 3,
+            targetDropSets = 1,
+            activeIsWarmup = false,
+            activeIsDropSet = true,
+        )
+
+        assertEquals(listOf(2, 3), upcoming.map { it.rowNumber })
+        assertTrue(upcoming.none { it.isDropSet })
+    }
+
     private fun completedSet(weight: Double, reps: Int, rir: Int?) = LocalSetEntity(
         id = "set-1",
         sessionId = "session-1",
@@ -78,6 +167,27 @@ class WorkoutSetEditingTest {
         reps = reps,
         rir = rir,
         completedAt = "2026-07-15T10:00:00Z",
+    )
+
+    private fun displaySet(
+        id: String,
+        setNumber: Int,
+        completedAt: String,
+        isWarmup: Boolean = false,
+        isDropSet: Boolean = false,
+        deleted: Boolean = false,
+    ) = LocalSetEntity(
+        id = id,
+        sessionId = "session-1",
+        exerciseId = "exercise-1",
+        setNumber = setNumber,
+        weight = 100.0,
+        reps = 8,
+        rir = 2,
+        isWarmup = isWarmup,
+        isDropSet = isDropSet,
+        completedAt = completedAt,
+        deleted = deleted,
     )
 
     private fun recommendation(weight: Double, reps: Int, rir: Int) = SetRecommendation(

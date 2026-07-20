@@ -122,7 +122,7 @@ fun ProgressScreen(
     var selectedExerciseId by rememberSaveable(initialExerciseId) {
         mutableStateOf(initialExerciseId)
     }
-    var metricName by rememberSaveable { mutableStateOf(ProgressMetric.MAX_WEIGHT.name) }
+    var metricName by rememberSaveable { mutableStateOf(ProgressMetric.ESTIMATED_1RM.name) }
     var rangeName by rememberSaveable { mutableStateOf(ProgressRange.ALL.name) }
     var chooserOpen by rememberSaveable { mutableStateOf(false) }
     val exercises = snapshot?.exercises.orEmpty()

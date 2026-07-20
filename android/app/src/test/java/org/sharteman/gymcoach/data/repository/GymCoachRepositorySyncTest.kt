@@ -140,6 +140,20 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
+    fun syncSchedulerFailureNeverTurnsADurableSetSaveIntoARetryableFailure() = runTest {
+        val fixture = fixture()
+        val workout = requireNotNull(bootstrapWithTargetSets(3).activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, gymId = null)
+        fixture.syncCounter.failure = IllegalStateException("scheduler unavailable")
+
+        val set = fixture.repository.addSet(sessionId, "exercise_1", 80.0, 8, 2, null)
+
+        assertEquals(set.id, fixture.dao.getSet(set.id)?.id)
+        assertEquals(2, fixture.dao.queuedOperations().size)
+        assertEquals(2, fixture.syncCounter.count)
+    }
+
+    @Test
     fun watchFinishUsesServerOutboxTransactionWithoutEchoPublisherCall() = runTest {
         val publisher = RecordingWatchPublisher()
         val fixture = fixture(publisher)
@@ -205,12 +219,14 @@ class GymCoachRepositorySyncTest {
         val finish = async { fixture.repository.finishSession(sessionId, null, 8) }
         val update = async {
             yield()
-            fixture.repository.updateSet(set, 90.0, 10, 1)
+            runCatching { fixture.repository.updateSet(set, 90.0, 10, 1) }.exceptionOrNull()
         }
-        awaitAll(finish, update)
+        finish.await()
+        val updateFailure = update.await()
 
         assertEquals(null, fixture.dao.getActiveWorkoutRuntime(sessionId))
         assertEquals(80.0, fixture.dao.getSet(set.id)?.weight ?: 0.0, 0.0)
+        assertTrue(updateFailure is IllegalStateException)
         val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
         assertEquals(WatchEventType.WORKOUT_FINISHED.name, watchFinish.eventType)
         assertEquals(3L, watchFinish.revision)
@@ -2266,7 +2282,10 @@ class GymCoachRepositorySyncTest {
             dao = dao,
             accountStore = accountStore,
             api = api,
-            scheduleSyncNow = { syncCounter.count++ },
+            scheduleSyncNow = {
+                syncCounter.count++
+                syncCounter.failure?.let { throw it }
+            },
             schedulePeriodicSync = {},
             watchCommandPublisher = watchPublisher,
             watchCommandScope = watchCommandScope,
@@ -2456,7 +2475,10 @@ class GymCoachRepositorySyncTest {
             }
     }
 
-    private class SyncCounter(var count: Int = 0)
+    private class SyncCounter(
+        var count: Int = 0,
+        var failure: Throwable? = null,
+    )
 
     private class RecordingWatchPublisher(
         private val fail: Boolean = false,
@@ -2799,6 +2821,9 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun saveWatchPeer(entity: WatchPeerEntity) { watchPeers[entity.deviceId] = entity }
         override suspend fun getWatchPeer(deviceId: String) = watchPeers[deviceId]
+        override suspend fun getLatestWatchPeerForSession(sessionId: String) = watchPeers.values
+            .filter { it.sessionId == sessionId }
+            .maxByOrNull { it.updatedAtEpochMs }
         override fun observeLatestWatchPeer(): Flow<WatchPeerEntity?> =
             MutableStateFlow(watchPeers.values.maxByOrNull { it.updatedAtEpochMs })
         override suspend fun saveWatchConflict(entity: WatchConflictEntity) { watchConflicts[entity.conflictId] = entity }

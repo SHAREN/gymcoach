@@ -13,6 +13,7 @@ import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentInput
 import org.sharteman.gymcoach.data.settings.SettingsGymExerciseConfigDto
 import org.sharteman.gymcoach.data.settings.SettingsGymInput
+import org.sharteman.gymcoach.data.settings.SettingsGymUpdateInput
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
 
 data class ProfileDraft(
@@ -74,6 +75,14 @@ fun GymDraft.toInputOrNull(makeActive: Boolean = false): SettingsGymInput? {
         barWeights = bars,
         exerciseConfigs = configs.values.sortedBy { it.exerciseId },
         makeActive = makeActive,
+    )
+}
+
+fun GymDraft.toUpdateInputOrNull(): SettingsGymUpdateInput? {
+    if (name.isBlank()) return null
+    return SettingsGymUpdateInput(
+        name = name.trim(),
+        exerciseConfigs = configs.values.sortedBy { it.exerciseId },
     )
 }
 
