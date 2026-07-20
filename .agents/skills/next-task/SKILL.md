@@ -1,6 +1,6 @@
 ---
 name: next-task
-description: Select and explain the next eligible GymCoach Beads task without claiming or implementing it. Use when the user asks what to work on next, requests the next READY task, wants queue prioritization, or needs a dependency-aware recommendation aligned with the current milestone.
+description: Select and explain the next eligible GymCoach Beads task without claiming or implementing it. Use when the user asks what to work on next, requests the next READY task, wants queue prioritization, or needs a dependency-aware recommendation from fresh Beads and stateless Dispatcher state.
 ---
 
 # Next Task
@@ -14,9 +14,13 @@ Read:
 
 ```text
 AGENTS.md
-docs/CURRENT_MILESTONE.md
 docs/CODEX_WORKFLOW.md
 ```
+
+When invoked by the Dispatcher, read the fresh output from
+`scripts/harness-status.ps1` first. `readyTasks` are implementation candidates;
+`awaitingIntegrationTasks` must be routed to integration instead of selected as
+new implementation work.
 
 Then query blocker-free READY work:
 
@@ -40,18 +44,16 @@ Apply these rules in order:
 1. The task has stage:ready.
 2. All blocking dependencies are complete.
 3. Native priority and label agree, ordered P0, P1, P2, then P3.
-4. The task belongs to the current milestone.
-5. For equal candidates, choose the oldest created task.
-6. When another task is active, the candidate has no overlapping files, APIs,
+4. For equal candidates, choose the oldest created task.
+5. When another task is active, the candidate has no overlapping files, APIs,
    schemas, shared mobile contracts, training formulas, or deployment surface.
 
 Do not select P4 or a task with inconsistent stage, type, or priority metadata.
 Report it as needing triage.
 
-Milestone alignment must be supported by the task description, notes, labels,
-or acceptance criteria. Do not infer it from the title alone. If
-docs/CURRENT_MILESTONE.md still marks the goal as an open question, state that
-criterion 4 cannot be enforced and use the remaining order.
+When the user is continuing an existing root request, prefer tasks linked by
+current Beads dependencies or root-request notes. Do not use a static milestone
+document as queue authority and do not infer request membership from a title.
 
 Do not recommend concurrent execution when task scope is missing or overlap is
 uncertain. Report that the candidate needs triage or must wait for the active
@@ -79,7 +81,7 @@ Dependencies: none
 Parallel safety: no overlap with active work
 Acceptance criteria:
 - ...
-Reason selected: highest-priority blocker-free READY task aligned with the current milestone; oldest among equal candidates.
+Reason selected: highest-priority blocker-free READY task; oldest among equal candidates and safe against active work.
 ```
 
 End with:

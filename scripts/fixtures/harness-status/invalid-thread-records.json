@@ -1,0 +1,61 @@
+{
+  "observedAt": "2026-07-18T16:00:00.000Z",
+  "tasks": [
+    {
+      "id": "gymcoach-invalid-threads",
+      "title": "Ready task with invalid thread discovery",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"]
+    }
+  ],
+  "threads": {
+    "snapshot": {
+      "capturedAt": "2026-07-18T16:00:00.000Z",
+      "tool": "codex_app.list_threads",
+      "request": { "limit": 50, "query": null },
+      "response": {
+        "schemaVersion": 2,
+        "query": null,
+        "unavailableHosts": [],
+        "threads": [
+          {},
+          {
+            "id": "thread-duplicate",
+            "hostId": "local",
+            "status": "mystery",
+            "cwd": "D:/GymCoach/Worktrees/invalid",
+            "createdAt": "not-a-number",
+            "updatedAt": 2,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-duplicate",
+            "hostId": "local",
+            "status": "active",
+            "cwd": "D:/GymCoach/Worktrees/duplicate",
+            "createdAt": 3,
+            "updatedAt": null,
+            "hasUnreadTurn": "no"
+          }
+        ]
+      }
+    }
+  },
+  "worktrees": [],
+  "disks": [
+    { "name": "C", "freeBytes": 1 },
+    { "name": "D", "freeBytes": 2 }
+  ],
+  "ports": [
+    { "port": 3030, "listening": false },
+    { "port": 3031, "listening": false },
+    { "port": 5434, "listening": false }
+  ],
+  "sourceHealth": {
+    "beads": { "ok": true },
+    "git": { "ok": true },
+    "disks": { "ok": true },
+    "ports": { "ok": true }
+  }
+}

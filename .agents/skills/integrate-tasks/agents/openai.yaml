@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Integrate Tasks'
+  short_description: 'Guard integration and product task closure'
+  default_prompt: 'Use $integrate-tasks to integrate verified GymCoach tasks, validate final artifacts, and close them through the guarded workflow.'

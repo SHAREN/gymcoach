@@ -1,6 +1,6 @@
 ---
 name: triage-inbox
-description: Prepare selected GymCoach Beads INBOX tasks for development without editing code or starting implementation. Use when the Project Dispatcher automatically triages a captured implementation request, or when the user asks to clarify, classify, or move an INBOX task to READY.
+description: Prepare selected GymCoach Beads INBOX tasks for development and mirror safe lifecycle state to GitHub without editing code or starting implementation. Use when the stateless Project Dispatcher triages a captured implementation request, or when the user asks to clarify, classify, or move an INBOX task to READY.
 ---
 
 # Triage Inbox
@@ -87,6 +87,16 @@ bd update TASK-ID --remove-label stage:inbox --add-label stage:ready --status op
 If the task is not ready, leave stage:inbox and append the exact open questions.
 If a real external blocker prevents progress, set status blocked and explain
 what will unblock it.
+
+After each successful Beads lifecycle mutation, update the single GitHub mirror:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
+
+GitHub is not authoritative. Mirror failure is a reported partial failure and
+must not roll back Beads, create a duplicate issue, or expose raw notes, private
+paths, credentials, device identifiers, or logs.
 
 ## Response
 

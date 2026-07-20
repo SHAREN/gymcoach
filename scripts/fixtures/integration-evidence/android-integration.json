@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "mode": "integration",
+  "authority": {
+    "rootTaskId": "gymcoach-android"
+  },
+  "integration": {
+    "head": "{{INTEGRATION_HEAD}}",
+    "branch": "codex/integration-root-request",
+    "requiredTaskIds": ["gymcoach-android"],
+    "combinedGate": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "command": "bash scripts/verify.sh && gradlew testDebugUnitTest lintDebug assembleDebug",
+      "exitCode": 0
+    },
+    "review": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "result": "passed",
+      "reviewedBy": "independent integration verifier",
+      "reviewEvidence": "Combined diff, Android gate, and final artifact evidence reviewed."
+    }
+  },
+  "tasks": [
+    {
+      "id": "gymcoach-android",
+      "classification": "product",
+      "verified": {
+        "base": "{{BASE}}",
+        "commit": "{{TASK_COMMIT}}",
+        "gate": {
+          "head": "{{TASK_COMMIT}}",
+          "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+          "exitCode": 0
+        }
+      },
+      "integration": {
+        "method": "ancestor"
+      },
+      "affectsAndroid": true
+    }
+  ],
+  "android": {
+    "sourceHead": "{{INTEGRATION_HEAD}}",
+    "assembleGate": {
+      "head": "{{INTEGRATION_HEAD}}",
+      "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+      "exitCode": 0
+    },
+    "outputMetadataPath": "android/app/build/outputs/apk/debug/output-metadata.json",
+    "debugApkPath": "android/app/build/outputs/apk/debug/app-debug.apk",
+    "immutableApkPath": "data/android-release/{{APK_FILE}}",
+    "latestJsonPath": "data/android-release/latest.json",
+    "apksignerPath": "{{APKSIGNER_PATH}}",
+    "aaptPath": "{{AAPT_PATH}}"
+  },
+  "delivery": {
+    "integrated": {
+      "required": true,
+      "status": "complete",
+      "head": "{{INTEGRATION_HEAD}}"
+    },
+    "published": {
+      "required": true,
+      "status": "complete",
+      "evidence": "Fresh immutable APK and latest.json were produced from the integration head."
+    },
+    "installed": {
+      "required": false,
+      "status": "not-authorized"
+    },
+    "deployed": {
+      "required": false,
+      "status": "not-authorized"
+    }
+  }
+}

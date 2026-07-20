@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 2,
+  "mode": "registered",
+  "threadSnapshot": {
+    "capturedAt": "{{OBSERVED_AT}}",
+    "tool": "codex_app.list_threads",
+    "request": {
+      "limit": 50,
+      "query": null
+    },
+    "capturedBy": {
+      "threadId": "thread-dispatcher",
+      "hostId": "local"
+    },
+    "response": {
+      "schemaVersion": 2,
+      "query": null,
+      "threads": [
+        {
+          "id": "thread-dispatcher",
+          "hostId": "local",
+          "status": "active",
+          "hasUnreadTurn": false,
+          "cwd": "{{CURRENT_SOURCE_PATH}}",
+          "createdAt": 1,
+          "updatedAt": 2
+        },
+        {
+          "id": "thread-example",
+          "hostId": "local",
+          "status": "idle",
+          "hasUnreadTurn": false,
+          "cwd": "{{CANDIDATE_PATH}}",
+          "createdAt": 1,
+          "updatedAt": 2
+        }
+      ],
+      "unavailableHosts": []
+    }
+  },
+  "allowedWorktreeRoot": "{{ALLOWED_ROOT}}",
+  "currentSourceWorktree": "{{CURRENT_SOURCE_PATH}}",
+  "currentIntegrationWorktrees": [],
+  "ownerPreservedWorktrees": [],
+  "candidate": {
+    "path": "{{CANDIDATE_PATH}}",
+    "role": "verifier",
+    "taskId": "gymcoach-example",
+    "threadId": "thread-example",
+    "hostId": "local",
+    "noLongerNeeded": true,
+    "expectedHead": "{{CANDIDATE_HEAD}}",
+    "expectedBranch": "{{CANDIDATE_BRANCH}}"
+  }
+}

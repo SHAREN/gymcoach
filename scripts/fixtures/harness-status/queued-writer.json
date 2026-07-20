@@ -1,0 +1,154 @@
+{
+  "observedAt": "2026-07-18T16:00:00.000Z",
+  "tasks": [
+    {
+      "id": "gymcoach-queued",
+      "title": "Queued writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Exactly one sole writer queued through Codex: client-new-thread:11111111-2222-3333-4444-555555555555. Do not create another writer while this request is queued or resolving."
+    },
+    {
+      "id": "gymcoach-bound",
+      "title": "Bound writer missing from snapshot",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-bound; role=implementation; thread=thread-bound; host=local; path-sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "id": "gymcoach-bound-idle",
+      "title": "Idle bound writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-bound-idle; role=implementation; thread=thread-bound-idle; host=local; path-sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "id": "gymcoach-review-idle",
+      "title": "Idle bound verifier",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-review-idle; role=verifier; thread=thread-review-idle; host=local; path-sha256=9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "id": "gymcoach-vbo",
+      "title": "Bound verifier missing from snapshot",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-vbo; role=verifier; thread=thread-verifier-bound; host=local; path-sha256=8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    {
+      "id": "gymcoach-cf1",
+      "title": "First conflicting reservation",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Implementation writer queued: client-new-thread:99999999-2222-3333-4444-555555555555."
+    },
+    {
+      "id": "gymcoach-cf2",
+      "title": "Second conflicting reservation",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Implementation writer queued: client-new-thread:99999999-2222-3333-4444-555555555555."
+    },
+    {
+      "id": "gymcoach-bf1",
+      "title": "First conflicting binding",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-bf1; role=implementation; thread=thread-binding-conflict; host=local; path-sha256=1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "id": "gymcoach-bf2",
+      "title": "Second conflicting binding",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-bf2; role=implementation; thread=thread-binding-conflict; host=local; path-sha256=2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "threads": {
+    "snapshot": {
+      "capturedAt": "2026-07-18T16:00:00.000Z",
+      "tool": "codex_app.list_threads",
+      "request": { "limit": 50, "query": null },
+      "response": {
+        "schemaVersion": 2,
+        "query": null,
+        "unavailableHosts": [],
+        "threads": [
+          {
+            "id": "thread-queued-resolving",
+            "clientThreadId": "client-new-thread:11111111-2222-3333-4444-555555555555",
+            "hostId": "local",
+            "status": "creating",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-queued",
+            "createdAt": 0,
+            "updatedAt": 1,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-conflicting-reservation",
+            "clientThreadId": "client-new-thread:99999999-2222-3333-4444-555555555555",
+            "hostId": "local",
+            "status": "creating",
+            "cwd": "D:/GymCoach/Worktrees/conflicting-reservation",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-binding-conflict",
+            "hostId": "local",
+            "status": "idle",
+            "cwd": "D:/GymCoach/Worktrees/conflicting-binding",
+            "createdAt": 2,
+            "updatedAt": 3,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-bound-idle",
+            "hostId": "local",
+            "status": "idle",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-bound-idle",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-review-idle",
+            "hostId": "local",
+            "status": "idle",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-review-idle",
+            "createdAt": 3,
+            "updatedAt": 4,
+            "hasUnreadTurn": false
+          }
+        ]
+      }
+    }
+  },
+  "worktrees": [],
+  "disks": [
+    { "name": "C", "freeBytes": 1 },
+    { "name": "D", "freeBytes": 2 }
+  ],
+  "ports": [
+    { "port": 3030, "listening": false },
+    { "port": 3031, "listening": false },
+    { "port": 5434, "listening": false }
+  ],
+  "sourceHealth": {
+    "beads": { "ok": true },
+    "git": { "ok": true },
+    "disks": { "ok": true },
+    "ports": { "ok": true }
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "number": 6,
+    "title": "[gymcoach-js4] Require integrated artifacts before product task closure",
+    "body": "Beads task: `gymcoach-js4`\n\nExisting mirror.",
+    "state": "open",
+    "labels": [
+      {
+        "name": "owner-note"
+      }
+    ],
+    "html_url": "https://github.com/SHAREN/gymcoach/issues/6"
+  },
+  {
+    "number": 7,
+    "title": "[gymcoach-a7b] Integrate verified Android weight picker into current APK",
+    "body": "Beads task: `gymcoach-a7b`\n\nExisting mirror.",
+    "state": "open",
+    "labels": [],
+    "html_url": "https://github.com/SHAREN/gymcoach/issues/7"
+  },
+  {
+    "number": 8,
+    "title": "[gymcoach-bk0] Integrate suitable upstream GymCoach changes",
+    "body": "Beads source of truth: `gymcoach-bk0`\n\nExisting parent mirror.",
+    "state": "open",
+    "labels": [],
+    "html_url": "https://github.com/SHAREN/gymcoach/issues/8"
+  }
+]

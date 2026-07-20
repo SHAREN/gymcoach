@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use when invoked with a TASK-ID either explicitly by the user or automatically by the Project Dispatcher after the task reaches READY.
+description: Implement exactly one prepared GymCoach Beads task in an isolated Codex Worktree and task branch. Use when invoked with a TASK-ID either explicitly by the user or by the stateless Project Dispatcher after the task reaches READY.
 ---
 
 # Execute Task
@@ -17,9 +17,6 @@ Before editing:
 ```text
 AGENTS.md
 CLAUDE.md
-docs/PRODUCT.md
-docs/ARCHITECTURE.md
-docs/CURRENT_MILESTONE.md
 docs/CODEX_WORKFLOW.md
 ```
 
@@ -49,6 +46,10 @@ bd dep list TASK-ID
    - git rev-parse --git-dir differs from git rev-parse --git-common-dir after
      path normalization, proving this is a linked worktree;
    - the current Codex task is dedicated to this Beads task.
+   - the stateless Project Dispatcher recorded the exact implementation
+     task/role/thread/host/resolved-path-hash Worktree binding in Beads notes
+     from real thread creation state. If it is missing, report the coordination
+     gap; do not invent an identity for later cleanup.
 5. Inspect other active work:
 
 ```text
@@ -61,7 +62,7 @@ surface. If ordering is required, stop and return the task to triage so the
 dependency can be recorded.
 
 6. Ensure the branch contains the Beads ID. If the worktree is clean and its
-current branch does not contain the ID, create the correct focused branch:
+   current branch does not contain the ID, create the correct focused branch:
 
 ```text
 feat/TASK-ID-short-description
@@ -87,6 +88,13 @@ bd update TASK-ID --claim --remove-label stage:ready
 ```
 
 If claim reports another assignee, stop.
+
+After the successful claim, mirror the new lifecycle state. A mirror failure is
+partial and does not roll back Beads:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
 
 ## Implementation Rules
 
@@ -173,6 +181,30 @@ Then move the task to REVIEW:
 ```text
 bd update TASK-ID --append-notes "Implementation evidence..." --add-label stage:review --status in_progress
 ```
+
+Update the existing GitHub mirror after the Beads transition:
+
+```text
+node scripts/sync-beads-github.mjs --task TASK-ID
+```
+
+Do not send raw implementation logs, private paths, credentials, device
+identifiers, or personal data to GitHub. A partial mirror failure does not
+change REVIEW state and is retried separately.
+
+Do not remove or unregister the current implementation Worktree. REVIEW and
+VERIFY require it to remain available. The stateless Project Dispatcher may
+consider it for automatic cleanup only after the task later reaches
+`stage:awaiting-integration` or
+closed, the implementation thread is inactive, and
+`scripts/cleanup-obsolete-worktree.mjs` validates fresh complete Codex thread
+state from the raw unfiltered `codex_app.list_threads` envelope, the exact
+machine-readable Beads task/role/thread/host/path-hash binding, clean Git status,
+expected branch/HEAD, reachability, preserved roles, and exact path containment.
+Reject wait-only, filtered, capped, unavailable-host, or flattened snapshots.
+The task itself only signals later eligibility; it never self-deletes. A later
+residual cleanup accepts only the immutable Git receipt ref produced by the
+successful registered pass, never caller-supplied inline receipt data.
 
 Report the branch, diff summary, checks, and task state. End by stating that the
 task is in REVIEW and has not been closed.

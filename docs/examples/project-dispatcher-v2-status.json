@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 2,
+  "observedAt": "2026-01-01T00:00:00.000Z",
+  "activeImplementations": [
+    {
+      "id": "gymcoach-example-implementation",
+      "title": "Example implementation",
+      "priority": "P1",
+      "status": "in_progress",
+      "stage": null
+    }
+  ],
+  "reviewTasks": [
+    {
+      "id": "gymcoach-example-review",
+      "title": "Example review",
+      "priority": "P1",
+      "status": "in_progress",
+      "stage": "stage:review"
+    }
+  ],
+  "verifyTasks": [],
+  "awaitingIntegrationTasks": [
+    {
+      "id": "gymcoach-example-awaiting",
+      "title": "Example awaiting integration",
+      "priority": "P2",
+      "status": "in_progress",
+      "stage": "stage:awaiting-integration"
+    }
+  ],
+  "readyTasks": [
+    {
+      "id": "gymcoach-example-ready",
+      "title": "Example blocker-free task",
+      "priority": "P2",
+      "status": "open",
+      "stage": "stage:ready"
+    }
+  ],
+  "blockedTasks": [
+    {
+      "id": "gymcoach-example-blocked",
+      "title": "Example dependency-blocked task",
+      "priority": "P2",
+      "status": "open",
+      "stage": "stage:ready",
+      "blockerKind": "dependency",
+      "blockedBy": ["gymcoach-example-blocker"]
+    }
+  ],
+  "codexThreads": {
+    "source": "codex_app.list_threads",
+    "query": null,
+    "capturedAt": "2026-01-01T00:00:00.000Z",
+    "complete": true,
+    "structurallyValid": true,
+    "reachedLimit": false,
+    "problems": [],
+    "taskScopedReconciliationAvailable": false,
+    "reconciledTaskIds": [],
+    "taskReconciliations": [],
+    "evidenceAmbiguous": false,
+    "items": [
+      {
+        "taskId": "gymcoach-example-implementation",
+        "role": "implementation",
+        "threadId": "thread-example",
+        "clientThreadId": null,
+        "hostId": "local",
+        "state": "active",
+        "cwd": "D:/GymCoach/Worktrees/example",
+        "gitBranch": "chore/gymcoach-example-implementation",
+        "source": "codex_app.list_threads",
+        "durableBinding": true,
+        "bindingConflict": false,
+        "durableReservation": false,
+        "reservationConflict": false
+      }
+    ]
+  },
+  "worktrees": [
+    {
+      "path": "D:/GymCoach/Worktrees/example",
+      "head": "1111111111111111111111111111111111111111",
+      "branch": "chore/gymcoach-example-implementation",
+      "detached": false,
+      "locked": false,
+      "prunable": false
+    }
+  ],
+  "disks": [
+    { "name": "C", "exists": true, "freeBytes": 8000000000 },
+    { "name": "D", "exists": true, "freeBytes": 48000000000 }
+  ],
+  "ports": [
+    {
+      "port": 3030,
+      "observed": true,
+      "listening": true,
+      "ownerPid": 100,
+      "processName": "node"
+    },
+    {
+      "port": 3031,
+      "observed": true,
+      "listening": false,
+      "ownerPid": null,
+      "processName": null
+    },
+    {
+      "port": 5434,
+      "observed": true,
+      "listening": false,
+      "ownerPid": null,
+      "processName": null
+    }
+  ],
+  "fullGateOwner": { "state": "none", "taskId": null, "candidates": [] },
+  "sourceHealth": {
+    "ok": true,
+    "creationRecommendationsSuppressed": false,
+    "suppressedCreationTaskIds": [],
+    "sources": {
+      "beads": { "ok": true, "detail": "Queried with bd --readonly." },
+      "git": { "ok": true, "detail": "Read from git worktree list." },
+      "disks": { "ok": true, "detail": "Read from the OS." },
+      "ports": { "ok": true, "detail": "Read from the OS." },
+      "codexThreads": {
+        "ok": true,
+        "complete": true,
+        "source": "codex_app.list_threads",
+        "taskScopedReconciliationAvailable": false,
+        "reconciledTaskIds": [],
+        "detail": null
+      }
+    },
+    "problems": []
+  },
+  "proposedActions": [
+    {
+      "key": "start-verifier:gymcoach-example-review",
+      "type": "start-verifier",
+      "taskId": "gymcoach-example-review",
+      "transition": true,
+      "reason": "REVIEW is ready and complete global thread discovery shows no verifier identity."
+    }
+  ]
+}

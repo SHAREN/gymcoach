@@ -53,11 +53,15 @@ bd update <id> --claim
 bd create "Short title" --description="Why this exists and what needs to be done" --type=task --priority=2
 ```
 
-5. Close completed work:
+5. Close only through the GymCoach lifecycle guard:
 
 ```bash
-bd close <id> --reason="Completed"
+node scripts/close-integrated-tasks.mjs --manifest PATH
 ```
+
+Do not call bd close directly for GymCoach product tasks. The guarded integration
+workflow is the normal close path. Independently verified pure harness/docs work
+may close only through the explicit no-runtime-artifact manifest exception.
 
 ## What Belongs In Beads
 
@@ -77,4 +81,6 @@ Use agent-local planning tools only for the current turn's execution checklist. 
 - Do not use `bd edit`; it opens an interactive editor. Use `bd update` flags instead.
 - Prefer `--json` when parsing `bd` output programmatically.
 - If hooks are installed, `bd prime` may already be injected. Run it manually when context is missing.
-- Do not auto-close or mutate tasks unless the work is actually complete.
+- Beads is authoritative; GitHub Issues are an idempotent sanitized mirror.
+- Do not auto-close or mutate tasks unless the guarded workflow proves the work
+  is complete.

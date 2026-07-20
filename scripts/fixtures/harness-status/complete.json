@@ -1,0 +1,184 @@
+{
+  "observedAt": "2026-07-18T16:00:00.000Z",
+  "tasks": [
+    {
+      "id": "gymcoach-impl",
+      "title": "Active implementation",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-impl; role=implementation; thread=thread-writer; host=local; path-sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "gymcoach-review",
+      "title": "Ready for verification",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-rva",
+      "title": "Review with active verifier",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-verify",
+      "title": "Verification running",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:verify", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-verify; role=verifier; thread=thread-verifier; host=local; path-sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "id": "gymcoach-await",
+      "title": "Awaiting integration",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:awaiting-integration", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-ready",
+      "title": "Blocker-free ready task",
+      "status": "open",
+      "priority": 2,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-rda",
+      "title": "Ready task with active writer",
+      "status": "open",
+      "priority": 2,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-ready-blocked",
+      "title": "Dependency-blocked ready task",
+      "status": "open",
+      "priority": 2,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [
+        {
+          "depends_on_id": "gymcoach-blocker",
+          "type": "blocks"
+        }
+      ]
+    },
+    {
+      "id": "gymcoach-blocker",
+      "title": "Blocking implementation",
+      "status": "in_progress",
+      "priority": 2,
+      "labels": ["area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-native-blocked",
+      "title": "Native blocked task",
+      "status": "blocked",
+      "priority": 2,
+      "labels": ["stage:ready", "area:infrastructure"]
+    }
+  ],
+  "threads": {
+    "snapshot": {
+      "capturedAt": "2026-07-18T16:00:00.000Z",
+      "tool": "codex_app.list_threads",
+      "request": { "limit": 50, "query": null },
+      "response": {
+        "schemaVersion": 2,
+        "query": null,
+        "unavailableHosts": [],
+        "threads": [
+          {
+            "id": "thread-dispatcher",
+            "hostId": "local",
+            "status": "active",
+            "cwd": "D:/GymCoach/Dispatcher",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "hasUnreadTurn": false,
+            "agentRole": "dispatcher"
+          },
+          {
+            "id": "thread-writer",
+            "hostId": "local",
+            "status": "active",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-impl",
+            "createdAt": 3,
+            "updatedAt": 4,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-verifier",
+            "hostId": "local",
+            "status": "running",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-verify",
+            "createdAt": 5,
+            "updatedAt": 6,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-review-verifier",
+            "hostId": "local",
+            "status": "in_progress",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-rva",
+            "createdAt": 7,
+            "updatedAt": 8,
+            "hasUnreadTurn": false,
+            "agentRole": "verifier"
+          },
+          {
+            "id": "thread-ready-writer",
+            "hostId": "local",
+            "status": "in_progress",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-rda",
+            "createdAt": 9,
+            "updatedAt": 10,
+            "hasUnreadTurn": false,
+            "agentRole": "implementation"
+          }
+        ]
+      }
+    }
+  },
+  "worktrees": [
+    {
+      "path": "D:/GymCoach/Worktrees/gymcoach-impl",
+      "head": "1111111111111111111111111111111111111111",
+      "branch": "chore/gymcoach-impl-active"
+    },
+    {
+      "path": "D:/GymCoach/Worktrees/gymcoach-verify",
+      "head": "2222222222222222222222222222222222222222",
+      "branch": "chore/gymcoach-verify-check"
+    },
+    {
+      "path": "D:/GymCoach/Worktrees/gymcoach-rva",
+      "head": "3333333333333333333333333333333333333333",
+      "branch": "chore/gymcoach-rva-check"
+    },
+    {
+      "path": "D:/GymCoach/Worktrees/gymcoach-rda",
+      "head": "4444444444444444444444444444444444444444",
+      "branch": "chore/gymcoach-rda-write"
+    }
+  ],
+  "disks": [
+    { "name": "C", "freeBytes": 8000000000 },
+    { "name": "D", "freeBytes": 48000000000 }
+  ],
+  "ports": [
+    { "port": 3030, "listening": true, "ownerPid": 100, "processName": "node" },
+    { "port": 3031, "listening": false },
+    { "port": 5434, "listening": true, "ownerPid": 200, "processName": "postgres" }
+  ],
+  "sourceHealth": {
+    "beads": { "ok": true, "detail": "fixture" },
+    "git": { "ok": true, "detail": "fixture" },
+    "disks": { "ok": true, "detail": "fixture" },
+    "ports": { "ok": true, "detail": "fixture" }
+  }
+}

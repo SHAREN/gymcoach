@@ -1,0 +1,853 @@
+{
+  "observedAt": "2026-07-18T16:05:00.000Z",
+  "tasks": [
+    {
+      "id": "gymcoach-bsa",
+      "title": "Baseline active writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-scr",
+      "title": "Scoped ready",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-srv",
+      "title": "Scoped review",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-sca",
+      "title": "Scoped active writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-sva",
+      "title": "Scoped active verifier",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"]
+    },
+    {
+      "id": "gymcoach-msg",
+      "title": "Missing scope",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-dur",
+      "title": "Durable idle writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Codex worktree binding v1: task=gymcoach-dur; role=implementation; thread=thread-durable-idle; host=local; path-sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "gymcoach-qrd",
+      "title": "Queued writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Exactly one implementation writer queued: client-new-thread:11111111-2222-3333-4444-555555555555."
+    },
+    {
+      "id": "gymcoach-orv",
+      "title": "Orphan verifier binding",
+      "status": "in_progress",
+      "priority": 1,
+      "labels": ["stage:review", "area:infrastructure"],
+      "notes": "Codex worktree binding v1: task=gymcoach-orv; role=verifier; thread=thread-orphan-verifier; host=local; path-sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "id": "gymcoach-ina",
+      "title": "Inactive historical writer",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": []
+    },
+    {
+      "id": "gymcoach-cf1",
+      "title": "First conflicting scoped reservation",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Implementation writer queued: client-new-thread:99999999-2222-3333-4444-555555555555."
+    },
+    {
+      "id": "gymcoach-cf2",
+      "title": "Second conflicting scoped reservation",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Implementation writer queued: client-new-thread:99999999-2222-3333-4444-555555555555."
+    },
+    {
+      "id": "gymcoach-bf1",
+      "title": "First conflicting scoped binding",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Codex worktree binding v1: task=gymcoach-bf1; role=implementation; thread=thread-binding-conflict; host=local; path-sha256=1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "id": "gymcoach-bf2",
+      "title": "Second conflicting scoped binding",
+      "status": "open",
+      "priority": 1,
+      "labels": ["stage:ready", "area:infrastructure"],
+      "dependencies": [],
+      "notes": "Codex worktree binding v1: task=gymcoach-bf2; role=implementation; thread=thread-binding-conflict; host=local; path-sha256=2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "threads": {
+    "snapshot": {
+      "capturedAt": "2026-07-18T16:00:00.000Z",
+      "tool": "codex_app.list_threads",
+      "request": {
+        "limit": 50,
+        "query": null
+      },
+      "response": {
+        "schemaVersion": 2,
+        "query": null,
+        "unavailableHosts": [],
+        "threads": [
+          {
+            "id": "thread-baseline-active",
+            "hostId": "local",
+            "status": "active",
+            "cwd": "D:/GymCoach/Worktrees/gymcoach-bsa",
+            "gitBranch": "chore/gymcoach-bsa-write",
+            "agentRole": "implementation",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-01",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/1",
+            "createdAt": 11,
+            "updatedAt": 12,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-02",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/2",
+            "createdAt": 21,
+            "updatedAt": 22,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-03",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/3",
+            "createdAt": 31,
+            "updatedAt": 32,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-04",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/4",
+            "createdAt": 41,
+            "updatedAt": 42,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-05",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/5",
+            "createdAt": 51,
+            "updatedAt": 52,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-06",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/6",
+            "createdAt": 61,
+            "updatedAt": 62,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-07",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/7",
+            "createdAt": 71,
+            "updatedAt": 72,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-08",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/8",
+            "createdAt": 81,
+            "updatedAt": 82,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-09",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/9",
+            "createdAt": 91,
+            "updatedAt": 92,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-10",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/10",
+            "createdAt": 101,
+            "updatedAt": 102,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-11",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/11",
+            "createdAt": 111,
+            "updatedAt": 112,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-12",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/12",
+            "createdAt": 121,
+            "updatedAt": 122,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-13",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/13",
+            "createdAt": 131,
+            "updatedAt": 132,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-14",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/14",
+            "createdAt": 141,
+            "updatedAt": 142,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-15",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/15",
+            "createdAt": 151,
+            "updatedAt": 152,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-16",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/16",
+            "createdAt": 161,
+            "updatedAt": 162,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-17",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/17",
+            "createdAt": 171,
+            "updatedAt": 172,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-18",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/18",
+            "createdAt": 181,
+            "updatedAt": 182,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-19",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/19",
+            "createdAt": 191,
+            "updatedAt": 192,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-20",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/20",
+            "createdAt": 201,
+            "updatedAt": 202,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-21",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/21",
+            "createdAt": 211,
+            "updatedAt": 212,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-22",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/22",
+            "createdAt": 221,
+            "updatedAt": 222,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-23",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/23",
+            "createdAt": 231,
+            "updatedAt": 232,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-24",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/24",
+            "createdAt": 241,
+            "updatedAt": 242,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-25",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/25",
+            "createdAt": 251,
+            "updatedAt": 252,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-26",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/26",
+            "createdAt": 261,
+            "updatedAt": 262,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-27",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/27",
+            "createdAt": 271,
+            "updatedAt": 272,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-28",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/28",
+            "createdAt": 281,
+            "updatedAt": 282,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-29",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/29",
+            "createdAt": 291,
+            "updatedAt": 292,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-30",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/30",
+            "createdAt": 301,
+            "updatedAt": 302,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-31",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/31",
+            "createdAt": 311,
+            "updatedAt": 312,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-32",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/32",
+            "createdAt": 321,
+            "updatedAt": 322,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-33",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/33",
+            "createdAt": 331,
+            "updatedAt": 332,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-34",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/34",
+            "createdAt": 341,
+            "updatedAt": 342,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-35",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/35",
+            "createdAt": 351,
+            "updatedAt": 352,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-36",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/36",
+            "createdAt": 361,
+            "updatedAt": 362,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-37",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/37",
+            "createdAt": 371,
+            "updatedAt": 372,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-38",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/38",
+            "createdAt": 381,
+            "updatedAt": 382,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-39",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/39",
+            "createdAt": 391,
+            "updatedAt": 392,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-40",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/40",
+            "createdAt": 401,
+            "updatedAt": 402,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-41",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/41",
+            "createdAt": 411,
+            "updatedAt": 412,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-42",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/42",
+            "createdAt": 421,
+            "updatedAt": 422,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-43",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/43",
+            "createdAt": 431,
+            "updatedAt": 432,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-44",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/44",
+            "createdAt": 441,
+            "updatedAt": 442,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-45",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/45",
+            "createdAt": 451,
+            "updatedAt": 452,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-46",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/46",
+            "createdAt": 461,
+            "updatedAt": 462,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-47",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/47",
+            "createdAt": 471,
+            "updatedAt": 472,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-48",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/48",
+            "createdAt": 481,
+            "updatedAt": 482,
+            "hasUnreadTurn": false
+          },
+          {
+            "id": "thread-history-49",
+            "hostId": "local",
+            "status": "completed",
+            "cwd": "D:/Codex/History/49",
+            "createdAt": 491,
+            "updatedAt": 492,
+            "hasUnreadTurn": false
+          }
+        ]
+      }
+    },
+    "taskSnapshots": [
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-scr"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-scr",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": { "limit": 50, "query": "gymcoach-bf1" },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-bf1",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": { "limit": 50, "query": "gymcoach-bf2" },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-bf2",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-srv"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-srv",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-sca"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-sca",
+          "unavailableHosts": [],
+          "threads": [
+            {
+              "id": "thread-scoped-active",
+              "hostId": "local",
+              "status": "running",
+              "cwd": "D:/GymCoach/Worktrees/gymcoach-sca",
+              "gitBranch": "chore/gymcoach-sca-write",
+              "agentRole": "implementation",
+              "createdAt": 1001,
+              "updatedAt": 1002,
+              "hasUnreadTurn": false
+            }
+          ]
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-sva"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-sva",
+          "unavailableHosts": [],
+          "threads": [
+            {
+              "id": "thread-scoped-verifier",
+              "hostId": "local",
+              "status": "in_progress",
+              "cwd": "D:/GymCoach/Worktrees/gymcoach-sva",
+              "gitBranch": "chore/gymcoach-sva-check",
+              "agentRole": "verifier",
+              "createdAt": 1003,
+              "updatedAt": 1004,
+              "hasUnreadTurn": false
+            }
+          ]
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-dur"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-dur",
+          "unavailableHosts": [],
+          "threads": [
+            {
+              "id": "thread-durable-idle",
+              "hostId": "local",
+              "status": "idle",
+              "cwd": "D:/GymCoach/Worktrees/gymcoach-dur",
+              "gitBranch": "chore/gymcoach-dur-write",
+              "createdAt": 1005,
+              "updatedAt": 1006,
+              "hasUnreadTurn": false
+            }
+          ]
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-qrd"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-qrd",
+          "unavailableHosts": [],
+          "threads": [
+            {
+              "id": "thread-queued-scoped",
+              "clientThreadId": "client-new-thread:11111111-2222-3333-4444-555555555555",
+              "hostId": "local",
+              "status": "setting_up",
+              "cwd": "D:/GymCoach/Worktrees/gymcoach-qrd",
+              "createdAt": 1007,
+              "updatedAt": 1008,
+              "hasUnreadTurn": false
+            }
+          ]
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-orv"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-orv",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": {
+          "limit": 50,
+          "query": "gymcoach-ina"
+        },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-ina",
+          "unavailableHosts": [],
+          "threads": [
+            {
+              "id": "thread-inactive-writer",
+              "hostId": "local",
+              "status": "completed",
+              "cwd": "D:/GymCoach/Worktrees/gymcoach-ina",
+              "gitBranch": "chore/gymcoach-ina-write",
+              "agentRole": "implementation",
+              "createdAt": 1009,
+              "updatedAt": 1010,
+              "hasUnreadTurn": false
+            }
+          ]
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": { "limit": 50, "query": "gymcoach-cf1" },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-cf1",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      },
+      {
+        "capturedAt": "2026-07-18T16:01:00.000Z",
+        "tool": "codex_app.list_threads",
+        "request": { "limit": 50, "query": "gymcoach-cf2" },
+        "response": {
+          "schemaVersion": 2,
+          "query": "gymcoach-cf2",
+          "unavailableHosts": [],
+          "threads": []
+        }
+      }
+    ]
+  },
+  "worktrees": [],
+  "disks": [
+    {
+      "name": "C",
+      "freeBytes": 8000000000
+    },
+    {
+      "name": "D",
+      "freeBytes": 48000000000
+    }
+  ],
+  "ports": [
+    {
+      "port": 3030,
+      "listening": true,
+      "ownerPid": 100,
+      "processName": "node"
+    },
+    {
+      "port": 3031,
+      "listening": false
+    },
+    {
+      "port": 5434,
+      "listening": true,
+      "ownerPid": 200,
+      "processName": "postgres"
+    }
+  ],
+  "sourceHealth": {
+    "beads": {
+      "ok": true,
+      "detail": "fixture"
+    },
+    "git": {
+      "ok": true,
+      "detail": "fixture"
+    },
+    "disks": {
+      "ok": true,
+      "detail": "fixture"
+    },
+    "ports": {
+      "ok": true,
+      "detail": "fixture"
+    }
+  }
+}
