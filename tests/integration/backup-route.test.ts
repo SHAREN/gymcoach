@@ -543,6 +543,8 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     ]);
     expect(dump.conversations).toHaveLength(1);
     expect(dump.conversations[0].messages).toHaveLength(2);
+    expect(dump.coachSessions[0].prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
+    expect(JSON.stringify(dump.coachSessions)).not.toContain('coachingProfile');
   });
 });
 

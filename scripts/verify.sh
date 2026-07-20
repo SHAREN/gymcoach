@@ -119,12 +119,27 @@ required_harness_files=(
   "scripts/fixtures/integration-evidence/behavior-equivalent.json"
   "scripts/fixtures/integration-evidence/no-runtime-artifact.json"
   "scripts/fixtures/integration-evidence/android-integration.json"
+  "scripts/fixtures/github-mirror/issues.json"
+  "scripts/fixtures/worktree-cleanup/registered-worktree.json"
+  "scripts/fixtures/harness-status/complete.json"
+  "scripts/fixtures/harness-status/queued-writer.json"
+  "scripts/fixtures/harness-status/incomplete-threads.json"
+  "scripts/fixtures/harness-status/full-gate-release.json"
+  "scripts/fixtures/harness-status/invalid-thread-records.json"
+  "docs/PROJECT_DISPATCHER_V2_PROMPT.md"
+  "docs/examples/project-dispatcher-v2-status.json"
 )
 for harness_file in "${required_harness_files[@]}"; do
   [ -f "$harness_file" ] || fail "missing Codex harness file: $harness_file"
 done
 grep -q "Automatic development orchestration" AGENTS.md || fail "AGENTS.md orchestration policy"
 grep -q "stage:awaiting-integration" docs/CODEX_WORKFLOW.md || fail "awaiting integration state"
+for playwright_reference in \
+  element-attributes playwright-tests request-mocking running-code \
+  session-management storage-state test-generation tracing video-recording; do
+  [ -f ".agents/skills/playwright-cli/references/${playwright_reference}.md" ] || \
+    fail "missing Playwright skill reference: ${playwright_reference}"
+done
 node <<'NODE' || fail "Codex harness configuration"
 const fs = require('fs');
 
@@ -162,6 +177,7 @@ for (const [event, [command, matcher]] of Object.entries(expected)) {
 NODE
 
 step "integration and harness regression tests"
+node scripts/test-integration-evidence.mjs || fail "integration evidence regression tests"
 node scripts/test-guarded-closure.mjs || fail "guarded closure regression tests"
 node scripts/test-github-issue-mirror.mjs || fail "GitHub issue mirror regression tests"
 node scripts/test-github-publication.mjs || fail "GitHub publication regression tests"
