@@ -1052,6 +1052,7 @@ export interface CoachCompletion {
   markdown: string;
   modelUsed: string;
   promptText: string; // JSON payload sent, for auditing
+  auditPrompt: string;
 }
 
 // Builds the prompt and delegates to the active LLM provider (Anthropic SDK or
