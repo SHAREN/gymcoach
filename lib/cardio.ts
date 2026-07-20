@@ -1,4 +1,5 @@
 import type { WeightUnit } from '@/lib/prisma-client';
+import type { TrackPoint } from '@/lib/import/track';
 
 // ============================================================
 // Cardio sets (issue #133) - duration/distance helpers
@@ -95,10 +96,7 @@ export function formatDistance(distanceM: number): string {
 
 // One-line label for a cardio set: "12:30 · 2.5 km" (duration only when
 // there is no distance).
-export function formatCardioSet(
-  durationSec: number,
-  distanceM: number | null | undefined,
-): string {
+export function formatCardioSet(durationSec: number, distanceM: number | null | undefined): string {
   const duration = formatDuration(durationSec);
   if (distanceM != null && distanceM > 0) {
     return `${duration} · ${formatDistance(distanceM)}`;
@@ -125,10 +123,7 @@ export function paceSecPerKm(
 }
 
 // Speed in kilometers per hour, or null when distance is absent/zero.
-export function speedKmh(
-  durationSec: number,
-  distanceM: number | null | undefined,
-): number | null {
+export function speedKmh(durationSec: number, distanceM: number | null | undefined): number | null {
   if (distanceM == null || distanceM <= 0 || durationSec <= 0) return null;
   return distanceM / 1000 / (durationSec / 3600);
 }
@@ -165,4 +160,170 @@ export function formatSpeed(
     return `${+mph.toFixed(1)} mph`;
   }
   return `${+kmh.toFixed(1)} km/h`;
+}
+
+// ============================================================
+// Pace / heart-rate change over an imported activity track
+// ============================================================
+// These are conservative product-quality gates, not physiological laws.
+// The estimate is descriptive only and is intended for a known continuous,
+// sustained aerobic effort. Track data alone cannot establish that the effort
+// was steady, level, well paced or representative of aerobic fitness.
+export const DECOUPLING_MIN_DURATION_SEC = 20 * 60;
+export const DECOUPLING_MAX_SAMPLE_GAP_SEC = 2 * 60;
+export const DECOUPLING_MAX_STATIONARY_GAP_SEC = 30;
+
+interface TimedValue {
+  t: number;
+  value: number;
+}
+
+function interpolateAt(points: TimedValue[], t: number): number | null {
+  for (let index = 0; index < points.length; index++) {
+    const current = points[index]!;
+    if (current.t === t) return current.value;
+    if (current.t > t) {
+      const previous = points[index - 1];
+      if (!previous) return null;
+      const fraction = (t - previous.t) / (current.t - previous.t);
+      return previous.value + (current.value - previous.value) * fraction;
+    }
+  }
+  return null;
+}
+
+function timeWeightedMean(points: TimedValue[], start: number, end: number): number | null {
+  const startValue = interpolateAt(points, start);
+  const endValue = interpolateAt(points, end);
+  if (startValue == null || endValue == null || end <= start) return null;
+
+  const window = [
+    { t: start, value: startValue },
+    ...points.filter((point) => point.t > start && point.t < end),
+    { t: end, value: endValue },
+  ];
+  let integral = 0;
+  for (let index = 1; index < window.length; index++) {
+    const previous = window[index - 1]!;
+    const current = window[index]!;
+    integral += ((previous.value + current.value) / 2) * (current.t - previous.t);
+  }
+  return integral / (end - start);
+}
+
+function hasExcessiveGap(points: TimedValue[]): boolean {
+  for (let index = 1; index < points.length; index++) {
+    if (points[index]!.t - points[index - 1]!.t > DECOUPLING_MAX_SAMPLE_GAP_SEC) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Optional pace / heart-rate change estimate for an imported track. The
+// analysis window is split at its exact elapsed-time midpoint. Distance is
+// interpolated at the boundary and HR is averaged with trapezoidal time
+// weighting so irregular sample density does not bias either half.
+//
+// cost = timeWeightedMeanHr / meanSpeed
+// changePct = (secondHalfCost / firstHalfCost - 1) * 100
+//
+// Positive values mean the recorded HR cost relative to pace was higher in the
+// second half; negative values mean it was lower. No fitness or workout-quality
+// classification follows from the sign or magnitude alone.
+export function trackDecoupling(track: TrackPoint[]): number | null {
+  if (track.length < 2) return null;
+
+  const distance: TimedValue[] = [];
+  const heartRate: TimedValue[] = [];
+  let previousTime: number | null = null;
+  let previousDistance: TimedValue | null = null;
+  let stationarySince: number | null = null;
+
+  for (const point of track) {
+    if (
+      !Number.isFinite(point.t) ||
+      point.t < 0 ||
+      point.t > MAX_DURATION_SEC ||
+      (previousTime != null && point.t <= previousTime)
+    ) {
+      return null;
+    }
+    previousTime = point.t;
+
+    if (point.d !== undefined) {
+      if (
+        typeof point.d !== 'number' ||
+        !Number.isFinite(point.d) ||
+        point.d < 0 ||
+        point.d > MAX_DISTANCE_M
+      ) {
+        return null;
+      }
+      const currentDistance = { t: point.t, value: point.d };
+      if (previousDistance) {
+        if (currentDistance.value < previousDistance.value) return null;
+        if (currentDistance.value === previousDistance.value) {
+          stationarySince ??= previousDistance.t;
+          if (currentDistance.t - stationarySince > DECOUPLING_MAX_STATIONARY_GAP_SEC) {
+            return null;
+          }
+        } else {
+          stationarySince = null;
+        }
+      }
+      distance.push(currentDistance);
+      previousDistance = currentDistance;
+    }
+
+    if (point.hr !== undefined) {
+      if (
+        typeof point.hr !== 'number' ||
+        !Number.isFinite(point.hr) ||
+        point.hr < AVG_HR_MIN ||
+        point.hr > AVG_HR_MAX
+      ) {
+        return null;
+      }
+      heartRate.push({ t: point.t, value: point.hr });
+    }
+  }
+
+  const start = track[0]!.t;
+  const end = track[track.length - 1]!.t;
+  if (end - start < DECOUPLING_MIN_DURATION_SEC) return null;
+  if (distance.length < 2 || heartRate.length < 2) return null;
+  if (
+    distance[0]!.t !== start ||
+    distance[distance.length - 1]!.t !== end ||
+    heartRate[0]!.t !== start ||
+    heartRate[heartRate.length - 1]!.t !== end
+  ) {
+    return null;
+  }
+  if (hasExcessiveGap(distance) || hasExcessiveGap(heartRate)) return null;
+
+  const midpoint = start + (end - start) / 2;
+  const startDistance = distance[0]!.value;
+  const midpointDistance = interpolateAt(distance, midpoint);
+  const endDistance = distance[distance.length - 1]!.value;
+  if (midpointDistance == null) return null;
+
+  const halfDuration = (end - start) / 2;
+  const firstDistance = midpointDistance - startDistance;
+  const secondDistance = endDistance - midpointDistance;
+  if (halfDuration <= 0 || firstDistance <= 0 || secondDistance <= 0) return null;
+
+  const firstMeanHr = timeWeightedMean(heartRate, start, midpoint);
+  const secondMeanHr = timeWeightedMean(heartRate, midpoint, end);
+  if (firstMeanHr == null || secondMeanHr == null || firstMeanHr <= 0 || secondMeanHr <= 0) {
+    return null;
+  }
+
+  const firstMeanSpeed = firstDistance / halfDuration;
+  const secondMeanSpeed = secondDistance / halfDuration;
+  const firstCost = firstMeanHr / firstMeanSpeed;
+  const secondCost = secondMeanHr / secondMeanSpeed;
+  const changePct = (secondCost / firstCost - 1) * 100;
+  return Number.isFinite(changePct) ? changePct : null;
 }
