@@ -11,8 +11,11 @@ import {
 } from '@/lib/history-calendar';
 
 // GET /api/history/csv?programId=...&month=YYYY-MM&timeZone=Area/City
-// Returns a CSV (UTF-8 + BOM for Excel) with one row per non-warmup set.
-// Same filters as the /history page.
+// Returns a CSV (UTF-8 + BOM for Excel) with one row per set, including
+// warmups flagged through is_warmup. Same filters as the /history page. The
+// native importer treats every source session as one atomic snapshot, so the
+// appended timezone/count/category columns are integrity metadata rather than
+// derived display values.
 export async function GET(req: Request) {
   try {
     const userId = await requireApiUserId();
@@ -41,7 +44,12 @@ export async function GET(req: Request) {
             orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }],
             include: {
               exercise: {
-                select: { name: true, muscleGroup: true, usesBodyweight: true },
+                select: {
+                  name: true,
+                  muscleGroup: true,
+                  category: true,
+                  usesBodyweight: true,
+                },
               },
             },
           },
@@ -98,6 +106,9 @@ export async function GET(req: Request) {
           // cardio logged without a heart-rate reading.
           set.avgHr != null ? String(set.avgHr) : '',
           set.maxHr != null ? String(set.maxHr) : '',
+          timeZone,
+          String(s.sets.length),
+          set.exercise.category,
         ];
         lines.push(row.map(csvEscape).join(','));
       }

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ImportSection } from './import-section';
+import { settings as englishSettings } from '@/messages/en/settings';
+import { settings as russianSettings } from '@/messages/ru/settings';
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -120,5 +122,38 @@ describe('ImportSection', () => {
       expect(toast.error).toHaveBeenCalledWith('Unrecognized format.');
     });
     expect(screen.queryByTestId('import-preview')).not.toBeInTheDocument();
+  });
+
+  it('selects GymCoach CSV with localized atomic-import copy and no Strong unit', async () => {
+    Object.defineProperties(HTMLElement.prototype, {
+      hasPointerCapture: { configurable: true, value: () => false },
+      setPointerCapture: { configurable: true, value: () => {} },
+      releasePointerCapture: { configurable: true, value: () => {} },
+      scrollIntoView: { configurable: true, value: () => {} },
+    });
+    const user = userEvent.setup();
+    render(<ImportSection />);
+
+    await user.click(screen.getByLabelText('Source app'));
+    await user.click(screen.getByRole('option', { name: 'GymCoach CSV' }));
+
+    expect(screen.getByText('Import from GymCoach')).toBeInTheDocument();
+    expect(screen.getByText(/Each source session is imported atomically/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Strong weight unit')).not.toBeInTheDocument();
+
+    await user.upload(fileInput(), csvFile());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/import/gymcoach');
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({ mode: 'preview' });
+    expect(body).not.toHaveProperty('unit');
+  });
+
+  it('keeps English and Russian GymCoach import guidance in the next-intl catalogs', () => {
+    expect(englishSettings.imports.gymcoachHint).toMatch(/atomically/i);
+    expect(russianSettings.imports.gymcoachHint).toMatch(/целиком/i);
   });
 });

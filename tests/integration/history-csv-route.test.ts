@@ -86,11 +86,12 @@ describe('GET /api/history/csv - cardio columns (issue #144)', () => {
     const distanceIdx = header.indexOf('distance_m');
     const avgHrIdx = header.indexOf('avg_hr');
     const maxHrIdx = header.indexOf('max_hr');
-    // The four cardio columns are pinned at the end in this order.
-    expect(durationIdx).toBe(header.length - 4);
-    expect(distanceIdx).toBe(header.length - 3);
-    expect(avgHrIdx).toBe(header.length - 2);
-    expect(maxHrIdx).toBe(header.length - 1);
+    // Existing cardio columns retain their positions; native import integrity
+    // metadata is append-only after them.
+    expect(durationIdx).toBe(header.length - 7);
+    expect(distanceIdx).toBe(header.length - 6);
+    expect(avgHrIdx).toBe(header.length - 5);
+    expect(maxHrIdx).toBe(header.length - 4);
 
     const exerciseIdx = header.indexOf('exercise');
     const strengthRow = rows.find((r) => r[exerciseIdx] === 'Bench');
@@ -114,6 +115,10 @@ describe('GET /api/history/csv - cardio columns (issue #144)', () => {
     expect(strengthRow![header.indexOf('external_load_kg')]).toBe('100');
     expect(strengthRow![header.indexOf('reps')]).toBe('5');
     expect(strengthRow![header.indexOf('volume_kg')]).toBe('500');
+    expect(strengthRow![header.indexOf('session_timezone')]).toBe('UTC');
+    expect(strengthRow![header.indexOf('session_set_count')]).toBe('2');
+    expect(strengthRow![header.indexOf('exercise_category')]).toBe('COMPOUND');
+    expect(cardioRow![header.indexOf('exercise_category')]).toBe('CARDIO');
   });
 
   it('uses the browser timezone for month filtering and the local date column', async () => {
@@ -146,6 +151,9 @@ describe('GET /api/history/csv - cardio columns (issue #144)', () => {
     );
     expect(april.rows).toHaveLength(1);
     expect(april.rows[0]?.[april.header.indexOf('session_date')]).toBe('2026-04-30');
+    expect(april.rows[0]?.[april.header.indexOf('session_timezone')]).toBe(
+      'America/Los_Angeles',
+    );
 
     const may = await exportRows(
       'http://test.local/api/history/csv?month=2026-05&timeZone=America%2FLos_Angeles',

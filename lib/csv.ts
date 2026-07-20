@@ -7,7 +7,10 @@
 //   Field values can be third-party-authored (a bulk import can plant
 //   exercise names and notes), so leading formula characters are neutralized
 //   with a single-quote prefix, the spreadsheet convention for "literal text".
-const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+// Prefix one apostrophe for a dangerous formula character after any existing
+// apostrophe run. The native importer removes exactly one, which makes the
+// protection reversible for =x, '=x, ''=x and so on.
+const FORMULA_PREFIX = /^'*(?=[=+\-@\t\r])/;
 
 // Column order of the history export (app/api/history/csv/route.ts).
 // Downstream scripts key on column positions, so the order is a contract:
@@ -37,6 +40,11 @@ export const HISTORY_CSV_HEADERS = [
   'distance_m', // cardio sets only (raw meters); empty on strength sets
   'avg_hr', // cardio sets only (bpm); empty on strength sets and cardio without HR
   'max_hr', // cardio sets only (bpm); empty on strength sets and cardio without HR
+  // Native import integrity metadata. These stay append-only so existing
+  // column-position consumers remain compatible.
+  'session_timezone',
+  'session_set_count',
+  'exercise_category',
 ] as const;
 
 export function csvEscape(value: string): string {

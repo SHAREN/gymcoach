@@ -95,7 +95,7 @@ interface FitBatchPreview {
   skipped: number;
 }
 
-type ImportFormat = 'STRONG' | 'HEVY' | 'TCX' | 'GPX' | 'FIT';
+type ImportFormat = 'STRONG' | 'HEVY' | 'GYMCOACH' | 'TCX' | 'GPX' | 'FIT';
 
 // Copy and endpoint per supported source app. Strong keeps its unit toggle
 // (its export follows the app's unit setting); Hevy always exports kg, so the
@@ -124,6 +124,14 @@ const FORMAT_META: Record<
     label: 'Hevy',
     endpoint: '/api/import/hevy',
     exportHint: 'export it as CSV (Settings, then Export & Import Data)',
+    hasUnitToggle: false,
+    accept: '.csv,text/csv',
+    fileKind: 'CSV',
+  },
+  GYMCOACH: {
+    label: 'GymCoach',
+    endpoint: '/api/import/gymcoach',
+    exportHint: '',
     hasUnitToggle: false,
     accept: '.csv,text/csv',
     fileKind: 'CSV',
@@ -182,6 +190,7 @@ export function ImportSection() {
   const isTcx = format === 'TCX';
   const isGpx = format === 'GPX';
   const isFit = format === 'FIT';
+  const exportHint = format === 'GYMCOACH' ? t('gymcoachHint') : meta.exportHint;
   // TCX, GPX and FIT are all single-activity cardio imports: same summary
   // shape, same preview/confirm UI. FIT is the only binary one (read as base64).
   const isCardioActivity = isTcx || isGpx || isFit;
@@ -375,8 +384,8 @@ export function ImportSection() {
         </h2>
         <p className="text-xs text-muted-foreground">
           {isCardioActivity
-            ? t('cardioDescription', { hint: meta.exportHint })
-            : t('appDescription', { app: meta.label, hint: meta.exportHint })}
+            ? t('cardioDescription', { hint: exportHint })
+            : t('appDescription', { app: meta.label, hint: exportHint })}
         </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -390,6 +399,7 @@ export function ImportSection() {
               <SelectContent>
                 <SelectItem value="STRONG">Strong</SelectItem>
                 <SelectItem value="HEVY">Hevy</SelectItem>
+                <SelectItem value="GYMCOACH">GymCoach CSV</SelectItem>
                 <SelectItem value="TCX">TCX file</SelectItem>
                 <SelectItem value="GPX">GPX file</SelectItem>
                 <SelectItem value="FIT">FIT file</SelectItem>

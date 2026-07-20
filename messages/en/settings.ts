@@ -240,6 +240,8 @@ export const settings = {
     cardioDescription: 'Bring a cardio workout: {hint}. Preview it here, then confirm.',
     appDescription:
       'Bring your training history from the {app} app: {hint}, preview it here, then confirm.',
+    gymcoachHint:
+      'export CSV from History. Each source session is imported atomically, and an identical re-import is skipped',
     activitiesSummary:
       '{count, plural, one {# activity} other {# activities}} to import{skipped, plural, =0 {} other { · # skipped}}',
     possibleDuplicate: 'possible duplicate',

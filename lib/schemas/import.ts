@@ -27,6 +27,16 @@ export const hevyImportInputSchema = z.object({
 
 export type HevyImportInput = z.infer<typeof hevyImportInputSchema>;
 
+// GymCoach native CSV import request: the timezone-aware history export fed
+// back in. The parser enforces the CSV's UTF-8 byte limit and complete native
+// column contract; this schema also caps the JSON string before parsing.
+export const gymcoachImportInputSchema = z.object({
+  csv: z.string().min(1).max(STRONG_CSV_MAX_BYTES, 'File too large: the limit is 5 MB.'),
+  mode: z.enum(['preview', 'confirm']),
+});
+
+export type GymcoachImportInput = z.infer<typeof gymcoachImportInputSchema>;
+
 // TCX cardio import request (issue #152). The xml field carries the raw file
 // text (untrusted XML - the parser refuses DTDs/entities by construction and
 // the size cap is enforced here AND on the streamed body read); same
