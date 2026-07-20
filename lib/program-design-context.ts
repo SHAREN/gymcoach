@@ -383,9 +383,11 @@ export async function buildProgramDesignContext({
   const activeGym = userContext?.activeGym ?? null;
   const gym = activeGym ? mapGym(activeGym) : null;
   const coachingProfile = coach.userProfile.coachingProfile;
+  const requestLimitationsProvided =
+    nonEmpty(answers.limitations) != null || answers.excludedExercises !== undefined;
   const exerciseConstraints: ProgramDesignContext['exerciseConstraints'] =
-    answers.excludedExercises !== undefined
-      ? answers.excludedExercises.map((exerciseName) => ({
+    requestLimitationsProvided
+      ? (answers.excludedExercises ?? []).map((exerciseName) => ({
           source: 'request' as const,
           kind: 'REQUEST_EXCLUSION' as const,
           label: 'Excluded for this program request',
@@ -480,13 +482,14 @@ export async function buildProgramDesignContext({
   const resolvedPreferences =
     nonEmpty(answers.preferences) ?? summarizeExercisePreferences(coachingProfile);
   const resolvedHealthStatus = answers.healthStatus ?? profileHealthStatus;
-  const limitationsKnown =
-    nonEmpty(answers.limitations) != null ||
-    answers.excludedExercises !== undefined ||
-    (resolvedHealthStatus === 'TRAIN_WITH_LIMITATIONS'
+  const limitationsKnown = requestLimitationsProvided
+    ? resolvedHealthStatus === 'TRAIN_WITH_LIMITATIONS'
+      ? (answers.excludedExercises?.length ?? 0) > 0
+      : true
+    : resolvedHealthStatus === 'TRAIN_WITH_LIMITATIONS'
       ? coachingProfile.limitations.state === 'KNOWN' &&
         coachingProfile.limitations.value.entries.length > 0
-      : hasKnownLimitations(coachingProfile));
+      : hasKnownLimitations(coachingProfile);
   const missingQuestions = buildMissingQuestions({
     mode,
     goal: resolvedGoal,
@@ -579,12 +582,11 @@ export async function buildProgramDesignContext({
         : profileAvailableDays
           ? 'profile'
           : 'unknown',
-      limitations:
-        nonEmpty(answers.limitations) || answers.excludedExercises !== undefined
-          ? 'request'
-          : limitationsKnown
-            ? 'profile'
-            : 'unknown',
+      limitations: requestLimitationsProvided
+        ? 'request'
+        : limitationsKnown
+          ? 'profile'
+          : 'unknown',
       equipmentAccess: resolvedEquipmentAccess ? 'request' : gym ? 'active-gym' : 'unknown',
     },
     missingQuestions,

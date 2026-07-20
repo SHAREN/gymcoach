@@ -131,7 +131,10 @@ export const programs = {
     sessionDuration: 'Maximum session duration (minutes)',
     limitations: 'Training movement or load constraints',
     limitationsPlaceholder:
-      'Name the constraint and every affected exercise, or enter none when there are no constraints.',
+      'Describe the self-reported constraint, or enter none when there are no constraints.',
+    excludedExercises: 'Affected exercise names',
+    excludedExercisesPlaceholder:
+      'Comma-separated exact catalog names, e.g. Bench press, Overhead press.',
     equipmentAccess: 'Available equipment',
     equipmentAccessPlaceholder:
       'Describe the bars, dumbbells, machines and other equipment available.',

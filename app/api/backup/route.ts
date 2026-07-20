@@ -31,6 +31,7 @@ import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { resolveEquipmentType } from '@/lib/gym-loads';
 import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -54,8 +55,8 @@ import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/c
 // - Program / Workout / ProgramExercise: all user content incl drop sets and supersets.
 // - Session / SessionExercise / Set: all user content incl durable exercise
 //   membership, durationSec, distanceM, avgHr.
-// - CoachSession, ExerciseGoal, BodyweightEntry, ReadinessCheckin,
-//   Conversation / Message: all user content.
+// - CoachSession response and non-sensitive audit metadata, ExerciseGoal,
+//   BodyweightEntry, ReadinessCheckin, Conversation / Message: user content.
 //
 // Intentionally excluded:
 // - User.id / email / passwordHash / createdAt (identity + credentials of the
@@ -328,7 +329,7 @@ export async function GET(req: Request) {
       coachSessions: coachSessions.map((c) => ({
         weekStart: c.weekStart.toISOString(),
         weekEnd: c.weekEnd.toISOString(),
-        prompt: c.prompt,
+        prompt: sanitizeCoachAuditPrompt(c.prompt),
         response: c.response,
         appliedAt: c.appliedAt?.toISOString() ?? null,
         createdAt: c.createdAt.toISOString(),
@@ -1223,7 +1224,7 @@ export async function POST(req: Request) {
               userId,
               weekStart: new Date(c.weekStart),
               weekEnd: new Date(c.weekEnd),
-              prompt: c.prompt,
+              prompt: sanitizeCoachAuditPrompt(c.prompt),
               response: c.response,
               appliedAt: c.appliedAt ? new Date(c.appliedAt) : null,
               createdAt: new Date(c.createdAt),

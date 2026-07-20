@@ -399,7 +399,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                 <div key={index} className="space-y-3 rounded-md border p-3">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label>{t('limitationKind')}</Label>
+                      <Label htmlFor={`limitation-kind-${index}`}>{t('limitationKind')}</Label>
                       <Select
                         value={entry.kind}
                         onValueChange={(kind) => {
@@ -411,7 +411,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                           });
                         }}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger id={`limitation-kind-${index}`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -665,7 +665,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                   <div key={index} className="space-y-3 rounded-md border p-3">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label>{t('activityType')}</Label>
+                        <Label htmlFor={`activity-type-${index}`}>{t('activityType')}</Label>
                         <Select
                           value={activity.type}
                           onValueChange={(type) => {
@@ -677,7 +677,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                             patch('outsideActivities', { state: 'KNOWN', value: activities });
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id={`activity-type-${index}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -729,7 +729,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                         }}
                       />
                       <div className="space-y-1.5">
-                        <Label>{t('intensity')}</Label>
+                        <Label htmlFor={`activity-intensity-${index}`}>{t('intensity')}</Label>
                         <Select
                           value={activity.intensity ?? 'UNKNOWN'}
                           onValueChange={(intensity) => {
@@ -744,7 +744,7 @@ export function CoachingProfileSection({ initial }: { initial: CoachingProfile }
                             patch('outsideActivities', { state: 'KNOWN', value: activities });
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id={`activity-intensity-${index}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

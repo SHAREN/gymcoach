@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getCurrentUserId } from '@/lib/auth';
 import { applyCoachingProfilePatch } from '@/lib/schemas/coaching-profile';
 import { Prisma } from '@/lib/prisma-client';
+import { createCoachAuditPrompt } from '@/lib/coach-audit';
 
 // Backup export/restore completeness (issue #168): the export must carry every
 // user-owned model/field, the restore must be a lossless, ownership-scoped
@@ -535,6 +536,8 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     ]);
     expect(dump.conversations).toHaveLength(1);
     expect(dump.conversations[0].messages).toHaveLength(2);
+    expect(dump.coachSessions[0].prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
+    expect(JSON.stringify(dump.coachSessions)).not.toContain('coachingProfile');
   });
 });
 
@@ -577,6 +580,28 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     const activeGymB = await db.gym.findFirst({ where: { id: profileB?.activeGymId ?? '' } });
     expect(activeGymB?.name).toBe('Basement');
     expect(profileB?.email).toBe('b@test.dev');
+  });
+
+  it('redacts legacy coach payloads again during restore', async () => {
+    const source = await seedFullUser('coach-prompt-source@test.dev');
+    actAs(source.id);
+    const dump = await (await getBackup(getReq())).json();
+    dump.coachSessions[0].prompt = JSON.stringify({
+      generatedAt: '2026-07-20T00:00:00.000Z',
+      userProfile: { coachingProfile: { privateField: 'must-not-survive' } },
+    });
+
+    const target = await db.user.create({
+      data: { email: 'coach-prompt-target@test.dev', passwordHash: 'x' },
+    });
+    actAs(target.id);
+    const response = await postBackup(jsonReq({ payload: dump, confirmReplace: true }));
+
+    expect(response.status).toBe(200);
+    const restored = await db.coachSession.findFirstOrThrow({ where: { userId: target.id } });
+    expect(restored.prompt).toBe(createCoachAuditPrompt('legacy-redacted'));
+    expect(restored.prompt).not.toContain('coachingProfile');
+    expect(restored.prompt).not.toContain('privateField');
   });
 
   it('round-trips ordered membership timestamps and accepts legacy v9 name-only rows', async () => {

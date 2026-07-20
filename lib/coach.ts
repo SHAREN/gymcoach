@@ -25,6 +25,7 @@ import { COACH_SYSTEM_PROMPT } from '@/lib/prompts/coach-system-prompt';
 import { exerciseRecords, type ExerciseRecord } from '@/lib/records';
 import { getLlmProvider } from '@/lib/llm';
 import { normalizeCoachingProfile, type CoachingProfile } from '@/lib/schemas/coaching-profile';
+import { createCoachAuditPrompt } from '@/lib/coach-audit';
 
 // ============================================================
 // Structured payload sent to the coach
@@ -994,7 +995,7 @@ export async function buildCurrentSessionContext(
 export interface CoachCompletion {
   markdown: string;
   modelUsed: string;
-  promptText: string; // JSON payload sent, for auditing
+  auditPrompt: string;
 }
 
 // Builds the prompt and delegates to the active LLM provider (Anthropic SDK or
@@ -1011,5 +1012,5 @@ export async function callCoach(payload: CoachPayload): Promise<CoachCompletion>
     maxTokens: 8000,
   });
 
-  return { markdown: text, modelUsed, promptText: userMessage };
+  return { markdown: text, modelUsed, auditPrompt: createCoachAuditPrompt() };
 }

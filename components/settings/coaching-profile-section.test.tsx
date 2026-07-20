@@ -57,6 +57,37 @@ describe('CoachingProfileSection', () => {
     expect(screen.getByText(/GymCoach does not diagnose/u)).toBeInTheDocument();
   });
 
+  it('gives every repeated structured-profile select an accessible name', () => {
+    const profile = applyCoachingProfilePatch(
+      null,
+      {
+        limitations: {
+          state: 'KNOWN',
+          value: {
+            entries: [
+              {
+                kind: 'FORBIDDEN_EXERCISE',
+                label: 'Request constraint',
+                affectedExerciseNames: ['Bench press'],
+              },
+            ],
+          },
+        },
+        outsideActivities: {
+          state: 'KNOWN',
+          value: [{ type: 'SPORT', name: 'Field sport', intensity: 'MODERATE' }],
+        },
+      },
+      new Date('2026-07-18T10:00:00.000Z'),
+    );
+
+    render(<CoachingProfileSection initial={profile} />);
+
+    expect(screen.getByRole('combobox', { name: /^Type$/u })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Activity type' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Typical intensity' })).toBeInTheDocument();
+  });
+
   it('keeps a failed section retryable', async () => {
     const profile = emptyCoachingProfile();
     const fetchMock = vi

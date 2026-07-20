@@ -356,6 +356,72 @@ describe('buildProgramDesignContext', () => {
     expect(context.answerSources.limitations).toBe('unknown');
   });
 
+  it('requires exact request exercise names and turns them into hard constraints', async () => {
+    const user = await db.user.create({
+      data: {
+        email: 'request-limitations@test.dev',
+        passwordHash: 'x',
+        goal: 'STRENGTH',
+      },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Bench press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const gym = await db.gym.create({ data: { userId: user.id, name: 'Request gym' } });
+    await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
+
+    const incomplete = await buildProgramDesignContext({
+      userId: user.id,
+      goal: '',
+      mode: 'NEW_PROGRAM',
+      answers: {
+        healthStatus: 'TRAIN_WITH_LIMITATIONS',
+        trainingExperience: 'INTERMEDIATE',
+        availableDays: [1, 3, 5],
+        sessionDurationMin: 60,
+        limitations: 'Self-reported request constraint',
+        excludedExercises: [],
+      },
+    });
+
+    expect(incomplete.missingQuestions.map((question) => question.id)).toEqual(['limitations']);
+    expect(incomplete.exerciseConstraints).toEqual([]);
+
+    const complete = await buildProgramDesignContext({
+      userId: user.id,
+      goal: '',
+      mode: 'NEW_PROGRAM',
+      answers: {
+        healthStatus: 'TRAIN_WITH_LIMITATIONS',
+        trainingExperience: 'INTERMEDIATE',
+        availableDays: [1, 3, 5],
+        sessionDurationMin: 60,
+        limitations: 'Self-reported request constraint',
+        excludedExercises: ['Bench press'],
+      },
+    });
+
+    expect(complete.missingQuestions).toEqual([]);
+    expect(complete.answerSources.limitations).toBe('request');
+    expect(complete.exerciseConstraints).toEqual([
+      expect.objectContaining({
+        source: 'request',
+        kind: 'REQUEST_EXCLUSION',
+        affectedExerciseNames: ['Bench press'],
+      }),
+    ]);
+    expect(complete.availableExercises.find((item) => item.id === exercise.id)).toMatchObject({
+      isAllowedByProfile: false,
+      limitationReasons: ['REQUEST_EXCLUSION: Excluded for this program request'],
+    });
+  });
+
   it('requires a post-block recovery assessment before extending a program', async () => {
     const user = await db.user.create({
       data: {
