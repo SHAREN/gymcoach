@@ -192,33 +192,39 @@ export function ExerciseFormDialog({
       return;
     }
     const saved = (await res.json()) as Exercise;
-    const equipmentResponse = await fetch(`/api/exercises/${saved.id}/equipment`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        gyms: groupedEquipment.map((group) => {
-          const selectedIds = group.items
-            .filter(
-              (item) =>
-                equipmentIds.has(item.id) &&
-                (resolvedValuesType === 'BARBELL' || item.systemBarbellFamily == null),
-            )
-            .map((item) => item.id);
-          const preferredId = preferredEquipmentByGym[group.gymId] ?? null;
-          const preferredItem = group.items.find((item) => item.id === preferredId);
-          return {
-            gymId: group.gymId,
-            equipmentIds: selectedIds,
-            preferredEquipmentId:
-              preferredItem &&
-              selectedIds.includes(preferredItem.id) &&
-              preferredItem.equipmentType === resolvedValuesType
-                ? preferredItem.id
-                : null,
-          };
+    let equipmentResponse: Response;
+    try {
+      equipmentResponse = await fetch(`/api/exercises/${saved.id}/equipment`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gyms: groupedEquipment.map((group) => {
+            const selectedIds = group.items
+              .filter(
+                (item) =>
+                  equipmentIds.has(item.id) &&
+                  (resolvedValuesType === 'BARBELL' || item.systemBarbellFamily == null),
+              )
+              .map((item) => item.id);
+            const preferredId = preferredEquipmentByGym[group.gymId] ?? null;
+            const preferredItem = group.items.find((item) => item.id === preferredId);
+            return {
+              gymId: group.gymId,
+              equipmentIds: selectedIds,
+              preferredEquipmentId:
+                preferredItem &&
+                selectedIds.includes(preferredItem.id) &&
+                preferredItem.equipmentType === resolvedValuesType
+                  ? preferredItem.id
+                  : null,
+            };
+          }),
         }),
-      }),
-    });
+      });
+    } catch {
+      toast.error(t('equipmentSaveError'));
+      return;
+    }
     if (!equipmentResponse.ok) {
       toast.error(t('equipmentSaveError'));
       return;

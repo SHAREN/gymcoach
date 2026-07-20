@@ -179,11 +179,11 @@ function renderDetail({
 }
 
 describe('ExerciseDetailEquipment', () => {
-  it('edits general details, resets on cancel, and keeps a rejected save retryable', async () => {
+  it('edits general details, resets on cancel, and keeps an HTTP failure retryable', async () => {
     const updatedExercise = { ...exercise, name: 'Updated skull crusher' };
     const fetchMock = vi
       .fn()
-      .mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
       .mockResolvedValueOnce(
         new Response(JSON.stringify(updatedExercise), {
           status: 200,
@@ -236,6 +236,85 @@ describe('ExerciseDetailEquipment', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/exercises/${exercise.id}/equipment`);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() => expect(editButton).toHaveFocus());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a rejected primary update retryable without an unhandled rejection', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(exercise), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit exercise' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('PUT');
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not save the exercise.'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a rejected equipment update retryable with the equipment-specific error', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(exercise), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(exercise), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit exercise' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/exercises/${exercise.id}/equipment`);
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('PATCH');
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'The exercise was saved, but its equipment links could not be updated.',
+      ),
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
