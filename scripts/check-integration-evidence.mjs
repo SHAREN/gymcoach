@@ -103,6 +103,37 @@ function runBeads(repo, args) {
   }
 }
 
+function runBeadsExport(repo) {
+  const result = spawnSync('bd', ['--readonly', 'export'], {
+    cwd: repo,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    reject(`bd export failed: ${result.error?.message ?? (result.stderr || result.stdout).trim()}`);
+  }
+  return result.stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch (error) {
+        reject(`bd export returned invalid JSONL: ${error.message}`);
+      }
+    });
+}
+
+export function indexBeadsExportRows(rows) {
+  const index = new Map();
+  for (const row of rows) {
+    if (row?._type !== 'issue' || typeof row.id !== 'string') continue;
+    if (index.has(row.id)) reject(`bd export contains duplicate task ${row.id}`);
+    index.set(row.id, row);
+  }
+  return index;
+}
+
 function requireGitCommit(repo, commit) {
   runGit(repo, ['cat-file', '-e', `${commit}^{commit}`]);
   return commit;
@@ -613,17 +644,15 @@ function dependencyId(dependency) {
 async function loadBeadsAuthority(repo, rootTaskId) {
   const tasks = {};
   const blockingDependencies = {};
+  const taskIndex = indexBeadsExportRows(runBeadsExport(repo));
   const pending = [rootTaskId];
   while (pending.length > 0) {
     const taskId = pending.pop();
     if (tasks[taskId]) {
       continue;
     }
-    const result = runBeads(repo, ['show', taskId, '--json']);
-    if (!Array.isArray(result) || result.length !== 1) {
-      reject(`authoritative Beads task ${taskId} was not found exactly once`);
-    }
-    const task = result[0];
+    const task = taskIndex.get(taskId);
+    if (!task) reject(`authoritative Beads export task ${taskId} was not found exactly once`);
     if (task.id !== taskId) {
       reject(`authoritative Beads lookup for ${taskId} returned ${task.id ?? 'an invalid task'}`);
     }

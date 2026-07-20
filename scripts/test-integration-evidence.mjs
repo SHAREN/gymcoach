@@ -10,9 +10,22 @@ import {
   buildImmutableVerificationNote,
   deriveAcceptanceDeliveryRequirements,
   IntegrationEvidenceError,
+  indexBeadsExportRows,
   isNoRuntimeArtifactPath,
   validateIntegrationEvidence,
 } from './check-integration-evidence.mjs';
+
+function testExportAuthorityUsesExactTaskRows() {
+  const rows = [
+    { _type: 'issue', id: 'gymcoach-h71', notes: 'h71 evidence' },
+    { _type: 'issue', id: 'gymcoach-ipw', notes: 'ipw evidence' },
+  ];
+  const index = indexBeadsExportRows(rows);
+  assert.equal(index.get('gymcoach-h71').notes, 'h71 evidence');
+  assert.notEqual(index.get('gymcoach-h71').notes, index.get('gymcoach-ipw').notes);
+}
+
+testExportAuthorityUsesExactTaskRows();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(root, 'scripts/fixtures/integration-evidence');
