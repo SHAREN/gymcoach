@@ -202,7 +202,7 @@ function defaultAndroidToolRunner(executable, args, label) {
       reject(`${label} contains a path or argument unsafe for cmd.exe batch execution`);
     }
     command = process.env.ComSpec ?? 'cmd.exe';
-    commandArgs = ['/d', '/s', '/c', values.map((value) => `"${value}"`).join(' ')];
+    commandArgs = ['/d', '/s', '/c', 'call', ...values];
   }
   const result = spawnSync(command, commandArgs, { encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0) {
