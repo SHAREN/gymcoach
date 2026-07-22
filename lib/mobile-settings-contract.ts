@@ -9,6 +9,7 @@ export const MOBILE_SETTINGS_DIAGNOSTIC_POLICY = {
   maxEvents: 500,
   maxBytes: 128 * 1024,
   maxAgeMs: 24 * 60 * 60 * 1000,
+  persistentSweepIntervalMs: 60 * 1000,
   containerMaxFileSize: '5m',
   containerMaxFiles: 3,
   collectorMaxEvents: 100,
@@ -69,6 +70,7 @@ export interface MobileSettingsDiagnosticEvent {
 
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MOBILE_TOKEN_PATTERN = /^gma_[A-Za-z0-9_-]{43}$/;
+const TOKEN_HASH_PATTERN = /^[A-Fa-f0-9]{64}$/;
 const SAFE_AUTHORITY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_METHOD_PATTERN = /^[A-Z]{1,12}$/;
 
@@ -98,17 +100,21 @@ export function isValidMobileTokenShape(value: string): boolean {
   return MOBILE_TOKEN_PATTERN.test(value);
 }
 
-function isSafeCorrelationId(value: string): boolean {
-  return CORRELATION_ID_PATTERN.test(value) && !MOBILE_TOKEN_PATTERN.test(value);
+export function isSafeMobileSettingsCorrelationId(value: string): boolean {
+  return (
+    CORRELATION_ID_PATTERN.test(value) &&
+    !MOBILE_TOKEN_PATTERN.test(value) &&
+    !TOKEN_HASH_PATTERN.test(value)
+  );
 }
 
 export function resolveMobileSettingsCorrelationId(
   value: string | null | undefined,
   generate: () => string = () => crypto.randomUUID(),
 ): string {
-  if (value && isSafeCorrelationId(value)) return value;
+  if (value && isSafeMobileSettingsCorrelationId(value)) return value;
   const generated = generate();
-  return isSafeCorrelationId(generated) ? generated : crypto.randomUUID();
+  return isSafeMobileSettingsCorrelationId(generated) ? generated : crypto.randomUUID();
 }
 
 export function mobileAuthErrorCode(outcome: MobileAuthOutcome): MobileSettingsErrorCode {

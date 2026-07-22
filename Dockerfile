@@ -68,7 +68,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # User non-root pour la securite
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 nextjs && \
+    mkdir -p /app/data/mobile-settings-diagnostics && \
+    chown -R nextjs:nodejs /app/data
 
 # Production node_modules first, then the standalone server overlays its own
 # bundled output on top. The standalone tree is a subset of prod-deps, so this

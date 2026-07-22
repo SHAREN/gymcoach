@@ -6,9 +6,11 @@ import { resolve } from 'node:path';
 
 export const INCIDENT_POLICY = {
   maxAgeHours: 24,
-  dockerTail: 2000,
   maxEvents: 100,
   maxBytes: 128 * 1024,
+  persistentStoreMaxEvents: 500,
+  persistentStoreMaxBytes: 128 * 1024,
+  persistentSweepIntervalSeconds: 60,
   containerMaxFileSize: '5m',
   containerMaxFiles: 3,
 };
@@ -24,6 +26,7 @@ const SUBREQUEST_PATHS = {
   'gym-equipment': '/api/gyms/diagnostic-health-probe/equipment',
 };
 const MOBILE_TOKEN_PATTERN = /^gma_[A-Za-z0-9_-]{43}$/;
+const TOKEN_HASH_PATTERN = /^[A-Fa-f0-9]{64}$/;
 const ROUTES = new Set([
   '/api/profile',
   '/api/gyms',
@@ -60,7 +63,11 @@ function safeValue(value, fallback) {
 }
 
 function isSafeCorrelationId(value) {
-  return CORRELATION_PATTERN.test(value) && !MOBILE_TOKEN_PATTERN.test(value);
+  return (
+    CORRELATION_PATTERN.test(value) &&
+    !MOBILE_TOKEN_PATTERN.test(value) &&
+    !TOKEN_HASH_PATTERN.test(value)
+  );
 }
 
 function safeTimestamp(value) {
@@ -138,15 +145,17 @@ export function extractIncidentEvents(logText, correlationId, now = new Date()) 
   const events = [];
   for (const line of String(logText).split(/\r?\n/)) {
     const marker = line.indexOf(LOG_PREFIX);
-    if (marker < 0) continue;
+    const candidate = marker >= 0 ? line.slice(marker + LOG_PREFIX.length) : line.trim();
+    if (!candidate.startsWith('{')) continue;
     try {
-      const parsed = JSON.parse(line.slice(marker + LOG_PREFIX.length));
+      const parsed = JSON.parse(candidate);
       const sanitized = sanitizeEvent(parsed, correlationId, minimumTimestamp);
       if (sanitized) events.push(sanitized);
     } catch {
       // Ignore malformed or unrelated container output.
     }
   }
+  events.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
   return boundedNewest(events);
 }
 
@@ -302,12 +311,11 @@ async function main() {
     checkHealth(baseUrl, SUBREQUEST_PATHS[subrequest]),
   ]);
   const logText = runDocker([
-    'logs',
-    '--since',
-    `${INCIDENT_POLICY.maxAgeHours}h`,
-    '--tail',
-    String(INCIDENT_POLICY.dockerTail),
+    'exec',
     'gymcoach-app',
+    'sh',
+    '-c',
+    'for file in /app/data/mobile-settings-diagnostics/event-*.json; do [ -f "$file" ] || continue; cat "$file"; done',
   ]);
   const bundle = buildIncidentBundle({
     correlationId,

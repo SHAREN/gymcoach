@@ -15,6 +15,7 @@ import {
   type MobileSettingsSubrequest,
 } from '@/lib/mobile-settings-contract';
 import { getRequestAuthDiagnostic } from '@/lib/request-auth-diagnostics';
+import { persistMobileSettingsDiagnostic } from '@/lib/mobile-settings-diagnostic-store';
 
 type RouteHandler<Args extends unknown[]> = (request: Request, ...args: Args) => Promise<Response>;
 
@@ -58,7 +59,8 @@ export function appendMobileSettingsDiagnostic(
     MOBILE_SETTINGS_DIAGNOSTIC_POLICY,
     options.nowMs ?? Date.now(),
   );
-  if (options.emit !== false) {
+  const persisted = persistMobileSettingsDiagnostic(event, { nowMs: options.nowMs });
+  if (!persisted && options.emit !== false && process.env.NODE_ENV !== 'production') {
     console.info(`${MOBILE_SETTINGS_LOG_PREFIX}${JSON.stringify(event)}`);
   }
 }

@@ -10,6 +10,7 @@ import {
 const now = new Date('2026-07-23T12:00:00.000Z');
 const correlationId = 'collector-test-001';
 const secretToken = 'gma_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const tokenHash = 'a'.repeat(64);
 const event = (index, overrides = {}) => ({
   schemaVersion: 1,
   kind: 'mobile-settings-request',
@@ -43,6 +44,7 @@ const logText = Array.from(
 const extracted = extractIncidentEvents(logText, correlationId, now);
 assert.equal(extracted.length, INCIDENT_POLICY.maxEvents);
 assert.equal(extracted[0].timestamp, event(50).timestamp);
+assert.equal(extractIncidentEvents(JSON.stringify(event(149)), correlationId, now).length, 1);
 
 const bundle = buildIncidentBundle({
   correlationId,
@@ -85,5 +87,10 @@ assert.throws(
   () => buildIncidentBundle({ correlationId: secretToken, subrequest: 'profile', logText: '' }),
   /correlation ID/,
 );
+assert.throws(
+  () => buildIncidentBundle({ correlationId: tokenHash, subrequest: 'profile', logText: '' }),
+  /correlation ID/,
+);
+assert.throws(() => extractIncidentEvents('', tokenHash, now), /correlation ID/);
 
 console.log('Mobile Settings incident collector tests passed.');

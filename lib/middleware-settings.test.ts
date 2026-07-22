@@ -52,21 +52,22 @@ describe('Settings middleware Bearer boundary', () => {
     expect(response.headers.get('x-middleware-next')).toBeNull();
   });
 
-  it('records the pre-handler missing-auth rejection with a safe correlation ID', async () => {
+  it('dispatches missing auth to handler validation and replaces token-hash correlations', async () => {
+    const tokenHash = 'a'.repeat(64);
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
     const response = await middleware(
       request('/api/profile', {
-        'X-GymCoach-Correlation-ID': 'Bearer secret@example.test C:\\private\\raw.log',
+        'X-GymCoach-Correlation-ID': tokenHash,
       }),
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toMatchObject({
-      error: 'Unauthorized',
-      code: 'mobile_auth_missing',
-      correlationId: expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
-    });
-    expect(response.headers.get('x-gymcoach-auth-outcome')).toBe('missing');
+    expect(response.headers.get('x-middleware-next')).toBe('1');
+    expect(response.headers.get('x-gymcoach-correlation-id')).toMatch(
+      /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+    );
+    expect(response.headers.get('x-gymcoach-correlation-id')).not.toBe(tokenHash);
     expect(response.headers.get('x-gymcoach-settings-subrequest')).toBe('profile');
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('preserves cookie-authenticated web Settings requests', async () => {

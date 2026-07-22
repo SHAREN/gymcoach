@@ -72,6 +72,27 @@ describe('mobile Settings diagnostics', () => {
     expect(mobileSettingsDiagnosticSnapshot()).toHaveLength(1);
   });
 
+  it('replaces token-hash-shaped correlations before response headers and diagnostic output', async () => {
+    const tokenHash = 'a'.repeat(64);
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const wrapped = withMobileSettingsDiagnostics('profile', async (request) => {
+      setRequestAuthDiagnostic(request, { outcome: 'missing', scheme: 'none' });
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    });
+
+    const response = await wrapped(
+      new Request('http://test.local/api/profile', {
+        headers: { 'X-GymCoach-Correlation-ID': tokenHash },
+      }),
+    );
+
+    const correlationId = response.headers.get('x-gymcoach-correlation-id');
+    expect(correlationId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+    expect(correlationId).not.toBe(tokenHash);
+    expect(String(log.mock.calls[0]?.[0])).not.toContain(tokenHash);
+    expect(mobileSettingsDiagnosticSnapshot()[0]?.correlationId).toBe(correlationId);
+  });
+
   it('rotates by age, count and encoded size', () => {
     const now = Date.parse('2026-07-23T12:00:00.000Z');
     const old = event('old-event', '2026-07-20T12:00:00.000Z');

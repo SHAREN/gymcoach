@@ -59,8 +59,12 @@ services:
       ANDROID_RELEASE_DIR: /app/data/android-release
       NODE_ENV: production
       GYMCOACH_RUNTIME_AUTHORITY: ${GYMCOACH_RUNTIME_AUTHORITY:-self-hosted}
+      # Structured mobile Settings events live only in this bounded store.
+      # The app prunes on startup, every append and every 60 seconds.
+      GYMCOACH_MOBILE_SETTINGS_DIAGNOSTIC_DIR: /app/data/mobile-settings-diagnostics
     volumes:
       - ./data/android-release:/app/data/android-release:ro
+      - mobile-settings-diagnostics:/app/data/mobile-settings-diagnostics
     logging:
       driver: json-file
       options:
@@ -101,3 +105,4 @@ services:
 
 volumes:
   postgres-data:
+  mobile-settings-diagnostics:
