@@ -1441,6 +1441,10 @@ private fun settingsErrorMessage(context: Context, throwable: Throwable, apkChec
     val resource = when (kind) {
         SettingsErrorKind.AUTHENTICATION -> R.string.settings_native_error_auth
         SettingsErrorKind.FORBIDDEN -> R.string.settings_native_error_forbidden
+        SettingsErrorKind.SESSION_ROUTE_REJECTED -> R.string.settings_native_error_session_route
+        SettingsErrorKind.ENDPOINT_MISMATCH -> R.string.settings_native_error_endpoint_mismatch
+        SettingsErrorKind.SESSION_VALIDATION_UNAVAILABLE ->
+            R.string.settings_native_error_session_validation
         SettingsErrorKind.NOT_FOUND -> if (apkCheck) R.string.settings_native_error_apk_missing
         else R.string.settings_native_error_invalid
         SettingsErrorKind.INVALID_DATA -> R.string.settings_native_error_invalid

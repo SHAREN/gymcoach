@@ -468,6 +468,9 @@ private fun <T, I> CoachingFieldInput<I>.toDto(
 )
 
 fun SettingsErrorKind.isRetryable(): Boolean = this in setOf(
+    SettingsErrorKind.SESSION_ROUTE_REJECTED,
+    SettingsErrorKind.ENDPOINT_MISMATCH,
+    SettingsErrorKind.SESSION_VALIDATION_UNAVAILABLE,
     SettingsErrorKind.RATE_LIMIT,
     SettingsErrorKind.BAD_GATEWAY,
     SettingsErrorKind.SERVER_UNAVAILABLE,

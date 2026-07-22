@@ -184,6 +184,9 @@
     <string name="settings_native_cancel">Отмена</string>
     <string name="settings_native_error_auth">Сессия истекла. Войдите в приложение заново.</string>
     <string name="settings_native_error_forbidden">Сервер запретил доступ для этого аккаунта.</string>
+    <string name="settings_native_error_session_route">Настройки отклонили запрос, но сессия всё ещё действительна. Повторите попытку или обновите приложение и сервер вместе.</string>
+    <string name="settings_native_error_endpoint_mismatch">Этот сервер не распознаёт текущую сессию. Вход сохранён; проверьте основной и резервный адреса сервера и повторите.</string>
+    <string name="settings_native_error_session_validation">Настройки не смогли проверить сессию. Вход сохранён; проверьте соединение и повторите.</string>
     <string name="settings_native_error_apk_missing">Сервер работает, но APK-файл ещё не опубликован.</string>
     <string name="settings_native_error_invalid">Сервер отклонил данные. Проверьте поля или выбранный файл.</string>
     <string name="settings_native_error_rate_limit">Слишком много запросов. Подождите минуту и повторите.</string>

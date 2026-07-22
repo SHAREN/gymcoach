@@ -261,6 +261,9 @@ data class SettingsImportPreview(
 enum class SettingsErrorKind {
     AUTHENTICATION,
     FORBIDDEN,
+    SESSION_ROUTE_REJECTED,
+    ENDPOINT_MISMATCH,
+    SESSION_VALIDATION_UNAVAILABLE,
     NOT_FOUND,
     INVALID_DATA,
     RATE_LIMIT,
