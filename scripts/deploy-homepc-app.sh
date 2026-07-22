@@ -3,6 +3,9 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+export GYMCOACH_COMMIT_SHA="$(git rev-parse HEAD)"
+export GYMCOACH_IMAGE_AUTHORITY="gymcoach-app"
+
 
 DC=(docker compose -f docker-compose.prod.yml -f docker-compose.local.yml)
 APP_CONTAINER=gymcoach-app

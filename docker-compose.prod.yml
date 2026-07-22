@@ -35,6 +35,8 @@ services:
         NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
         NEXT_PUBLIC_DEMO_EMAIL: ${NEXT_PUBLIC_DEMO_EMAIL:-}
         NEXT_PUBLIC_DEMO_PASSWORD: ${NEXT_PUBLIC_DEMO_PASSWORD:-}
+        GYMCOACH_COMMIT_SHA: ${GYMCOACH_COMMIT_SHA:-unknown}
+        GYMCOACH_IMAGE_AUTHORITY: ${GYMCOACH_IMAGE_AUTHORITY:-gymcoach-app}
     container_name: gymcoach-app
     restart: always
     depends_on:
@@ -56,8 +58,14 @@ services:
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
       ANDROID_RELEASE_DIR: /app/data/android-release
       NODE_ENV: production
+      GYMCOACH_RUNTIME_AUTHORITY: ${GYMCOACH_RUNTIME_AUTHORITY:-self-hosted}
     volumes:
       - ./data/android-release:/app/data/android-release:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '3'
     # Applique les migrations Prisma puis lance Next.js standalone.
     # `migrate deploy` est idempotent : sans nouvelle migration, c'est un no-op.
     # On invoque le bundle Prisma directement (le shim .bin perd ses .wasm

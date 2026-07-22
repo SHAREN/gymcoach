@@ -2,7 +2,15 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Prisma } from '@/prisma/generated/client';
 import { getCurrentUserId } from '@/lib/auth';
-import { authenticateMobileRequest } from '@/lib/mobile-auth';
+import { authenticateMobileRequestDetailed } from '@/lib/mobile-auth';
+import {
+  MOBILE_SETTINGS_AUTH_OUTCOME_HEADER,
+  MOBILE_SETTINGS_ERROR_CODE_HEADER,
+  mobileAuthErrorCode,
+  type MobileAuthOutcome,
+  type MobileSettingsErrorCode,
+} from '@/lib/mobile-settings-contract';
+import { setRequestAuthDiagnostic } from '@/lib/request-auth-diagnostics';
 
 // ============================================================
 // Helpers for the API routes
@@ -14,21 +22,40 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public safeCode?: MobileSettingsErrorCode,
+    public authOutcome?: MobileAuthOutcome,
   ) {
     super(message);
   }
 }
 
 export async function requireApiUserId(req?: Request): Promise<string> {
+  let mobileOutcome: MobileAuthOutcome = 'missing';
   if (req) {
-    const mobilePrincipal = await authenticateMobileRequest(req);
-    if (mobilePrincipal) return mobilePrincipal.userId;
+    try {
+      const mobile = await authenticateMobileRequestDetailed(req);
+      mobileOutcome = mobile.outcome;
+      if (mobile.principal) {
+        setRequestAuthDiagnostic(req, { outcome: 'valid', scheme: 'bearer' });
+        return mobile.principal.userId;
+      }
+    } catch (error) {
+      setRequestAuthDiagnostic(req, { outcome: 'unavailable', scheme: 'bearer' });
+      throw error;
+    }
   }
   const userId = await getCurrentUserId();
-  if (!userId) {
-    throw new ApiError(401, 'Unauthorized');
+  if (userId) {
+    if (req) setRequestAuthDiagnostic(req, { outcome: 'valid', scheme: 'cookie' });
+    return userId;
   }
-  return userId;
+  if (req) {
+    setRequestAuthDiagnostic(req, {
+      outcome: mobileOutcome,
+      scheme: mobileOutcome === 'missing' ? 'none' : 'bearer',
+    });
+  }
+  throw new ApiError(401, 'Unauthorized', mobileAuthErrorCode(mobileOutcome), mobileOutcome);
 }
 
 export async function parseJsonBody<T extends z.ZodTypeAny>(
@@ -60,10 +87,7 @@ export async function parseJsonBody<T extends z.ZodTypeAny>(
 // size limit, so `req.json()` would buffer an arbitrarily large body into
 // memory before any schema check runs. Aborts with 413 as soon as the
 // cumulative byte count exceeds the cap.
-export async function readBodyWithCap(
-  req: Request,
-  maxBytes: number,
-): Promise<string> {
+export async function readBodyWithCap(req: Request, maxBytes: number): Promise<string> {
   if (!req.body) return '';
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -95,22 +119,45 @@ export async function readBodyWithCap(
 }
 
 export function handleApiError(err: unknown): NextResponse {
+  function apiErrorResponse(
+    error: string,
+    status: number,
+    safeCode?: MobileSettingsErrorCode,
+    authOutcome?: MobileAuthOutcome,
+    includeCode = false,
+  ): NextResponse {
+    const headers = new Headers();
+    if (safeCode) headers.set(MOBILE_SETTINGS_ERROR_CODE_HEADER, safeCode);
+    if (authOutcome) headers.set(MOBILE_SETTINGS_AUTH_OUTCOME_HEADER, authOutcome);
+    return NextResponse.json(
+      { error, ...(includeCode && safeCode ? { code: safeCode } : {}) },
+      { status, headers },
+    );
+  }
+
   if (err instanceof ApiError) {
-    return NextResponse.json({ error: err.message }, { status: err.status });
+    return apiErrorResponse(
+      err.message,
+      err.status,
+      err.safeCode,
+      err.authOutcome,
+      err.authOutcome !== undefined,
+    );
   }
 
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
-      return NextResponse.json(
-        { error: 'Conflict: an entry with this value already exists.' },
-        { status: 409 },
+      return apiErrorResponse(
+        'Conflict: an entry with this value already exists.',
+        409,
+        'request_rejected',
       );
     }
     if (err.code === 'P2025') {
-      return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+      return apiErrorResponse('Not found.', 404, 'endpoint_authority_mismatch');
     }
   }
 
-  console.error('[api] unhandled error:', err);
-  return NextResponse.json({ error: 'Server error.' }, { status: 500 });
+  console.error('[api] unhandled error type:', err instanceof Error ? err.name : 'UnknownError');
+  return apiErrorResponse('Server error.', 500, 'server_schema_failure');
 }

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { db } from '@/lib/db';
+import { isValidMobileTokenShape, type MobileAuthOutcome } from '@/lib/mobile-settings-contract';
 
 const MOBILE_TOKEN_PREFIX = 'gma_';
 export const MOBILE_TOKEN_TTL_DAYS = 180;
@@ -8,6 +9,10 @@ export interface MobilePrincipal {
   tokenId: string;
   userId: string;
   deviceId: string;
+}
+export interface MobileAuthenticationResult {
+  outcome: MobileAuthOutcome;
+  principal: MobilePrincipal | null;
 }
 
 export function generateMobileToken(): string {
@@ -27,18 +32,33 @@ export function mobileTokenExpiry(now = new Date()): Date {
 }
 
 export function readMobileToken(req: Request): string | null {
-  const authorization = req.headers.get('authorization');
-  if (!authorization?.toLowerCase().startsWith('bearer ')) return null;
-  const token = authorization.slice(7).trim();
-  return token.startsWith(MOBILE_TOKEN_PREFIX) ? token : null;
+  const parsed = parseMobileAuthorization(req);
+  return parsed.outcome === 'valid' ? parsed.token : null;
 }
 
-export async function authenticateMobileRequest(req: Request): Promise<MobilePrincipal | null> {
-  const token = readMobileToken(req);
-  if (!token) return null;
+function parseMobileAuthorization(
+  req: Request,
+): { outcome: 'missing' | 'malformed'; token: null } | { outcome: 'valid'; token: string } {
+  const authorization = req.headers.get('authorization');
+  if (!authorization) return { outcome: 'missing', token: null };
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  const token = match?.[1]?.trim();
+  if (!token || !isValidMobileTokenShape(token)) {
+    return { outcome: 'malformed', token: null };
+  }
+  return { outcome: 'valid', token };
+}
+
+export async function authenticateMobileRequestDetailed(
+  req: Request,
+): Promise<MobileAuthenticationResult> {
+  const authorization = parseMobileAuthorization(req);
+  if (authorization.outcome !== 'valid') {
+    return { outcome: authorization.outcome, principal: null };
+  }
 
   const row = await db.mobileAccessToken.findUnique({
-    where: { tokenHash: hashMobileToken(token) },
+    where: { tokenHash: hashMobileToken(authorization.token) },
     select: {
       id: true,
       userId: true,
@@ -48,12 +68,24 @@ export async function authenticateMobileRequest(req: Request): Promise<MobilePri
       lastUsedAt: true,
     },
   });
-  if (!row || row.revokedAt || row.expiresAt.getTime() <= Date.now()) return null;
+  if (!row) return { outcome: 'not-found', principal: null };
+  if (row.revokedAt) return { outcome: 'revoked', principal: null };
+  if (row.expiresAt.getTime() <= Date.now()) {
+    return { outcome: 'expired', principal: null };
+  }
 
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > 5 * 60_000) {
     void db.mobileAccessToken
       .update({ where: { id: row.id }, data: { lastUsedAt: new Date() } })
       .catch(() => {});
   }
-  return { tokenId: row.id, userId: row.userId, deviceId: row.deviceId };
+  return {
+    outcome: 'valid',
+    principal: { tokenId: row.id, userId: row.userId, deviceId: row.deviceId },
+  };
+}
+
+export async function authenticateMobileRequest(req: Request): Promise<MobilePrincipal | null> {
+  const result = await authenticateMobileRequestDetailed(req);
+  return result.principal;
 }

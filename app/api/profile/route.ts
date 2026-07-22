@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { profileUpdateSchema } from '@/lib/schemas/profile';
+import { withMobileSettingsDiagnostics } from '@/lib/mobile-settings-diagnostics';
 import {
   applyCoachingProfilePatch,
   normalizeCoachingProfile,
@@ -36,7 +37,7 @@ function findProfile(userId: string) {
   return db.user.findUnique({ where: { id: userId }, select: PROFILE_SELECT });
 }
 
-export async function GET(req: Request) {
+async function getProfile(req: Request) {
   try {
     const userId = await requireApiUserId(req);
     const user = await findProfile(userId);
@@ -46,7 +47,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function PATCH(req: Request) {
+async function patchProfile(req: Request) {
   try {
     const userId = await requireApiUserId(req);
     const data = await parseJsonBody(req, profileUpdateSchema, { maxBytes: MAX_PROFILE_BYTES });
@@ -88,3 +89,6 @@ export async function PATCH(req: Request) {
     return handleApiError(err);
   }
 }
+
+export const GET = withMobileSettingsDiagnostics('profile', getProfile);
+export const PATCH = withMobileSettingsDiagnostics('profile', patchProfile);

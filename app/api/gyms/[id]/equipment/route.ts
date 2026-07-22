@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { db } from '@/lib/db';
+import { withMobileSettingsDiagnostics } from '@/lib/mobile-settings-diagnostics';
 import { getOwnedGymInventory, upsertOwnedGymEquipment } from '@/lib/gym-equipment';
 import { gymEquipmentInputSchema } from '@/lib/schemas/gym-equipment';
 
@@ -13,7 +14,7 @@ async function requireOwnedGym(id: string, userId: string) {
   if (!gym) throw new ApiError(404, 'Gym not found.');
 }
 
-export async function GET(req: Request, props: Params) {
+async function getGymEquipment(req: Request, props: Params) {
   const { id } = await props.params;
   try {
     const userId = await requireApiUserId(req);
@@ -24,7 +25,7 @@ export async function GET(req: Request, props: Params) {
   }
 }
 
-export async function POST(req: Request, props: Params) {
+async function postGymEquipment(req: Request, props: Params) {
   const { id } = await props.params;
   try {
     const userId = await requireApiUserId(req);
@@ -40,3 +41,6 @@ export async function POST(req: Request, props: Params) {
     return handleApiError(err);
   }
 }
+
+export const GET = withMobileSettingsDiagnostics<[Params]>('gym-equipment', getGymEquipment);
+export const POST = withMobileSettingsDiagnostics<[Params]>('gym-equipment', postGymEquipment);

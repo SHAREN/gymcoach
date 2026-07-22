@@ -52,6 +52,14 @@ RUN npm ci --omit=dev
 
 # ---- Stage 4: runner ----
 FROM node:22-alpine AS runner
+ARG GYMCOACH_COMMIT_SHA=unknown
+ARG GYMCOACH_IMAGE_AUTHORITY=gymcoach-app
+ENV GYMCOACH_COMMIT_SHA=${GYMCOACH_COMMIT_SHA}
+ENV GYMCOACH_IMAGE_AUTHORITY=${GYMCOACH_IMAGE_AUTHORITY}
+LABEL org.opencontainers.image.revision=${GYMCOACH_COMMIT_SHA}
+LABEL org.opencontainers.image.title="GymCoach"
+LABEL org.gymcoach.diagnostics="mobile-settings-v1"
+
 RUN apk add --no-cache openssl
 WORKDIR /app
 

@@ -1,15 +1,31 @@
 import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
-import { authenticateMobileRequest } from '@/lib/mobile-auth';
+import { authenticateMobileRequestDetailed } from '@/lib/mobile-auth';
+import { mobileAuthErrorCode } from '@/lib/mobile-settings-contract';
+import { setRequestAuthDiagnostic } from '@/lib/request-auth-diagnostics';
 import {
   mobileCreateMetadataSchema,
   type MobileCreateMetadata,
 } from '@/lib/schemas/mobile-idempotency';
 
 export async function requireMobileUserId(req: Request): Promise<string> {
-  const principal = await authenticateMobileRequest(req);
-  if (!principal) throw new ApiError(401, 'Unauthorized');
-  return principal.userId;
+  try {
+    const result = await authenticateMobileRequestDetailed(req);
+    if (result.principal) {
+      setRequestAuthDiagnostic(req, { outcome: 'valid', scheme: 'bearer' });
+      return result.principal.userId;
+    }
+    setRequestAuthDiagnostic(req, {
+      outcome: result.outcome,
+      scheme: result.outcome === 'missing' ? 'none' : 'bearer',
+    });
+    throw new ApiError(401, 'Unauthorized', mobileAuthErrorCode(result.outcome), result.outcome);
+  } catch (error) {
+    if (!(error instanceof ApiError)) {
+      setRequestAuthDiagnostic(req, { outcome: 'unavailable', scheme: 'bearer' });
+    }
+    throw error;
+  }
 }
 
 export function parseMobileCreateMetadata(req: Request): MobileCreateMetadata {

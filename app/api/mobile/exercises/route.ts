@@ -1,13 +1,14 @@
 import { handleApiError, parseJsonBody } from '@/lib/api';
 import { db } from '@/lib/db';
 import { parseMobileCreateMetadata, requireMobileUserId } from '@/lib/mobile-programs-catalog';
+import { withMobileSettingsDiagnostics } from '@/lib/mobile-settings-diagnostics';
 import { exerciseInputSchema } from '@/lib/schemas/exercise';
 import { clientExerciseClassificationMetadata } from '@/lib/exercise-classification';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
+async function getExercises(req: Request) {
   try {
     const userId = await requireMobileUserId(req);
     const [exercises, exerciseSessions] = await Promise.all([
@@ -46,7 +47,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function postExercise(req: Request) {
   try {
     const userId = await requireMobileUserId(req);
     const metadata = parseMobileCreateMetadata(req);
@@ -74,3 +75,6 @@ export async function POST(req: Request) {
     return handleApiError(error);
   }
 }
+
+export const GET = withMobileSettingsDiagnostics('exercises', getExercises);
+export const POST = withMobileSettingsDiagnostics('exercises', postExercise);

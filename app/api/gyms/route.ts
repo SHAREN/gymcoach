@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { gymCreateSchema } from '@/lib/schemas/gym';
+import { withMobileSettingsDiagnostics } from '@/lib/mobile-settings-diagnostics';
 import { validateGymExerciseConfigs } from '@/lib/gym-data';
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 
-export async function GET(req: Request) {
+async function getGyms(req: Request) {
   try {
     const userId = await requireApiUserId(req);
     const [user, gyms] = await Promise.all([
@@ -31,7 +32,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function postGym(req: Request) {
   try {
     const userId = await requireApiUserId(req);
     const input = await parseJsonBody(req, gymCreateSchema);
@@ -72,3 +73,6 @@ export async function POST(req: Request) {
     return handleApiError(err);
   }
 }
+
+export const GET = withMobileSettingsDiagnostics('gyms', getGyms);
+export const POST = withMobileSettingsDiagnostics('gyms', postGym);

@@ -183,6 +183,7 @@ node scripts/test-github-issue-mirror.mjs || fail "GitHub issue mirror regressio
 node scripts/test-github-publication.mjs || fail "GitHub publication regression tests"
 node scripts/test-worktree-cleanup.mjs || fail "Worktree cleanup regression tests"
 node scripts/test-harness-status.mjs || fail "stateless Dispatcher harness regression tests"
+node scripts/test-mobile-settings-incident.mjs || fail "mobile Settings incident collector tests"
 
 if [ "$FULL" = "1" ]; then
   step "full-gate production safety preflight"

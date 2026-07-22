@@ -7,6 +7,7 @@ services:
     environment:
       LLM_PROVIDER: ${LLM_PROVIDER:-demo}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GYMCOACH_RUNTIME_AUTHORITY: canonical-3030
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
     # Replace the VPS-only 3010 binding instead of merging both host ports.
     ports: !override
