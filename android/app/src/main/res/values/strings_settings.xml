@@ -184,6 +184,9 @@
     <string name="settings_native_cancel">Cancel</string>
     <string name="settings_native_error_auth">The session has expired. Sign in again.</string>
     <string name="settings_native_error_forbidden">The server refused access to this account.</string>
+    <string name="settings_native_error_session_route">Settings access was rejected, but your session is still valid. Retry or update the app and server together.</string>
+    <string name="settings_native_error_endpoint_mismatch">This server does not recognize the current session. Your sign-in was preserved; check the primary and fallback server addresses, then retry.</string>
+    <string name="settings_native_error_session_validation">Settings could not confirm whether the session is valid. Your sign-in was preserved; check the connection and retry.</string>
     <string name="settings_native_error_apk_missing">The server is running, but no APK has been published yet.</string>
     <string name="settings_native_error_invalid">The server rejected the data. Check the fields or selected file.</string>
     <string name="settings_native_error_rate_limit">Too many requests. Wait a minute and retry.</string>

@@ -39,9 +39,10 @@ class SettingsRepositoryTest {
     }
 
     @Test
-    fun `does not retry authentication failure on fallback`() = runTest {
+    fun `repeated settings loads preserve a valid session`() = runTest {
         val accountStore = FakeAccountStore()
-        val attempts = mutableListOf<String>()
+        var loads = 0
+        val expected = snapshot()
         val repository = SettingsRepository.failover(
             accountStore = accountStore,
             token = "token",
@@ -49,20 +50,171 @@ class SettingsRepositoryTest {
             remoteFactory = { baseUrl, _ ->
                 object : SettingsDataSourceStub() {
                     override suspend fun load(): SettingsSnapshot {
-                        attempts += baseUrl
+                        assertEquals(PRIMARY, baseUrl)
+                        loads += 1
+                        return expected
+                    }
+                }
+            },
+        )
+
+        repeat(3) { assertEquals(expected, repository.load()) }
+
+        assertEquals(3, loads)
+        assertTrue(accountStore.isAuthenticated)
+    }
+
+    @Test
+    fun `route specific 401 preserves a session validated by bootstrap`() = runTest {
+        val accountStore = FakeAccountStore()
+        val repository = rejectedSettingsRepository(
+            accountStore = accountStore,
+            statusCode = 401,
+            validation = SettingsSessionValidation.VALID,
+        )
+
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.SESSION_ROUTE_REJECTED, failure.kind)
+        assertTrue(accountStore.isAuthenticated)
+    }
+
+    @Test
+    fun `route specific 403 preserves a session validated by bootstrap`() = runTest {
+        val accountStore = FakeAccountStore()
+        val repository = rejectedSettingsRepository(
+            accountStore = accountStore,
+            statusCode = 403,
+            validation = SettingsSessionValidation.VALID,
+        )
+
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.SESSION_ROUTE_REJECTED, failure.kind)
+        assertTrue(accountStore.isAuthenticated)
+    }
+
+    @Test
+    fun `confirmed invalid credentials clear only the access token`() = runTest {
+        val accountStore = FakeAccountStore()
+        val repository = rejectedSettingsRepository(
+            accountStore = accountStore,
+            statusCode = 401,
+            validation = SettingsSessionValidation.INVALID,
+        )
+
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.AUTHENTICATION, failure.kind)
+        assertTrue(!accountStore.isAuthenticated)
+        assertEquals("user_1", accountStore.userId)
+        assertEquals("user@example.com", accountStore.userEmail)
+        assertEquals(PRIMARY, accountStore.primaryServerUrl)
+        assertEquals(FALLBACK, accountStore.fallbackServerUrl)
+    }
+
+    @Test
+    fun `unconfirmed session validation preserves the token`() = runTest {
+        val accountStore = FakeAccountStore()
+        val repository = rejectedSettingsRepository(
+            accountStore = accountStore,
+            statusCode = 401,
+            validation = SettingsSessionValidation.UNCONFIRMED,
+        )
+
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.SESSION_VALIDATION_UNAVAILABLE, failure.kind)
+        assertTrue(accountStore.isAuthenticated)
+    }
+
+    @Test
+    fun `fallback backend mismatch validates against the login authority`() = runTest {
+        val accountStore = FakeAccountStore().apply { serverUrl = FALLBACK }
+        var validatedUrl: String? = null
+        val repository = SettingsRepository.failover(
+            accountStore = accountStore,
+            token = "token",
+            endpointResolver = ServerEndpointResolver(
+                accountStore,
+                ServerReachabilityProbe { url -> url == FALLBACK },
+            ),
+            sessionValidator = SettingsSessionValidator { baseUrl, token ->
+                validatedUrl = baseUrl
+                assertEquals("token", token)
+                SettingsSessionValidation.VALID
+            },
+            remoteFactory = { baseUrl, _ ->
+                object : SettingsDataSourceStub() {
+                    override suspend fun load(): SettingsSnapshot {
+                        assertEquals(FALLBACK, baseUrl)
                         throw SettingsException(SettingsErrorKind.AUTHENTICATION, statusCode = 401)
                     }
                 }
             },
         )
 
-        val failure = runCatching { repository.load() }.exceptionOrNull()
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
 
-        assertTrue(failure is SettingsException)
-        assertEquals(listOf(PRIMARY), attempts)
-        assertEquals(PRIMARY, accountStore.serverUrl)
-        assertTrue(!accountStore.isAuthenticated)
+        assertEquals(SettingsErrorKind.ENDPOINT_MISMATCH, failure.kind)
+        assertEquals(PRIMARY, validatedUrl)
+        assertEquals(FALLBACK, accountStore.serverUrl)
+        assertTrue(accountStore.isAuthenticated)
     }
+
+    @Test
+    fun `legacy session without recorded authority is preserved`() = runTest {
+        val accountStore = FakeAccountStore().apply { sessionServerUrl = null }
+        var validationCalled = false
+        val repository = SettingsRepository.failover(
+            accountStore = accountStore,
+            token = "token",
+            endpointResolver = ServerEndpointResolver(accountStore, ServerReachabilityProbe { true }),
+            sessionValidator = SettingsSessionValidator { _, _ ->
+                validationCalled = true
+                SettingsSessionValidation.INVALID
+            },
+            remoteFactory = { _, _ ->
+                object : SettingsDataSourceStub() {
+                    override suspend fun load(): SettingsSnapshot {
+                        throw SettingsException(SettingsErrorKind.AUTHENTICATION, statusCode = 401)
+                    }
+                }
+            },
+        )
+
+        val failure = runCatching { repository.load() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.SESSION_VALIDATION_UNAVAILABLE, failure.kind)
+        assertTrue(!validationCalled)
+        assertTrue(accountStore.isAuthenticated)
+    }
+
+    private fun rejectedSettingsRepository(
+        accountStore: FakeAccountStore,
+        statusCode: Int,
+        validation: SettingsSessionValidation,
+    ): SettingsRepository = SettingsRepository.failover(
+        accountStore = accountStore,
+        token = "token",
+        endpointResolver = ServerEndpointResolver(accountStore, ServerReachabilityProbe { true }),
+        sessionValidator = SettingsSessionValidator { baseUrl, token ->
+            assertEquals(PRIMARY, baseUrl)
+            assertEquals("token", token)
+            validation
+        },
+        remoteFactory = { baseUrl, _ ->
+            object : SettingsDataSourceStub() {
+                override suspend fun load(): SettingsSnapshot {
+                    assertEquals(PRIMARY, baseUrl)
+                    throw SettingsException(
+                        kind = settingsErrorKindForStatus(statusCode),
+                        statusCode = statusCode,
+                    )
+                }
+            }
+        },
+    )
 
     private fun snapshot() = SettingsSnapshot(
         profile = SettingsProfileDto(
@@ -82,6 +234,7 @@ class SettingsRepositoryTest {
     private class FakeAccountStore : AccountStore {
         override val deviceId = "device_test"
         override var serverUrl = PRIMARY
+        override var sessionServerUrl: String? = PRIMARY
         override val primaryServerUrl = PRIMARY
         override var fallbackServerUrl: String? = FALLBACK
         override var userId: String? = "user_1"

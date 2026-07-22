@@ -44,6 +44,7 @@ class SecureAccountStoreTest {
         assertEquals(TEST_USER_ID, restored.userId)
         assertEquals(TEST_EMAIL, restored.userEmail)
         assertEquals(UNREACHABLE_SERVER_URL, restored.serverUrl)
+        assertEquals(UNREACHABLE_SERVER_URL, restored.sessionServerUrl)
     }
 
     @Test
@@ -77,6 +78,7 @@ class SecureAccountStoreTest {
 
         val cleared = SecureAccountStore(context)
         assertNull(cleared.getAccessToken())
+        assertNull(cleared.sessionServerUrl)
         assertNull(cleared.userId)
         assertNull(cleared.userEmail)
         assertEquals(deviceId, cleared.deviceId)

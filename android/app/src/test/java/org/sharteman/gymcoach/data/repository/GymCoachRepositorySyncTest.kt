@@ -2009,6 +2009,17 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
+    fun explicitLogoutClearsAuthenticationAndAccountIdentity() = runTest {
+        val fixture = fixture()
+
+        fixture.repository.logout()
+
+        assertFalse(fixture.accountStore.isAuthenticated)
+        assertEquals(null, fixture.accountStore.userId)
+        assertEquals(null, fixture.accountStore.userEmail)
+    }
+
+    @Test
     fun failedInitialBootstrapDoesNotPersistTheNewLogin() = runTest {
         val fixture = fixture()
         fixture.accountStore.clearAccount()

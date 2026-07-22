@@ -16,6 +16,8 @@ import javax.crypto.spec.GCMParameterSpec
 interface AccountStore {
     val deviceId: String
     var serverUrl: String
+    val sessionServerUrl: String?
+        get() = null
     val primaryServerUrl: String
         get() = serverUrl
     var fallbackServerUrl: String?
@@ -59,6 +61,10 @@ class SecureAccountStore(context: Context) : AccountStore {
             preferences.edit().putString(KEY_ACTIVE_SERVER_URL, normalizeServerUrl(value)).apply()
         }
 
+    override val sessionServerUrl: String?
+        get() = preferences.getString(KEY_SESSION_SERVER_URL, null)
+            ?.let { runCatching { normalizeServerUrl(it) }.getOrNull() }
+
     override val primaryServerUrl: String
         get() = preferences.getString(KEY_SERVER_URL, BuildConfig.DEFAULT_SERVER_URL)
             ?.let(::normalizeServerUrl)
@@ -93,13 +99,23 @@ class SecureAccountStore(context: Context) : AccountStore {
     }
 
     override fun setAccessToken(token: String) {
-        check(preferences.edit().putString(KEY_TOKEN, encrypt(token)).commit()) {
+        check(
+            preferences.edit()
+                .putString(KEY_TOKEN, encrypt(token))
+                .putString(KEY_SESSION_SERVER_URL, serverUrl)
+                .commit(),
+        ) {
             "Failed to persist encrypted account state."
         }
     }
 
     override fun clearAccessToken() {
-        check(preferences.edit().remove(KEY_TOKEN).commit()) {
+        check(
+            preferences.edit()
+                .remove(KEY_TOKEN)
+                .remove(KEY_SESSION_SERVER_URL)
+                .commit(),
+        ) {
             "Failed to clear encrypted account state."
         }
     }
@@ -108,6 +124,7 @@ class SecureAccountStore(context: Context) : AccountStore {
         check(
             preferences.edit()
                 .remove(KEY_TOKEN)
+                .remove(KEY_SESSION_SERVER_URL)
                 .remove(KEY_USER_ID)
                 .remove(KEY_EMAIL)
                 .commit(),
@@ -183,6 +200,7 @@ class SecureAccountStore(context: Context) : AccountStore {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val GCM_IV_BYTES = 12
         const val KEY_TOKEN = "access-token"
+        const val KEY_SESSION_SERVER_URL = "session-server-url"
         const val KEY_DEVICE_ID = "device-id"
         const val KEY_SERVER_URL = "server-url"
         const val KEY_ACTIVE_SERVER_URL = "active-server-url"

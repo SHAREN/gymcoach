@@ -60,6 +60,8 @@ import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsProfileDto
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
 import org.sharteman.gymcoach.data.settings.SettingsRepository
+import org.sharteman.gymcoach.data.settings.SettingsSessionValidation
+import org.sharteman.gymcoach.data.settings.SettingsSessionValidator
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
 import org.sharteman.gymcoach.data.settings.SettingsSystemProfilesDto
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
@@ -183,13 +185,59 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun authenticationFailureReturnsToLoginAndSettingsLoadAfterReauthentication() {
+    fun routeSpecificAuthenticationFailurePreservesSessionAndShowsRetry() {
         val accountStore = SecureAccountStore(
             InstrumentationRegistry.getInstrumentation().targetContext,
         )
         accountStore.clearAccount()
         accountStore.setAccessToken(STALE_TOKEN)
-        val staleRepository = testSettingsRepository(accountStore, STALE_TOKEN) {
+        var authenticationRequired = false
+
+        try {
+            composeRule.setContent {
+                GymCoachTheme(darkTheme = true) {
+                    SettingsScreen(
+                        onBack = {},
+                        onOpenWebPath = {},
+                        onAuthenticationRequired = { authenticationRequired = true },
+                        repository = testSettingsRepository(
+                            accountStore = accountStore,
+                            expectedToken = STALE_TOKEN,
+                            validation = SettingsSessionValidation.VALID,
+                        ) {
+                            throw SettingsException(
+                                SettingsErrorKind.AUTHENTICATION,
+                                statusCode = 401,
+                            )
+                        },
+                    )
+                }
+            }
+
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    composeRule.onNodeWithTag("settings-retry-load").assertIsDisplayed()
+                }.isSuccess
+            }
+            composeRule.runOnIdle { assertFalse(authenticationRequired) }
+            assertEquals(STALE_TOKEN, accountStore.getAccessToken())
+        } finally {
+            accountStore.clearAccount()
+        }
+    }
+
+    @Test
+    fun confirmedAuthenticationFailureReturnsToLoginAndSettingsLoadAfterReauthentication() {
+        val accountStore = SecureAccountStore(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+        )
+        accountStore.clearAccount()
+        accountStore.setAccessToken(STALE_TOKEN)
+        val staleRepository = testSettingsRepository(
+            accountStore,
+            STALE_TOKEN,
+            SettingsSessionValidation.INVALID,
+        ) {
             throw SettingsException(SettingsErrorKind.AUTHENTICATION, statusCode = 401)
         }
 
@@ -605,11 +653,17 @@ private class RetryableSettingsSource(
 private fun testSettingsRepository(
     accountStore: SecureAccountStore,
     expectedToken: String,
+    validation: SettingsSessionValidation = SettingsSessionValidation.VALID,
     load: suspend () -> SettingsSnapshot,
 ): SettingsRepository = SettingsRepository.failover(
     accountStore = accountStore,
     token = expectedToken,
     endpointResolver = ServerEndpointResolver(accountStore, ServerReachabilityProbe { true }),
+    sessionValidator = SettingsSessionValidator { baseUrl, accessToken ->
+        assertEquals(accountStore.sessionServerUrl, baseUrl)
+        assertEquals(expectedToken, accessToken)
+        validation
+    },
     remoteFactory = { _, accessToken ->
         object : SettingsDataSource by FakeSettingsSource() {
             override suspend fun load(): SettingsSnapshot {
