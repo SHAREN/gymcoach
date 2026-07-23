@@ -5,12 +5,19 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.security.KeyStore
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnostics
+import org.sharteman.gymcoach.data.diagnostics.SettingsRequestDiagnostic
+import org.sharteman.gymcoach.data.local.GymCoachDatabase
+import org.sharteman.gymcoach.data.network.ApiClient
+import org.sharteman.gymcoach.data.repository.GymCoachRepository
+import org.sharteman.gymcoach.data.settings.SettingsRepository
 
 /**
  * Phase methods invoked separately by scripts/verify-android-auth-upgrade.ps1.
@@ -31,7 +38,7 @@ class SecureAccountUpgradeTest {
     fun seedEncryptedAccountForUpgrade() {
         clearFixture()
         val store = SecureAccountStore(context)
-        store.configureServerUrls(UNREACHABLE_SERVER_URL, null)
+        store.configureServerUrls(fixtureServerUrl(), null)
         store.userId = TEST_USER_ID
         store.userEmail = TEST_EMAIL
         store.setAccessToken(TEST_TOKEN)
@@ -44,6 +51,22 @@ class SecureAccountUpgradeTest {
             "The seed phase could not read its encrypted access token.",
             SecureAccountStore(context).getAccessToken() == TEST_TOKEN,
         )
+        val diagnostics = SettingsDiagnostics.create(context)
+        assertTrue(diagnostics.clear())
+        diagnostics.recordRequest(
+            SettingsRequestDiagnostic(
+                attemptId = DIAGNOSTIC_ATTEMPT_ID,
+                correlationId = DIAGNOSTIC_CORRELATION_ID,
+                subrequest = "bootstrap",
+                origin = fixtureServerUrl(),
+                path = "/api/mobile/bootstrap",
+                method = "GET",
+                statusCode = 200,
+                category = DIAGNOSTIC_SEEDED_CATEGORY,
+                durationMs = 1,
+            ),
+        )
+        assertDiagnosticEvidence(expectMigration = false)
     }
 
     @Test
@@ -76,18 +99,57 @@ class SecureAccountUpgradeTest {
     }
 
     @Test
-    fun verifyLegacyAccountAndRecoverAuthorityAfterUpgrade() {
+    fun migrateLegacyAuthorityThroughProductionSettingsRepository() {
         verifyEncryptedAccountAfterUpgrade()
         val legacy = SecureAccountStore(context)
         assertNull(legacy.sessionServerUrl)
 
-        legacy.recordSessionAuthority(UNREACHABLE_SERVER_URL)
+        val profile = runBlocking { SettingsRepository.create(context).loadProfile() }
         val recovered = SecureAccountStore(context)
 
+        assertEquals(TEST_EMAIL, profile.email)
         assertEquals(TEST_TOKEN, recovered.getAccessToken())
-        assertEquals(UNREACHABLE_SERVER_URL, recovered.sessionServerUrl)
+        assertEquals(fixtureServerUrl(), recovered.primaryServerUrl)
+        assertEquals(fixtureServerUrl(), recovered.serverUrl)
+        assertEquals(fixtureServerUrl(), recovered.sessionServerUrl)
         assertEquals(TEST_USER_ID, recovered.userId)
         assertEquals(TEST_EMAIL, recovered.userEmail)
+        assertDiagnosticEvidence(expectMigration = true)
+    }
+
+    @Test
+    fun verifyRecoveredAuthorityAndDiagnosticsAfterRestartOrUpdate() {
+        verifyEncryptedAccountAfterUpgrade()
+        val recovered = SecureAccountStore(context)
+
+        assertEquals(fixtureServerUrl(), recovered.primaryServerUrl)
+        assertEquals(fixtureServerUrl(), recovered.serverUrl)
+        assertEquals(fixtureServerUrl(), recovered.sessionServerUrl)
+        assertDiagnosticEvidence(expectMigration = true)
+    }
+
+    @Test
+    fun verifyDiagnosticsSurviveProductionLogout() {
+        verifyRecoveredAuthorityAndDiagnosticsAfterRestartOrUpdate()
+        val beforeLogout = SettingsDiagnostics.create(context).snapshot().map { it.eventId }.toSet()
+        val accountStore = SecureAccountStore(context)
+        val repository = GymCoachRepository(
+            dao = GymCoachDatabase.get(context).dao(),
+            accountStore = accountStore,
+            api = ApiClient(),
+            scheduleSyncNow = {},
+            schedulePeriodicSync = {},
+        )
+
+        runBlocking { repository.logout() }
+
+        assertNull(accountStore.getAccessToken())
+        assertNull(accountStore.userId)
+        assertNull(accountStore.userEmail)
+        val afterLogout = SettingsDiagnostics.create(context).snapshot()
+        assertTrue(afterLogout.isNotEmpty())
+        assertTrue(afterLogout.map { it.eventId }.toSet().containsAll(beforeLogout))
+        assertDiagnosticEvidence(expectMigration = true)
     }
 
     @Test
@@ -107,18 +169,18 @@ class SecureAccountUpgradeTest {
     fun legacySessionAuthorityRecoverySurvivesStoreRecreation() {
         clearFixture()
         val legacy = SecureAccountStore(context)
-        legacy.configureServerUrls(UNREACHABLE_SERVER_URL, null)
+        legacy.configureServerUrls(fixtureServerUrl(), null)
         legacy.userId = TEST_USER_ID
         legacy.userEmail = TEST_EMAIL
         legacy.setAccessToken(TEST_TOKEN)
         assertTrue(accountPreferences().edit().remove(KEY_SESSION_SERVER_URL).commit())
         assertNull(SecureAccountStore(context).sessionServerUrl)
 
-        SecureAccountStore(context).recordSessionAuthority(UNREACHABLE_SERVER_URL)
+        runBlocking { SettingsRepository.create(context).loadProfile() }
         val restarted = SecureAccountStore(context)
 
         assertEquals(TEST_TOKEN, restarted.getAccessToken())
-        assertEquals(UNREACHABLE_SERVER_URL, restarted.sessionServerUrl)
+        assertEquals(fixtureServerUrl(), restarted.sessionServerUrl)
         assertEquals(TEST_USER_ID, restarted.userId)
         assertEquals(TEST_EMAIL, restarted.userEmail)
         clearFixture()
@@ -126,6 +188,19 @@ class SecureAccountUpgradeTest {
 
     private fun accountPreferences() =
         context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+
+    private fun fixtureServerUrl(): String = requireNotNull(
+        InstrumentationRegistry.getArguments().getString(ARG_SERVER_URL),
+    ) { "The production bootstrap fixture URL was not supplied." }
+
+    private fun assertDiagnosticEvidence(expectMigration: Boolean) {
+        val events = SettingsDiagnostics.create(context).snapshot()
+        assertTrue(events.any { it.correlationId == DIAGNOSTIC_CORRELATION_ID })
+        assertTrue(events.any { it.category == DIAGNOSTIC_SEEDED_CATEGORY })
+        if (expectMigration) {
+            assertTrue(events.any { it.category == "legacy-authority-restored" })
+        }
+    }
 
     private fun clearFixture() {
         accountPreferences().edit().clear().commit()
@@ -149,6 +224,9 @@ class SecureAccountUpgradeTest {
         const val TEST_TOKEN = "upgrade-regression-sentinel"
         const val TEST_USER_ID = "upgrade-regression-user"
         const val TEST_EMAIL = "upgrade-regression@example.invalid"
-        const val UNREACHABLE_SERVER_URL = "http://127.0.0.1:65534"
+        const val ARG_SERVER_URL = "serverUrl"
+        const val DIAGNOSTIC_ATTEMPT_ID = "upgrade-diagnostics-attempt"
+        const val DIAGNOSTIC_CORRELATION_ID = "upgrade-diagnostics-correlation"
+        const val DIAGNOSTIC_SEEDED_CATEGORY = "upgrade-fixture-seeded"
     }
 }

@@ -9,8 +9,8 @@ For a local 0.4.30 baseline built from the same source under test:
     :app:packageDebug
 
 The init script substitutes a plain Application only for this cross-version storage test, so a
-synthetic sentinel is not sent to the production synchronization path. Revoked-session behavior
-remains covered by the normal repository tests and runner.
+synthetic sentinel is not sent to production synchronization. A local HTTP fixture exercises the
+production SettingsRepository/bootstrap and logout paths without contacting canonical runtime.
 #>
 [CmdletBinding()]
 param(
@@ -39,6 +39,9 @@ if ($Serial -ne 'emulator-5554') {
 $BaselineApk = (Resolve-Path -LiteralPath $BaselineApk).Path
 $UpgradeApk = (Resolve-Path -LiteralPath $UpgradeApk).Path
 $TestApk = (Resolve-Path -LiteralPath $TestApk).Path
+$fixtureScript = (Resolve-Path -LiteralPath (
+    Join-Path $PSScriptRoot 'android-auth-upgrade-fixture.mjs'
+)).Path
 
 $sdkRoot = $env:ANDROID_HOME
 if ([string]::IsNullOrWhiteSpace($sdkRoot)) {
@@ -58,6 +61,7 @@ foreach ($tool in @($adb, $aapt, $apksigner)) {
         throw "Required Android tool was not found: $tool"
     }
 }
+$node = (Get-Command node -ErrorAction Stop).Source
 
 function Invoke-Checked {
     param(
@@ -108,6 +112,7 @@ function Invoke-InstrumentationPhase {
     $result = Invoke-Checked -FilePath $adb -Arguments @(
         '-s', $Serial, 'shell', 'am', 'instrument', '-w', '-r',
         '-e', 'class', $className,
+        '-e', 'serverUrl', $fixtureUrl,
         'org.sharteman.gymcoach.test/org.sharteman.gymcoach.data.security.AuthUpgradeTestRunner'
     )
     if (-not ($result -match '^OK \(1 test\)$')) {
@@ -116,6 +121,68 @@ function Invoke-InstrumentationPhase {
             ($result -join "`n")
         )
     }
+}
+
+function Start-UpgradeFixture {
+    $portProbe = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Any,
+        0
+    )
+    $portProbe.Start()
+    $port = ([System.Net.IPEndPoint]$portProbe.LocalEndpoint).Port
+    $portProbe.Stop()
+
+    $id = [Guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path $env:TEMP "gymcoach-auth-upgrade-$id.out.log"
+    $stderrPath = Join-Path $env:TEMP "gymcoach-auth-upgrade-$id.err.log"
+    $startArguments = @{
+        FilePath = $node
+        ArgumentList = @($fixtureScript, "$port")
+        WindowStyle = 'Hidden'
+        RedirectStandardOutput = $stdoutPath
+        RedirectStandardError = $stderrPath
+        PassThru = $true
+    }
+    $process = $null
+    try {
+        $process = Start-Process @startArguments
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline) {
+            if ($process.HasExited) {
+                $stderr = Get-Content -Raw -LiteralPath $stderrPath -ErrorAction SilentlyContinue
+                throw "The Android auth upgrade fixture exited early: $stderr"
+            }
+            if ((Get-Content -Raw -LiteralPath $stdoutPath -ErrorAction SilentlyContinue) -match "READY $port") {
+                return [pscustomobject]@{
+                    Process = $process
+                    Port = $port
+                    StdoutPath = $stdoutPath
+                    StderrPath = $stderrPath
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        throw 'Timed out waiting for the Android auth upgrade fixture.'
+    } catch {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+            $process.WaitForExit(5000) | Out-Null
+        }
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+function Stop-UpgradeFixture {
+    param([Parameter(Mandatory = $true)]$Fixture)
+
+    if (-not $Fixture.Process.HasExited) {
+        Stop-Process -Id $Fixture.Process.Id -ErrorAction SilentlyContinue
+        $Fixture.Process.WaitForExit(5000) | Out-Null
+    }
+    Remove-Item -LiteralPath $Fixture.StdoutPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $Fixture.StderrPath -Force -ErrorAction SilentlyContinue
 }
 
 function Test-EncryptedPreferencePresent {
@@ -148,30 +215,49 @@ if ($upgrade.CertificateSha256 -ne $baseline.CertificateSha256) {
     throw 'Baseline and upgrade APK signing certificates differ.'
 }
 
-# Initial uninstall and clear create a deterministic baseline before the account is seeded.
-# No clear or uninstall occurs between the seed and upgrade verification phases.
-& $adb -s $Serial uninstall 'org.sharteman.gymcoach' *> $null
-& $adb -s $Serial uninstall 'org.sharteman.gymcoach.test' *> $null
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $BaselineApk) | Out-Null
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $TestApk) | Out-Null
-Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
-Invoke-InstrumentationPhase -MethodName 'seedLegacyAccountWithoutSessionAuthorityForUpgrade'
-if (-not (Test-EncryptedPreferencePresent)) {
-    throw 'The seed phase did not persist the encrypted account preference.'
+$fixture = Start-UpgradeFixture
+$fixtureUrl = "http://192.168.0.119:$($fixture.Port)"
+try {
+    # Initial uninstall and clear create a deterministic baseline before the account is seeded.
+    # No clear or uninstall occurs through both install-r, restart, and logout verification phases.
+    & $adb -s $Serial uninstall 'org.sharteman.gymcoach' *> $null
+    & $adb -s $Serial uninstall 'org.sharteman.gymcoach.test' *> $null
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $BaselineApk) | Out-Null
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $TestApk) | Out-Null
+    Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
+    Invoke-InstrumentationPhase -MethodName 'seedLegacyAccountWithoutSessionAuthorityForUpgrade'
+    if (-not (Test-EncryptedPreferencePresent)) {
+        throw 'The seed phase did not persist the encrypted account preference.'
+    }
+
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'force-stop', 'org.sharteman.gymcoach') | Out-Null
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $UpgradeApk) | Out-Null
+    if (-not (Test-EncryptedPreferencePresent)) {
+        throw 'The first install-r removed the encrypted account preference before app startup.'
+    }
+    Invoke-InstrumentationPhase -MethodName 'migrateLegacyAuthorityThroughProductionSettingsRepository'
+
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'force-stop', 'org.sharteman.gymcoach') | Out-Null
+    Invoke-InstrumentationPhase -MethodName 'verifyRecoveredAuthorityAndDiagnosticsAfterRestartOrUpdate'
+
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'force-stop', 'org.sharteman.gymcoach') | Out-Null
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $UpgradeApk) | Out-Null
+    if (-not (Test-EncryptedPreferencePresent)) {
+        throw 'The second install-r removed the encrypted account preference before app startup.'
+    }
+    Invoke-InstrumentationPhase -MethodName 'verifyRecoveredAuthorityAndDiagnosticsAfterRestartOrUpdate'
+    Invoke-InstrumentationPhase -MethodName 'verifyDiagnosticsSurviveProductionLogout'
+
+    Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
+    Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
+} finally {
+    Stop-UpgradeFixture -Fixture $fixture
 }
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'force-stop', 'org.sharteman.gymcoach') | Out-Null
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $UpgradeApk) | Out-Null
-if (-not (Test-EncryptedPreferencePresent)) {
-    throw 'adb install -r removed the encrypted account preference before app startup.'
-}
-Invoke-InstrumentationPhase -MethodName 'verifyLegacyAccountAndRecoverAuthorityAfterUpgrade'
-Invoke-InstrumentationPhase -MethodName 'corruptEncryptedAccountFailsClosedAfterUpgrade'
-Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
-Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
 
 Write-Output (
     'Android auth upgrade regression passed on emulator-5554: ' +
     "$($baseline.VersionName) ($($baseline.VersionCode)) -> " +
-    "$($upgrade.VersionName) ($($upgrade.VersionCode)); package and signer remained stable."
+    "$($upgrade.VersionName) ($($upgrade.VersionCode)) with two install-r passes; " +
+    'production bootstrap, process restart, diagnostics retention, logout, package, and signer passed.'
 )

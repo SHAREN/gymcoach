@@ -226,24 +226,34 @@ class SettingsApiTest {
     @Test
     fun `every Settings subrequest retains network and schema failures`() = runTest {
         settingsLoadCalls().forEach { call ->
-            val networkDiagnostics = RecordingDiagnostics()
-            val networkClient = OkHttpClient.Builder().addInterceptor {
-                throw UnknownHostException("offline")
-            }.build()
-            val networkApi = SettingsApi(
-                "https://example.test",
-                "token",
-                networkClient,
-                networkDiagnostics,
-            )
+            settingsTransportFailures().forEach { transport ->
+                val thrown = transport.createException()
+                val networkDiagnostics = RecordingDiagnostics()
+                val networkClient = OkHttpClient.Builder().addInterceptor {
+                    throw thrown
+                }.build()
+                val networkApi = SettingsApi(
+                    "https://example.test",
+                    "token",
+                    networkClient,
+                    networkDiagnostics,
+                )
 
-            val networkFailure = runCatching {
-                call.invoke(networkApi)
-            }.exceptionOrNull() as SettingsException
+                val networkFailure = runCatching {
+                    call.invoke(networkApi)
+                }.exceptionOrNull() as SettingsException
 
-            assertEquals(SettingsErrorKind.DNS, networkFailure.kind)
-            assertEquals(call.subrequest, networkFailure.subrequest)
-            assertEquals("DNS", networkDiagnostics.requests.single().category)
+                val diagnostic = networkDiagnostics.requests.single()
+                assertEquals(transport.kind, networkFailure.kind)
+                assertEquals(call.subrequest, networkFailure.subrequest)
+                assertTrue(!networkFailure.correlationId.isNullOrBlank())
+                assertEquals(networkFailure.correlationId, diagnostic.correlationId)
+                assertEquals(call.subrequest, diagnostic.subrequest)
+                assertEquals(transport.category, diagnostic.category)
+                assertEquals(transport.category, diagnostic.errorCode)
+                assertTrue(networkFailure.cause === thrown)
+                assertTrue(diagnostic.exception === thrown)
+            }
 
             val schemaDiagnostics = RecordingDiagnostics()
             val schemaClient = OkHttpClient.Builder().addInterceptor { chain ->
@@ -392,11 +402,32 @@ private data class SettingsLoadCall(
     val invoke: suspend (SettingsApi) -> Unit,
 )
 
+private data class SettingsTransportFailure(
+    val kind: SettingsErrorKind,
+    val category: String,
+    val createException: () -> Throwable,
+)
+
 private fun settingsLoadCalls() = listOf(
     SettingsLoadCall("profile") { it.loadProfile() },
     SettingsLoadCall("gyms") { it.loadGyms() },
     SettingsLoadCall("exercises") { it.loadExercises() },
     SettingsLoadCall("gym-equipment") { it.loadGymInventory("cly9h7k2w0001u6w8m4v3n2pq") },
+)
+
+private fun settingsTransportFailures() = listOf(
+    SettingsTransportFailure(SettingsErrorKind.DNS, "DNS") {
+        UnknownHostException("offline")
+    },
+    SettingsTransportFailure(SettingsErrorKind.TIMEOUT, "TIMEOUT") {
+        SocketTimeoutException("timeout")
+    },
+    SettingsTransportFailure(SettingsErrorKind.TLS, "TLS") {
+        SSLHandshakeException("certificate")
+    },
+    SettingsTransportFailure(SettingsErrorKind.TRANSPORT, "TRANSPORT") {
+        ConnectException("connection refused")
+    },
 )
 
 private class RecordingDiagnostics : SettingsDiagnosticSink {
