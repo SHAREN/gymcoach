@@ -183,6 +183,8 @@
     <string name="settings_native_refresh">Обновить</string>
     <string name="settings_native_cancel">Отмена</string>
     <string name="settings_native_error_auth">Сессия истекла. Войдите в приложение заново.</string>
+    <string name="settings_native_error_token_revoked">Эта сессия отозвана. Войдите в приложение заново.</string>
+    <string name="settings_native_error_token_expired">Срок действия токена сессии истёк. Войдите заново.</string>
     <string name="settings_native_error_forbidden">Сервер запретил доступ для этого аккаунта.</string>
     <string name="settings_native_error_session_route">Настройки отклонили запрос, но сессия всё ещё действительна. Повторите попытку или обновите приложение и сервер вместе.</string>
     <string name="settings_native_error_endpoint_mismatch">Этот сервер не распознаёт текущую сессию. Вход сохранён; проверьте основной и резервный адреса сервера и повторите.</string>
@@ -195,7 +197,27 @@
     <string name="settings_native_error_dns">Не удалось определить адрес сервера. Проверьте Wi-Fi, VPN и адрес сервера.</string>
     <string name="settings_native_error_timeout">Сервер не ответил вовремя. Проверьте соединение и повторите.</string>
     <string name="settings_native_error_tls">Не удалось проверить HTTPS-сертификат. Проверьте публичный адрес, дату и время телефона.</string>
+    <string name="settings_native_error_transport">Приложение не смогло открыть соединение с сервером. Проверьте активный и резервный адреса.</string>
     <string name="settings_native_error_offline">Нет сети либо сервер отклонил подключение.</string>
     <string name="settings_native_error_response">Сервер вернул непонятный ответ. Обновите приложение и сервер вместе.</string>
     <string name="settings_native_error_unknown">Не удалось выполнить действие по неизвестной причине.</string>
+    <string name="settings_diagnostics_title">Диагностика инцидентов</string>
+    <string name="settings_diagnostics_description">Сохранено очищенных событий: %1$d. Количество, размер и срок хранения ограничены.</string>
+    <string name="settings_diagnostics_copy">Копировать диагностику</string>
+    <string name="settings_diagnostics_export">Экспортировать архив</string>
+    <string name="settings_diagnostics_clear">Очистить диагностику</string>
+    <string name="settings_diagnostics_clip_label">Диагностика GymCoach</string>
+    <string name="settings_diagnostics_copied">Очищенная диагностика скопирована.</string>
+    <string name="settings_diagnostics_exported">Архив диагностики сохранён.</string>
+    <string name="settings_diagnostics_cleared">Диагностика очищена.</string>
+    <string name="settings_diagnostics_clear_failed">Не удалось очистить диагностику. Данные приложения не изменены.</string>
+    <string name="settings_partial_title">Некоторые разделы настроек требуют внимания</string>
+    <string name="settings_partial_profile">Профиль</string>
+    <string name="settings_partial_gyms">Залы</string>
+    <string name="settings_partial_exercises">Упражнения</string>
+    <string name="settings_partial_equipment">Оборудование зала</string>
+    <string name="settings_partial_failure">%1$s: %2$s</string>
+    <string name="settings_partial_correlation">ID корреляции: %1$s</string>
+    <string name="settings_partial_no_correlation">недоступен</string>
+    <string name="settings_partial_retry">Повторить загрузку разделов</string>
 </resources>

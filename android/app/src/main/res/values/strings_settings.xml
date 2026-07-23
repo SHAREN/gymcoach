@@ -183,6 +183,8 @@
     <string name="settings_native_refresh">Refresh</string>
     <string name="settings_native_cancel">Cancel</string>
     <string name="settings_native_error_auth">The session has expired. Sign in again.</string>
+    <string name="settings_native_error_token_revoked">This session was revoked. Sign in again.</string>
+    <string name="settings_native_error_token_expired">This session token expired. Sign in again.</string>
     <string name="settings_native_error_forbidden">The server refused access to this account.</string>
     <string name="settings_native_error_session_route">Settings access was rejected, but your session is still valid. Retry or update the app and server together.</string>
     <string name="settings_native_error_endpoint_mismatch">This server does not recognize the current session. Your sign-in was preserved; check the primary and fallback server addresses, then retry.</string>
@@ -195,7 +197,27 @@
     <string name="settings_native_error_dns">The server name could not be resolved. Check Wi-Fi, VPN and the server address.</string>
     <string name="settings_native_error_timeout">The server did not answer in time. Check the connection and retry.</string>
     <string name="settings_native_error_tls">HTTPS certificate verification failed. Check the public address and the device date/time.</string>
+    <string name="settings_native_error_transport">The app could not open a connection to this server. Check the active and fallback addresses.</string>
     <string name="settings_native_error_offline">No network connection or the server refused the connection.</string>
     <string name="settings_native_error_response">The server returned an unreadable response. Update the app and server together.</string>
     <string name="settings_native_error_unknown">The operation failed for an unknown reason.</string>
+    <string name="settings_diagnostics_title">Incident diagnostics</string>
+    <string name="settings_diagnostics_description">%1$d sanitized events are retained with bounded count, size and age limits.</string>
+    <string name="settings_diagnostics_copy">Copy diagnostics</string>
+    <string name="settings_diagnostics_export">Export archive</string>
+    <string name="settings_diagnostics_clear">Clear diagnostics</string>
+    <string name="settings_diagnostics_clip_label">GymCoach diagnostics</string>
+    <string name="settings_diagnostics_copied">Sanitized diagnostics copied.</string>
+    <string name="settings_diagnostics_exported">Diagnostic archive saved.</string>
+    <string name="settings_diagnostics_cleared">Diagnostics cleared.</string>
+    <string name="settings_diagnostics_clear_failed">Diagnostics could not be cleared. App data was not changed.</string>
+    <string name="settings_partial_title">Some Settings sections need attention</string>
+    <string name="settings_partial_profile">Profile</string>
+    <string name="settings_partial_gyms">Gyms</string>
+    <string name="settings_partial_exercises">Exercises</string>
+    <string name="settings_partial_equipment">Gym equipment</string>
+    <string name="settings_partial_failure">%1$s: %2$s</string>
+    <string name="settings_partial_correlation">Correlation ID: %1$s</string>
+    <string name="settings_partial_no_correlation">unavailable</string>
+    <string name="settings_partial_retry">Retry failed sections</string>
 </resources>

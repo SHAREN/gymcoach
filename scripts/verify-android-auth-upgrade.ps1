@@ -3,6 +3,11 @@ Build the dedicated test APK before running this harness:
   cd android
   .\gradlew.bat -I ..\scripts\android-auth-upgrade-runner.init.gradle :app:assembleDebugAndroidTest
 
+For a local 0.4.30 baseline built from the same source under test:
+  .\gradlew.bat -I ..\scripts\android-auth-upgrade-runner.init.gradle `
+    -Pgymcoach.authUpgrade.versionCode=40 -Pgymcoach.authUpgrade.versionName=0.4.30 `
+    :app:packageDebug
+
 The init script substitutes a plain Application only for this cross-version storage test, so a
 synthetic sentinel is not sent to the production synchronization path. Revoked-session behavior
 remains covered by the normal repository tests and runner.
@@ -151,7 +156,7 @@ Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $Base
 Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
 Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $TestApk) | Out-Null
 Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'
-Invoke-InstrumentationPhase -MethodName 'seedEncryptedAccountForUpgrade'
+Invoke-InstrumentationPhase -MethodName 'seedLegacyAccountWithoutSessionAuthorityForUpgrade'
 if (-not (Test-EncryptedPreferencePresent)) {
     throw 'The seed phase did not persist the encrypted account preference.'
 }
@@ -160,7 +165,7 @@ Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $Upgr
 if (-not (Test-EncryptedPreferencePresent)) {
     throw 'adb install -r removed the encrypted account preference before app startup.'
 }
-Invoke-InstrumentationPhase -MethodName 'verifyEncryptedAccountAfterUpgrade'
+Invoke-InstrumentationPhase -MethodName 'verifyLegacyAccountAndRecoverAuthorityAfterUpgrade'
 Invoke-InstrumentationPhase -MethodName 'corruptEncryptedAccountFailsClosedAfterUpgrade'
 Invoke-Checked -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'pm', 'clear', 'org.sharteman.gymcoach') | Out-Null
 Invoke-InstrumentationPhase -MethodName 'verifyFreshInstallRequiresAuthentication'

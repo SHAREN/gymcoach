@@ -29,6 +29,7 @@ interface AccountStore {
     var userEmail: String?
     fun getAccessToken(): String?
     fun setAccessToken(token: String)
+    fun recordSessionAuthority(serverUrl: String) = Unit
     fun clearAccessToken()
     fun clearAccount()
     fun configureServerUrls(primaryServerUrl: String, fallbackServerUrl: String?) {
@@ -106,6 +107,16 @@ class SecureAccountStore(context: Context) : AccountStore {
                 .commit(),
         ) {
             "Failed to persist encrypted account state."
+        }
+    }
+
+    override fun recordSessionAuthority(serverUrl: String) {
+        check(
+            preferences.edit()
+                .putString(KEY_SESSION_SERVER_URL, normalizeServerUrl(serverUrl))
+                .commit(),
+        ) {
+            "Failed to persist session authority."
         }
     }
 

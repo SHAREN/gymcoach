@@ -83,6 +83,7 @@ import org.sharteman.gymcoach.data.profile.CoachingProfileSaveResult
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.settings.SettingsErrorKind
 import org.sharteman.gymcoach.data.settings.SettingsException
+import org.sharteman.gymcoach.data.settings.isConfirmedCredentialFailure
 import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -124,7 +125,7 @@ fun CoachingProfileScreen(
 
     fun handleFailure(error: Throwable) {
         val settings = error as? SettingsException
-        if (settings?.kind == SettingsErrorKind.AUTHENTICATION) {
+        if (settings?.kind?.isConfirmedCredentialFailure() == true) {
             onAuthenticationRequired()
             return
         }

@@ -240,6 +240,28 @@ data class SettingsSnapshot(
     val gymList: SettingsGymListDto,
     val exercises: List<ExerciseDto>,
     val gymInventories: Map<String, SettingsGymInventoryDto> = emptyMap(),
+    val sectionFailures: List<SettingsSectionFailure> = emptyList(),
+)
+
+enum class SettingsSection {
+    PROFILE,
+    GYMS,
+    EXERCISES,
+    EQUIPMENT,
+}
+
+data class SettingsSectionFailure(
+    val section: SettingsSection,
+    val kind: SettingsErrorKind,
+    val statusCode: Int? = null,
+    val correlationId: String? = null,
+    val subrequest: String? = null,
+    val route: String? = null,
+    val authority: String? = null,
+    val errorCode: String? = null,
+    val authOutcome: String? = null,
+    val causeClass: String? = null,
+    val retryable: Boolean = true,
 )
 
 enum class SettingsImportFormat {
@@ -260,6 +282,8 @@ data class SettingsImportPreview(
 
 enum class SettingsErrorKind {
     AUTHENTICATION,
+    TOKEN_REVOKED,
+    TOKEN_EXPIRED,
     FORBIDDEN,
     SESSION_ROUTE_REJECTED,
     ENDPOINT_MISMATCH,
@@ -272,6 +296,7 @@ enum class SettingsErrorKind {
     DNS,
     TIMEOUT,
     TLS,
+    TRANSPORT,
     OFFLINE,
     INVALID_RESPONSE,
     UNKNOWN,
@@ -281,5 +306,18 @@ class SettingsException(
     val kind: SettingsErrorKind,
     val statusCode: Int? = null,
     val serverMessage: String? = null,
+    val correlationId: String? = null,
+    val subrequest: String? = null,
+    val route: String? = null,
+    val authority: String? = null,
+    val errorCode: String? = null,
+    val authOutcome: String? = null,
+    val retryable: Boolean = true,
     cause: Throwable? = null,
 ) : Exception(serverMessage ?: kind.name, cause)
+
+fun SettingsErrorKind.isConfirmedCredentialFailure(): Boolean = this in setOf(
+    SettingsErrorKind.AUTHENTICATION,
+    SettingsErrorKind.TOKEN_REVOKED,
+    SettingsErrorKind.TOKEN_EXPIRED,
+)

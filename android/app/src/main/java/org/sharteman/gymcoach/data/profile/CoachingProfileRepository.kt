@@ -26,6 +26,7 @@ import org.sharteman.gymcoach.data.settings.CoachingProfileRemoteDataSource
 import org.sharteman.gymcoach.data.settings.SettingsErrorKind
 import org.sharteman.gymcoach.data.settings.SettingsException
 import org.sharteman.gymcoach.data.settings.SettingsRepository
+import org.sharteman.gymcoach.data.settings.isConfirmedCredentialFailure
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.sync.SyncScheduler
 
@@ -81,7 +82,7 @@ class CoachingProfileRepository(
                     )
                 }
             } catch (error: SettingsException) {
-                if (error.kind == SettingsErrorKind.AUTHENTICATION || !error.kind.isRetryable()) {
+                if (error.kind.isConfirmedCredentialFailure() || !error.kind.isRetryable()) {
                     throw error
                 }
                 if (initialProfile != null) {
@@ -100,7 +101,7 @@ class CoachingProfileRepository(
             CoachingProfileLoadResult(remote.loadProfile().coachingProfile ?: CoachingProfileDto())
         } catch (error: SettingsException) {
             if (
-                initialProfile == null || error.kind == SettingsErrorKind.AUTHENTICATION ||
+                initialProfile == null || error.kind.isConfirmedCredentialFailure() ||
                 !error.kind.isRetryable()
             ) throw error
             CoachingProfileLoadResult(
@@ -129,7 +130,7 @@ class CoachingProfileRepository(
         return try {
             syncPending() ?: CoachingProfileSaveResult(currentProfile)
         } catch (error: SettingsException) {
-            if (error.kind == SettingsErrorKind.AUTHENTICATION || !error.kind.isRetryable()) {
+            if (error.kind.isConfirmedCredentialFailure() || !error.kind.isRetryable()) {
                 throw error
             }
             val queued = pendingStore.read()?.patch ?: patch
@@ -146,7 +147,7 @@ class CoachingProfileRepository(
                 remote.loadProfile().coachingProfile ?: CoachingProfileDto(),
             )
         } catch (error: SettingsException) {
-            if (error.kind == SettingsErrorKind.AUTHENTICATION || !error.kind.isRetryable()) {
+            if (error.kind.isConfirmedCredentialFailure() || !error.kind.isRetryable()) {
                 throw error
             }
             val queued = pendingStore.read()?.patch
@@ -173,7 +174,7 @@ class CoachingProfileRepository(
                 conflictedFields = resolution.conflictedFields,
             )
         } catch (error: SettingsException) {
-            if (error.kind != SettingsErrorKind.AUTHENTICATION && !error.kind.isRetryable()) {
+            if (!error.kind.isConfirmedCredentialFailure() && !error.kind.isRetryable()) {
                 pendingStore.clear()
             }
             throw error
@@ -477,6 +478,7 @@ fun SettingsErrorKind.isRetryable(): Boolean = this in setOf(
     SettingsErrorKind.DNS,
     SettingsErrorKind.TIMEOUT,
     SettingsErrorKind.TLS,
+    SettingsErrorKind.TRANSPORT,
     SettingsErrorKind.OFFLINE,
     SettingsErrorKind.INVALID_RESPONSE,
     SettingsErrorKind.UNKNOWN,

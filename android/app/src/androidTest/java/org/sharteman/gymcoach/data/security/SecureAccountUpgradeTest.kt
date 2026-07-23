@@ -47,6 +47,14 @@ class SecureAccountUpgradeTest {
     }
 
     @Test
+    fun seedLegacyAccountWithoutSessionAuthorityForUpgrade() {
+        seedEncryptedAccountForUpgrade()
+        assertTrue(accountPreferences().edit().remove(KEY_SESSION_SERVER_URL).commit())
+        assertNull(SecureAccountStore(context).sessionServerUrl)
+        assertEquals(TEST_TOKEN, SecureAccountStore(context).getAccessToken())
+    }
+
+    @Test
     fun verifyEncryptedAccountAfterUpgrade() {
         val restored = SecureAccountStore(context)
 
@@ -68,6 +76,21 @@ class SecureAccountUpgradeTest {
     }
 
     @Test
+    fun verifyLegacyAccountAndRecoverAuthorityAfterUpgrade() {
+        verifyEncryptedAccountAfterUpgrade()
+        val legacy = SecureAccountStore(context)
+        assertNull(legacy.sessionServerUrl)
+
+        legacy.recordSessionAuthority(UNREACHABLE_SERVER_URL)
+        val recovered = SecureAccountStore(context)
+
+        assertEquals(TEST_TOKEN, recovered.getAccessToken())
+        assertEquals(UNREACHABLE_SERVER_URL, recovered.sessionServerUrl)
+        assertEquals(TEST_USER_ID, recovered.userId)
+        assertEquals(TEST_EMAIL, recovered.userEmail)
+    }
+
+    @Test
     fun corruptEncryptedAccountFailsClosedAfterUpgrade() {
         val store = SecureAccountStore(context)
         assertTrue(
@@ -77,6 +100,27 @@ class SecureAccountUpgradeTest {
         accountPreferences().edit().putString(KEY_TOKEN, "corrupt-upgrade-state").commit()
 
         assertNull(SecureAccountStore(context).getAccessToken())
+        clearFixture()
+    }
+
+    @Test
+    fun legacySessionAuthorityRecoverySurvivesStoreRecreation() {
+        clearFixture()
+        val legacy = SecureAccountStore(context)
+        legacy.configureServerUrls(UNREACHABLE_SERVER_URL, null)
+        legacy.userId = TEST_USER_ID
+        legacy.userEmail = TEST_EMAIL
+        legacy.setAccessToken(TEST_TOKEN)
+        assertTrue(accountPreferences().edit().remove(KEY_SESSION_SERVER_URL).commit())
+        assertNull(SecureAccountStore(context).sessionServerUrl)
+
+        SecureAccountStore(context).recordSessionAuthority(UNREACHABLE_SERVER_URL)
+        val restarted = SecureAccountStore(context)
+
+        assertEquals(TEST_TOKEN, restarted.getAccessToken())
+        assertEquals(UNREACHABLE_SERVER_URL, restarted.sessionServerUrl)
+        assertEquals(TEST_USER_ID, restarted.userId)
+        assertEquals(TEST_EMAIL, restarted.userEmail)
         clearFixture()
     }
 
@@ -100,6 +144,7 @@ class SecureAccountUpgradeTest {
         const val PREFERENCES_NAME = "gymcoach-account"
         const val KEY_ALIAS = "gymcoach-mobile-token"
         const val KEY_TOKEN = "access-token"
+        const val KEY_SESSION_SERVER_URL = "session-server-url"
         const val KEY_FIXTURE_READY = "auth-upgrade-fixture-ready"
         const val TEST_TOKEN = "upgrade-regression-sentinel"
         const val TEST_USER_ID = "upgrade-regression-user"

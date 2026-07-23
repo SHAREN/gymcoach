@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.data.local.GymCoachDatabase
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnostics
 import org.sharteman.gymcoach.data.network.ApiClient
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
@@ -21,6 +22,8 @@ import org.sharteman.gymcoach.watch.sync.WatchSyncPreferences
 import org.sharteman.gymcoach.watch.ui.WatchStatusDataSource
 
 class GymCoachApplication : Application() {
+    lateinit var settingsDiagnostics: SettingsDiagnostics
+        private set
     lateinit var repository: GymCoachRepository
         private set
     lateinit var watchCompanionRuntime: WatchCompanionRuntime
@@ -33,6 +36,7 @@ class GymCoachApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        settingsDiagnostics = SettingsDiagnostics.create(this).also { it.install(this) }
         val database = GymCoachDatabase.get(this)
         val accountStore = SecureAccountStore(this)
         val watchPublisher = SwitchableWatchPhoneCommandPublisher()

@@ -9,8 +9,8 @@ import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.profile.CoachingProfileRepository
 import org.sharteman.gymcoach.data.profile.isRetryable
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
-import org.sharteman.gymcoach.data.settings.SettingsErrorKind
 import org.sharteman.gymcoach.data.settings.SettingsException
+import org.sharteman.gymcoach.data.settings.isConfirmedCredentialFailure
 import java.io.IOException
 
 class SyncWorker(
@@ -30,7 +30,7 @@ class SyncWorker(
             Result.failure()
         } catch (error: SettingsException) {
             when {
-                error.kind == SettingsErrorKind.AUTHENTICATION -> Result.failure()
+                error.kind.isConfirmedCredentialFailure() -> Result.failure()
                 error.kind.isRetryable() -> Result.retry()
                 else -> Result.failure()
             }

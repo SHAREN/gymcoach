@@ -120,6 +120,33 @@ class ServerEndpointResolverTest {
         assertEquals(PRIMARY, resolver.resolve())
     }
 
+    @Test
+    fun `reports stale fallback and failover decisions without changing behavior`() = runTest {
+        val store = FakeAccountStore().apply { serverUrl = FALLBACK }
+        val events = mutableListOf<ServerEndpointEvent>()
+        val resolver = ServerEndpointResolver(
+            accountStore = store,
+            probe = ServerReachabilityProbe { true },
+            nowEpochMs = { 1_000L },
+            primaryRetryIntervalMs = 5_000L,
+            observer = events::add,
+        )
+
+        assertEquals(FALLBACK, resolver.resolve())
+        assertEquals("stale-fallback-retained", events.single().category)
+
+        events.clear()
+        store.serverUrl = PRIMARY
+        val result = resolver.execute { url ->
+            if (url == PRIMARY) throw ConnectException("unavailable")
+            "ok"
+        }
+
+        assertEquals("ok", result)
+        assertTrue(events.any { it.category == "primary-attempt-failed" })
+        assertTrue(events.any { it.category == "alternate-succeeded" })
+    }
+
     private class FakeAccountStore : AccountStore {
         override val deviceId = "device_test"
         override var serverUrl = PRIMARY

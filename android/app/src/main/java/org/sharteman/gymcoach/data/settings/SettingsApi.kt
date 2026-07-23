@@ -3,6 +3,7 @@ package org.sharteman.gymcoach.data.settings
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,11 @@ import org.sharteman.gymcoach.data.model.ApiErrorResponse
 import org.sharteman.gymcoach.data.model.CoachingProfilePatchInput
 import org.sharteman.gymcoach.data.model.CoachingProfilePatchRequest
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.diagnostics.NoOpSettingsDiagnosticSink
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnosticSink
+import org.sharteman.gymcoach.data.diagnostics.SettingsRequestDiagnostic
+import org.sharteman.gymcoach.data.diagnostics.safeCorrelation
+import org.sharteman.gymcoach.data.diagnostics.safeDiagnosticLabel
 import org.sharteman.gymcoach.data.network.resolveAndroidDownloadUrl
 
 interface CoachingProfileRemoteDataSource {
@@ -32,6 +38,9 @@ interface CoachingProfileRemoteDataSource {
 interface SettingsDataSource : CoachingProfileRemoteDataSource {
     suspend fun load(): SettingsSnapshot
     override suspend fun loadProfile(): SettingsProfileDto = load().profile
+    suspend fun loadGyms(): SettingsGymListDto = load().gymList
+    suspend fun loadExercises(): List<ExerciseDto> = load().exercises
+    fun withDiagnosticAttempt(attemptId: String): SettingsDataSource = this
     suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto
     override suspend fun saveCoachingProfile(input: CoachingProfilePatchInput): SettingsProfileDto =
         throw UnsupportedOperationException("Coaching profile writes are unavailable.")
@@ -75,6 +84,8 @@ class SettingsApi(
     private val baseUrl: String,
     private val token: String,
     private val client: OkHttpClient = defaultClient(),
+    private val diagnostics: SettingsDiagnosticSink = NoOpSettingsDiagnosticSink,
+    private val attemptId: String? = null,
 ) : SettingsDataSource {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -89,8 +100,8 @@ class SettingsApi(
 
     override suspend fun load(): SettingsSnapshot {
         val profile = loadProfile()
-        val gyms = request<SettingsGymListDto>("GET", "/api/gyms")
-        val exercises = request<List<ExerciseDto>>("GET", "/api/mobile/exercises")
+        val gyms = loadGyms()
+        val exercises = loadExercises()
         val inventories = gyms.gyms.associate { gym ->
             gym.id to loadGymInventory(gym.id).normalizeSystemProfiles(gym, exercises)
         }
@@ -99,6 +110,20 @@ class SettingsApi(
 
     override suspend fun loadProfile(): SettingsProfileDto =
         request("GET", "/api/profile")
+
+    override suspend fun loadGyms(): SettingsGymListDto =
+        request("GET", "/api/gyms")
+
+    override suspend fun loadExercises(): List<ExerciseDto> =
+        request("GET", "/api/mobile/exercises")
+
+    override fun withDiagnosticAttempt(attemptId: String): SettingsDataSource = SettingsApi(
+        baseUrl = baseUrl,
+        token = token,
+        client = client,
+        diagnostics = diagnostics,
+        attemptId = attemptId,
+    )
 
     override suspend fun saveProfile(input: SettingsProfileInput): SettingsProfileDto =
         request("PATCH", "/api/profile", json.encodeToString(input))
@@ -191,7 +216,7 @@ class SettingsApi(
     override fun releaseDownloadUrl(release: AndroidReleaseDto): String =
         resolveAndroidDownloadUrl(baseUrl, release.downloadUrl)
 
-    override suspend fun exportBackup(): String = requestRaw("GET", "/api/backup")
+    override suspend fun exportBackup(): String = requestRaw("GET", "/api/backup").body
 
     override suspend fun restoreBackup(payload: String) {
         val parsed = try {
@@ -247,13 +272,51 @@ class SettingsApi(
         body: String? = null,
         authenticated: Boolean = true,
     ): T {
-        val responseBody = requestRaw(method, path, body, authenticated)
+        val response = requestRaw(method, path, body, authenticated, recordSuccess = false)
         return try {
-            json.decodeFromString(responseBody)
+            json.decodeFromString<T>(response.body).also {
+                diagnostics.recordRequest(
+                    SettingsRequestDiagnostic(
+                        attemptId = attemptId,
+                        correlationId = response.correlationId,
+                        subrequest = response.subrequest,
+                        origin = baseUrl,
+                        path = path,
+                        method = method,
+                        statusCode = response.statusCode,
+                        category = response.errorCode ?: "ok",
+                        durationMs = response.durationMs,
+                        authOutcome = response.authOutcome,
+                        errorCode = response.errorCode,
+                    ),
+                )
+            }
         } catch (error: SerializationException) {
+            diagnostics.recordRequest(
+                SettingsRequestDiagnostic(
+                    attemptId = attemptId,
+                    correlationId = response.correlationId,
+                    subrequest = response.subrequest,
+                    origin = baseUrl,
+                    path = path,
+                    method = method,
+                    statusCode = response.statusCode,
+                    category = "invalid-response",
+                    durationMs = response.durationMs,
+                    authOutcome = response.authOutcome,
+                    errorCode = "invalid-json-schema",
+                    exception = error,
+                ),
+            )
             throw SettingsException(
-                SettingsErrorKind.INVALID_RESPONSE,
+                kind = SettingsErrorKind.INVALID_RESPONSE,
                 serverMessage = "The server returned an unreadable response.",
+                correlationId = response.correlationId,
+                subrequest = response.subrequest,
+                route = path,
+                authority = baseUrl,
+                errorCode = "invalid-json-schema",
+                authOutcome = response.authOutcome,
                 cause = error,
             )
         }
@@ -264,9 +327,15 @@ class SettingsApi(
         path: String,
         body: String? = null,
         authenticated: Boolean = true,
-    ): String = withContext(Dispatchers.IO) {
+        recordSuccess: Boolean = true,
+    ): SettingsRawResponse = withContext(Dispatchers.IO) {
+        val requestCorrelationId = UUID.randomUUID().toString()
+        val requestSubrequest = settingsSubrequestForPath(path)
+        val startedNanos = System.nanoTime()
         try {
-            val builder = Request.Builder().url("${baseUrl.trimEnd('/')}$path")
+            val builder = Request.Builder()
+                .url("${baseUrl.trimEnd('/')}$path")
+                .header(CORRELATION_HEADER, requestCorrelationId)
             if (authenticated) builder.header("Authorization", "Bearer $token")
             when (method) {
                 "GET" -> builder.get()
@@ -278,27 +347,126 @@ class SettingsApi(
             }
             client.newCall(builder.build()).execute().use { response ->
                 val responseBody = response.body?.string().orEmpty()
+                val correlationId = safeCorrelation(response.header(CORRELATION_HEADER))
+                    ?: requestCorrelationId
+                val subrequest = safeDiagnosticLabel(response.header(SUBREQUEST_HEADER))
+                    ?: requestSubrequest
+                val authOutcome = safeDiagnosticLabel(response.header(AUTH_OUTCOME_HEADER))
+                val headerErrorCode = safeDiagnosticLabel(response.header(ERROR_CODE_HEADER))
+                val durationMs = elapsedMillis(startedNanos)
                 if (!response.isSuccessful) {
                     val envelope = runCatching {
                         json.decodeFromString<ApiErrorResponse>(responseBody)
                     }.getOrNull()
-                    throw SettingsException(
-                        kind = settingsErrorKindForStatus(response.code),
+                    val kind = settingsErrorKindForStatus(response.code)
+                    val errorCode = headerErrorCode
+                        ?: safeDiagnosticLabel(envelope?.code)
+                        ?: safeDiagnosticLabel(kind.name)
+                    val failure = SettingsException(
+                        kind = kind,
                         statusCode = response.code,
                         serverMessage = envelope?.error,
+                        correlationId = correlationId,
+                        subrequest = subrequest,
+                        route = path,
+                        authority = baseUrl,
+                        errorCode = errorCode,
+                        authOutcome = authOutcome,
+                        retryable = response.code !in setOf(400, 409, 413, 422),
+                    )
+                    diagnostics.recordRequest(
+                        SettingsRequestDiagnostic(
+                            attemptId = attemptId,
+                            correlationId = correlationId,
+                            subrequest = subrequest,
+                            origin = baseUrl,
+                            path = path,
+                            method = method,
+                            statusCode = response.code,
+                            category = errorCode ?: kind.name,
+                            durationMs = durationMs,
+                            authOutcome = authOutcome,
+                            errorCode = errorCode,
+                            exception = failure,
+                        ),
+                    )
+                    throw failure
+                }
+                if (recordSuccess) {
+                    diagnostics.recordRequest(
+                        SettingsRequestDiagnostic(
+                            attemptId = attemptId,
+                            correlationId = correlationId,
+                            subrequest = subrequest,
+                            origin = baseUrl,
+                            path = path,
+                            method = method,
+                            statusCode = response.code,
+                            category = headerErrorCode ?: "ok",
+                            durationMs = durationMs,
+                            authOutcome = authOutcome,
+                            errorCode = headerErrorCode,
+                        ),
                     )
                 }
-                responseBody
+                SettingsRawResponse(
+                    body = responseBody,
+                    statusCode = response.code,
+                    correlationId = correlationId,
+                    subrequest = subrequest,
+                    authOutcome = authOutcome,
+                    errorCode = headerErrorCode,
+                    durationMs = durationMs,
+                )
             }
         } catch (error: SettingsException) {
             throw error
         } catch (error: Throwable) {
-            throw SettingsException(classifySettingsError(error), cause = error)
+            val kind = classifySettingsError(error)
+            val failure = SettingsException(
+                kind = kind,
+                correlationId = requestCorrelationId,
+                subrequest = requestSubrequest,
+                route = path,
+                authority = baseUrl,
+                errorCode = safeDiagnosticLabel(kind.name),
+                cause = error,
+            )
+            diagnostics.recordRequest(
+                SettingsRequestDiagnostic(
+                    attemptId = attemptId,
+                    correlationId = requestCorrelationId,
+                    subrequest = requestSubrequest,
+                    origin = baseUrl,
+                    path = path,
+                    method = method,
+                    statusCode = null,
+                    category = kind.name,
+                    durationMs = elapsedMillis(startedNanos),
+                    errorCode = kind.name,
+                    exception = error,
+                ),
+            )
+            throw failure
         }
     }
 
+    private data class SettingsRawResponse(
+        val body: String,
+        val statusCode: Int,
+        val correlationId: String,
+        val subrequest: String?,
+        val authOutcome: String?,
+        val errorCode: String?,
+        val durationMs: Long,
+    )
+
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val CORRELATION_HEADER = "X-GymCoach-Correlation-ID"
+        private const val SUBREQUEST_HEADER = "X-GymCoach-Settings-Subrequest"
+        private const val AUTH_OUTCOME_HEADER = "X-GymCoach-Auth-Outcome"
+        private const val ERROR_CODE_HEADER = "X-GymCoach-Error-Code"
 
         private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -323,9 +491,20 @@ fun classifySettingsError(error: Throwable): SettingsErrorKind = when (error) {
     is UnknownHostException -> SettingsErrorKind.DNS
     is SocketTimeoutException -> SettingsErrorKind.TIMEOUT
     is SSLException -> SettingsErrorKind.TLS
-    is ConnectException -> SettingsErrorKind.SERVER_UNAVAILABLE
+    is ConnectException -> SettingsErrorKind.TRANSPORT
     is SerializationException -> SettingsErrorKind.INVALID_RESPONSE
     else -> SettingsErrorKind.OFFLINE.takeIf {
         error is java.io.IOException
     } ?: SettingsErrorKind.UNKNOWN
 }
+
+private fun settingsSubrequestForPath(path: String): String? = when {
+    path == "/api/profile" -> "profile"
+    path == "/api/gyms" -> "gyms"
+    path == "/api/mobile/exercises" -> "exercises"
+    Regex("^/api/gyms/[^/]+/equipment$").matches(path) -> "gym-equipment"
+    else -> null
+}
+
+private fun elapsedMillis(startedNanos: Long): Long =
+    ((System.nanoTime() - startedNanos) / 1_000_000L).coerceIn(0, 300_000)

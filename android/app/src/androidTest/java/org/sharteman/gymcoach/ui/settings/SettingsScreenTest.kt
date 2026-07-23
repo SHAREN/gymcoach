@@ -9,8 +9,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -60,6 +62,8 @@ import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsProfileDto
 import org.sharteman.gymcoach.data.settings.SettingsProfileInput
 import org.sharteman.gymcoach.data.settings.SettingsRepository
+import org.sharteman.gymcoach.data.settings.SettingsSection
+import org.sharteman.gymcoach.data.settings.SettingsSectionFailure
 import org.sharteman.gymcoach.data.settings.SettingsSessionValidation
 import org.sharteman.gymcoach.data.settings.SettingsSessionValidator
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
@@ -295,6 +299,81 @@ class SettingsScreenTest {
         } finally {
             accountStore.clearAccount()
         }
+    }
+
+    @Test
+    fun diagnosticsActionsRemainAvailableWhenSettingsContentCannotLoad() {
+        val unavailable = object : FakeSettingsSource() {
+            override suspend fun load(): SettingsSnapshot {
+                throw SettingsException(
+                    kind = SettingsErrorKind.DNS,
+                    correlationId = "settings-profile-dns",
+                    subrequest = "profile",
+                )
+            }
+        }
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    onAuthenticationRequired = {},
+                    repository = unavailable,
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-retry-load").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-diagnostics-copy").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithTag("settings-diagnostics-export").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithTag("settings-diagnostics-clear").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun partialSectionFailureKeepsProfileAndShowsExactRetryState() {
+        val partial = object : FakeSettingsSource() {
+            override suspend fun load(): SettingsSnapshot = snapshot().copy(
+                sectionFailures = listOf(
+                    SettingsSectionFailure(
+                        section = SettingsSection.EXERCISES,
+                        kind = SettingsErrorKind.INVALID_RESPONSE,
+                        correlationId = "settings-exercises-schema",
+                    ),
+                ),
+            )
+        }
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                SettingsScreen(
+                    onBack = {},
+                    onOpenWebPath = {},
+                    onAuthenticationRequired = {},
+                    repository = partial,
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("settings-native-screen").assertIsDisplayed()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("settings-native-screen")
+            .performScrollToNode(hasTestTag("settings-section-failure-exercises"))
+        composeRule.onNodeWithTag("settings-section-failure-exercises")
+            .assertIsDisplayed()
+        val expectedCorrelation = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(R.string.settings_partial_correlation, "settings-exercises-schema")
+        composeRule.onNodeWithTag("settings-section-correlation-exercises")
+            .assertTextEquals(expectedCorrelation)
+        composeRule.onNodeWithTag("settings-section-retry").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithTag("settings-profile-display-name")
+            .performScrollTo()
+            .assertTextContains("Android")
     }
 
     @Test
@@ -654,7 +733,7 @@ private fun testSettingsRepository(
     accountStore: SecureAccountStore,
     expectedToken: String,
     validation: SettingsSessionValidation = SettingsSessionValidation.VALID,
-    load: suspend () -> SettingsSnapshot,
+    loadSnapshot: suspend () -> SettingsSnapshot,
 ): SettingsRepository = SettingsRepository.failover(
     accountStore = accountStore,
     token = expectedToken,
@@ -666,10 +745,21 @@ private fun testSettingsRepository(
     },
     remoteFactory = { _, accessToken ->
         object : SettingsDataSource by FakeSettingsSource() {
+            override fun withDiagnosticAttempt(attemptId: String): SettingsDataSource = this
+
             override suspend fun load(): SettingsSnapshot {
                 assertEquals(expectedToken, accessToken)
-                return load()
+                return loadSnapshot()
             }
+
+            override suspend fun loadProfile() = loadSnapshot().profile
+
+            override suspend fun loadGyms() = loadSnapshot().gymList
+
+            override suspend fun loadExercises() = loadSnapshot().exercises
+
+            override suspend fun loadGymInventory(gymId: String) =
+                loadSnapshot().gymInventories.getValue(gymId)
         }
     },
 )

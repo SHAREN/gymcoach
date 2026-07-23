@@ -3,6 +3,8 @@
 package org.sharteman.gymcoach.ui.settings
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -54,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,12 +74,21 @@ import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.sharteman.gymcoach.BuildConfig
+import org.sharteman.gymcoach.GymCoachApplication
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnosticExportState
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnosticQueueCounts
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnostics
+import org.sharteman.gymcoach.data.diagnostics.buildArchive
+import org.sharteman.gymcoach.data.diagnostics.buildCopyPayload
+import org.sharteman.gymcoach.data.local.GymCoachDatabase
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.network.enqueueAndroidUpdate
+import org.sharteman.gymcoach.data.offline.OfflineRuntime
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.data.settings.AndroidPreferenceState
@@ -91,8 +103,11 @@ import org.sharteman.gymcoach.data.settings.SettingsGymEquipmentDto
 import org.sharteman.gymcoach.data.settings.SettingsImportFormat
 import org.sharteman.gymcoach.data.settings.SettingsImportPreview
 import org.sharteman.gymcoach.data.settings.SettingsRepository
+import org.sharteman.gymcoach.data.settings.SettingsSection
+import org.sharteman.gymcoach.data.settings.SettingsSectionFailure
 import org.sharteman.gymcoach.data.settings.SettingsSnapshot
 import org.sharteman.gymcoach.data.settings.classifySettingsError
+import org.sharteman.gymcoach.data.settings.isConfirmedCredentialFailure
 import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.setTableMetricEnabled
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
@@ -111,6 +126,21 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val diagnostics = remember(context) {
+        (context.applicationContext as? GymCoachApplication)?.settingsDiagnostics
+            ?: SettingsDiagnostics.create(context.applicationContext)
+    }
+    val syncQueueFlow = remember(appRepository) { appRepository?.pendingCount ?: flowOf(0) }
+    val offlineQueueFlow = remember {
+        runCatching { OfflineRuntime.pendingCount() }.getOrElse { flowOf(0) }
+    }
+    val syncQueueCount by syncQueueFlow.collectAsState(initial = 0)
+    val offlineQueueCount by offlineQueueFlow.collectAsState(initial = 0)
+    val databaseSchemaVersion = remember(context) {
+        runCatching {
+            GymCoachDatabase.get(context.applicationContext).openHelper.readableDatabase.version
+        }.getOrDefault(0)
+    }
     val account = remember(context) { SecureAccountStore(context.applicationContext) }
     val preferenceStore = remember(context) { AndroidPreferences(context.applicationContext) }
     var preferences by remember { mutableStateOf(preferenceStore.load()) }
@@ -139,9 +169,11 @@ fun SettingsScreen(
     var loading by remember { mutableStateOf(true) }
     var feedback by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var diagnosticCount by remember { mutableStateOf(diagnostics.snapshot().size) }
+    var pendingDiagnosticArchive by remember { mutableStateOf<ByteArray?>(null) }
 
     fun showFailure(throwable: Throwable, apkCheck: Boolean = false) {
-        if (settingsErrorKind(throwable) == SettingsErrorKind.AUTHENTICATION) {
+        if (settingsErrorKind(throwable).isConfirmedCredentialFailure()) {
             error = null
             feedback = null
             onAuthenticationRequired()
@@ -152,7 +184,7 @@ fun SettingsScreen(
     }
 
     fun showSystemProfileFailure(throwable: Throwable) {
-        if (settingsErrorKind(throwable) == SettingsErrorKind.AUTHENTICATION) {
+        if (settingsErrorKind(throwable).isConfirmedCredentialFailure()) {
             systemProfileError = null
             error = null
             feedback = null
@@ -181,12 +213,23 @@ fun SettingsScreen(
                     formatWeightList(gymDraft.configs[exerciseId]?.weightOptions.orEmpty())
                 }.orEmpty()
                 loading = false
+                diagnosticCount = diagnostics.snapshot().size
             }
             .onFailure {
                 loading = false
                 showFailure(it)
+                diagnosticCount = diagnostics.snapshot().size
             }
     }
+
+    fun diagnosticExportState(latest: AndroidReleaseDto? = release) = SettingsDiagnosticExportState(
+        databaseSchemaVersion = databaseSchemaVersion,
+        queueCounts = SettingsDiagnosticQueueCounts(
+            sync = syncQueueCount,
+            offline = offlineQueueCount,
+        ),
+        latestRelease = latest,
+    )
 
     fun savePreferences(next: AndroidPreferenceState) {
         preferences = next
@@ -203,6 +246,22 @@ fun SettingsScreen(
                 runCatching { writeText(context, uri, backup.second) }
                     .onSuccess {
                         feedback = context.getString(R.string.settings_native_backup_exported)
+                        error = null
+                    }
+                    .onFailure { showFailure(it) }
+            }
+        }
+    }
+    val diagnosticExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val archive = pendingDiagnosticArchive
+        pendingDiagnosticArchive = null
+        if (uri != null && archive != null) {
+            scope.launch {
+                runCatching { writeBytes(context, uri, archive) }
+                    .onSuccess {
+                        feedback = context.getString(R.string.settings_diagnostics_exported)
                         error = null
                     }
                     .onFailure { showFailure(it) }
@@ -278,6 +337,65 @@ fun SettingsScreen(
         }
     }
 
+    fun copyDiagnostics() {
+        scope.launch {
+            busy = true
+            runCatching {
+                val latest = release ?: runCatching { repository.latestRelease() }.getOrNull()
+                if (latest != null) release = latest
+                val exportState = diagnosticExportState(latest)
+                withContext(Dispatchers.Default) {
+                    diagnostics.buildCopyPayload(exportState)
+                }
+            }.onSuccess { payload ->
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(
+                    ClipData.newPlainText(
+                        context.getString(R.string.settings_diagnostics_clip_label),
+                        payload,
+                    ),
+                )
+                feedback = context.getString(R.string.settings_diagnostics_copied)
+                error = null
+            }.onFailure { showFailure(it) }
+            diagnosticCount = diagnostics.snapshot().size
+            busy = false
+        }
+    }
+
+    fun exportDiagnostics() {
+        scope.launch {
+            busy = true
+            runCatching {
+                val latest = release ?: runCatching { repository.latestRelease() }.getOrNull()
+                if (latest != null) release = latest
+                val exportState = diagnosticExportState(latest)
+                withContext(Dispatchers.Default) {
+                    diagnostics.buildArchive(exportState)
+                }
+            }.onSuccess { archive ->
+                pendingDiagnosticArchive = archive
+                diagnosticExportLauncher.launch(
+                    "gymcoach-diagnostics-${BuildConfig.VERSION_NAME}-${BuildConfig.VERSION_CODE}.zip",
+                )
+            }.onFailure { showFailure(it) }
+            diagnosticCount = diagnostics.snapshot().size
+            busy = false
+        }
+    }
+
+    fun clearDiagnostics() {
+        val cleared = diagnostics.clear()
+        diagnosticCount = diagnostics.snapshot().size
+        if (cleared) {
+            feedback = context.getString(R.string.settings_diagnostics_cleared)
+            error = null
+        } else {
+            error = context.getString(R.string.settings_diagnostics_clear_failed)
+            feedback = null
+        }
+    }
+
     LaunchedEffect(Unit) { refresh() }
 
     Scaffold(
@@ -299,10 +417,19 @@ fun SettingsScreen(
     ) { padding ->
         if (loading) {
             Column(
-                Modifier.fillMaxSize().padding(padding),
+                Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) { CircularProgressIndicator() }
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            ) {
+                CircularProgressIndicator()
+                SettingsDiagnosticsSection(
+                    eventCount = diagnosticCount,
+                    enabled = !busy,
+                    onCopy = ::copyDiagnostics,
+                    onExport = ::exportDiagnostics,
+                    onClear = ::clearDiagnostics,
+                )
+            }
         } else if (snapshot == null) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -323,6 +450,13 @@ fun SettingsScreen(
                         Modifier.padding(start = 6.dp),
                     )
                 }
+                SettingsDiagnosticsSection(
+                    eventCount = diagnosticCount,
+                    enabled = !busy,
+                    onCopy = ::copyDiagnostics,
+                    onExport = ::exportDiagnostics,
+                    onClear = ::clearDiagnostics,
+                )
             }
         } else {
             LazyColumn(
@@ -478,6 +612,24 @@ fun SettingsScreen(
                             }
                         },
                     )
+                }
+                item {
+                    SettingsDiagnosticsSection(
+                        eventCount = diagnosticCount,
+                        enabled = !busy,
+                        onCopy = ::copyDiagnostics,
+                        onExport = ::exportDiagnostics,
+                        onClear = ::clearDiagnostics,
+                    )
+                }
+                if (snapshot?.sectionFailures?.isNotEmpty() == true) {
+                    item {
+                        SettingsSectionFailuresCard(
+                            failures = snapshot?.sectionFailures.orEmpty(),
+                            enabled = !busy,
+                            onRetry = { scope.launch { refresh() } },
+                        )
+                    }
                 }
                 item {
                     OutlinedButton(
@@ -882,7 +1034,71 @@ private fun MessageBanner(error: String?, feedback: String?) {
 }
 
 @Composable
-private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsSectionFailuresCard(
+    failures: List<SettingsSectionFailure>,
+    enabled: Boolean,
+    onRetry: () -> Unit,
+) {
+    val context = LocalContext.current
+    SettingsCard(stringResource(R.string.settings_partial_title)) {
+        failures.distinctBy { it.section to it.correlationId }.forEach { failure ->
+            val section = stringResource(
+                when (failure.section) {
+                    SettingsSection.PROFILE -> R.string.settings_partial_profile
+                    SettingsSection.GYMS -> R.string.settings_partial_gyms
+                    SettingsSection.EXERCISES -> R.string.settings_partial_exercises
+                    SettingsSection.EQUIPMENT -> R.string.settings_partial_equipment
+                },
+            )
+            Text(
+                text = stringResource(
+                    R.string.settings_partial_failure,
+                    section,
+                    settingsErrorMessage(
+                        context,
+                        SettingsException(
+                            kind = failure.kind,
+                            statusCode = failure.statusCode,
+                            correlationId = failure.correlationId,
+                            subrequest = failure.subrequest,
+                            route = failure.route,
+                            authority = failure.authority,
+                            errorCode = failure.errorCode,
+                            authOutcome = failure.authOutcome,
+                            retryable = failure.retryable,
+                        ),
+                        apkCheck = false,
+                    ),
+                ),
+                modifier = Modifier.testTag(
+                    "settings-section-failure-${failure.section.name.lowercase()}",
+                ),
+            )
+            Text(
+                text = stringResource(
+                    R.string.settings_partial_correlation,
+                    failure.correlationId ?: context.getString(R.string.settings_partial_no_correlation),
+                ),
+                modifier = Modifier.testTag(
+                    "settings-section-correlation-${failure.section.name.lowercase()}",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(
+            onClick = onRetry,
+            enabled = enabled && failures.any { it.retryable },
+            modifier = Modifier.fillMaxWidth().testTag("settings-section-retry"),
+        ) {
+            Icon(Icons.Default.Refresh, contentDescription = null)
+            Text(stringResource(R.string.settings_partial_retry))
+        }
+    }
+}
+
+@Composable
+fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(14.dp),
@@ -1365,6 +1581,13 @@ private suspend fun writeText(context: Context, uri: Uri, text: String) = withCo
     } ?: throw java.io.IOException("Could not write the backup file.")
 }
 
+private suspend fun writeBytes(context: Context, uri: Uri, bytes: ByteArray) =
+    withContext(Dispatchers.IO) {
+        context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+            output.write(bytes)
+        } ?: throw java.io.IOException("Could not write the diagnostic archive.")
+    }
+
 private const val MAX_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024
 
 private data class SelectedEquipmentImage(val bytes: ByteArray, val mimeType: String)
@@ -1440,6 +1663,8 @@ private fun settingsErrorMessage(context: Context, throwable: Throwable, apkChec
     val kind = settingsErrorKind(throwable)
     val resource = when (kind) {
         SettingsErrorKind.AUTHENTICATION -> R.string.settings_native_error_auth
+        SettingsErrorKind.TOKEN_REVOKED -> R.string.settings_native_error_token_revoked
+        SettingsErrorKind.TOKEN_EXPIRED -> R.string.settings_native_error_token_expired
         SettingsErrorKind.FORBIDDEN -> R.string.settings_native_error_forbidden
         SettingsErrorKind.SESSION_ROUTE_REJECTED -> R.string.settings_native_error_session_route
         SettingsErrorKind.ENDPOINT_MISMATCH -> R.string.settings_native_error_endpoint_mismatch
@@ -1454,6 +1679,7 @@ private fun settingsErrorMessage(context: Context, throwable: Throwable, apkChec
         SettingsErrorKind.DNS -> R.string.settings_native_error_dns
         SettingsErrorKind.TIMEOUT -> R.string.settings_native_error_timeout
         SettingsErrorKind.TLS -> R.string.settings_native_error_tls
+        SettingsErrorKind.TRANSPORT -> R.string.settings_native_error_transport
         SettingsErrorKind.OFFLINE -> R.string.settings_native_error_offline
         SettingsErrorKind.INVALID_RESPONSE -> R.string.settings_native_error_response
         SettingsErrorKind.UNKNOWN -> R.string.settings_native_error_unknown

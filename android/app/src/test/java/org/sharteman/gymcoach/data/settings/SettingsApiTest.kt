@@ -1,5 +1,6 @@
 package org.sharteman.gymcoach.data.settings
 
+import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
@@ -18,6 +19,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnosticSink
+import org.sharteman.gymcoach.data.diagnostics.SettingsRequestDiagnostic
 import org.sharteman.gymcoach.data.model.CoachingFieldInput
 import org.sharteman.gymcoach.data.model.CoachingFieldState
 import org.sharteman.gymcoach.data.model.CoachingHealthStatus
@@ -77,6 +80,199 @@ class SettingsApiTest {
         assertEquals(SettingsErrorKind.DNS, classifySettingsError(UnknownHostException()))
         assertEquals(SettingsErrorKind.TIMEOUT, classifySettingsError(SocketTimeoutException()))
         assertEquals(SettingsErrorKind.TLS, classifySettingsError(SSLHandshakeException("certificate")))
+        assertEquals(SettingsErrorKind.TRANSPORT, classifySettingsError(ConnectException()))
+    }
+
+    @Test
+    fun `load propagates one attempt across exact correlated subrequests`() = runTest {
+        val diagnostics = RecordingDiagnostics()
+        val requestCorrelations = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requestCorrelations += requireNotNull(request.header("X-GymCoach-Correlation-ID"))
+            val body = when (request.url.encodedPath) {
+                "/api/profile" -> """{"email":"safe@example.invalid"}"""
+                "/api/gyms" -> """{"gyms":[]}"""
+                "/api/mobile/exercises" -> "[]"
+                else -> error("Unexpected path ${request.url.encodedPath}")
+            }
+            val subrequest = when (request.url.encodedPath) {
+                "/api/profile" -> "profile"
+                "/api/gyms" -> "gyms"
+                else -> "exercises"
+            }
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .header("X-GymCoach-Correlation-ID", "server-$subrequest")
+                .header("X-GymCoach-Settings-Subrequest", subrequest)
+                .header("X-GymCoach-Auth-Outcome", "valid")
+                .header("X-GymCoach-Error-Code", "ok")
+                .body(body.toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val api = SettingsApi(
+            baseUrl = "https://example.test",
+            token = "token",
+            client = client,
+            diagnostics = diagnostics,
+        ).withDiagnosticAttempt("settings-attempt-1")
+
+        val snapshot = api.load()
+
+        assertEquals("safe@example.invalid", snapshot.profile.email)
+        assertEquals(3, requestCorrelations.distinct().size)
+        assertEquals(
+            setOf("profile", "gyms", "exercises"),
+            diagnostics.requests.mapNotNull { it.subrequest }.toSet(),
+        )
+        assertTrue(diagnostics.requests.all { it.attemptId == "settings-attempt-1" })
+        assertTrue(diagnostics.requests.all { it.authOutcome == "valid" })
+    }
+
+    @Test
+    fun `route rejection retains server correlation auth category and safe cause`() = runTest {
+        val diagnostics = RecordingDiagnostics()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(403)
+                .message("Forbidden")
+                .header("X-GymCoach-Correlation-ID", "settings-profile-403")
+                .header("X-GymCoach-Settings-Subrequest", "profile")
+                .header("X-GymCoach-Auth-Outcome", "valid")
+                .header("X-GymCoach-Error-Code", "auth_rejected")
+                .body("""{"error":"Rejected","code":"auth_rejected"}"""
+                    .toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val api = SettingsApi("https://example.test", "token", client, diagnostics)
+
+        val failure = runCatching { api.loadProfile() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.FORBIDDEN, failure.kind)
+        assertEquals("settings-profile-403", failure.correlationId)
+        assertEquals("profile", failure.subrequest)
+        assertEquals("auth_rejected", failure.errorCode)
+        assertEquals("valid", failure.authOutcome)
+        assertEquals("auth_rejected", diagnostics.requests.single().category)
+    }
+
+    @Test
+    fun `invalid JSON keeps the successful response correlation and schema category`() = runTest {
+        val diagnostics = RecordingDiagnostics()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .header("X-GymCoach-Correlation-ID", "settings-profile-schema")
+                .header("X-GymCoach-Settings-Subrequest", "profile")
+                .header("X-GymCoach-Auth-Outcome", "valid")
+                .body("not-json".toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val api = SettingsApi("https://example.test", "token", client, diagnostics)
+
+        val failure = runCatching { api.loadProfile() }.exceptionOrNull() as SettingsException
+
+        assertEquals(SettingsErrorKind.INVALID_RESPONSE, failure.kind)
+        assertEquals("settings-profile-schema", failure.correlationId)
+        assertEquals("invalid-json-schema", failure.errorCode)
+        assertEquals(1, diagnostics.requests.size)
+        assertEquals("invalid-response", diagnostics.requests.single().category)
+        assertTrue(diagnostics.requests.single().durationMs >= 0)
+    }
+
+    @Test
+    fun `every Settings subrequest retains HTTP auth failures`() = runTest {
+        settingsLoadCalls().forEach { call ->
+            listOf(401, 403).forEach { statusCode ->
+                val diagnostics = RecordingDiagnostics()
+                val client = OkHttpClient.Builder().addInterceptor { chain ->
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(statusCode)
+                        .message("Rejected")
+                        .header("X-GymCoach-Correlation-ID", "${call.subrequest}-$statusCode")
+                        .header("X-GymCoach-Settings-Subrequest", call.subrequest)
+                        .header("X-GymCoach-Auth-Outcome", "valid")
+                        .header("X-GymCoach-Error-Code", "route_rejected")
+                        .body(
+                            """{"error":"Rejected","code":"route_rejected"}"""
+                                .toResponseBody("application/json".toMediaType()),
+                        )
+                        .build()
+                }.build()
+                val api = SettingsApi("https://example.test", "token", client, diagnostics)
+
+                val failure = runCatching { call.invoke(api) }.exceptionOrNull() as SettingsException
+
+                assertEquals(statusCode, failure.statusCode)
+                assertEquals(call.subrequest, failure.subrequest)
+                assertEquals("${call.subrequest}-$statusCode", failure.correlationId)
+                assertEquals("route_rejected", failure.errorCode)
+                assertEquals("valid", failure.authOutcome)
+                assertEquals("route_rejected", diagnostics.requests.single().category)
+            }
+        }
+    }
+
+    @Test
+    fun `every Settings subrequest retains network and schema failures`() = runTest {
+        settingsLoadCalls().forEach { call ->
+            val networkDiagnostics = RecordingDiagnostics()
+            val networkClient = OkHttpClient.Builder().addInterceptor {
+                throw UnknownHostException("offline")
+            }.build()
+            val networkApi = SettingsApi(
+                "https://example.test",
+                "token",
+                networkClient,
+                networkDiagnostics,
+            )
+
+            val networkFailure = runCatching {
+                call.invoke(networkApi)
+            }.exceptionOrNull() as SettingsException
+
+            assertEquals(SettingsErrorKind.DNS, networkFailure.kind)
+            assertEquals(call.subrequest, networkFailure.subrequest)
+            assertEquals("DNS", networkDiagnostics.requests.single().category)
+
+            val schemaDiagnostics = RecordingDiagnostics()
+            val schemaClient = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("X-GymCoach-Correlation-ID", "${call.subrequest}-schema")
+                    .header("X-GymCoach-Settings-Subrequest", call.subrequest)
+                    .body("not-json".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }.build()
+            val schemaApi = SettingsApi(
+                "https://example.test",
+                "token",
+                schemaClient,
+                schemaDiagnostics,
+            )
+
+            val schemaFailure = runCatching {
+                call.invoke(schemaApi)
+            }.exceptionOrNull() as SettingsException
+
+            assertEquals(SettingsErrorKind.INVALID_RESPONSE, schemaFailure.kind)
+            assertEquals(call.subrequest, schemaFailure.subrequest)
+            assertEquals("${call.subrequest}-schema", schemaFailure.correlationId)
+            assertEquals("invalid-response", schemaDiagnostics.requests.single().category)
+        }
     }
 
     @Test
@@ -188,5 +384,25 @@ class SettingsApiTest {
             "stable-large-20",
             existingBar.getValue("equipmentId").jsonPrimitive.content,
         )
+    }
+}
+
+private data class SettingsLoadCall(
+    val subrequest: String,
+    val invoke: suspend (SettingsApi) -> Unit,
+)
+
+private fun settingsLoadCalls() = listOf(
+    SettingsLoadCall("profile") { it.loadProfile() },
+    SettingsLoadCall("gyms") { it.loadGyms() },
+    SettingsLoadCall("exercises") { it.loadExercises() },
+    SettingsLoadCall("gym-equipment") { it.loadGymInventory("cly9h7k2w0001u6w8m4v3n2pq") },
+)
+
+private class RecordingDiagnostics : SettingsDiagnosticSink {
+    val requests = mutableListOf<SettingsRequestDiagnostic>()
+
+    override fun recordRequest(input: SettingsRequestDiagnostic) {
+        requests += input
     }
 }

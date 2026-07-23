@@ -4,6 +4,18 @@ gradle.beforeProject { project ->
             project.androidComponents.finalizeDsl { androidDsl ->
                 androidDsl.defaultConfig.testInstrumentationRunner =
                     'org.sharteman.gymcoach.data.security.AuthUpgradeTestRunner'
+                def versionCodeOverride = gradle.startParameter.projectProperties[
+                    'gymcoach.authUpgrade.versionCode'
+                ]
+                def versionNameOverride = gradle.startParameter.projectProperties[
+                    'gymcoach.authUpgrade.versionName'
+                ]
+                if (versionCodeOverride != null) {
+                    androidDsl.defaultConfig.versionCode = Integer.parseInt(versionCodeOverride)
+                }
+                if (versionNameOverride != null) {
+                    androidDsl.defaultConfig.versionName = versionNameOverride
+                }
             }
         }
     }

@@ -21,6 +21,13 @@ val huaweiWatchFingerprint = providers.gradleProperty("gymcoach.huawei.watchFing
     .orElse("")
 val huaweiWatchDeviceUuid = providers.gradleProperty("gymcoach.huawei.watchDeviceUuid")
     .orElse("")
+val repositoryRoot = rootProject.projectDir.parentFile
+val sourceCommit = providers.environmentVariable("GYMCOACH_COMMIT_SHA").orElse(
+    providers.exec {
+        workingDir(repositoryRoot)
+        commandLine("git", "rev-parse", "--short=12", "HEAD")
+    }.standardOutput.asText.map { output -> output.trim().ifBlank { "unknown" } },
+)
 
 android {
     namespace = "org.sharteman.gymcoach"
@@ -30,13 +37,14 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40
-        versionName = "0.4.30"
+        versionCode = 41
+        versionName = "0.4.31"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://gymcoach7.sharteman.duckdns.org\"")
         buildConfigField("String", "DEFAULT_FALLBACK_SERVER_URL", "\"http://192.168.0.119:3030\"")
+        buildConfigField("String", "SOURCE_COMMIT", sourceCommit.get().asBuildConfigString())
         buildConfigField("String", "HUAWEI_WEAR_ENGINE_APP_ID", huaweiWearEngineAppId.get().asBuildConfigString())
         buildConfigField("String", "HUAWEI_WATCH_PACKAGE_NAME", huaweiWatchPackageName.get().asBuildConfigString())
         buildConfigField("String", "HUAWEI_WATCH_FINGERPRINT", huaweiWatchFingerprint.get().asBuildConfigString())
@@ -121,7 +129,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-val repositoryRoot = rootProject.projectDir.parentFile
 val generateAndroidExerciseNames = tasks.register<Exec>("generateAndroidExerciseNames") {
     group = "build setup"
     description = "Generates the Android Russian exercise dictionary from the web dictionary."
