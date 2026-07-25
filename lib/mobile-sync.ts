@@ -350,6 +350,88 @@ async function applyOperationInTransaction(
         changed: true,
       };
     }
+    case 'REPLACE_PROGRAM_EXERCISE': {
+      const current = await tx.programExercise.findFirst({
+        where: {
+          id: operation.programExerciseId,
+          workout: { program: { userId } },
+        },
+        select: { id: true, workoutId: true, exerciseId: true },
+      });
+      if (!current) throw new ApiError(404, 'Program exercise not found.');
+
+      const session = await tx.session.findFirst({
+        where: {
+          id: operation.sessionId,
+          userId,
+          workoutId: current.workoutId,
+          finishedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!session) throw new ApiError(404, 'Workout session not found.');
+
+      const replacement = await tx.exercise.findFirst({
+        where: { id: operation.replacementExerciseId, userId },
+        select: { id: true },
+      });
+      if (!replacement) throw new ApiError(400, 'Invalid replacement exercise.');
+
+      if (current.exerciseId === operation.replacementExerciseId) {
+        return {
+          entityType: 'PROGRAM_EXERCISE',
+          entityId: current.id,
+          previousExerciseId: operation.previousExerciseId,
+          replacementExerciseId: current.exerciseId,
+          changed: false,
+        };
+      }
+      if (current.exerciseId !== operation.previousExerciseId) {
+        throw new ApiError(
+          409,
+          `Program exercise changed from ${operation.previousExerciseId} to ${current.exerciseId}. Refresh the workout and try again.`,
+        );
+      }
+
+      const updated = await tx.programExercise.updateMany({
+        where: {
+          id: current.id,
+          exerciseId: operation.previousExerciseId,
+        },
+        data: { exerciseId: operation.replacementExerciseId },
+      });
+      if (updated.count !== 1) {
+        const latest = await tx.programExercise.findFirst({
+          where: {
+            id: operation.programExerciseId,
+            workout: { program: { userId } },
+          },
+          select: { exerciseId: true },
+        });
+        if (!latest) throw new ApiError(404, 'Program exercise not found.');
+        if (latest.exerciseId === operation.replacementExerciseId) {
+          return {
+            entityType: 'PROGRAM_EXERCISE',
+            entityId: current.id,
+            previousExerciseId: operation.previousExerciseId,
+            replacementExerciseId: latest.exerciseId,
+            changed: false,
+          };
+        }
+        throw new ApiError(
+          409,
+          `Program exercise changed from ${operation.previousExerciseId} to ${latest.exerciseId}. Refresh the workout and try again.`,
+        );
+      }
+
+      return {
+        entityType: 'PROGRAM_EXERCISE',
+        entityId: current.id,
+        previousExerciseId: current.exerciseId,
+        replacementExerciseId: operation.replacementExerciseId,
+        changed: true,
+      };
+    }
     case 'FINISH_SESSION': {
       const existing = await tx.session.findFirst({ where: { id: operation.sessionId, userId } });
       if (!existing) throw new ApiError(404, 'Session not found.');

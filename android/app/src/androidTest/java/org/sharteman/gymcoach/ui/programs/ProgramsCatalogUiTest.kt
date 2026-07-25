@@ -29,6 +29,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.IOException
 import java.util.Locale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -120,6 +121,38 @@ class ProgramsCatalogUiTest {
         composeRule.onNodeWithTag("exercise-search").performTextInput("row")
         composeRule.onNodeWithText("Barbell Row").assertIsDisplayed()
         composeRule.onNodeWithText("Bench Press").assertDoesNotExist()
+    }
+
+    @Test
+    fun catalogUsesSharedEquipmentFilterAndGroupsTrainedExercisesFirst() {
+        composeRule.setContent {
+            GymCoachTheme {
+                ExerciseCatalogScreen(
+                    dataSource = FakeProgramsCatalogDataSource(
+                        exerciseOrder = listOf("row", "bench", "cardio"),
+                    ),
+                    serverUrl = "https://example.test",
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("exercise-filter-muscle")
+            .assertTextContains("Muscle: All muscles")
+        composeRule.onNodeWithTag("exercise-filter-equipment")
+            .assertTextContains("Equipment: All equipment")
+        val trainedTop = composeRule.onNodeWithTag("exercise-bench")
+            .fetchSemanticsNode().boundsInRoot.top
+        val zeroTop = composeRule.onNodeWithTag("exercise-row")
+            .fetchSemanticsNode().boundsInRoot.top
+        assertTrue(trainedTop < zeroTop)
+
+        composeRule.onNodeWithTag("exercise-filter-equipment").performClick()
+        composeRule.onNodeWithTag("exercise-filter-equipment-CARDIO").performClick()
+
+        composeRule.onNodeWithText("Running").assertIsDisplayed()
+        composeRule.onNodeWithText("Bench Press").assertDoesNotExist()
+        composeRule.onNodeWithText("Barbell Row").assertDoesNotExist()
     }
 
     @Test
@@ -486,7 +519,10 @@ class ProgramsCatalogUiTest {
             composeRule.onNodeWithTag("exercise-bench-trained-days", useUnmergedTree = true)
                 .performScrollTo()
                 .assertIsDisplayed()
-            composeRule.onNodeWithText("Тренировочных дней: 2", useUnmergedTree = true).assertExists()
+                .assertTextEquals("2")
+            composeRule.onNodeWithContentDescription("Тренировочных дней: 2").assertExists()
+            composeRule.onNodeWithText("Тренировочных дней: 2", useUnmergedTree = true)
+                .assertDoesNotExist()
             composeRule.onNodeWithText("Грудь").assertIsDisplayed()
             composeRule.onAllNodesWithText("Базовое • Штанга").onFirst().assertIsDisplayed()
         } finally {
@@ -495,7 +531,9 @@ class ProgramsCatalogUiTest {
     }
 }
 
-private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
+private class FakeProgramsCatalogDataSource(
+    private val exerciseOrder: List<String> = listOf("bench", "row", "cardio"),
+) : ProgramsCatalogDataSource {
     var exerciseUpdateAttempts = 0
     var failNextExerciseUpdates = 0
 
@@ -557,7 +595,10 @@ private class FakeProgramsCatalogDataSource : ProgramsCatalogDataSource {
 
     override suspend fun listPrograms() = listOf(program)
     override suspend fun getProgram(id: String) = program
-    override suspend fun listExercises() = listOf(bench, row, cardio)
+    override suspend fun listExercises(): List<ExerciseDto> {
+        val byId = listOf(bench, row, cardio).associateBy { it.id }
+        return exerciseOrder.map { id -> requireNotNull(byId[id]) }
+    }
     override suspend fun getExercise(id: String) = listExercises().first { it.id == id }
     override suspend fun createProgram(input: ProgramInput) = error("unused")
     override suspend fun updateProgram(id: String, input: ProgramInput) = error("unused")

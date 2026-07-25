@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -128,6 +129,7 @@ import org.sharteman.gymcoach.training.setTableMetricEnabled
 import org.sharteman.gymcoach.training.toDisplayWeight
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
+import org.sharteman.gymcoach.ui.programs.ExerciseReplacementDialog
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -170,6 +172,8 @@ fun WorkoutScreen(
     var restRemaining by remember { mutableIntStateOf(0) }
     var showSummary by rememberSaveable { mutableStateOf(false) }
     var controlsDialog by remember { mutableStateOf(false) }
+    var replacementDialog by rememberSaveable { mutableStateOf(false) }
+    var replacementBusy by remember { mutableStateOf(false) }
     var resetDialog by remember { mutableStateOf(false) }
     var resetBusy by remember { mutableStateOf(false) }
     var detailsExerciseId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -193,6 +197,8 @@ fun WorkoutScreen(
     val setSaveError = stringResource(R.string.set_save_error)
     val setDeleteError = stringResource(R.string.set_delete_error)
     val restStartError = stringResource(R.string.rest_start_error)
+    val exerciseReplaceError = stringResource(R.string.exercise_replace_error)
+    val exerciseReplaceWaitForRest = stringResource(R.string.exercise_replace_wait_for_rest)
 
     if (session == null || workout == null) {
         Scaffold(topBar = { TopAppBar(title = { Text("GymCoach") }) }) { padding ->
@@ -236,12 +242,19 @@ fun WorkoutScreen(
     var selectedEquipmentByExercise by rememberSaveable {
         mutableStateOf(emptyMap<String, String>())
     }
+    val equipmentSelectionKeys = exercises.mapTo(mutableSetOf(), ::workoutEquipmentSelectionKey)
+    LaunchedEffect(equipmentSelectionKeys) {
+        selectedEquipmentByExercise = retainWorkoutEquipmentSelections(
+            selectedEquipmentByExercise,
+            exercises,
+        )
+    }
     val equipmentIdsByExercise = exercises.associate { exercise ->
         exercise.id to resolveWorkoutEquipmentId(
             exercise = exercise,
             gym = gym,
             sets = allSets,
-            selectedEquipmentId = selectedEquipmentByExercise[exercise.id],
+            selectedEquipmentId = selectedEquipmentByExercise[workoutEquipmentSelectionKey(exercise)],
         )
     }
     val effectiveReturnRecommendations = exercises.mapNotNull { exercise ->
@@ -339,14 +352,20 @@ fun WorkoutScreen(
         return
     }
 
-    var weightText by rememberSaveable(current.id) { mutableStateOf("") }
-    var repsText by rememberSaveable(current.id) { mutableStateOf("") }
-    var rirText by rememberSaveable(current.id) { mutableStateOf(target.targetRIR.toString()) }
-    var notesText by rememberSaveable(current.id) { mutableStateOf("") }
-    var isWarmup by rememberSaveable(current.id) { mutableStateOf(false) }
-    var isDropSet by rememberSaveable(current.id) { mutableStateOf(false) }
-    var preserveInputsAfterExerciseEdit by remember(current.id) { mutableStateOf(false) }
-    var completedExerciseEdit by remember(current.id) { mutableStateOf<ExerciseDto?>(null) }
+    var weightText by rememberSaveable(current.id, current.exerciseId) { mutableStateOf("") }
+    var repsText by rememberSaveable(current.id, current.exerciseId) { mutableStateOf("") }
+    var rirText by rememberSaveable(current.id, current.exerciseId) {
+        mutableStateOf(target.targetRIR.toString())
+    }
+    var notesText by rememberSaveable(current.id, current.exerciseId) { mutableStateOf("") }
+    var isWarmup by rememberSaveable(current.id, current.exerciseId) { mutableStateOf(false) }
+    var isDropSet by rememberSaveable(current.id, current.exerciseId) { mutableStateOf(false) }
+    var preserveInputsAfterExerciseEdit by remember(current.id, current.exerciseId) {
+        mutableStateOf(false)
+    }
+    var completedExerciseEdit by remember(current.id, current.exerciseId) {
+        mutableStateOf<ExerciseDto?>(null)
+    }
     val autofillKey = workoutInputAutofillKey(
         exerciseId = current.id,
         comparableSetCount = comparableSets.size,
@@ -355,9 +374,15 @@ fun WorkoutScreen(
         returnSuggestedWeight = returnRecommendation?.suggestedWeight,
         lastPerformanceSessionId = lastPerformance?.sessionId,
     )
-    var lastAppliedAutofillKey by rememberSaveable(current.id) { mutableStateOf<String?>(null) }
-    var hasAppliedAutofill by rememberSaveable(current.id) { mutableStateOf(false) }
-    var observedAutofillKey by remember(current.id) { mutableStateOf<String?>(null) }
+    var lastAppliedAutofillKey by rememberSaveable(current.id, current.exerciseId) {
+        mutableStateOf<String?>(null)
+    }
+    var hasAppliedAutofill by rememberSaveable(current.id, current.exerciseId) {
+        mutableStateOf(false)
+    }
+    var observedAutofillKey by remember(current.id, current.exerciseId) {
+        mutableStateOf<String?>(null)
+    }
 
     LaunchedEffect(autofillKey) {
         if (shouldPreserveRestoredWorkoutInputs(
@@ -485,7 +510,7 @@ fun WorkoutScreen(
                         selectionRequired = inventory.requiresEquipmentSelection && selectedProfile == null,
                         onSelect = { equipmentId ->
                             selectedEquipmentByExercise = selectedEquipmentByExercise +
-                                (current.id to equipmentId)
+                                (workoutEquipmentSelectionKey(current) to equipmentId)
                         },
                     )
                 }
@@ -644,7 +669,17 @@ fun WorkoutScreen(
     if (controlsDialog) {
         WorkoutControlsDialog(
             workoutName = workout.name,
+            currentExerciseName = exerciseDisplayName(current.exercise.name),
             startedAt = session?.startedAt.orEmpty(),
+            replaceEnabled = !replacementBusy,
+            onReplace = {
+                if (restRemaining > 0) {
+                    scope.launch { snackbar.showSnackbar(exerciseReplaceWaitForRest) }
+                } else {
+                    controlsDialog = false
+                    replacementDialog = true
+                }
+            },
             onComplete = {
                 controlsDialog = false
                 showSummary = true
@@ -658,6 +693,37 @@ fun WorkoutScreen(
                 resetDialog = true
             },
             onDismiss = { controlsDialog = false },
+        )
+    }
+    if (replacementDialog) {
+        ExerciseReplacementDialog(
+            currentExercise = current.exercise,
+            catalog = bootstrap?.catalog.orEmpty(),
+            trainingDatesByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty()
+                .mapValues { (_, sessions) -> sessions.map { it.startedAt } },
+            serverUrl = repository.serverUrl,
+            loggedSetCount = currentSets.size,
+            busy = replacementBusy,
+            onConfirm = { replacement ->
+                scope.launch {
+                    replacementBusy = true
+                    try {
+                        repository.replaceProgramExercise(
+                            sessionId = sessionId,
+                            programExerciseId = current.id,
+                            replacementExerciseId = replacement.id,
+                        )
+                        replacementDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseReplaceError)
+                    } finally {
+                        replacementBusy = false
+                    }
+                }
+            },
+            onDismiss = { if (!replacementBusy) replacementDialog = false },
         )
     }
     if (resetDialog) {
@@ -2367,7 +2433,10 @@ private fun SessionActions(
 @Composable
 private fun WorkoutControlsDialog(
     workoutName: String,
+    currentExerciseName: String,
     startedAt: String,
+    replaceEnabled: Boolean,
+    onReplace: () -> Unit,
     onComplete: () -> Unit,
     onPause: () -> Unit,
     onReset: () -> Unit,
@@ -2384,6 +2453,20 @@ private fun WorkoutControlsDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    currentExerciseName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                OutlinedButton(
+                    onClick = onReplace,
+                    enabled = replaceEnabled,
+                    modifier = Modifier.fillMaxWidth().testTag("workout-replace-exercise"),
+                ) {
+                    Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.exercise_replace_action))
+                }
                 Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Flag, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -2705,6 +2788,17 @@ internal fun shouldPreserveRestoredWorkoutInputs(
 ): Boolean = hasAppliedAutofill && observedAutofillKey == null &&
     (weightText.isNotBlank() || repsText.isNotBlank() || rirText.isNotBlank())
 
+internal fun workoutEquipmentSelectionKey(target: ProgramExerciseDto): String =
+    "${target.id}|${target.exerciseId}"
+
+internal fun retainWorkoutEquipmentSelections(
+    selections: Map<String, String>,
+    targets: List<ProgramExerciseDto>,
+): Map<String, String> {
+    val activeKeys = targets.mapTo(mutableSetOf(), ::workoutEquipmentSelectionKey)
+    return selections.filterKeys { it in activeKeys }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun WorkoutScreenPreview(
@@ -2789,6 +2883,8 @@ internal fun WorkoutScreenPreview(
     var metrics by remember { mutableStateOf(listOf(SetTableMetric.ONE_RM)) }
     var previewSelectedIndex by remember { mutableIntStateOf(0) }
     var previewDetailsExerciseId by rememberSaveable { mutableStateOf<String?>(null) }
+    var previewControlsDialog by rememberSaveable { mutableStateOf(false) }
+    var previewReplacementDialog by rememberSaveable { mutableStateOf(false) }
     val previewDetailsExercise = previewDetailsExerciseId?.let { exerciseId ->
         exercises.firstOrNull { it.exerciseId == exerciseId }?.exercise
     }
@@ -2817,7 +2913,7 @@ internal fun WorkoutScreenPreview(
                 progress = 2f / 12f,
                 onSelect = { previewSelectedIndex = it },
                 onOpen = { previewDetailsExerciseId = it.id },
-                onOpenControls = {},
+                onOpenControls = { previewControlsDialog = true },
             )
         },
     ) { padding ->
@@ -2915,6 +3011,62 @@ internal fun WorkoutScreenPreview(
                 )
             }
         }
+    }
+    if (previewControlsDialog) {
+        WorkoutControlsDialog(
+            workoutName = "Monday",
+            currentExerciseName = exerciseDisplayName(previewTarget.exercise.name),
+            startedAt = "2026-07-13T10:00:00Z",
+            replaceEnabled = true,
+            onReplace = {
+                previewControlsDialog = false
+                previewReplacementDialog = true
+            },
+            onComplete = {},
+            onPause = {},
+            onReset = {},
+            onDismiss = { previewControlsDialog = false },
+        )
+    }
+    if (previewReplacementDialog) {
+        val previewCatalog = exercises.map { it.exercise } + listOf(
+            ExerciseDto(
+                id = "lying-leg-curl",
+                userId = "preview-user",
+                name = "Lying Leg Curl",
+                muscleGroup = "HAMSTRINGS",
+                category = "ISOLATION",
+                equipmentType = "MACHINE",
+                trainingDates = listOf("2026-07-01T10:00:00Z"),
+            ),
+            ExerciseDto(
+                id = "seated-cable-row",
+                userId = "preview-user",
+                name = "Seated Cable Row",
+                muscleGroup = "BACK_THICKNESS",
+                category = "COMPOUND",
+                equipmentType = "CABLE",
+            ),
+        )
+        ExerciseReplacementDialog(
+            currentExercise = previewTarget.exercise,
+            catalog = previewCatalog,
+            trainingDatesByExerciseId = previewCatalog.associate { it.id to it.trainingDates },
+            serverUrl = "https://gymcoach7.sharteman.duckdns.org",
+            loggedSetCount = sets.count { it.exerciseId == previewTarget.exerciseId && !it.deleted },
+            busy = false,
+            onConfirm = { replacement ->
+                exercises = exercises.map { target ->
+                    if (target.id == previewTarget.id) {
+                        target.copy(exerciseId = replacement.id, exercise = replacement)
+                    } else {
+                        target
+                    }
+                }
+                previewReplacementDialog = false
+            },
+            onDismiss = { previewReplacementDialog = false },
+        )
     }
     previewDetailsExercise?.let { exercise ->
         ExerciseDetailsDialog(

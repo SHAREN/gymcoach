@@ -61,6 +61,7 @@ import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.MobileUser
 import org.sharteman.gymcoach.data.model.ProfileDto
 import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
+import org.sharteman.gymcoach.data.model.ReplaceProgramExerciseOperation
 import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.SessionDto
@@ -1052,6 +1053,446 @@ class GymCoachRepositorySyncTest {
         assertEquals(5, laterOperation.previousTargetSets)
         assertEquals(6, laterOperation.targetSets)
         assertEquals(6, fixture.dao.cachedTargetSets())
+    }
+
+    @Test
+    fun replacingExerciseWithoutLoggedSetsUpdatesProgramRuntimeOutboxAndWatchMarker() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession()
+
+        assertTrue(fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        ))
+
+        val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
+        assertEquals("exercise_2", cached.activeProgramExerciseId())
+        assertEquals("exercise_2", cached.openSessionExerciseId(sessionId))
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertTrue(fixture.repository.localSets(sessionId).isEmpty())
+        val operation = fixture.decodeReplacementOperation(fixture.dao.queuedOperations().single())
+        assertEquals(sessionId, operation.sessionId)
+        assertEquals("program_exercise_1", operation.programExerciseId)
+        assertEquals("exercise_1", operation.previousExerciseId)
+        assertEquals("exercise_2", operation.replacementExerciseId)
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        val marker = requireNotNull(fixture.dao.getWatchResyncMarker(sessionId))
+        assertEquals(runtime.revision, marker.revision)
+        assertEquals("ACTIVE_EXERCISE_CHANGED", marker.reason)
+        assertEquals(listOf("EXERCISE"), publisher.commands)
+        assertEquals(1, fixture.syncCounter.count)
+    }
+
+    @Test
+    fun replacingExerciseKeepsLoggedSetsAttachedToTheOriginalExercise() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 2)
+        val before = fixture.repository.localSets(sessionId)
+
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+
+        assertEquals(before, fixture.repository.localSets(sessionId))
+        assertEquals(listOf("exercise_1", "exercise_1"), before.map { it.exerciseId })
+        assertEquals(listOf("set_replace_1", "set_replace_2"), before.map { it.id })
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+    }
+
+    @Test
+    fun staleBootstrapRefreshPreservesPendingExerciseReplacement() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        val stale = fixture.api.bootstrapResponse
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.bootstrapResponse = stale
+
+        val refreshed = fixture.repository.refreshBootstrap()
+
+        assertEquals("exercise_2", refreshed.activeProgramExerciseId())
+        assertEquals("exercise_2", refreshed.openSessionExerciseId(sessionId))
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun networkFailureKeepsReplacementDurableAcrossRepositoryRestartAndRetriesOnce() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 1)
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.syncFailure = IOException("offline")
+
+        val failed = runCatching { fixture.repository.syncPending() }
+
+        assertTrue(failed.exceptionOrNull() is IOException)
+        assertEquals("FAILED", fixture.dao.queuedOperations().single().status)
+        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = { fixture.syncCounter.count++ },
+            schedulePeriodicSync = {},
+        )
+        assertEquals("exercise_2", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_2", restarted.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals("exercise_1", restarted.localSets(sessionId).single().exerciseId)
+
+        fixture.api.syncFailure = null
+        fixture.api.syncCalls.clear()
+        fixture.api.syncHandler = { request ->
+            fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+                fixture.api.bootstrapResponse,
+                "program_exercise_1",
+                "exercise_2",
+            )
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(operationId = it.operationId, status = "APPLIED")
+                },
+            )
+        }
+
+        assertTrue(restarted.syncPending())
+        assertEquals(1, fixture.api.syncCalls.size)
+        assertEquals(1, fixture.api.syncCalls.single().operations.filterIsInstance<ReplaceProgramExerciseOperation>().size)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals("exercise_2", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_2", restarted.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+    }
+
+    @Test
+    fun rejectedReplacementRollsBackProgramRuntimeAndWatchMarker() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 1)
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "stale exercise")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.openSessionExerciseId(sessionId))
+        assertEquals("exercise_1", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
+    }
+
+    @Test
+    fun staleRejectedReplacementReconcilesProgramRuntimeAndWatchMarkerToAuthoritativeExercise() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 1)
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+            "exercise_3",
+        )
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "stale exercise")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
+        assertEquals("exercise_3", cached.activeProgramExerciseId())
+        assertEquals("exercise_3", cached.openSessionExerciseId(sessionId))
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("exercise_3", runtime.activeExerciseId)
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        assertEquals(listOf("EXERCISE", "EXERCISE", "EXERCISE"), publisher.commands)
+    }
+
+    @Test
+    fun blockedReplacementReconcilesToAuthoritativeExerciseAfterRepositoryRestart() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        val blocked = fixture.dao.queuedOperations().single()
+        fixture.dao.markOperationBlocked(blocked.operationId, "stale exercise")
+        fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+            "exercise_3",
+        )
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = { fixture.syncCounter.count++ },
+            schedulePeriodicSync = {},
+            watchCommandPublisher = publisher,
+        )
+
+        assertFalse(restarted.syncPending())
+
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        assertEquals("exercise_3", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        val runtime = requireNotNull(restarted.activeWorkoutRuntime(sessionId))
+        assertEquals("exercise_3", runtime.activeExerciseId)
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
+    }
+
+    @Test
+    fun rejectedReplacementWithDeletedAuthoritativeTargetClearsTheImpossibleOperationSafely() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 1)
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+        ).copy(
+            catalog = fixture.api.bootstrapResponse.catalog.filterNot { it.id == "exercise_2" },
+        )
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "target deleted")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals(
+            null,
+            findProgramExercise(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "program_exercise_1",
+            ),
+        )
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals(null, runtime.activeExerciseId)
+        val marker = requireNotNull(fixture.dao.getWatchResyncMarker(sessionId))
+        assertEquals(runtime.revision, marker.revision)
+        assertEquals("PROGRAM_EXERCISE_REMOVED", marker.reason)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
+        assertTrue(fixture.repository.syncPending())
+    }
+
+    @Test
+    fun retryingBlockedReplacementWithDeletedTargetClearsItAndTheStaleRuntime() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        val blocked = fixture.dao.queuedOperations().single()
+        fixture.dao.markOperationBlocked(blocked.operationId, "target deleted")
+        fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+        ).copy(
+            catalog = fixture.api.bootstrapResponse.catalog.filterNot { it.id == "exercise_2" },
+        )
+        fixture.repository.refreshBootstrap()
+
+        fixture.repository.retryBlockedChange()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals(null, runtime.activeExerciseId)
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals("PROGRAM_EXERCISE_REMOVED", fixture.dao.getWatchResyncMarker(sessionId)?.reason)
+    }
+
+    @Test
+    fun discardingBlockedReplacementWithDeletedTargetClearsItAndTheStaleRuntime() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        val blocked = fixture.dao.queuedOperations().single()
+        fixture.dao.markOperationBlocked(blocked.operationId, "target deleted")
+        fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+        )
+
+        fixture.repository.discardBlockedChange()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals(null, runtime.activeExerciseId)
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals("PROGRAM_EXERCISE_REMOVED", fixture.dao.getWatchResyncMarker(sessionId)?.reason)
+    }
+
+    @Test
+    fun retryingRejectedReplacementRestoresItAndSynchronizesExactlyOnce() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+            "exercise_3",
+        )
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "stale exercise")
+                },
+            )
+        }
+        assertFalse(fixture.repository.syncPending())
+        assertEquals("exercise_3", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_3", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        fixture.api.syncCalls.clear()
+        fixture.api.syncHandler = { request ->
+            fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+                fixture.api.bootstrapResponse,
+                "program_exercise_1",
+                "exercise_2",
+            )
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "APPLIED")
+                },
+            )
+        }
+
+        fixture.repository.retryBlockedChange()
+
+        val retried = fixture.dao.queuedOperations().single()
+        assertEquals("PENDING", retried.status)
+        assertEquals("exercise_3", fixture.decodeReplacementOperation(retried).previousExerciseId)
+        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertTrue(fixture.repository.syncPending())
+        assertEquals(1, fixture.api.syncCalls.size)
+        assertEquals(1, fixture.api.syncCalls.single().operations.filterIsInstance<ReplaceProgramExerciseOperation>().size)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun discardingStaleRejectedReplacementKeepsAuthoritativeProgramRuntimeAndWatchMarker() = runTest {
+        val publisher = RecordingWatchPublisher()
+        val fixture = fixture(publisher)
+        val sessionId = fixture.prepareExerciseReplacementSession(loggedSetCount = 1)
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+        fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
+            fixture.api.bootstrapResponse,
+            "program_exercise_1",
+            "exercise_3",
+        )
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "stale exercise")
+                },
+            )
+        }
+        assertFalse(fixture.repository.syncPending())
+
+        fixture.repository.discardBlockedChange()
+
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
+        assertEquals("exercise_3", cached.activeProgramExerciseId())
+        assertEquals("exercise_3", cached.openSessionExerciseId(sessionId))
+        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("exercise_3", runtime.activeExerciseId)
+        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        assertEquals(listOf("EXERCISE", "EXERCISE", "EXERCISE"), publisher.commands)
+    }
+
+    @Test
+    fun secondReplacementIsRefusedWhileTheFirstIsPending() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareExerciseReplacementSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_2",
+        )
+
+        val second = runCatching {
+            fixture.repository.replaceProgramExercise(
+                sessionId = sessionId,
+                programExerciseId = "program_exercise_1",
+                replacementExerciseId = "exercise_1",
+            )
+        }
+
+        assertTrue(second.exceptionOrNull() is IllegalStateException)
+        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
     }
 
     @Test
@@ -2382,6 +2823,7 @@ class GymCoachRepositorySyncTest {
         activeProgram: ProgramDto? = null,
         exerciseHistoryByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
         gyms: List<GymDto> = emptyList(),
+        catalog: List<ExerciseDto> = emptyList(),
     ) = BootstrapResponse(
         schemaVersion = 1,
         calculationVersion = "test",
@@ -2389,6 +2831,7 @@ class GymCoachRepositorySyncTest {
         profile = ProfileDto(id = "user_1", email = "user@example.com"),
         activeProgram = activeProgram,
         gyms = gyms,
+        catalog = catalog,
         openSessions = openSessions,
         exerciseHistoryByExerciseId = exerciseHistoryByExerciseId,
     )
@@ -2438,8 +2881,31 @@ class GymCoachRepositorySyncTest {
                 ?.trim('"')
         }
 
-    private fun bootstrapWithTargetSets(targetSets: Int) = bootstrap(
-        activeProgram = ProgramDto(
+    private fun bootstrapWithTargetSets(targetSets: Int): BootstrapResponse {
+        val originalExercise = ExerciseDto(
+            id = "exercise_1",
+            name = "Bench press",
+            muscleGroup = "CHEST",
+            category = "STRENGTH",
+            equipmentType = "BARBELL",
+        )
+        val replacementExercise = ExerciseDto(
+            id = "exercise_2",
+            name = "Incline dumbbell press",
+            muscleGroup = "CHEST",
+            category = "STRENGTH",
+            equipmentType = "DUMBBELL",
+        )
+        val authoritativeThirdExercise = ExerciseDto(
+            id = "exercise_3",
+            name = "Machine chest press",
+            muscleGroup = "CHEST",
+            category = "STRENGTH",
+            equipmentType = "MACHINE",
+        )
+        return bootstrap(
+            catalog = listOf(originalExercise, replacementExercise, authoritativeThirdExercise),
+            activeProgram = ProgramDto(
             id = "program_1",
             name = "Test program",
             phase = "HYPERTROPHY",
@@ -2460,18 +2926,82 @@ class GymCoachRepositorySyncTest {
                             targetRepsMax = 12,
                             targetRIR = 2,
                             restSec = 120,
-                            exercise = ExerciseDto(
-                                id = "exercise_1",
-                                name = "Bench press",
-                                muscleGroup = "CHEST",
-                                category = "STRENGTH",
-                            ),
+                            exercise = originalExercise,
                         ),
                     ),
                 ),
             ),
-        ),
-    )
+            ),
+        )
+    }
+
+    private suspend fun Fixture.prepareExerciseReplacementSession(loggedSetCount: Int = 0): String {
+        val response = bootstrapWithTargetSets(3)
+        val workout = requireNotNull(response.activeProgram).workouts.single()
+        val sessionId = "session_replace_$loggedSetCount"
+        val loggedSets = List(loggedSetCount) { index ->
+            SetDto(
+                id = "set_replace_${index + 1}",
+                sessionId = sessionId,
+                exerciseId = "exercise_1",
+                setNumber = index + 1,
+                weight = 80.0 + index,
+                reps = 8,
+                rir = 2,
+                completedAt = "2026-07-13T10:0${index + 1}:00Z",
+            )
+        }
+        api.bootstrapResponse = response.copy(
+            openSessions = listOf(
+                SessionDto(
+                    id = sessionId,
+                    programId = response.activeProgram.id,
+                    workoutId = workout.id,
+                    startedAt = "2026-07-13T10:00:00Z",
+                    sets = loggedSets,
+                    workout = workout,
+                ),
+            ),
+        )
+        repository.refreshBootstrap()
+        dao.saveActiveWorkoutRuntime(
+            ActiveWorkoutRuntimeEntity(
+                sessionId = sessionId,
+                workoutId = workout.id,
+                activeExerciseId = "exercise_1",
+                revision = 1,
+                updatedAtEpochMs = 1_000,
+            ),
+        )
+        return sessionId
+    }
+
+    private fun BootstrapResponse.activeProgramExerciseId(): String? =
+        activeProgram?.workouts?.singleOrNull()?.exercises?.singleOrNull()?.exerciseId
+
+    private fun BootstrapResponse.openSessionExerciseId(sessionId: String): String? =
+        openSessions.firstOrNull { it.id == sessionId }
+            ?.workout
+            ?.exercises
+            ?.singleOrNull()
+            ?.exerciseId
+
+    private fun removeProgramExerciseFromBootstrap(
+        bootstrap: BootstrapResponse,
+        programExerciseId: String,
+    ): BootstrapResponse {
+        fun removeFromWorkout(workout: WorkoutDto): WorkoutDto = workout.copy(
+            exercises = workout.exercises.filterNot { it.id == programExerciseId },
+        )
+        return bootstrap.copy(
+            activeProgram = bootstrap.activeProgram?.let { program ->
+                program.copy(workouts = program.workouts.map(::removeFromWorkout))
+            },
+            openSessions = bootstrap.openSessions.map { session ->
+                session.copy(workout = session.workout?.let(::removeFromWorkout))
+            },
+        )
+    }
 
     private fun progressSnapshot(generatedAt: String) = MobileProgressSnapshot(
         schemaVersion = 1,
@@ -2519,6 +3049,9 @@ class GymCoachRepositorySyncTest {
 
         fun decodeTargetSetsOperation(entity: SyncOutboxEntity): UpdateTargetSetsOperation =
             api.json.decodeFromString<SyncOperation>(entity.payloadJson) as UpdateTargetSetsOperation
+
+        fun decodeReplacementOperation(entity: SyncOutboxEntity): ReplaceProgramExerciseOperation =
+            api.json.decodeFromString<SyncOperation>(entity.payloadJson) as ReplaceProgramExerciseOperation
 
         suspend fun upsertEntries(): List<Pair<SyncOutboxEntity, UpsertSetOperation>> =
             dao.queuedOperations().mapNotNull { entity ->
@@ -2988,6 +3521,22 @@ class GymCoachRepositorySyncTest {
         override suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long) {
             updateOperation(operationId) {
                 it.copy(
+                    status = "PENDING",
+                    lastError = null,
+                    lastRetryRequestedAtEpochMs = requestedAtEpochMs,
+                )
+            }
+        }
+        override suspend fun retryOperationWithPayload(
+            operationId: String,
+            type: String,
+            payloadJson: String,
+            requestedAtEpochMs: Long,
+        ) {
+            updateOperation(operationId) {
+                it.copy(
+                    type = type,
+                    payloadJson = payloadJson,
                     status = "PENDING",
                     lastError = null,
                     lastRetryRequestedAtEpochMs = requestedAtEpochMs,

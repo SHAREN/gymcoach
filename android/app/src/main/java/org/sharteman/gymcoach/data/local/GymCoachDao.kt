@@ -377,6 +377,18 @@ interface GymCoachDao {
     )
     suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long)
 
+    @Query(
+        "UPDATE sync_outbox SET type = :type, payloadJson = :payloadJson, status = 'PENDING', " +
+            "lastError = NULL, lastRetryRequestedAtEpochMs = :requestedAtEpochMs " +
+            "WHERE operationId = :operationId",
+    )
+    suspend fun retryOperationWithPayload(
+        operationId: String,
+        type: String,
+        payloadJson: String,
+        requestedAtEpochMs: Long,
+    )
+
     @Query("UPDATE sync_outbox SET status = 'PENDING' WHERE status = 'SYNCING'")
     suspend fun recoverInterruptedOperations()
 
@@ -521,6 +533,67 @@ interface GymCoachDao {
     ) {
         saveBootstrap(bootstrap)
         enqueue(operation)
+    }
+
+    @Transaction
+    suspend fun saveExerciseReplacement(
+        bootstrap: BootstrapCacheEntity,
+        operation: SyncOutboxEntity,
+        runtime: ActiveWorkoutRuntimeEntity,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        saveBootstrap(bootstrap)
+        enqueue(operation)
+        saveActiveWorkoutRuntime(runtime)
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun blockAndRollbackExerciseReplacement(
+        operationId: String,
+        error: String,
+        bootstrap: BootstrapCacheEntity,
+        runtime: ActiveWorkoutRuntimeEntity?,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        markOperationBlocked(operationId, error)
+        saveBootstrap(bootstrap)
+        runtime?.let { saveActiveWorkoutRuntime(it) }
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun retryAndRestoreExerciseReplacement(
+        operationId: String,
+        operationType: String,
+        payloadJson: String,
+        requestedAtEpochMs: Long,
+        bootstrap: BootstrapCacheEntity,
+        runtime: ActiveWorkoutRuntimeEntity?,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        retryOperationWithPayload(
+            operationId = operationId,
+            type = operationType,
+            payloadJson = payloadJson,
+            requestedAtEpochMs = requestedAtEpochMs,
+        )
+        saveBootstrap(bootstrap)
+        runtime?.let { saveActiveWorkoutRuntime(it) }
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun reconcileExerciseReplacement(
+        bootstrap: BootstrapCacheEntity,
+        operationIdToRemove: String?,
+        runtime: ActiveWorkoutRuntimeEntity?,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        saveBootstrap(bootstrap)
+        operationIdToRemove?.let { removeOperations(listOf(it)) }
+        runtime?.let { saveActiveWorkoutRuntime(it) }
+        marker?.let { saveWatchResyncMarker(it) }
     }
 
     @Transaction

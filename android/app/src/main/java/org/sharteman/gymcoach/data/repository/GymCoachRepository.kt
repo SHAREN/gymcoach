@@ -49,7 +49,9 @@ import org.sharteman.gymcoach.data.model.MobileFrozenPlatePoolSnapshot
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.MobileSetPayload
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
+import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
+import org.sharteman.gymcoach.data.model.ReplaceProgramExerciseOperation
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncOperation
@@ -219,6 +221,15 @@ class GymCoachRepository(
 
     suspend fun retryBlockedChange() = syncMutex.withLock {
         val blocked = dao.queuedOperations().firstOrNull { it.status == "BLOCKED" } ?: return@withLock
+        val operation = runCatching {
+            api.json.decodeFromString<SyncOperation>(blocked.payloadJson)
+        }.getOrNull()
+        if (operation is ReplaceProgramExerciseOperation) {
+            val watchCommand = restoreBlockedExerciseReplacement(operation, blocked.operationId)
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncSafely()
+            return@withLock
+        }
         dao.retryOperation(blocked.operationId, System.currentTimeMillis())
         scheduleSyncNow()
     }
@@ -244,7 +255,19 @@ class GymCoachRepository(
                     ?.set
                     ?.sessionId
             is UpdateTargetSetsOperation -> null
+            is ReplaceProgramExerciseOperation -> null
             null -> null
+        }
+        if (operation is ReplaceProgramExerciseOperation) {
+            val authoritative = refreshBootstrap()
+            val watchCommand = reconcileExerciseReplacementWithAuthoritativeBootstrap(
+                operation = operation,
+                authoritative = authoritative,
+                operationIdToRemove = blocked.operationId,
+            )
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncSafely()
+            return@withLock
         }
         if (operation is UpdateTargetSetsOperation) {
             val cached = dao.getBootstrap()
@@ -300,6 +323,7 @@ class GymCoachRepository(
                     is DeleteSessionOperation -> queued.sessionId == sessionId
                     is DeleteSetOperation -> queued.setId in localSetIds
                     is UpdateTargetSetsOperation -> false
+                    is ReplaceProgramExerciseOperation -> false
                     null -> entry.operationId == blocked.operationId
                 }
                 entry.operationId.takeIf { related }
@@ -414,6 +438,11 @@ class GymCoachRepository(
                 runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
                     .getOrNull() as? UpdateTargetSetsOperation
             }
+            val pendingExerciseReplacements = queuedOperations.mapNotNull { entry ->
+                if (entry.status == "BLOCKED") return@mapNotNull null
+                runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
+                    .getOrNull() as? ReplaceProgramExerciseOperation
+            }
             val targets = pendingMutationTargets(queuedOperations, api.json)
             val pendingFinishedSessions = if (targets.complete) {
                 targets.sessionIds.mapNotNull { sessionId ->
@@ -432,8 +461,15 @@ class GymCoachRepository(
             val effective = pendingTargetUpdates.fold(historyMerged) { current, operation ->
                 updateProgramExerciseTargetSets(current, operation.programExerciseId, operation.targetSets)
             }
+            val replacementProtected = pendingExerciseReplacements.fold(effective) { current, operation ->
+                replaceProgramExerciseInBootstrap(
+                    current,
+                    operation.programExerciseId,
+                    operation.replacementExerciseId,
+                )
+            }
             val exerciseProtection = capturedExerciseProtection + captureExerciseEditProtection()
-            val protectedExerciseMetadata = exerciseProtection.entries.fold(effective) { current, entry ->
+            val protectedExerciseMetadata = exerciseProtection.entries.fold(replacementProtected) { current, entry ->
                 applyExerciseInputToBootstrap(current, entry.key, entry.value)
             }
             dao.saveBootstrap(
@@ -856,6 +892,99 @@ class GymCoachRepository(
         scheduleSyncNow()
     }
 
+    suspend fun replaceProgramExercise(
+        sessionId: String,
+        programExerciseId: String,
+        replacementExerciseId: String,
+    ): Boolean = syncMutex.withLock {
+        var watchCommand: PreparedWatchCommand? = null
+        val replaced = watchCommandMutex.withLock {
+            bootstrapCacheMutex.withLock {
+                val pendingReplacement = dao.queuedOperations().asSequence()
+                    .mapNotNull { entry ->
+                        runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }
+                            .getOrNull() as? ReplaceProgramExerciseOperation
+                    }
+                    .firstOrNull { it.programExerciseId == programExerciseId }
+                check(pendingReplacement == null) {
+                    "This exercise replacement is still waiting to synchronize."
+                }
+
+                val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
+                val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                val current = requireNotNull(findProgramExercise(bootstrap, programExerciseId)) {
+                    "Program exercise was not found in the cached program."
+                }
+                require(replacementExerciseId != current.exerciseId) {
+                    "Replacement exercise must differ from the current exercise."
+                }
+                requireNotNull(bootstrap.catalog.firstOrNull { it.id == replacementExerciseId }) {
+                    "Replacement exercise is not available in the cached catalog."
+                }
+                val session = requireNotNull(dao.getSession(sessionId)) { "Workout session was not found." }
+                check(session.finishedAt == null) { "Workout is no longer active." }
+                check(session.workoutId == current.workoutId) {
+                    "Program exercise does not belong to the active workout."
+                }
+                val runtime = requireNotNull(dao.getActiveWorkoutRuntime(sessionId)) {
+                    "Active workout state was not found."
+                }
+                check(runtime.status != "FINISHED" && runtime.activeExerciseId == current.exerciseId) {
+                    "The active exercise changed. Open replacement again."
+                }
+
+                val changedAt = System.currentTimeMillis()
+                val updatedRuntime = nextPhoneRuntime(runtime, changedAt) { currentRuntime ->
+                    currentRuntime.copy(
+                        activeExerciseId = replacementExerciseId,
+                        activeSetId = null,
+                        setStartedAtEpochMs = null,
+                        setAccumulatedPauseMs = 0,
+                        restStartedAtEpochMs = null,
+                        restEndsAtEpochMs = null,
+                        restDurationSeconds = null,
+                        restPausedRemainingMs = null,
+                    )
+                }
+                val operation = ReplaceProgramExerciseOperation(
+                    operationId = operationId(),
+                    sessionId = sessionId,
+                    programExerciseId = programExerciseId,
+                    previousExerciseId = current.exerciseId,
+                    replacementExerciseId = replacementExerciseId,
+                )
+                val updatedBootstrap = replaceProgramExerciseInBootstrap(
+                    bootstrap,
+                    programExerciseId,
+                    replacementExerciseId,
+                )
+                dao.saveExerciseReplacement(
+                    bootstrap = cached.copy(
+                        payloadJson = api.json.encodeToString(updatedBootstrap),
+                        updatedAtEpochMs = changedAt,
+                    ),
+                    operation = outbox(operation),
+                    runtime = updatedRuntime,
+                    marker = watchMarker(updatedRuntime, "ACTIVE_EXERCISE_CHANGED"),
+                )
+                watchCommand = prepareWatchCommand {
+                    watchCommandPublisher.activeExerciseChanged(
+                        sessionId,
+                        replacementExerciseId,
+                        updatedRuntime.revision,
+                        changedAt,
+                    )
+                }
+                true
+            }
+        }
+        if (replaced) {
+            dispatchPreparedWatchCommand(watchCommand)
+            scheduleSyncSafely()
+        }
+        replaced
+    }
+
     suspend fun addSet(
         sessionId: String,
         exerciseId: String,
@@ -1251,7 +1380,7 @@ class GymCoachRepository(
                 is DeleteSessionOperation -> queued.sessionId == sessionId
                 is DeleteSetOperation -> queued.setId in localSetIds ||
                     queuedSetSessions[queued.setId] == sessionId
-                is UpdateTargetSetsOperation, null -> false
+                is UpdateTargetSetsOperation, is ReplaceProgramExerciseOperation, null -> false
             }
             entry.operationId.takeIf { related }
         }
@@ -1282,14 +1411,349 @@ class GymCoachRepository(
                 }
         }
 
+    private suspend fun blockRejectedOperation(
+        entry: SyncOutboxEntity,
+        operation: SyncOperation,
+        error: String,
+    ) {
+        if (operation !is ReplaceProgramExerciseOperation) {
+            dao.markOperationBlocked(entry.operationId, error)
+            return
+        }
+        val watchCommand = rollbackRejectedExerciseReplacement(operation, entry.operationId, error)
+        dispatchPreparedWatchCommand(watchCommand)
+    }
+
+    private suspend fun rollbackRejectedExerciseReplacement(
+        operation: ReplaceProgramExerciseOperation,
+        operationId: String,
+        error: String,
+    ): PreparedWatchCommand? = watchCommandMutex.withLock {
+        bootstrapCacheMutex.withLock bootstrapLock@{
+            val cached = dao.getBootstrap()
+            val bootstrap = cached?.let { entity ->
+                runCatching { api.json.decodeFromString<BootstrapResponse>(entity.payloadJson) }.getOrNull()
+            }
+            if (cached == null || bootstrap == null) {
+                dao.markOperationBlocked(operationId, error)
+                return@bootstrapLock null
+            }
+            val changedAt = System.currentTimeMillis()
+            val restoredBootstrap = replaceProgramExerciseInBootstrap(
+                bootstrap,
+                operation.programExerciseId,
+                operation.previousExerciseId,
+            )
+            val currentRuntime = dao.getActiveWorkoutRuntime(operation.sessionId)
+            val restoredRuntime = currentRuntime
+                ?.takeIf { it.activeExerciseId == operation.replacementExerciseId }
+                ?.let { runtime ->
+                    nextPhoneRuntime(runtime, changedAt) { current ->
+                        current.copy(
+                            activeExerciseId = operation.previousExerciseId,
+                            activeSetId = null,
+                            setStartedAtEpochMs = null,
+                            setAccumulatedPauseMs = 0,
+                            restStartedAtEpochMs = null,
+                            restEndsAtEpochMs = null,
+                            restDurationSeconds = null,
+                            restPausedRemainingMs = null,
+                        )
+                    }
+                }
+            dao.blockAndRollbackExerciseReplacement(
+                operationId = operationId,
+                error = error,
+                bootstrap = cached.copy(
+                    payloadJson = api.json.encodeToString(restoredBootstrap),
+                    updatedAtEpochMs = changedAt,
+                ),
+                runtime = restoredRuntime,
+                marker = restoredRuntime?.let { watchMarker(it, "ACTIVE_EXERCISE_CHANGED") },
+            )
+            restoredRuntime?.let { runtime ->
+                prepareWatchCommand {
+                    watchCommandPublisher.activeExerciseChanged(
+                        operation.sessionId,
+                        operation.previousExerciseId,
+                        runtime.revision,
+                        changedAt,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun restoreBlockedExerciseReplacement(
+        operation: ReplaceProgramExerciseOperation,
+        operationId: String,
+    ): PreparedWatchCommand? = watchCommandMutex.withLock {
+        bootstrapCacheMutex.withLock bootstrapLock@{
+            val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
+            val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+            val changedAt = System.currentTimeMillis()
+            val currentRuntime = dao.getActiveWorkoutRuntime(operation.sessionId)
+            val authoritativeTarget = findProgramExercise(bootstrap, operation.programExerciseId)
+            if (authoritativeTarget == null) {
+                val safeExerciseId = safeExerciseIdAfterRemovedTarget(
+                    bootstrap = bootstrap,
+                    sessionId = operation.sessionId,
+                )
+                val reconciledRuntime = currentRuntime
+                    ?.takeIf {
+                        it.status != "FINISHED" &&
+                            it.activeExerciseId in setOf(
+                                operation.previousExerciseId,
+                                operation.replacementExerciseId,
+                            ) &&
+                            it.activeExerciseId != safeExerciseId
+                    }
+                    ?.let { runtime ->
+                        nextPhoneRuntime(runtime, changedAt) { current ->
+                            current.copy(
+                                activeExerciseId = safeExerciseId,
+                                activeSetId = null,
+                                setStartedAtEpochMs = null,
+                                setAccumulatedPauseMs = 0,
+                                restStartedAtEpochMs = null,
+                                restEndsAtEpochMs = null,
+                                restDurationSeconds = null,
+                                restPausedRemainingMs = null,
+                            )
+                        }
+                    }
+                dao.reconcileExerciseReplacement(
+                    bootstrap = cached,
+                    operationIdToRemove = operationId,
+                    runtime = reconciledRuntime,
+                    marker = reconciledRuntime?.let {
+                        watchMarker(it, "PROGRAM_EXERCISE_REMOVED")
+                    },
+                )
+                return@bootstrapLock safeExerciseId?.let { exerciseId ->
+                    reconciledRuntime?.let { runtime ->
+                        prepareWatchCommand {
+                            watchCommandPublisher.activeExerciseChanged(
+                                operation.sessionId,
+                                exerciseId,
+                                runtime.revision,
+                                changedAt,
+                            )
+                        }
+                    }
+                }
+            }
+            requireNotNull(bootstrap.catalog.firstOrNull { it.id == operation.replacementExerciseId }) {
+                "Replacement exercise is no longer available in the cached catalog."
+            }
+            val eligibleActiveExerciseIds = setOf(
+                operation.previousExerciseId,
+                operation.replacementExerciseId,
+                authoritativeTarget.exerciseId,
+            )
+            val restoredRuntime = currentRuntime
+                ?.takeIf {
+                    it.status != "FINISHED" &&
+                        it.activeExerciseId in eligibleActiveExerciseIds &&
+                        it.activeExerciseId != operation.replacementExerciseId
+                }
+                ?.let { runtime ->
+                    nextPhoneRuntime(runtime, changedAt) { current ->
+                        current.copy(
+                            activeExerciseId = operation.replacementExerciseId,
+                            activeSetId = null,
+                            setStartedAtEpochMs = null,
+                            setAccumulatedPauseMs = 0,
+                            restStartedAtEpochMs = null,
+                            restEndsAtEpochMs = null,
+                            restDurationSeconds = null,
+                            restPausedRemainingMs = null,
+                        )
+                    }
+                }
+            if (authoritativeTarget.exerciseId == operation.replacementExerciseId) {
+                dao.reconcileExerciseReplacement(
+                    bootstrap = cached,
+                    operationIdToRemove = operationId,
+                    runtime = restoredRuntime,
+                    marker = restoredRuntime?.let { watchMarker(it, "ACTIVE_EXERCISE_CHANGED") },
+                )
+                return@bootstrapLock restoredRuntime?.let { runtime ->
+                    prepareWatchCommand {
+                        watchCommandPublisher.activeExerciseChanged(
+                            operation.sessionId,
+                            operation.replacementExerciseId,
+                            runtime.revision,
+                            changedAt,
+                        )
+                    }
+                }
+            }
+            val rebasedOperation = operation.copy(
+                previousExerciseId = authoritativeTarget.exerciseId,
+            )
+            val rewrittenOutbox = outbox(rebasedOperation)
+            val restoredBootstrap = replaceProgramExerciseInBootstrap(
+                bootstrap,
+                operation.programExerciseId,
+                operation.replacementExerciseId,
+            )
+            dao.retryAndRestoreExerciseReplacement(
+                operationId = operationId,
+                operationType = rewrittenOutbox.type,
+                payloadJson = rewrittenOutbox.payloadJson,
+                requestedAtEpochMs = changedAt,
+                bootstrap = cached.copy(
+                    payloadJson = api.json.encodeToString(restoredBootstrap),
+                    updatedAtEpochMs = changedAt,
+                ),
+                runtime = restoredRuntime,
+                marker = restoredRuntime?.let { watchMarker(it, "ACTIVE_EXERCISE_CHANGED") },
+            )
+            restoredRuntime?.let { runtime ->
+                prepareWatchCommand {
+                    watchCommandPublisher.activeExerciseChanged(
+                        operation.sessionId,
+                        operation.replacementExerciseId,
+                        runtime.revision,
+                        changedAt,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun reconcileExerciseReplacementWithAuthoritativeBootstrap(
+        operation: ReplaceProgramExerciseOperation,
+        authoritative: BootstrapResponse,
+        operationIdToRemove: String? = null,
+    ): PreparedWatchCommand? = watchCommandMutex.withLock {
+        bootstrapCacheMutex.withLock bootstrapLock@{
+            val authoritativeTarget = findProgramExercise(
+                authoritative,
+                operation.programExerciseId,
+            )
+            val cached = dao.getBootstrap() ?: return@bootstrapLock null
+            val currentRuntime = dao.getActiveWorkoutRuntime(operation.sessionId)
+            val eligibleActiveExerciseIds = setOf(
+                operation.previousExerciseId,
+                operation.replacementExerciseId,
+            )
+            val changedAt = System.currentTimeMillis()
+            if (authoritativeTarget == null) {
+                val safeExerciseId = safeExerciseIdAfterRemovedTarget(
+                    bootstrap = authoritative,
+                    sessionId = operation.sessionId,
+                )
+                val reconciledRuntime = currentRuntime
+                    ?.takeIf {
+                        it.status != "FINISHED" &&
+                            it.activeExerciseId in eligibleActiveExerciseIds &&
+                            it.activeExerciseId != safeExerciseId
+                    }
+                    ?.let { runtime ->
+                        nextPhoneRuntime(runtime, changedAt) { current ->
+                            current.copy(
+                                activeExerciseId = safeExerciseId,
+                                activeSetId = null,
+                                setStartedAtEpochMs = null,
+                                setAccumulatedPauseMs = 0,
+                                restStartedAtEpochMs = null,
+                                restEndsAtEpochMs = null,
+                                restDurationSeconds = null,
+                                restPausedRemainingMs = null,
+                            )
+                        }
+                    }
+                dao.reconcileExerciseReplacement(
+                    bootstrap = cached,
+                    operationIdToRemove = operationIdToRemove ?: operation.operationId,
+                    runtime = reconciledRuntime,
+                    marker = reconciledRuntime?.let {
+                        watchMarker(it, "PROGRAM_EXERCISE_REMOVED")
+                    },
+                )
+                return@bootstrapLock safeExerciseId?.let { exerciseId ->
+                    reconciledRuntime?.let { runtime ->
+                        prepareWatchCommand {
+                            watchCommandPublisher.activeExerciseChanged(
+                                operation.sessionId,
+                                exerciseId,
+                                runtime.revision,
+                                changedAt,
+                            )
+                        }
+                    }
+                }
+            }
+            val reconciledRuntime = currentRuntime
+                ?.takeIf {
+                    it.status != "FINISHED" &&
+                        it.activeExerciseId in eligibleActiveExerciseIds &&
+                        it.activeExerciseId != authoritativeTarget.exerciseId
+                }
+                ?.let { runtime ->
+                    nextPhoneRuntime(runtime, changedAt) { current ->
+                        current.copy(
+                            activeExerciseId = authoritativeTarget.exerciseId,
+                            activeSetId = null,
+                            setStartedAtEpochMs = null,
+                            setAccumulatedPauseMs = 0,
+                            restStartedAtEpochMs = null,
+                            restEndsAtEpochMs = null,
+                            restDurationSeconds = null,
+                            restPausedRemainingMs = null,
+                        )
+                    }
+                }
+            dao.reconcileExerciseReplacement(
+                bootstrap = cached,
+                operationIdToRemove = operationIdToRemove,
+                runtime = reconciledRuntime,
+                marker = reconciledRuntime?.let { watchMarker(it, "ACTIVE_EXERCISE_CHANGED") },
+            )
+            reconciledRuntime?.let { runtime ->
+                prepareWatchCommand {
+                    watchCommandPublisher.activeExerciseChanged(
+                        operation.sessionId,
+                        authoritativeTarget.exerciseId,
+                        runtime.revision,
+                        changedAt,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun safeExerciseIdAfterRemovedTarget(
+        bootstrap: BootstrapResponse,
+        sessionId: String,
+    ): String? {
+        val embeddedWorkout = bootstrap.openSessions.firstOrNull { it.id == sessionId }?.workout
+        val workoutId = embeddedWorkout?.id ?: dao.getSession(sessionId)?.workoutId
+        val workout = embeddedWorkout
+            ?: bootstrap.activeProgram?.workouts?.firstOrNull { it.id == workoutId }
+            ?: bootstrap.openSessions.asSequence()
+                .mapNotNull { it.workout }
+                .firstOrNull { it.id == workoutId }
+        return workout?.exercises
+            ?.minWithOrNull(compareBy<ProgramExerciseDto> { it.order }.thenBy { it.id })
+            ?.exerciseId
+    }
+
     suspend fun syncPending(): Boolean = syncMutex.withLock {
         val token = accountStore.getAccessToken() ?: return true
         dao.recoverInterruptedOperations()
         var allAccepted = true
+        var rejectedReplacement: ReplaceProgramExerciseOperation? = null
 
         while (true) {
             val queue = dao.queuedOperations()
-            if (queue.firstOrNull()?.status == "BLOCKED") {
+            val blockedHead = queue.firstOrNull()?.takeIf { it.status == "BLOCKED" }
+            if (blockedHead != null) {
+                rejectedReplacement = runCatching {
+                    api.json.decodeFromString<SyncOperation>(blockedHead.payloadJson)
+                }.getOrNull() as? ReplaceProgramExerciseOperation
                 allAccepted = false
                 break
             }
@@ -1336,9 +1800,12 @@ class GymCoachRepository(
                     throw MobileAuthenticationRequiredException()
                 }
                 if (error is ApiException && error.statusCode in 400..499 && error.statusCode != 429) {
-                    dao.markOperationBlocked(
-                        decoded.first().first.operationId,
-                        error.message ?: "Server rejected the synchronization batch.",
+                    val (entry, operation) = decoded.first()
+                    rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                    blockRejectedOperation(
+                        entry = entry,
+                        operation = operation,
+                        error = error.message ?: "Server rejected the synchronization batch.",
                     )
                     allAccepted = false
                     break
@@ -1364,13 +1831,19 @@ class GymCoachRepository(
                 when (result.status) {
                     "APPLIED", "DUPLICATE" -> applied += result.operationId
                     "REJECTED" -> {
-                        dao.markOperationBlocked(result.operationId, result.error ?: "Rejected")
+                        rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                        blockRejectedOperation(entry, operation, result.error ?: "Rejected")
                         allAccepted = false
                         stopAfterCurrentBatch = true
                         break
                     }
                     else -> {
-                        dao.markOperationBlocked(result.operationId, result.error ?: "Unknown sync status")
+                        rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                        blockRejectedOperation(
+                            entry,
+                            operation,
+                            result.error ?: "Unknown sync status",
+                        )
                         allAccepted = false
                         stopAfterCurrentBatch = true
                         break
@@ -1381,6 +1854,16 @@ class GymCoachRepository(
             if (stopAfterCurrentBatch) break
         }
         runCatching { refreshBootstrap() }
+            .getOrNull()
+            ?.let { authoritative ->
+                rejectedReplacement?.let { operation ->
+                    val watchCommand = reconcileExerciseReplacementWithAuthoritativeBootstrap(
+                        operation = operation,
+                        authoritative = authoritative,
+                    )
+                    dispatchPreparedWatchCommand(watchCommand)
+                }
+            }
         runCatching { refreshProgress() }
         allAccepted
     }
@@ -1920,6 +2403,7 @@ internal fun pendingMutationTargets(
                 deletedSessionIds += operation.sessionId
             }
             is UpdateTargetSetsOperation -> Unit
+            is ReplaceProgramExerciseOperation -> Unit
         }
     }
     return PendingMutationTargets(sessionIds, setIds, deletedSessionIds, complete = true)
@@ -1938,6 +2422,44 @@ internal fun findProgramExerciseTargetSets(
         .flatMap { it.exercises.asSequence() }
         .firstOrNull { it.id == programExerciseId }
         ?.targetSets
+
+internal fun findProgramExercise(
+    bootstrap: BootstrapResponse,
+    programExerciseId: String,
+): ProgramExerciseDto? = bootstrap.activeProgram?.workouts
+    ?.asSequence()
+    ?.flatMap { it.exercises.asSequence() }
+    ?.firstOrNull { it.id == programExerciseId }
+    ?: bootstrap.openSessions.asSequence()
+        .mapNotNull { it.workout }
+        .flatMap { it.exercises.asSequence() }
+        .firstOrNull { it.id == programExerciseId }
+
+internal fun replaceProgramExerciseInBootstrap(
+    bootstrap: BootstrapResponse,
+    programExerciseId: String,
+    replacementExerciseId: String,
+): BootstrapResponse {
+    val replacement = bootstrap.catalog.firstOrNull { it.id == replacementExerciseId }
+        ?: return bootstrap
+    fun updateWorkout(workout: WorkoutDto): WorkoutDto = workout.copy(
+        exercises = workout.exercises.map { target ->
+            if (target.id == programExerciseId) {
+                target.copy(exerciseId = replacement.id, exercise = replacement)
+            } else {
+                target
+            }
+        },
+    )
+    return bootstrap.copy(
+        activeProgram = bootstrap.activeProgram?.let { program ->
+            program.copy(workouts = program.workouts.map(::updateWorkout))
+        },
+        openSessions = bootstrap.openSessions.map { session ->
+            session.copy(workout = session.workout?.let(::updateWorkout))
+        },
+    )
+}
 
 internal fun updateProgramExerciseTargetSets(
     bootstrap: BootstrapResponse,

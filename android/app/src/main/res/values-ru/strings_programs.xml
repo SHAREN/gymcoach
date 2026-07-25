@@ -53,8 +53,17 @@
     <string name="exercise_rest_range">Укажите отдых от 15 до 600 секунд.</string>
     <string name="exercise_update_error">Не удалось сохранить упражнение. Изменения остались в форме. Повторите попытку.</string>
     <string name="filter_all">Все</string>
+    <string name="filter_all_muscles">Все мышцы</string>
+    <string name="filter_all_equipment">Всё оборудование</string>
     <string name="filter_muscle">Мышцы: %1$s</string>
     <string name="filter_category">Категория: %1$s</string>
+    <string name="filter_equipment">Оборудование: %1$s</string>
+    <string name="filter_reset">Сбросить фильтры</string>
+    <string name="exercise_replace_action">Заменить упражнение</string>
+    <string name="exercise_replace_title">Выберите замену</string>
+    <string name="exercise_replace_logged_warning">Записанные подходы останутся у упражнения «%1$s». Оставшаяся тренировка будет использовать «%2$s».</string>
+    <string name="exercise_replace_error">Не удалось заменить упражнение. Выбрано прежнее упражнение.</string>
+    <string name="exercise_replace_wait_for_rest">Завершите или пропустите текущий отдых перед заменой упражнения.</string>
     <string name="create">Создать</string>
     <string name="loading">Загрузка…</string>
     <string name="close">Закрыть</string>

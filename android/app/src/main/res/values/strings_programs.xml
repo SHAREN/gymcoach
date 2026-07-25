@@ -53,8 +53,17 @@
     <string name="exercise_rest_range">Enter a rest time from 15 to 600 seconds.</string>
     <string name="exercise_update_error">Could not save the exercise. Your changes are still here. Try again.</string>
     <string name="filter_all">All</string>
+    <string name="filter_all_muscles">All muscles</string>
+    <string name="filter_all_equipment">All equipment</string>
     <string name="filter_muscle">Muscle: %1$s</string>
     <string name="filter_category">Category: %1$s</string>
+    <string name="filter_equipment">Equipment: %1$s</string>
+    <string name="filter_reset">Reset filters</string>
+    <string name="exercise_replace_action">Replace exercise</string>
+    <string name="exercise_replace_title">Choose a replacement</string>
+    <string name="exercise_replace_logged_warning">Recorded sets will stay with “%1$s”. The remaining workout will use “%2$s”.</string>
+    <string name="exercise_replace_error">The exercise could not be replaced. The previous exercise is still selected.</string>
+    <string name="exercise_replace_wait_for_rest">Finish or skip the current rest before replacing the exercise.</string>
     <string name="create">Create</string>
     <string name="loading">Loading…</string>
     <string name="close">Close</string>

@@ -40,6 +40,36 @@ describe('mobileSyncOperationSchema', () => {
       mobileSyncOperationSchema.safeParse({ ...operation, previousTargetSets: 21 }).success,
     ).toBe(false);
   });
+
+  it('accepts distinct active-workout exercise replacements', () => {
+    expect(
+      mobileSyncOperationSchema.parse({
+        operationId: 'replace_exercise_schema_01',
+        type: 'REPLACE_PROGRAM_EXERCISE',
+        sessionId: 'session_schema_01',
+        programExerciseId: 'program_exercise_schema_01',
+        previousExerciseId: 'exercise_schema_01',
+        replacementExerciseId: 'exercise_schema_02',
+      }),
+    ).toMatchObject({
+      type: 'REPLACE_PROGRAM_EXERCISE',
+      previousExerciseId: 'exercise_schema_01',
+      replacementExerciseId: 'exercise_schema_02',
+    });
+  });
+
+  it('rejects replacing an exercise with itself', () => {
+    expect(
+      mobileSyncOperationSchema.safeParse({
+        operationId: 'replace_exercise_schema_02',
+        type: 'REPLACE_PROGRAM_EXERCISE',
+        sessionId: 'session_schema_02',
+        programExerciseId: 'program_exercise_schema_02',
+        previousExerciseId: 'exercise_schema_same',
+        replacementExerciseId: 'exercise_schema_same',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 const validFrozenSnapshot = {

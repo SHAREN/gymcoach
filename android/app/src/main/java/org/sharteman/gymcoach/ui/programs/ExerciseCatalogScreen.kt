@@ -1,35 +1,22 @@
 package org.sharteman.gymcoach.ui.programs
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.EventAvailable
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -40,19 +27,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
-import org.sharteman.gymcoach.data.media.ExerciseMediaCatalog
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.MobileProgressPointDto
@@ -61,17 +41,7 @@ import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.ui.ExerciseDetailsDialog
 import org.sharteman.gymcoach.ui.ExerciseEditorDialog
-import org.sharteman.gymcoach.ui.localization.equipmentTypeDisplayName
-import org.sharteman.gymcoach.ui.localization.exerciseCategoryDisplayName
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
-import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
-
-private val muscleGroups = listOf(
-    "CHEST", "BACK_WIDTH", "BACK_THICKNESS", "SHOULDERS_FRONT", "SHOULDERS_LATERAL",
-    "SHOULDERS_REAR", "BICEPS", "TRICEPS", "FOREARMS", "QUADS", "HAMSTRINGS",
-    "GLUTES", "CALVES", "ABS", "LOWER_BACK", "OTHER",
-)
-private val categories = listOf("COMPOUND", "ISOLATION", "CARDIO")
 
 @Composable
 fun ExerciseCatalogScreen(
@@ -102,7 +72,6 @@ fun ExerciseCatalogScreen(
         onOpenHistory = onOpenHistory,
     )
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExerciseCatalogScreen(
@@ -127,7 +96,7 @@ fun ExerciseCatalogScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var muscle by remember { mutableStateOf<String?>(null) }
-    var category by remember { mutableStateOf<String?>(null) }
+    var equipment by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<ExerciseDto?>(null) }
@@ -143,8 +112,10 @@ fun ExerciseCatalogScreen(
         }
     }
     LaunchedEffect(dataSource) { reload() }
-    val filtered = remember(exercises, query, muscle, category) {
-        filterCatalogExercises(exercises, query, muscle, category)
+    val filtered = remember(exercises, query, muscle, equipment) {
+        sortCatalogExercisesByTrainingDays(
+            filterCatalogExercises(exercises, query, muscle, equipment),
+        )
     }
 
     Scaffold(
@@ -179,30 +150,16 @@ fun ExerciseCatalogScreen(
                 )
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    EnumFilterButton(
-                        label = stringResource(
-                            R.string.filter_muscle,
-                            muscle?.let(::muscleGroupDisplayName)
-                                ?: stringResource(R.string.filter_all),
-                        ),
-                        value = muscle,
-                        values = muscleGroups,
-                        displayValue = ::muscleGroupDisplayName,
-                        onValue = { muscle = it },
-                    )
-                    EnumFilterButton(
-                        label = stringResource(
-                            R.string.filter_category,
-                            category?.let(::exerciseCategoryDisplayName)
-                                ?: stringResource(R.string.filter_all),
-                        ),
-                        value = category,
-                        values = categories,
-                        displayValue = ::exerciseCategoryDisplayName,
-                        onValue = { category = it },
-                    )
-                }
+                ExerciseFilterControls(
+                    muscleGroup = muscle,
+                    equipmentType = equipment,
+                    onMuscleGroupChange = { muscle = it },
+                    onEquipmentTypeChange = { equipment = it },
+                    onReset = {
+                        muscle = null
+                        equipment = null
+                    },
+                )
             }
             if (loading) item { LoadingRow() }
             else if (error != null) item { ErrorCard(error, ::reload) }
@@ -217,6 +174,7 @@ fun ExerciseCatalogScreen(
                 ExerciseCatalogCard(
                     exercise = exercise,
                     serverUrl = serverUrl,
+                    trainedDayCount = exerciseTrainingDayCount(exercise.trainingDates),
                     onOpen = { detailId = exercise.id },
                 )
             }
@@ -291,109 +249,4 @@ fun ExerciseCatalogScreen(
             },
         )
     }
-}
-
-@Composable
-private fun ExerciseCatalogCard(exercise: ExerciseDto, serverUrl: String, onOpen: () -> Unit) {
-    val context = LocalContext.current
-    val media = remember(exercise.name) {
-        runCatching { ExerciseMediaCatalog.load(context).resolve(exercise.name) }.getOrNull()
-    }
-    val trainedDays = remember(exercise.trainingDates) {
-        exerciseTrainingDayCount(exercise.trainingDates)
-    }
-    Card(onClick = onOpen, modifier = Modifier.fillMaxWidth().testTag("exercise-${exercise.id}")) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                modifier = Modifier.size(72.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                if (media != null) {
-                    AsyncImage(
-                        model = media.frameUrl(serverUrl),
-                        contentDescription = exerciseDisplayName(exercise.name),
-                        contentScale = ContentScale.Fit,
-                    )
-                } else {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Image, contentDescription = null)
-                    }
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    exerciseDisplayName(exercise.name),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Row(
-                    modifier = Modifier.testTag("exercise-${exercise.id}-trained-days"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.EventAvailable,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        stringResource(R.string.exercise_trained_days, trainedDays),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    muscleGroupDisplayName(exercise.muscleGroup),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "${exerciseCategoryDisplayName(exercise.category)} • " +
-                        equipmentTypeDisplayName(exercise.equipmentType),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EnumFilterButton(
-    label: String,
-    value: String?,
-    values: List<String>,
-    displayValue: (String) -> String,
-    onValue: (String?) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    Column {
-        OutlinedButton(onClick = { open = true }) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.filter_all)) },
-                onClick = { open = false; onValue(null) },
-            )
-            values.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(displayValue(option)) },
-                    onClick = { open = false; onValue(option) },
-                )
-            }
-        }
-    }
-}
-
-internal fun filterCatalogExercises(
-    exercises: List<ExerciseDto>,
-    query: String,
-    muscleGroup: String?,
-    category: String?,
-    language: String = java.util.Locale.getDefault().language,
-): List<ExerciseDto> = exercises.filter { exercise ->
-    (query.isBlank() || exercise.name.contains(query.trim(), ignoreCase = true) ||
-        exerciseDisplayName(exercise.name, language).contains(query.trim(), ignoreCase = true)) &&
-        (muscleGroup == null || exercise.muscleGroup == muscleGroup) &&
-        (category == null || exercise.category == category)
 }

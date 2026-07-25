@@ -1885,6 +1885,207 @@ describe('Android mobile API', () => {
     ).toBe(3);
   });
 
+  it('replaces an owned active-workout exercise exactly once without moving logged sets', async () => {
+    const seeded = await seedUser('mobile-replace-exercise@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const replacement = await db.exercise.create({
+      data: {
+        userId: seeded.user.id,
+        name: 'Incline Dumbbell Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'DUMBBELL',
+      },
+    });
+    const session = await db.session.create({
+      data: {
+        id: 'mobile_replace_session_01',
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        programId: seeded.workout.programId,
+        startedAt: new Date('2026-07-20T10:00:00Z'),
+        sets: {
+          create: {
+            id: 'mobile_replace_set_01',
+            exerciseId: seeded.exercise.id,
+            setNumber: 1,
+            weight: 100,
+            reps: 8,
+            rir: 2,
+            completedAt: new Date('2026-07-20T10:05:00Z'),
+          },
+        },
+      },
+    });
+    const operation = {
+      operationId: 'replace_exercise_operation_01',
+      type: 'REPLACE_PROGRAM_EXERCISE',
+      sessionId: session.id,
+      programExerciseId: seeded.programExercise.id,
+      previousExerciseId: seeded.exercise.id,
+      replacementExerciseId: replacement.id,
+    };
+
+    const first = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await first.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: {
+        entityType: 'PROGRAM_EXERCISE',
+        entityId: seeded.programExercise.id,
+        previousExerciseId: seeded.exercise.id,
+        replacementExerciseId: replacement.id,
+        changed: true,
+      },
+    });
+
+    const repeated = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await repeated.json()).results[0]).toMatchObject({
+      status: 'DUPLICATE',
+      result: { replacementExerciseId: replacement.id, changed: true },
+    });
+    expect(
+      (await db.programExercise.findUniqueOrThrow({ where: { id: seeded.programExercise.id } }))
+        .exerciseId,
+    ).toBe(replacement.id);
+    expect(
+      (await db.set.findUniqueOrThrow({ where: { id: 'mobile_replace_set_01' } })).exerciseId,
+    ).toBe(seeded.exercise.id);
+  });
+
+  it('rejects stale, foreign and cross-session exercise replacements', async () => {
+    const owner = await seedUser('mobile-replace-owner@test.dev');
+    const stranger = await seedUser('mobile-replace-stranger@test.dev');
+    const { accessToken } = await loginDevice(owner.user.email);
+    const replacement = await db.exercise.create({
+      data: {
+        userId: owner.user.id,
+        name: 'Owner replacement',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const ownerSession = await db.session.create({
+      data: {
+        id: 'mobile_replace_owner_session',
+        userId: owner.user.id,
+        workoutId: owner.workout.id,
+        programId: owner.workout.programId,
+        startedAt: new Date('2026-07-20T11:00:00Z'),
+      },
+    });
+
+    const stale = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'replace_exercise_stale_01',
+              type: 'REPLACE_PROGRAM_EXERCISE',
+              sessionId: ownerSession.id,
+              programExerciseId: owner.programExercise.id,
+              previousExerciseId: 'exercise_stale_missing_01',
+              replacementExerciseId: replacement.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await stale.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: expect.stringContaining('Program exercise changed'),
+    });
+
+    const foreign = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'replace_exercise_foreign_01',
+              type: 'REPLACE_PROGRAM_EXERCISE',
+              sessionId: ownerSession.id,
+              programExerciseId: owner.programExercise.id,
+              previousExerciseId: owner.exercise.id,
+              replacementExerciseId: stranger.exercise.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await foreign.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'Invalid replacement exercise.',
+    });
+
+    const wrongSession = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'replace_exercise_wrong_session_01',
+              type: 'REPLACE_PROGRAM_EXERCISE',
+              sessionId: ownerSession.id,
+              programExerciseId: stranger.programExercise.id,
+              previousExerciseId: stranger.exercise.id,
+              replacementExerciseId: replacement.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await wrongSession.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'Program exercise not found.',
+    });
+
+    const finishedSession = await db.session.create({
+      data: {
+        id: 'mobile_replace_finished_session',
+        userId: owner.user.id,
+        workoutId: owner.workout.id,
+        programId: owner.workout.programId,
+        startedAt: new Date('2026-07-19T11:00:00Z'),
+        finishedAt: new Date('2026-07-19T12:00:00Z'),
+      },
+    });
+    const finished = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'replace_exercise_finished_session_01',
+              type: 'REPLACE_PROGRAM_EXERCISE',
+              sessionId: finishedSession.id,
+              programExerciseId: owner.programExercise.id,
+              previousExerciseId: owner.exercise.id,
+              replacementExerciseId: replacement.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await finished.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'Workout session not found.',
+    });
+    expect(
+      (await db.programExercise.findUniqueOrThrow({ where: { id: owner.programExercise.id } }))
+        .exerciseId,
+    ).toBe(owner.exercise.id);
+  });
+
   it('stops an ordered batch after the first rejected operation', async () => {
     const owner = await seedUser('mobile-ordered-owner@test.dev');
     const stranger = await seedUser('mobile-ordered-stranger@test.dev');

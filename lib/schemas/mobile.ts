@@ -176,25 +176,45 @@ const mobileSetSchema = z
 
 const operationBase = z.object({ operationId: opaqueId });
 
-export const mobileSyncOperationSchema = z.discriminatedUnion('type', [
-  operationBase.extend({ type: z.literal('START_SESSION'), session: mobileSessionSchema }),
-  operationBase.extend({ type: z.literal('UPSERT_SET'), set: mobileSetSchema }),
-  operationBase.extend({ type: z.literal('DELETE_SET'), setId: opaqueId }),
-  operationBase.extend({ type: z.literal('DELETE_SESSION'), sessionId: opaqueId }),
-  operationBase.extend({
-    type: z.literal('UPDATE_TARGET_SETS'),
-    programExerciseId: opaqueId,
-    targetSets: z.number().int().min(1).max(20),
-    previousTargetSets: z.number().int().min(1).max(20),
-  }),
-  operationBase.extend({
-    type: z.literal('FINISH_SESSION'),
-    sessionId: opaqueId,
-    finishedAt: isoDate,
-    notes: z.string().trim().max(2000).nullable().optional(),
-    sessionRpe: z.number().int().min(1).max(10).nullable().optional(),
-  }),
-]);
+export const mobileSyncOperationSchema = z
+  .discriminatedUnion('type', [
+    operationBase.extend({ type: z.literal('START_SESSION'), session: mobileSessionSchema }),
+    operationBase.extend({ type: z.literal('UPSERT_SET'), set: mobileSetSchema }),
+    operationBase.extend({ type: z.literal('DELETE_SET'), setId: opaqueId }),
+    operationBase.extend({ type: z.literal('DELETE_SESSION'), sessionId: opaqueId }),
+    operationBase.extend({
+      type: z.literal('UPDATE_TARGET_SETS'),
+      programExerciseId: opaqueId,
+      targetSets: z.number().int().min(1).max(20),
+      previousTargetSets: z.number().int().min(1).max(20),
+    }),
+    operationBase.extend({
+      type: z.literal('REPLACE_PROGRAM_EXERCISE'),
+      sessionId: opaqueId,
+      programExerciseId: opaqueId,
+      previousExerciseId: opaqueId,
+      replacementExerciseId: opaqueId,
+    }),
+    operationBase.extend({
+      type: z.literal('FINISH_SESSION'),
+      sessionId: opaqueId,
+      finishedAt: isoDate,
+      notes: z.string().trim().max(2000).nullable().optional(),
+      sessionRpe: z.number().int().min(1).max(10).nullable().optional(),
+    }),
+  ])
+  .superRefine((operation, ctx) => {
+    if (
+      operation.type === 'REPLACE_PROGRAM_EXERCISE' &&
+      operation.previousExerciseId === operation.replacementExerciseId
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['replacementExerciseId'],
+        message: 'Replacement exercise must differ from the current exercise.',
+      });
+    }
+  });
 
 export const mobileSyncBatchSchema = z.object({
   operations: z.array(mobileSyncOperationSchema).min(1).max(500),

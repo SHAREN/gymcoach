@@ -479,6 +479,16 @@ data class UpdateTargetSetsOperation(
 ) : SyncOperation
 
 @Serializable
+@SerialName("REPLACE_PROGRAM_EXERCISE")
+data class ReplaceProgramExerciseOperation(
+    override val operationId: String,
+    val sessionId: String,
+    val programExerciseId: String,
+    val previousExerciseId: String,
+    val replacementExerciseId: String,
+) : SyncOperation
+
+@Serializable
 @SerialName("FINISH_SESSION")
 data class FinishSessionOperation(
     override val operationId: String,

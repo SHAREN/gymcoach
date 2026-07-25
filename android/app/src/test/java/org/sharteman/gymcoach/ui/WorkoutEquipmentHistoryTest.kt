@@ -356,6 +356,51 @@ class WorkoutEquipmentHistoryTest {
         assertEquals(null, rejectedLegacyFallback)
     }
 
+    @Test
+    fun `equipment selections stay isolated by program target and replacement clears only that target`() {
+        val sharedExercise = ExerciseDto(
+            id = "shared-pressdown",
+            name = "Shared pressdown",
+            muscleGroup = "TRICEPS",
+            category = "ISOLATION",
+            equipmentType = "CABLE",
+        )
+        fun target(id: String, order: Int) = ProgramExerciseDto(
+            id = id,
+            workoutId = "workout-1",
+            exerciseId = sharedExercise.id,
+            order = order,
+            targetSets = 3,
+            targetRepsMin = 8,
+            targetRepsMax = 12,
+            targetRIR = 2,
+            restSec = 90,
+            exercise = sharedExercise,
+        )
+        val first = target("target-a", 1)
+        val second = target("target-b", 2)
+        val selections = mapOf(
+            workoutEquipmentSelectionKey(first) to "cable-a",
+            workoutEquipmentSelectionKey(second) to "cable-b",
+        )
+
+        assertEquals(2, selections.size)
+        assertEquals("cable-a", selections[workoutEquipmentSelectionKey(first)])
+        assertEquals("cable-b", selections[workoutEquipmentSelectionKey(second)])
+
+        val replacement = sharedExercise.copy(id = "replacement-pressdown")
+        val replacedFirst = first.copy(
+            exerciseId = replacement.id,
+            exercise = replacement,
+        )
+        val retained = retainWorkoutEquipmentSelections(
+            selections = selections,
+            targets = listOf(replacedFirst, second),
+        )
+
+        assertEquals(mapOf(workoutEquipmentSelectionKey(second) to "cable-b"), retained)
+    }
+
     private fun nullEquipmentPerformance(
         gymId: String?,
         sessionId: String,
