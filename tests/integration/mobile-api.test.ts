@@ -1885,6 +1885,146 @@ describe('Android mobile API', () => {
     ).toBe(3);
   });
 
+  it('atomically updates, adds, removes and links workout exercises without moving logged sets', async () => {
+    const seeded = await seedUser('mobile-mutate-workout@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const secondExercise = await db.exercise.create({
+      data: {
+        userId: seeded.user.id,
+        name: 'Cable Row',
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const addedExercise = await db.exercise.create({
+      data: {
+        userId: seeded.user.id,
+        name: 'Face Pull',
+        muscleGroup: 'SHOULDERS_REAR',
+        category: 'ISOLATION',
+        equipmentType: 'CABLE',
+      },
+    });
+    const secondProgramExercise = await db.programExercise.create({
+      data: {
+        id: 'mobile_mutate_program_exercise_02',
+        workoutId: seeded.workout.id,
+        exerciseId: secondExercise.id,
+        order: 1,
+        targetSets: 3,
+        targetDropSets: 0,
+        targetRepsMin: 8,
+        targetRepsMax: 12,
+        targetRIR: 2,
+        restSec: 90,
+      },
+    });
+    const session = await db.session.create({
+      data: {
+        id: 'mobile_mutate_session_01',
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        programId: seeded.workout.programId,
+        startedAt: new Date('2026-07-22T10:00:00Z'),
+        sets: {
+          create: {
+            id: 'mobile_mutate_completed_set_01',
+            exerciseId: seeded.exercise.id,
+            setNumber: 1,
+            weight: 80,
+            reps: 10,
+            rir: 2,
+            completedAt: new Date('2026-07-22T10:05:00Z'),
+          },
+        },
+      },
+    });
+    const select = {
+      id: true,
+      exerciseId: true,
+      order: true,
+      targetSets: true,
+      targetDropSets: true,
+      targetRepsMin: true,
+      targetRepsMax: true,
+      targetRIR: true,
+      restSec: true,
+      tempo: true,
+      notes: true,
+      supersetGroup: true,
+      autoregulationMode: true,
+      fatigueRate: true,
+      loadAdjustmentPct: true,
+    } as const;
+    const previousExercises = await db.programExercise.findMany({
+      where: { workoutId: seeded.workout.id },
+      orderBy: [{ order: 'asc' }, { id: 'asc' }],
+      select,
+    });
+    const retained = previousExercises.find((item) => item.id === secondProgramExercise.id)!;
+    const exercises = [
+      {
+        ...retained,
+        order: 0,
+        targetSets: 5,
+        targetDropSets: 1,
+        targetRepsMin: 10,
+        targetRepsMax: 15,
+        notes: 'Keep the chest supported.',
+        supersetGroup: 1,
+      },
+      {
+        ...retained,
+        id: 'mobile_mutate_program_exercise_03',
+        exerciseId: addedExercise.id,
+        order: 1,
+        targetSets: 3,
+        targetDropSets: 0,
+        targetRepsMin: 12,
+        targetRepsMax: 15,
+        notes: null,
+        supersetGroup: 1,
+      },
+    ];
+    const operation = {
+      operationId: 'mutate_workout_operation_01',
+      type: 'MUTATE_WORKOUT_EXERCISES',
+      sessionId: session.id,
+      workoutId: seeded.workout.id,
+      previousExercises,
+      exercises,
+      previousActiveExerciseId: seeded.exercise.id,
+      nextActiveExerciseId: secondExercise.id,
+    };
+
+    const first = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await first.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: { entityType: 'WORKOUT_EXERCISES', entityId: seeded.workout.id, changed: true },
+    });
+    const repeated = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await repeated.json()).results[0]).toMatchObject({
+      status: 'DUPLICATE',
+      result: { entityType: 'WORKOUT_EXERCISES', changed: true },
+    });
+
+    const stored = await db.programExercise.findMany({
+      where: { workoutId: seeded.workout.id },
+      orderBy: [{ order: 'asc' }, { id: 'asc' }],
+      select,
+    });
+    expect(stored).toEqual(exercises);
+    expect(
+      (await db.set.findUniqueOrThrow({ where: { id: 'mobile_mutate_completed_set_01' } }))
+        .exerciseId,
+    ).toBe(seeded.exercise.id);
+  });
+
   it('replaces an owned active-workout exercise exactly once without moving logged sets', async () => {
     const seeded = await seedUser('mobile-replace-exercise@test.dev');
     const { accessToken } = await loginDevice(seeded.user.email);

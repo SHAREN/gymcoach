@@ -39,7 +39,6 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -129,6 +128,7 @@ import org.sharteman.gymcoach.training.setTableMetricEnabled
 import org.sharteman.gymcoach.training.toDisplayWeight
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.ui.localization.muscleGroupDisplayName
+import org.sharteman.gymcoach.ui.programs.ExerciseAddDialog
 import org.sharteman.gymcoach.ui.programs.ExerciseReplacementDialog
 import java.time.Duration
 import java.time.Instant
@@ -172,6 +172,9 @@ fun WorkoutScreen(
     var restRemaining by remember { mutableIntStateOf(0) }
     var showSummary by rememberSaveable { mutableStateOf(false) }
     var controlsDialog by remember { mutableStateOf(false) }
+    var exerciseMenuDialog by rememberSaveable { mutableStateOf(false) }
+    var addExerciseDialog by rememberSaveable { mutableStateOf(false) }
+    var exerciseMutationBusy by remember { mutableStateOf(false) }
     var replacementDialog by rememberSaveable { mutableStateOf(false) }
     var replacementBusy by remember { mutableStateOf(false) }
     var resetDialog by remember { mutableStateOf(false) }
@@ -199,6 +202,9 @@ fun WorkoutScreen(
     val restStartError = stringResource(R.string.rest_start_error)
     val exerciseReplaceError = stringResource(R.string.exercise_replace_error)
     val exerciseReplaceWaitForRest = stringResource(R.string.exercise_replace_wait_for_rest)
+    val exerciseChangeError = stringResource(R.string.exercise_change_error)
+    val exerciseRemoveError = stringResource(R.string.exercise_remove_error)
+    val exerciseAddError = stringResource(R.string.exercise_add_error)
 
     if (session == null || workout == null) {
         Scaffold(topBar = { TopAppBar(title = { Text("GymCoach") }) }) { padding ->
@@ -483,6 +489,7 @@ fun WorkoutScreen(
                     selectExercise(index)
                 },
                 onOpen = { detailsExerciseId = it.id },
+                onAdd = { addExerciseDialog = true },
                 onOpenControls = { controlsDialog = true },
             )
         },
@@ -499,6 +506,7 @@ fun WorkoutScreen(
                     completedRows = completedWorkingRows,
                     plannedRows = plannedRows,
                     returnRecommendation = returnRecommendation,
+                    onActions = { exerciseMenuDialog = true },
                 )
             }
             if (!inventory.isAvailable || inventory.equipment.isNotEmpty()) {
@@ -666,20 +674,101 @@ fun WorkoutScreen(
         }
     }
 
-    if (controlsDialog) {
-        WorkoutControlsDialog(
-            workoutName = workout.name,
-            currentExerciseName = exerciseDisplayName(current.exercise.name),
-            startedAt = session?.startedAt.orEmpty(),
-            replaceEnabled = !replacementBusy,
+    if (exerciseMenuDialog) {
+        ActiveExerciseMenuDialog(
+            exercise = current,
+            exercises = exercises,
+            busy = exerciseMutationBusy,
+            onUpdate = { updated ->
+                scope.launch {
+                    exerciseMutationBusy = true
+                    try {
+                        repository.updateProgramExercisePrescription(sessionId, updated)
+                        exerciseMenuDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseChangeError)
+                    } finally {
+                        exerciseMutationBusy = false
+                    }
+                }
+            },
+            onSuperset = { neighborId ->
+                scope.launch {
+                    exerciseMutationBusy = true
+                    try {
+                        repository.mutateProgramExerciseSuperset(sessionId, current.id, neighborId)
+                        exerciseMenuDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseChangeError)
+                    } finally {
+                        exerciseMutationBusy = false
+                    }
+                }
+            },
             onReplace = {
                 if (restRemaining > 0) {
                     scope.launch { snackbar.showSnackbar(exerciseReplaceWaitForRest) }
                 } else {
-                    controlsDialog = false
+                    exerciseMenuDialog = false
                     replacementDialog = true
                 }
             },
+            onRemove = {
+                scope.launch {
+                    exerciseMutationBusy = true
+                    try {
+                        repository.removeProgramExercise(sessionId, current.id)
+                        exerciseMenuDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseRemoveError)
+                    } finally {
+                        exerciseMutationBusy = false
+                    }
+                }
+            },
+            onInformation = {
+                exerciseMenuDialog = false
+                detailsExerciseId = current.exerciseId
+            },
+            onDismiss = { if (!exerciseMutationBusy) exerciseMenuDialog = false },
+        )
+    }
+    if (addExerciseDialog) {
+        ExerciseAddDialog(
+            catalog = bootstrap?.catalog.orEmpty(),
+            excludedExerciseIds = exercises.mapTo(mutableSetOf()) { it.exerciseId },
+            trainingDatesByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty()
+                .mapValues { (_, sessions) -> sessions.map { it.startedAt } },
+            serverUrl = repository.serverUrl,
+            busy = exerciseMutationBusy,
+            onConfirm = { exercise ->
+                scope.launch {
+                    exerciseMutationBusy = true
+                    try {
+                        repository.addProgramExercise(sessionId, workout.id, exercise.id)
+                        addExerciseDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseAddError)
+                    } finally {
+                        exerciseMutationBusy = false
+                    }
+                }
+            },
+            onDismiss = { if (!exerciseMutationBusy) addExerciseDialog = false },
+        )
+    }
+    if (controlsDialog) {
+        WorkoutControlsDialog(
+            workoutName = workout.name,
+            startedAt = session?.startedAt.orEmpty(),
             onComplete = {
                 controlsDialog = false
                 showSummary = true
@@ -812,6 +901,7 @@ private fun WorkoutHeader(
     progress: Float,
     onSelect: (Int) -> Unit,
     onOpen: (ExerciseDto) -> Unit,
+    onAdd: () -> Unit,
     onOpenControls: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.background) {
@@ -857,6 +947,7 @@ private fun WorkoutHeader(
                 selectionEnabled = selectionEnabled,
                 onSelect = onSelect,
                 onOpen = onOpen,
+                onAdd = onAdd,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
         }
@@ -872,6 +963,7 @@ private fun ExerciseStrip(
     selectionEnabled: Boolean,
     onSelect: (Int) -> Unit,
     onOpen: (ExerciseDto) -> Unit,
+    onAdd: () -> Unit,
 ) {
     val context = LocalContext.current
     val mediaCatalog = remember(context) {
@@ -1001,6 +1093,28 @@ private fun ExerciseStrip(
                 }
             }
         }
+        item(key = "add-exercise") {
+            Card(
+                onClick = onAdd,
+                modifier = Modifier
+                    .width(74.dp)
+                    .height(58.dp)
+                    .testTag("exercise-add-tile"),
+                shape = RoundedCornerShape(7.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                ),
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Outlined.Add,
+                        contentDescription = stringResource(R.string.exercise_add_action),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1022,6 +1136,7 @@ private fun ExerciseSummaryCard(
     completedRows: Int,
     plannedRows: Int,
     returnRecommendation: ReturnRecommendationDto? = null,
+    onActions: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1050,16 +1165,27 @@ private fun ExerciseSummaryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Text(
-                        "$completedRows / $plannedRows",
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Text(
+                            "$completedRows / $plannedRows",
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                    IconButton(
+                        onClick = onActions,
+                        modifier = Modifier.testTag("active-exercise-actions"),
+                    ) {
+                        Icon(
+                            Icons.Outlined.MoreVert,
+                            contentDescription = stringResource(R.string.exercise_actions),
+                        )
+                    }
                 }
             }
             Text(
@@ -2433,10 +2559,7 @@ private fun SessionActions(
 @Composable
 private fun WorkoutControlsDialog(
     workoutName: String,
-    currentExerciseName: String,
     startedAt: String,
-    replaceEnabled: Boolean,
-    onReplace: () -> Unit,
     onComplete: () -> Unit,
     onPause: () -> Unit,
     onReset: () -> Unit,
@@ -2453,20 +2576,6 @@ private fun WorkoutControlsDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    currentExerciseName,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                OutlinedButton(
-                    onClick = onReplace,
-                    enabled = replaceEnabled,
-                    modifier = Modifier.fillMaxWidth().testTag("workout-replace-exercise"),
-                ) {
-                    Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.exercise_replace_action))
-                }
                 Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Flag, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -2884,11 +2993,32 @@ internal fun WorkoutScreenPreview(
     var previewSelectedIndex by remember { mutableIntStateOf(0) }
     var previewDetailsExerciseId by rememberSaveable { mutableStateOf<String?>(null) }
     var previewControlsDialog by rememberSaveable { mutableStateOf(false) }
+    var previewExerciseMenuDialog by rememberSaveable { mutableStateOf(false) }
+    var previewAddExerciseDialog by rememberSaveable { mutableStateOf(false) }
     var previewReplacementDialog by rememberSaveable { mutableStateOf(false) }
     val previewDetailsExercise = previewDetailsExerciseId?.let { exerciseId ->
         exercises.firstOrNull { it.exerciseId == exerciseId }?.exercise
     }
     val previewTarget = exercises[previewSelectedIndex]
+    val previewCatalog = exercises.map { it.exercise } + listOf(
+        ExerciseDto(
+            id = "lying-leg-curl",
+            userId = "preview-user",
+            name = "Lying Leg Curl",
+            muscleGroup = "HAMSTRINGS",
+            category = "ISOLATION",
+            equipmentType = "MACHINE",
+            trainingDates = listOf("2026-07-01T10:00:00Z"),
+        ),
+        ExerciseDto(
+            id = "seated-cable-row",
+            userId = "preview-user",
+            name = "Seated Cable Row",
+            muscleGroup = "BACK_THICKNESS",
+            category = "COMPOUND",
+            equipmentType = "CABLE",
+        ),
+    ).distinctBy { it.id }
     val recommendation = remember {
         SetRecommendation(
             weight = 97.5,
@@ -2913,6 +3043,7 @@ internal fun WorkoutScreenPreview(
                 progress = 2f / 12f,
                 onSelect = { previewSelectedIndex = it },
                 onOpen = { previewDetailsExerciseId = it.id },
+                onAdd = { previewAddExerciseDialog = true },
                 onOpenControls = { previewControlsDialog = true },
             )
         },
@@ -2927,6 +3058,7 @@ internal fun WorkoutScreenPreview(
                     previewTarget,
                     completedRows = if (previewSelectedIndex == 0) 2 else 0,
                     plannedRows = previewTarget.targetSets + previewTarget.targetDropSets,
+                    onActions = { previewExerciseMenuDialog = true },
                 )
             }
             item {
@@ -3015,39 +3147,81 @@ internal fun WorkoutScreenPreview(
     if (previewControlsDialog) {
         WorkoutControlsDialog(
             workoutName = "Monday",
-            currentExerciseName = exerciseDisplayName(previewTarget.exercise.name),
             startedAt = "2026-07-13T10:00:00Z",
-            replaceEnabled = true,
-            onReplace = {
-                previewControlsDialog = false
-                previewReplacementDialog = true
-            },
             onComplete = {},
             onPause = {},
             onReset = {},
             onDismiss = { previewControlsDialog = false },
         )
     }
-    if (previewReplacementDialog) {
-        val previewCatalog = exercises.map { it.exercise } + listOf(
-            ExerciseDto(
-                id = "lying-leg-curl",
-                userId = "preview-user",
-                name = "Lying Leg Curl",
-                muscleGroup = "HAMSTRINGS",
-                category = "ISOLATION",
-                equipmentType = "MACHINE",
-                trainingDates = listOf("2026-07-01T10:00:00Z"),
-            ),
-            ExerciseDto(
-                id = "seated-cable-row",
-                userId = "preview-user",
-                name = "Seated Cable Row",
-                muscleGroup = "BACK_THICKNESS",
-                category = "COMPOUND",
-                equipmentType = "CABLE",
-            ),
+    if (previewExerciseMenuDialog) {
+        ActiveExerciseMenuDialog(
+            exercise = previewTarget,
+            exercises = exercises,
+            busy = false,
+            onUpdate = { updated ->
+                exercises = exercises.map { if (it.id == updated.id) updated else it }
+                previewExerciseMenuDialog = false
+            },
+            onSuperset = { neighborId ->
+                if (neighborId == null) {
+                    val group = previewTarget.supersetGroup
+                    exercises = exercises.map {
+                        if (group != null && it.supersetGroup == group) it.copy(supersetGroup = null) else it
+                    }
+                } else {
+                    val neighbor = exercises.first { it.id == neighborId }
+                    val group = neighbor.supersetGroup ?: previewTarget.supersetGroup ?: 1
+                    exercises = exercises.map {
+                        if (it.id == previewTarget.id || it.id == neighbor.id) it.copy(supersetGroup = group) else it
+                    }
+                }
+                previewExerciseMenuDialog = false
+            },
+            onReplace = {
+                previewExerciseMenuDialog = false
+                previewReplacementDialog = true
+            },
+            onRemove = {
+                exercises = exercises.filterNot { it.id == previewTarget.id }
+                    .mapIndexed { index, item -> item.copy(order = index) }
+                previewSelectedIndex = previewSelectedIndex.coerceAtMost(exercises.lastIndex)
+                previewExerciseMenuDialog = false
+            },
+            onInformation = {
+                previewExerciseMenuDialog = false
+                previewDetailsExerciseId = previewTarget.exerciseId
+            },
+            onDismiss = { previewExerciseMenuDialog = false },
         )
+    }
+    if (previewAddExerciseDialog) {
+        ExerciseAddDialog(
+            catalog = previewCatalog,
+            excludedExerciseIds = exercises.mapTo(mutableSetOf()) { it.exerciseId },
+            trainingDatesByExerciseId = previewCatalog.associate { it.id to it.trainingDates },
+            serverUrl = "https://gymcoach7.sharteman.duckdns.org",
+            busy = false,
+            onConfirm = { added ->
+                exercises = exercises + ProgramExerciseDto(
+                    id = "preview-added-${added.id}",
+                    workoutId = "preview-workout",
+                    exerciseId = added.id,
+                    order = exercises.size,
+                    targetSets = 4,
+                    targetRepsMin = 8,
+                    targetRepsMax = 12,
+                    targetRIR = 2,
+                    restSec = added.defaultRestSec,
+                    exercise = added,
+                )
+                previewSelectedIndex = exercises.lastIndex
+                previewAddExerciseDialog = false
+            },
+            onDismiss = { previewAddExerciseDialog = false },
+        )
+    }
+    if (previewReplacementDialog) {
         ExerciseReplacementDialog(
             currentExercise = previewTarget.exercise,
             catalog = previewCatalog,

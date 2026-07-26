@@ -350,6 +350,128 @@ async function applyOperationInTransaction(
         changed: true,
       };
     }
+    case 'MUTATE_WORKOUT_EXERCISES': {
+      const session = await tx.session.findFirst({
+        where: {
+          id: operation.sessionId,
+          userId,
+          workoutId: operation.workoutId,
+          finishedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!session) throw new ApiError(404, 'Workout session not found.');
+
+      const currentRows = await tx.programExercise.findMany({
+        where: { workoutId: operation.workoutId, workout: { program: { userId } } },
+        orderBy: [{ order: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          exerciseId: true,
+          order: true,
+          targetSets: true,
+          targetDropSets: true,
+          targetRepsMin: true,
+          targetRepsMax: true,
+          targetRIR: true,
+          restSec: true,
+          tempo: true,
+          notes: true,
+          supersetGroup: true,
+          autoregulationMode: true,
+          fatigueRate: true,
+          loadAdjustmentPct: true,
+        },
+      });
+      if (currentRows.length === 0) throw new ApiError(404, 'Workout exercises not found.');
+
+      const canonical = (
+        rows: Array<{
+          id: string;
+          exerciseId: string;
+          order: number;
+          targetSets: number;
+          targetDropSets: number;
+          targetRepsMin: number;
+          targetRepsMax: number;
+          targetRIR: number;
+          restSec: number;
+          tempo?: string | null;
+          notes?: string | null;
+          supersetGroup?: number | null;
+          autoregulationMode: 'PRESERVE_RIR' | 'PRESERVE_REPS';
+          fatigueRate?: number | null;
+          loadAdjustmentPct?: number | null;
+        }>,
+      ) =>
+        rows
+          .map((row) => ({
+            ...row,
+            tempo: row.tempo ?? null,
+            notes: row.notes ?? null,
+            supersetGroup: row.supersetGroup ?? null,
+            fatigueRate: row.fatigueRate ?? null,
+            loadAdjustmentPct: row.loadAdjustmentPct ?? null,
+          }))
+          .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+      const current = canonical(currentRows);
+      const previous = canonical(operation.previousExercises);
+      const next = canonical(operation.exercises);
+      if (JSON.stringify(current) === JSON.stringify(next)) {
+        return {
+          entityType: 'WORKOUT_EXERCISES',
+          entityId: operation.workoutId,
+          changed: false,
+        };
+      }
+      if (JSON.stringify(current) !== JSON.stringify(previous)) {
+        throw new ApiError(409, 'Workout exercises changed. Refresh the workout and try again.');
+      }
+
+      const ownedExerciseCount = await tx.exercise.count({
+        where: { userId, id: { in: next.map((exercise) => exercise.exerciseId) } },
+      });
+      if (ownedExerciseCount !== next.length) {
+        throw new ApiError(400, 'A workout exercise is unavailable.');
+      }
+
+      const nextIds = new Set(next.map((exercise) => exercise.id));
+      await tx.programExercise.deleteMany({
+        where: { workoutId: operation.workoutId, id: { notIn: [...nextIds] } },
+      });
+      const currentIds = new Set(current.map((exercise) => exercise.id));
+      for (const exercise of next) {
+        const data = {
+          exerciseId: exercise.exerciseId,
+          order: exercise.order,
+          targetSets: exercise.targetSets,
+          targetDropSets: exercise.targetDropSets,
+          targetRepsMin: exercise.targetRepsMin,
+          targetRepsMax: exercise.targetRepsMax,
+          targetRIR: exercise.targetRIR,
+          restSec: exercise.restSec,
+          tempo: exercise.tempo,
+          notes: exercise.notes,
+          supersetGroup: exercise.supersetGroup,
+          autoregulationMode: exercise.autoregulationMode,
+          fatigueRate: exercise.fatigueRate,
+          loadAdjustmentPct: exercise.loadAdjustmentPct,
+        };
+        if (currentIds.has(exercise.id)) {
+          await tx.programExercise.update({ where: { id: exercise.id }, data });
+        } else {
+          await tx.programExercise.create({
+            data: { id: exercise.id, workoutId: operation.workoutId, ...data },
+          });
+        }
+      }
+
+      return {
+        entityType: 'WORKOUT_EXERCISES',
+        entityId: operation.workoutId,
+        changed: true,
+      };
+    }
     case 'REPLACE_PROGRAM_EXERCISE': {
       const current = await tx.programExercise.findFirst({
         where: {

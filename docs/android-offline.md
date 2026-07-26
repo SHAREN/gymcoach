@@ -15,7 +15,10 @@ offline fallback. After the first authenticated bootstrap it can start or
 resume a cached workout without internet access. The trainee can record, edit
 and delete sets, including weight, repetitions, RIR and notes, finish the
 session, record session RPE and receive the deterministic next-set
-recommendation locally.
+recommendation locally. The active exercise card also exposes the native
+workout-plan actions available on the web: target sets and repetitions, drop
+sets, supersets, program notes, replacement, removal and exercise information.
+Exercise addition remains a separate terminal `+` tile in the exercise strip.
 
 MCP, LLM coach replies and AI program generation are online-only. Their absence
 must never prevent recording or finishing a native workout. Cached coach and
@@ -53,7 +56,18 @@ change. Supported operations are:
 - `START_SESSION`;
 - `UPSERT_SET`;
 - `DELETE_SET`;
-- `FINISH_SESSION`.
+- `FINISH_SESSION`;
+- `UPDATE_TARGET_SETS`;
+- `REPLACE_PROGRAM_EXERCISE`;
+- `MUTATE_WORKOUT_EXERCISES`.
+
+`MUTATE_WORKOUT_EXERCISES` replaces one workout's ordered prescription as one
+compare-and-swap transaction. It covers active-workout add, remove, target,
+note and superset changes. The payload contains both the previous and intended
+exercise lists, so a stale server state is rejected rather than partially
+applied. Replaying an already-applied payload is idempotent. Removing or
+replacing a planned exercise never rewrites completed sets, which remain tied
+to their original exercise in session history.
 
 Each operation has a unique client-generated `operationId`. The server stores a
 hash and result for every applied operation in `MobileMutation`. Repeating the
@@ -75,6 +89,12 @@ local mutation. Before importing open sessions, the client decodes the complete
 outbox and protects every referenced session and set. This prevents a refresh
 from replacing an offline edit, reviving a locally deleted set or reopening a
 locally finished session.
+
+Pending workout-plan operations are reapplied over each refreshed bootstrap in
+outbox order. A rejected atomic workout mutation rolls the cached plan and
+active-exercise runtime back together; retry restores the intended state only
+when the authoritative previous list still matches, while discard keeps the
+authoritative server plan.
 
 For unprotected open sessions, bootstrap reconciliation also removes local sets
 that no longer exist on the server and removes sessions that were finished

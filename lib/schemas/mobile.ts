@@ -175,6 +175,23 @@ const mobileSetSchema = z
   });
 
 const operationBase = z.object({ operationId: opaqueId });
+const mobileWorkoutExerciseMutationSchema = z.object({
+  id: opaqueId,
+  exerciseId: opaqueId,
+  order: z.number().int().min(0).max(500),
+  targetSets: z.number().int().min(1).max(20),
+  targetDropSets: z.number().int().min(0).max(10),
+  targetRepsMin: z.number().int().min(1).max(50),
+  targetRepsMax: z.number().int().min(1).max(50),
+  targetRIR: z.number().int().min(0).max(5),
+  restSec: z.number().int().min(15).max(900),
+  tempo: z.string().trim().max(50).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  supersetGroup: z.number().int().min(1).max(9).nullable().optional(),
+  autoregulationMode: z.enum(['PRESERVE_RIR', 'PRESERVE_REPS']),
+  fatigueRate: z.number().min(0.25).max(2).nullable().optional(),
+  loadAdjustmentPct: z.number().min(1).max(5).nullable().optional(),
+});
 
 export const mobileSyncOperationSchema = z
   .discriminatedUnion('type', [
@@ -187,6 +204,15 @@ export const mobileSyncOperationSchema = z
       programExerciseId: opaqueId,
       targetSets: z.number().int().min(1).max(20),
       previousTargetSets: z.number().int().min(1).max(20),
+    }),
+    operationBase.extend({
+      type: z.literal('MUTATE_WORKOUT_EXERCISES'),
+      sessionId: opaqueId,
+      workoutId: opaqueId,
+      previousExercises: z.array(mobileWorkoutExerciseMutationSchema).min(1).max(200),
+      exercises: z.array(mobileWorkoutExerciseMutationSchema).min(1).max(200),
+      previousActiveExerciseId: opaqueId,
+      nextActiveExerciseId: opaqueId,
     }),
     operationBase.extend({
       type: z.literal('REPLACE_PROGRAM_EXERCISE'),
@@ -204,6 +230,46 @@ export const mobileSyncOperationSchema = z
     }),
   ])
   .superRefine((operation, ctx) => {
+    if (operation.type === 'MUTATE_WORKOUT_EXERCISES') {
+      for (const [field, exercises] of [
+        ['previousExercises', operation.previousExercises],
+        ['exercises', operation.exercises],
+      ] as const) {
+        if (new Set(exercises.map((exercise) => exercise.id)).size !== exercises.length) {
+          ctx.addIssue({ code: 'custom', path: [field], message: 'Exercise IDs must be unique.' });
+        }
+        if (new Set(exercises.map((exercise) => exercise.exerciseId)).size !== exercises.length) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [field],
+            message: 'A workout cannot contain the same exercise twice.',
+          });
+        }
+        exercises.forEach((exercise, index) => {
+          if (exercise.targetRepsMin > exercise.targetRepsMax) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [field, index, 'targetRepsMax'],
+              message: 'Maximum repetitions must be at least the minimum.',
+            });
+          }
+        });
+      }
+      if (!operation.previousExercises.some((item) => item.exerciseId === operation.previousActiveExerciseId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['previousActiveExerciseId'],
+          message: 'Previous active exercise must belong to the previous workout state.',
+        });
+      }
+      if (!operation.exercises.some((item) => item.exerciseId === operation.nextActiveExerciseId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['nextActiveExerciseId'],
+          message: 'Next active exercise must belong to the next workout state.',
+        });
+      }
+    }
     if (
       operation.type === 'REPLACE_PROGRAM_EXERCISE' &&
       operation.previousExerciseId === operation.replacementExerciseId

@@ -479,6 +479,37 @@ data class UpdateTargetSetsOperation(
 ) : SyncOperation
 
 @Serializable
+data class MobileWorkoutExerciseMutationDto(
+    val id: String,
+    val exerciseId: String,
+    val order: Int,
+    val targetSets: Int,
+    val targetDropSets: Int = 0,
+    val targetRepsMin: Int,
+    val targetRepsMax: Int,
+    val targetRIR: Int,
+    val restSec: Int,
+    val tempo: String? = null,
+    val notes: String? = null,
+    val supersetGroup: Int? = null,
+    val autoregulationMode: String = "PRESERVE_RIR",
+    val fatigueRate: Double? = null,
+    val loadAdjustmentPct: Double? = null,
+)
+
+@Serializable
+@SerialName("MUTATE_WORKOUT_EXERCISES")
+data class MutateWorkoutExercisesOperation(
+    override val operationId: String,
+    val sessionId: String,
+    val workoutId: String,
+    val previousExercises: List<MobileWorkoutExerciseMutationDto>,
+    val exercises: List<MobileWorkoutExerciseMutationDto>,
+    val previousActiveExerciseId: String,
+    val nextActiveExerciseId: String,
+) : SyncOperation
+
+@Serializable
 @SerialName("REPLACE_PROGRAM_EXERCISE")
 data class ReplaceProgramExerciseOperation(
     override val operationId: String,

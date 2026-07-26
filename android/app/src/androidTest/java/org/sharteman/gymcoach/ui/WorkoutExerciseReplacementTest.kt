@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Rule
 import org.junit.Test
@@ -125,9 +126,7 @@ class WorkoutExerciseReplacementTest {
     }
 
     private fun openReplacementPicker() {
-        composeRule.onNodeWithContentDescription(
-            composeRule.activity.getString(R.string.workout_controls),
-        ).performClick()
-        composeRule.onNodeWithTag("workout-replace-exercise").performClick()
+        composeRule.onNodeWithTag("active-exercise-actions").performScrollTo().performClick()
+        composeRule.onNodeWithTag("exercise-menu-replace").performClick()
     }
 }

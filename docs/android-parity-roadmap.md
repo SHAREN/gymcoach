@@ -55,7 +55,9 @@ The target offline boundary is:
 
 - Add deterministic outbox operations for readiness, bodyweight,
   measurements, goals and volume targets.
-- Keep complex program editing online until conflict rules are specified.
+- Keep broad program editing online, while active-workout exercise targets,
+  notes, supersets, replacement, add and remove use the atomic idempotent mobile
+  workout-exercise mutation contract.
 - Add background sync where the browser and Android WebView support it, with
   foreground retry as the guaranteed fallback.
 

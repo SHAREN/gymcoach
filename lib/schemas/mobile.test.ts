@@ -70,6 +70,71 @@ describe('mobileSyncOperationSchema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('accepts an atomic active-workout exercise list mutation', () => {
+    const exercise = (id: string, exerciseId: string, order: number) => ({
+      id,
+      exerciseId,
+      order,
+      targetSets: 4,
+      targetDropSets: 0,
+      targetRepsMin: 8,
+      targetRepsMax: 12,
+      targetRIR: 2,
+      restSec: 90,
+      tempo: null,
+      notes: null,
+      supersetGroup: null,
+      autoregulationMode: 'PRESERVE_RIR',
+      fatigueRate: null,
+      loadAdjustmentPct: null,
+    });
+    const parsed = mobileSyncOperationSchema.parse({
+      operationId: 'mutate_workout_schema_01',
+      type: 'MUTATE_WORKOUT_EXERCISES',
+      sessionId: 'session_schema_mutate_01',
+      workoutId: 'workout_schema_mutate_01',
+      previousExercises: [exercise('program_exercise_01', 'exercise_01', 0)],
+      exercises: [
+        exercise('program_exercise_01', 'exercise_01', 0),
+        exercise('program_exercise_02', 'exercise_02', 1),
+      ],
+      previousActiveExerciseId: 'exercise_01',
+      nextActiveExerciseId: 'exercise_02',
+    });
+
+    expect(parsed.type).toBe('MUTATE_WORKOUT_EXERCISES');
+  });
+
+  it('rejects duplicate exercises, invalid repetition ranges and missing active members', () => {
+    const exercise = (id: string, exerciseId: string, order: number) => ({
+      id,
+      exerciseId,
+      order,
+      targetSets: 4,
+      targetDropSets: 0,
+      targetRepsMin: 12,
+      targetRepsMax: 8,
+      targetRIR: 2,
+      restSec: 90,
+      autoregulationMode: 'PRESERVE_RIR',
+    });
+    expect(
+      mobileSyncOperationSchema.safeParse({
+        operationId: 'mutate_workout_schema_02',
+        type: 'MUTATE_WORKOUT_EXERCISES',
+        sessionId: 'session_schema_mutate_02',
+        workoutId: 'workout_schema_mutate_02',
+        previousExercises: [exercise('program_exercise_01', 'exercise_01', 0)],
+        exercises: [
+          exercise('program_exercise_01', 'exercise_01', 0),
+          exercise('program_exercise_02', 'exercise_01', 1),
+        ],
+        previousActiveExerciseId: 'exercise_missing',
+        nextActiveExerciseId: 'exercise_missing',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 const validFrozenSnapshot = {

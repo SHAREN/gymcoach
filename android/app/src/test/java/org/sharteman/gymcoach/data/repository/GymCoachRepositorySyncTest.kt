@@ -59,6 +59,7 @@ import org.sharteman.gymcoach.data.model.MobileProgressExerciseDto
 import org.sharteman.gymcoach.data.model.MobileProgressPointDto
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.MobileUser
+import org.sharteman.gymcoach.data.model.MutateWorkoutExercisesOperation
 import org.sharteman.gymcoach.data.model.ProfileDto
 import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
 import org.sharteman.gymcoach.data.model.ReplaceProgramExerciseOperation
@@ -1493,6 +1494,182 @@ class GymCoachRepositorySyncTest {
         assertEquals(1, fixture.dao.queuedOperations().size)
         assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
         assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+    }
+
+    @Test
+    fun workoutPrescriptionMutationIsOfflineFirstAndSurvivesAStaleBootstrap() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
+        val current = requireNotNull(findProgramExercise(
+            requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+            "program_exercise_1",
+        ))
+
+        assertTrue(
+            fixture.repository.updateProgramExercisePrescription(
+                sessionId,
+                current.copy(
+                    targetSets = 5,
+                    targetDropSets = 1,
+                    targetRepsMin = 10,
+                    targetRepsMax = 15,
+                    notes = "Controlled eccentric",
+                ),
+            ),
+        )
+        fixture.repository.refreshBootstrap()
+
+        val updated = requireNotNull(findProgramExercise(
+            requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+            "program_exercise_1",
+        ))
+        assertEquals(5, updated.targetSets)
+        assertEquals(1, updated.targetDropSets)
+        assertEquals(10, updated.targetRepsMin)
+        assertEquals(15, updated.targetRepsMax)
+        assertEquals("Controlled eccentric", updated.notes)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun workoutMutationIsRefusedWithoutDeadlockWhileAReplacementIsPending() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession()
+        fixture.repository.replaceProgramExercise(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            replacementExerciseId = "exercise_3",
+        )
+        val current = requireNotNull(findProgramExercise(
+            requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+            "program_exercise_2",
+        ))
+
+        val result = runCatching {
+            fixture.repository.updateProgramExercisePrescription(
+                sessionId,
+                current.copy(notes = "wait for sync"),
+            )
+        }
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun workoutExerciseAddRemoveAndSupersetMutationsAreAtomic() = runTest {
+        val addFixture = fixture()
+        val addSessionId = addFixture.prepareWorkoutExerciseMutationSession()
+        val addedId = addFixture.repository.addProgramExercise(addSessionId, "workout_1", "exercise_3")
+        val addOperation = addFixture.decodeWorkoutMutation(addFixture.dao.queuedOperations().single())
+        assertTrue(addOperation.exercises.any { it.id == addedId && it.exerciseId == "exercise_3" })
+        assertEquals("exercise_3", addFixture.repository.activeWorkoutRuntime(addSessionId)?.activeExerciseId)
+
+        val removeFixture = fixture()
+        val removeSessionId = removeFixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
+        assertEquals(
+            "exercise_2",
+            removeFixture.repository.removeProgramExercise(removeSessionId, "program_exercise_1"),
+        )
+        val removed = requireNotNull(removeFixture.repository.cachedBootstrapSnapshot())
+        assertEquals(listOf("exercise_2"), findWorkout(removed, "workout_1")?.exercises?.map { it.exerciseId })
+        assertEquals("exercise_1", removeFixture.repository.localSets(removeSessionId).single().exerciseId)
+        assertEquals("exercise_2", removeFixture.repository.activeWorkoutRuntime(removeSessionId)?.activeExerciseId)
+
+        val supersetFixture = fixture()
+        val supersetSessionId = supersetFixture.prepareWorkoutExerciseMutationSession()
+        assertTrue(
+            supersetFixture.repository.mutateProgramExerciseSuperset(
+                supersetSessionId,
+                "program_exercise_1",
+                "program_exercise_2",
+            ),
+        )
+        val linked = findWorkout(
+            requireNotNull(supersetFixture.repository.cachedBootstrapSnapshot()),
+            "workout_1",
+        )?.exercises.orEmpty()
+        assertEquals(listOf(1, 1), linked.map { it.supersetGroup })
+    }
+
+    @Test
+    fun failedWorkoutMutationRetriesExactlyOnceAndDuplicateAcceptanceClearsTheOutbox() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession()
+        val current = requireNotNull(findProgramExercise(
+            requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+            "program_exercise_1",
+        ))
+        fixture.repository.updateProgramExercisePrescription(sessionId, current.copy(targetSets = 6))
+        fixture.api.syncFailure = IOException("offline")
+
+        assertTrue(runCatching { fixture.repository.syncPending() }.exceptionOrNull() is IOException)
+        assertEquals("FAILED", fixture.dao.queuedOperations().single().status)
+        fixture.repository.refreshBootstrap()
+        assertEquals(
+            6,
+            findProgramExerciseTargetSets(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "program_exercise_1",
+            ),
+        )
+
+        fixture.api.syncFailure = null
+        fixture.api.syncCalls.clear()
+        fixture.api.syncHandler = { request ->
+            val operation = request.operations.single() as MutateWorkoutExercisesOperation
+            fixture.api.bootstrapResponse = replaceWorkoutExercisesInBootstrap(
+                fixture.api.bootstrapResponse,
+                operation.workoutId,
+                operation.exercises.map {
+                    it.toProgramExerciseDto(fixture.api.bootstrapResponse, operation.workoutId)
+                },
+            )
+            SyncBatchResponse(
+                serverTime = "2026-07-22T12:00:00Z",
+                results = listOf(SyncOperationResult(operation.operationId, "DUPLICATE")),
+            )
+        }
+
+        assertTrue(fixture.repository.syncPending())
+        assertEquals(1, fixture.api.syncCalls.size)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals(
+            6,
+            findProgramExerciseTargetSets(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "program_exercise_1",
+            ),
+        )
+    }
+
+    @Test
+    fun rejectedWorkoutMutationRollsBackProgramAndActiveExerciseButPreservesSets() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
+        fixture.repository.removeProgramExercise(sessionId, "program_exercise_1")
+        fixture.api.syncHandler = { request ->
+            SyncBatchResponse(
+                serverTime = "2026-07-22T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "REJECTED", error = "stale workout")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        assertEquals(
+            listOf("exercise_1", "exercise_2"),
+            findWorkout(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "workout_1",
+            )?.exercises?.map { it.exerciseId },
+        )
+        assertEquals("exercise_1", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
     }
 
     @Test
@@ -2976,6 +3153,64 @@ class GymCoachRepositorySyncTest {
         return sessionId
     }
 
+    private suspend fun Fixture.prepareWorkoutExerciseMutationSession(loggedSetCount: Int = 0): String {
+        val base = bootstrapWithTargetSets(3)
+        val program = requireNotNull(base.activeProgram)
+        val originalWorkout = program.workouts.single()
+        val secondExercise = base.catalog.first { it.id == "exercise_2" }
+        val workout = originalWorkout.copy(
+            exercises = originalWorkout.exercises + ProgramExerciseDto(
+                id = "program_exercise_2",
+                workoutId = originalWorkout.id,
+                exerciseId = secondExercise.id,
+                order = 2,
+                targetSets = 3,
+                targetRepsMin = 8,
+                targetRepsMax = 12,
+                targetRIR = 2,
+                restSec = 90,
+                exercise = secondExercise,
+            ),
+        )
+        val sessionId = "session_mutate_$loggedSetCount"
+        val loggedSets = List(loggedSetCount) { index ->
+            SetDto(
+                id = "set_mutate_${index + 1}",
+                sessionId = sessionId,
+                exerciseId = "exercise_1",
+                setNumber = index + 1,
+                weight = 80.0,
+                reps = 10,
+                rir = 2,
+                completedAt = "2026-07-22T10:0${index + 1}:00Z",
+            )
+        }
+        api.bootstrapResponse = base.copy(
+            activeProgram = program.copy(workouts = listOf(workout)),
+            openSessions = listOf(
+                SessionDto(
+                    id = sessionId,
+                    programId = program.id,
+                    workoutId = workout.id,
+                    startedAt = "2026-07-22T10:00:00Z",
+                    sets = loggedSets,
+                    workout = workout,
+                ),
+            ),
+        )
+        repository.refreshBootstrap()
+        dao.saveActiveWorkoutRuntime(
+            ActiveWorkoutRuntimeEntity(
+                sessionId = sessionId,
+                workoutId = workout.id,
+                activeExerciseId = "exercise_1",
+                revision = 1,
+                updatedAtEpochMs = 1_000,
+            ),
+        )
+        return sessionId
+    }
+
     private fun BootstrapResponse.activeProgramExerciseId(): String? =
         activeProgram?.workouts?.singleOrNull()?.exercises?.singleOrNull()?.exerciseId
 
@@ -3052,6 +3287,9 @@ class GymCoachRepositorySyncTest {
 
         fun decodeReplacementOperation(entity: SyncOutboxEntity): ReplaceProgramExerciseOperation =
             api.json.decodeFromString<SyncOperation>(entity.payloadJson) as ReplaceProgramExerciseOperation
+
+        fun decodeWorkoutMutation(entity: SyncOutboxEntity): MutateWorkoutExercisesOperation =
+            api.json.decodeFromString<SyncOperation>(entity.payloadJson) as MutateWorkoutExercisesOperation
 
         suspend fun upsertEntries(): List<Pair<SyncOutboxEntity, UpsertSetOperation>> =
             dao.queuedOperations().mapNotNull { entity ->
