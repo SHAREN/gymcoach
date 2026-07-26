@@ -285,9 +285,11 @@ fun WorkoutScreen(
     val completedWorkingRows = currentSetProgress.completedRows
     val totalPlannedRows = exerciseSetProgress.sumOf { it.plannedRows }
     val totalCompletedRows = exerciseSetProgress.sumOf { it.completedRows }
-    val completedExerciseIds = exerciseSetProgress
-        .filter { progress -> progress.completedRows >= progress.plannedRows }
-        .mapTo(mutableSetOf()) { progress -> progress.exerciseId }
+    val completedExerciseIds = completedWorkoutExerciseIds(
+        exercises = exercises,
+        sets = allSets,
+        returnRecommendations = effectiveReturnRecommendations,
+    )
     val unit = bootstrap?.profile?.unit ?: "KG"
     val lastWorking = comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
     val recoverySec = lastWorking?.let {
@@ -579,13 +581,14 @@ fun WorkoutScreen(
                         } else {
                             snackbar.showSnackbar(restStartError)
                         }
-                        val group = current.supersetGroup
-                        if (group != null) {
-                            val next = exercises.indices.firstOrNull { index ->
-                                index != selectedIndex && exercises[index].supersetGroup == group
-                            }
-                            if (next != null) selectExercise(next, preserveRest = true)
-                        }
+                        val next = nextIncompleteWorkoutExerciseIndex(
+                            exercises = exercises,
+                            sets = allSets,
+                            returnRecommendations = effectiveReturnRecommendations,
+                            currentIndex = selectedIndex,
+                            submittedSet = addedSet,
+                        )
+                        if (next != null) selectExercise(next, preserveRest = true)
                         true
                     },
                 )

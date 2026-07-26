@@ -34,6 +34,14 @@ Room is the source of truth during a workout. The local database stores:
 The UI observes Room flows. A successful network request is not required before
 a local set appears or before the next-set calculation can run.
 
+After a working set is stored, native workout navigation uses the effective
+session target for each exercise. It alternates only to incomplete members of
+the current superset, advances past a completed group to the next incomplete
+exercise, and wraps to an earlier exercise only when unfinished work genuinely
+remains. Completion ignores deleted rows, warm-ups, drop sets and duplicate
+representations of the same set. A fully complete workout stays in its completed
+state so Finish is the natural action.
+
 Client-generated session and set IDs are the final server IDs. This avoids ID
 remapping and makes a repeated upload safe.
 
