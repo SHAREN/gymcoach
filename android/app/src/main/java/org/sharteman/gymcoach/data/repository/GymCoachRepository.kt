@@ -1006,6 +1006,7 @@ class GymCoachRepository(
         val exercise = requireNotNull(bootstrap.catalog.firstOrNull { it.id == exerciseId }) {
             "Exercise is not available in the cached catalog."
         }
+        val defaults = bootstrap.activeWorkoutExerciseDefaults
         mutateWorkoutExercises(sessionId, workoutId) { exercises, _ ->
             require(exercises.none { it.exerciseId == exerciseId }) {
                 "This exercise is already in the workout."
@@ -1015,12 +1016,15 @@ class GymCoachRepository(
                 workoutId = workoutId,
                 exerciseId = exerciseId,
                 order = (exercises.maxOfOrNull { it.order } ?: -1) + 1,
-                targetSets = 4,
-                targetDropSets = 0,
-                targetRepsMin = 8,
-                targetRepsMax = 12,
-                targetRIR = 2,
+                targetSets = defaults.targetSets,
+                targetDropSets = defaults.targetDropSets,
+                targetRepsMin = defaults.targetRepsMin,
+                targetRepsMax = defaults.targetRepsMax,
+                targetRIR = defaults.targetRIR,
                 restSec = exercise.defaultRestSec,
+                autoregulationMode = defaults.autoregulationMode,
+                fatigueRate = defaults.fatigueRate,
+                loadAdjustmentPct = defaults.loadAdjustmentPct,
                 exercise = exercise,
             )
             (exercises + created) to exerciseId

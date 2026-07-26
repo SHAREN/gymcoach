@@ -36,6 +36,7 @@ import { getExerciseMedia } from '@/lib/exercise-media';
 import { meaningfulProgramNote } from '@/lib/program-notes';
 import { targetDropSets } from '@/lib/planned-sets';
 import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
+import { ACTIVE_WORKOUT_EXERCISE_DEFAULTS } from '@/lib/active-workout-exercise-defaults';
 
 type SessionProgramExercise = ProgramExercise & { exercise: Exercise };
 
@@ -282,11 +283,7 @@ export function SessionExerciseMenu({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           exerciseId: exercise.id,
-          targetSets: 4,
-          targetDropSets: 0,
-          targetRepsMin: 8,
-          targetRepsMax: 12,
-          targetRIR: 2,
+          ...ACTIVE_WORKOUT_EXERCISE_DEFAULTS,
           restSec: exercise.defaultRestSec,
         }),
       });

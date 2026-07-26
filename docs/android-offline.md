@@ -19,6 +19,10 @@ recommendation locally. The active exercise card also exposes the native
 workout-plan actions available on the web: target sets and repetitions, drop
 sets, supersets, program notes, replacement, removal and exercise information.
 Exercise addition remains a separate terminal `+` tile in the exercise strip.
+The bootstrap carries the same initial prescription used by the web add flow,
+so Android does not maintain a second set of hard-coded defaults. The selected
+thumbnail stays fully vivid; inactive thumbnail images use a short GPU alpha
+transition while status, completion and superset indicators remain undimmed.
 
 MCP, LLM coach replies and AI program generation are online-only. Their absence
 must never prevent recording or finishing a native workout. Cached coach and

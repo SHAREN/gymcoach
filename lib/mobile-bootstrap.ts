@@ -16,8 +16,9 @@ import {
 } from '@/lib/return-to-training-history';
 import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
+import { ACTIVE_WORKOUT_EXERCISE_DEFAULTS } from '@/lib/active-workout-exercise-defaults';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 7;
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 8;
 export const MOBILE_CALCULATION_VERSION = '2026-07-27-next-set-return-parity-v1';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
@@ -444,6 +445,7 @@ export async function buildMobileBootstrap(userId: string) {
       ...exercise,
       loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
     })),
+    activeWorkoutExerciseDefaults: ACTIVE_WORKOUT_EXERCISE_DEFAULTS,
     openSessions,
     lastPerformances: serializedPerformances,
     ...equipmentHistoryContract,

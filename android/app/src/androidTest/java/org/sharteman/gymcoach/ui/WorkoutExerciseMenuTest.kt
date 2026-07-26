@@ -6,12 +6,17 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.R
@@ -44,6 +49,30 @@ class WorkoutExerciseMenuTest {
             composeRule.activity.getString(R.string.workout_controls),
         ).performClick()
         composeRule.onNodeWithTag("workout-replace-exercise").assertDoesNotExist()
+    }
+
+    @Test
+    fun thumbnailEmphasisTransfersImmediatelyWithoutChangingExerciseIndexes() {
+        setContent()
+        val activeLabel = composeRule.activity.getString(R.string.exercise_thumbnail_active)
+        val inactiveLabel = composeRule.activity.getString(R.string.exercise_thumbnail_inactive)
+
+        composeRule.onNodeWithTag("exercise-thumbnail-item-romanian-deadlift").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, activeLabel),
+        )
+        composeRule.onNodeWithTag("exercise-thumbnail-item-incline-bench").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, inactiveLabel),
+        )
+
+        composeRule.onNodeWithTag("exercise-thumbnail-1").performClick()
+
+        composeRule.onNodeWithTag("exercise-thumbnail-item-romanian-deadlift").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, inactiveLabel),
+        )
+        composeRule.onNodeWithTag("exercise-thumbnail-item-incline-bench").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, activeLabel),
+        )
+        composeRule.onNodeWithText("2 / 3").assertIsDisplayed()
     }
 
     @Test
@@ -96,6 +125,9 @@ class WorkoutExerciseMenuTest {
         composeRule.onNodeWithContentDescription(
             composeRule.activity.getString(R.string.back_to_workout),
         ).performClick()
+        composeRule.onAllNodesWithContentDescription(
+            composeRule.activity.getString(R.string.exercise_add_action),
+        ).assertCountEquals(1)
         composeRule.onNodeWithTag("exercise-add-tile").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("exercise-add-picker").assertIsDisplayed()
         composeRule.onNodeWithTag("add-exercise-lying-leg-curl").performClick()

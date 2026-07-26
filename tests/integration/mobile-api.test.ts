@@ -330,7 +330,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       profile: {
         email: seeded.user.email,
         activeGymId: seeded.gym.id,
@@ -435,7 +435,18 @@ describe('Android mobile API', () => {
       (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
     ).recommendation;
 
+    expect(body.schemaVersion).toBe(8);
     expect(body.calculationVersion).toBe('2026-07-27-next-set-return-parity-v1');
+    expect(body.activeWorkoutExerciseDefaults).toEqual({
+      targetSets: 4,
+      targetDropSets: 0,
+      targetRepsMin: 8,
+      targetRepsMax: 12,
+      targetRIR: 2,
+      autoregulationMode: 'PRESERVE_RIR',
+      fatigueRate: null,
+      loadAdjustmentPct: null,
+    });
     expect(recommendation).toMatchObject({
       mode: 'muscle-reintro',
       historyBasis: 'long-term-exact',

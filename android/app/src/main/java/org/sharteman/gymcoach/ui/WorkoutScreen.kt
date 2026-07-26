@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -75,12 +77,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -994,16 +998,45 @@ private fun ExerciseStrip(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(exercises.indices.toList(), key = { exercises[it].id }) { index ->
+        items(
+            count = exercises.size,
+            key = { index -> exercises[index].id },
+            contentType = { "exercise-thumbnail" },
+        ) { index ->
             val exercise = exercises[index]
             val thumbnailUrl = mediaCatalog?.resolve(exercise.exercise.name)?.frameUrl(serverUrl)
             val selected = index == selectedIndex
+            val thumbnailAlpha by animateFloatAsState(
+                targetValue = exerciseThumbnailAlpha(selected),
+                animationSpec = tween(durationMillis = 180),
+                label = "exercise-thumbnail-emphasis",
+            )
+            val imageRequest = remember(thumbnailUrl) {
+                thumbnailUrl?.let { url ->
+                    ImageRequest.Builder(context)
+                        .data(url)
+                        .diskCacheKey(url)
+                        .crossfade(true)
+                        .build()
+                }
+            }
             val completed = exercise.exerciseId in completedExerciseIds
             val previousInGroup = exercise.supersetGroup != null &&
                 exercises.getOrNull(index - 1)?.supersetGroup == exercise.supersetGroup
             val nextInGroup = exercise.supersetGroup != null &&
                 exercises.getOrNull(index + 1)?.supersetGroup == exercise.supersetGroup
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                modifier = Modifier
+                    .testTag("exercise-thumbnail-item-${exercise.id}")
+                    .semantics {
+                        stateDescription = if (selected) {
+                            context.getString(R.string.exercise_thumbnail_active)
+                        } else {
+                            context.getString(R.string.exercise_thumbnail_inactive)
+                        }
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Card(
                     onClick = {
                         when (exerciseStripAction(selected, selectionEnabled)) {
@@ -1031,16 +1064,12 @@ private fun ExerciseStrip(
                     ),
                 ) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        if (thumbnailUrl != null) {
+                        if (imageRequest != null) {
                             SubcomposeAsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(thumbnailUrl)
-                                    .diskCacheKey(thumbnailUrl)
-                                    .crossfade(true)
-                                    .build(),
+                                model = imageRequest,
                                 contentDescription = exerciseDisplayName(exercise.exercise.name),
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = thumbnailAlpha },
                                 loading = {
                                     ExerciseThumbnailFallback(exerciseDisplayName(exercise.exercise.name), selected)
                                 },
@@ -1052,9 +1081,9 @@ private fun ExerciseStrip(
                             Surface(
                                 modifier = Modifier.fillMaxSize(),
                                 color = if (selected) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                    Color.Transparent
                                 } else {
-                                    Color.Black.copy(alpha = 0.04f)
+                                    Color.Black.copy(alpha = 0.08f)
                                 },
                             ) {}
                         } else {
@@ -1093,7 +1122,7 @@ private fun ExerciseStrip(
                 }
             }
         }
-        item(key = "add-exercise") {
+        item(key = "add-exercise", contentType = "exercise-add-tile") {
             Card(
                 onClick = onAdd,
                 modifier = Modifier

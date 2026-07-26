@@ -298,6 +298,8 @@
     <string name="exercise_remove_warning">%1$s will be removed from the current workout plan. Completed sets stay in workout history.</string>
     <string name="exercise_remove_last">A workout must keep at least one exercise.</string>
     <string name="exercise_add_action">Add exercise</string>
+    <string name="exercise_thumbnail_active">Active exercise</string>
+    <string name="exercise_thumbnail_inactive">Inactive exercise</string>
     <string name="exercise_add_title">Add exercise to workout</string>
     <string name="exercise_add_error">The exercise could not be added.</string>
     <string name="exercise_change_error">The exercise plan could not be changed.</string>

@@ -42,6 +42,8 @@ data class BootstrapResponse(
     val activeProgram: ProgramDto? = null,
     val gyms: List<GymDto> = emptyList(),
     val catalog: List<ExerciseDto> = emptyList(),
+    val activeWorkoutExerciseDefaults: ActiveWorkoutExerciseDefaultsDto =
+        ActiveWorkoutExerciseDefaultsDto(),
     val openSessions: List<SessionDto> = emptyList(),
     val lastPerformances: Map<String, LastPerformanceDto> = emptyMap(),
     val lastPerformancesByEquipment: Map<String, List<LastPerformanceDto>> = emptyMap(),
@@ -492,6 +494,18 @@ data class MobileWorkoutExerciseMutationDto(
     val tempo: String? = null,
     val notes: String? = null,
     val supersetGroup: Int? = null,
+    val autoregulationMode: String = "PRESERVE_RIR",
+    val fatigueRate: Double? = null,
+    val loadAdjustmentPct: Double? = null,
+)
+
+@Serializable
+data class ActiveWorkoutExerciseDefaultsDto(
+    val targetSets: Int = 4,
+    val targetDropSets: Int = 0,
+    val targetRepsMin: Int = 8,
+    val targetRepsMax: Int = 12,
+    val targetRIR: Int = 2,
     val autoregulationMode: String = "PRESERVE_RIR",
     val fatigueRate: Double? = null,
     val loadAdjustmentPct: Double? = null,

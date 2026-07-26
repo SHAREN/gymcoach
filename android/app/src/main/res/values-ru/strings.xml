@@ -300,6 +300,8 @@
     <string name="exercise_remove_warning">«%1$s» будет убрано из текущего плана тренировки. Выполненные подходы останутся в истории.</string>
     <string name="exercise_remove_last">В тренировке должно остаться хотя бы одно упражнение.</string>
     <string name="exercise_add_action">Добавить упражнение</string>
+    <string name="exercise_thumbnail_active">Активное упражнение</string>
+    <string name="exercise_thumbnail_inactive">Неактивное упражнение</string>
     <string name="exercise_add_title">Добавить упражнение в тренировку</string>
     <string name="exercise_add_error">Не удалось добавить упражнение.</string>
     <string name="exercise_change_error">Не удалось изменить план упражнения.</string>

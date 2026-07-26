@@ -40,6 +40,7 @@ import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.ActiveWorkoutExerciseDefaultsDto
 import org.sharteman.gymcoach.data.model.CoachingFieldDto
 import org.sharteman.gymcoach.data.model.CoachingProfileDto
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
@@ -1591,6 +1592,40 @@ class GymCoachRepositorySyncTest {
             "workout_1",
         )?.exercises.orEmpty()
         assertEquals(listOf(1, 1), linked.map { it.supersetGroup })
+    }
+
+    @Test
+    fun addUsesBootstrapDefaultsAndRapidRepeatCannotCreateADuplicateExercise() = runTest {
+        val fixture = fixture()
+        val defaults = ActiveWorkoutExerciseDefaultsDto(
+            targetSets = 2,
+            targetDropSets = 1,
+            targetRepsMin = 6,
+            targetRepsMax = 9,
+            targetRIR = 3,
+            autoregulationMode = "PRESERVE_REPS",
+            fatigueRate = 1.1,
+            loadAdjustmentPct = 2.5,
+        )
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(defaults = defaults)
+
+        val addedId = fixture.repository.addProgramExercise(sessionId, "workout_1", "exercise_3")
+        val repeated = runCatching {
+            fixture.repository.addProgramExercise(sessionId, "workout_1", "exercise_3")
+        }
+
+        val operation = fixture.decodeWorkoutMutation(fixture.dao.queuedOperations().single())
+        val added = operation.exercises.single { it.id == addedId }
+        assertEquals(defaults.targetSets, added.targetSets)
+        assertEquals(defaults.targetDropSets, added.targetDropSets)
+        assertEquals(defaults.targetRepsMin, added.targetRepsMin)
+        assertEquals(defaults.targetRepsMax, added.targetRepsMax)
+        assertEquals(defaults.targetRIR, added.targetRIR)
+        assertEquals(defaults.autoregulationMode, added.autoregulationMode)
+        assertEquals(defaults.fatigueRate, added.fatigueRate)
+        assertEquals(defaults.loadAdjustmentPct, added.loadAdjustmentPct)
+        assertTrue(repeated.exceptionOrNull() is IllegalStateException)
+        assertEquals(1, fixture.dao.queuedOperations().size)
     }
 
     @Test
@@ -3153,8 +3188,11 @@ class GymCoachRepositorySyncTest {
         return sessionId
     }
 
-    private suspend fun Fixture.prepareWorkoutExerciseMutationSession(loggedSetCount: Int = 0): String {
-        val base = bootstrapWithTargetSets(3)
+    private suspend fun Fixture.prepareWorkoutExerciseMutationSession(
+        loggedSetCount: Int = 0,
+        defaults: ActiveWorkoutExerciseDefaultsDto = ActiveWorkoutExerciseDefaultsDto(),
+    ): String {
+        val base = bootstrapWithTargetSets(3).copy(activeWorkoutExerciseDefaults = defaults)
         val program = requireNotNull(base.activeProgram)
         val originalWorkout = program.workouts.single()
         val secondExercise = base.catalog.first { it.id == "exercise_2" }
