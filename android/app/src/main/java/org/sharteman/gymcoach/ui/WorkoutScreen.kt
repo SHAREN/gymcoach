@@ -119,8 +119,9 @@ import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.isAchievableLoad
 import org.sharteman.gymcoach.training.nominalResistanceKg
 import org.sharteman.gymcoach.training.normalizeSetTableMetrics
-import org.sharteman.gymcoach.training.recommendNextSet
+import org.sharteman.gymcoach.training.recommendNextSetFromSharedContract
 import org.sharteman.gymcoach.training.resolveExerciseInventory
+import org.sharteman.gymcoach.training.resolveSharedNextSetTarget
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.selectedEquipment
 import org.sharteman.gymcoach.training.setTableMetricEnabled
@@ -265,11 +266,7 @@ fun WorkoutScreen(
         gymEquipmentId = currentEquipmentId,
     )
     val returnRecommendation = effectiveReturnRecommendations[current.id]
-    val target = current.copy(
-        targetSets = returnRecommendation?.targetSets ?: current.targetSets,
-        targetDropSets = if (returnRecommendation?.mode != null && returnRecommendation.mode != "normal") 0 else current.targetDropSets,
-        targetRIR = returnRecommendation?.targetRIR ?: current.targetRIR,
-    )
+    val target = resolveSharedNextSetTarget(current, returnRecommendation) ?: current
     val currentSets = allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
     val selectedEquipmentDto = gym?.equipment?.firstOrNull { it.id == selectedProfile?.equipmentId }
     val comparableSets = selectedProfile?.let { profile ->
@@ -310,13 +307,13 @@ fun WorkoutScreen(
         readiness.readiness <= 2 || (readiness.soreness?.get(current.exercise.muscleGroup) ?: 0) >= 4
     } ?: false
     val loadConstraints = inventory.constraints
-    val recommendation = recommendNextSet(
-        programExercise = target,
+    val recommendation = recommendNextSetFromSharedContract(
+        programExercise = current,
+        returnRecommendation = returnRecommendation,
         completedSets = comparableSets,
         recoverySec = recoverySec,
         sameMuscleSuperset = sameMuscleSuperset,
         allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
-        maxWeight = returnRecommendation?.weightCeiling,
         constraints = loadConstraints,
     )
 
@@ -385,19 +382,32 @@ fun WorkoutScreen(
         ) {
             return@LaunchedEffect
         }
-        val candidateWeight = recommendation?.weight
-            ?: returnRecommendation?.suggestedWeight
-            ?: lastPerformance?.maxWeight
-        val initialWeight = candidateWeight?.let {
-            constrainGymWeight(it, it, inventory.constraints)
-        } ?: selectedProfile?.attainableLoads?.firstOrNull()
+        val candidateWeight = if (returnRecommendation == null) {
+            null
+        } else {
+            recommendation?.weight
+                ?: returnRecommendation.suggestedWeight
+                ?: lastPerformance?.maxWeight
+        }
+        val initialWeight = if (returnRecommendation == null) {
+            null
+        } else {
+            candidateWeight?.let {
+                constrainGymWeight(it, it, inventory.constraints)
+            } ?: selectedProfile?.attainableLoads?.firstOrNull()
+        }
         if (initialWeight == null) {
             weightText = ""
         } else {
             weightText = formatWeight(roundWeight(toDisplayWeight(initialWeight, unit), 2))
         }
-        repsText = (recommendation?.reps ?: target.targetRepsMin).toString()
-        rirText = (recommendation?.rir ?: target.targetRIR).toString()
+        if (returnRecommendation == null) {
+            repsText = ""
+            rirText = ""
+        } else {
+            repsText = (recommendation?.reps ?: target.targetRepsMin).toString()
+            rirText = (recommendation?.rir ?: target.targetRIR).toString()
+        }
         lastAppliedAutofillKey = autofillKey
         hasAppliedAutofill = true
     }
@@ -2135,7 +2145,7 @@ private fun SetPickerField(
 }
 
 @Composable
-private fun RestTimerCard(
+internal fun RestTimerCard(
     remainingSec: Int,
     totalSec: Int,
     recommendation: SetRecommendation?,

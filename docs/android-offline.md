@@ -108,6 +108,14 @@ application. It supports `PRESERVE_RIR`, `PRESERVE_REPS`, actual recovery time,
 same-primary-muscle supersets, readiness and deload increase blocks,
 return-to-training ceilings and the active gym inventory.
 
+The bootstrap precomputes equipment-scoped return recommendations for every
+owned gym, including gyms that do not yet have an open server session. Web and
+Android apply the same session target RIR and weight ceiling before equipment
+rounding. If the scoped recommendation is missing from an old or incomplete
+bootstrap, the native client does not produce or prefill a next-set
+recommendation from unrestricted program targets; it waits for refreshed
+shared state instead of bypassing a possible return ceiling.
+
 Missing RIR lowers recommendation confidence. No offline calculation invokes an
 LLM or invents a replacement for missing data.
 

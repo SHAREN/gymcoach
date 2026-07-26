@@ -110,11 +110,15 @@ describe('mobile equipment history contract', () => {
 
   it('includes the open-session gym when the active gym is different', () => {
     const gymIds = mobileWorkoutGymIds(
+      ['gym-a', 'gym-b'],
       'gym-a',
       [{ workoutId: 'workout-1', gymId: 'gym-b' }],
       'workout-1',
     );
-    const historyGymIds = mobileHistoryGymIds('gym-a', [{ gymId: 'gym-b' }, { gymId: 'gym-a' }]);
+    const historyGymIds = mobileHistoryGymIds(['gym-a', 'gym-b'], 'gym-a', [
+      { gymId: 'gym-b' },
+      { gymId: 'gym-a' },
+    ]);
     const merged = mergeMobileEquipmentReturnRecommendations([
       { 'program-exercise-1': [recommendation('cable-a', 30)] },
       { 'program-exercise-1': [recommendation('cable-b', 60)] },
@@ -163,11 +167,12 @@ describe('mobile equipment history contract', () => {
 
   it('keeps an open no-gym session as a first-class scope beside the active gym', () => {
     const gymIds = mobileWorkoutGymIds(
+      ['gym-a'],
       'gym-a',
       [{ workoutId: 'workout-1', gymId: null }],
       'workout-1',
     );
-    const historyGymIds = mobileHistoryGymIds('gym-a', [{ gymId: null }]);
+    const historyGymIds = mobileHistoryGymIds(['gym-a'], 'gym-a', [{ gymId: null }]);
     const merged = mergeMobileEquipmentReturnRecommendations([
       { 'program-exercise-1': [recommendation(null, 30, 'gym-a')] },
       { 'program-exercise-1': [recommendation(null, 60, null)] },
@@ -192,5 +197,13 @@ describe('mobile equipment history contract', () => {
         (item) => item.gymId == null && item.gymEquipmentId == null,
       )?.recommendation.suggestedWeight,
     ).toBe(60);
+  });
+
+  it('preloads every owned gym before a local session exists', () => {
+    expect(mobileWorkoutGymIds(['gym-a', 'gym-b'], 'gym-a', [], 'workout-1')).toEqual([
+      'gym-a',
+      'gym-b',
+    ]);
+    expect(mobileHistoryGymIds(['gym-a', 'gym-b'], 'gym-a', [])).toEqual(['gym-a', 'gym-b']);
   });
 });

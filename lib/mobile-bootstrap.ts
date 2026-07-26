@@ -18,7 +18,7 @@ import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 7;
-export const MOBILE_CALCULATION_VERSION = '2026-07-18-multi-muscle-load-v1';
+export const MOBILE_CALCULATION_VERSION = '2026-07-27-next-set-return-parity-v1';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
 interface MobileExerciseHistoryRow {
@@ -80,21 +80,26 @@ export function buildMobileEquipmentHistoryContract(
 }
 
 export function mobileWorkoutGymIds(
+  ownedGymIds: string[],
   activeGymId: string | null,
   openSessions: Array<{ workoutId: string | null; gymId: string | null }>,
   workoutId: string,
 ): Array<string | null> {
   return mobileHistoryGymIds(
+    ownedGymIds,
     activeGymId,
     openSessions.filter((session) => session.workoutId === workoutId),
   );
 }
 
 export function mobileHistoryGymIds(
+  ownedGymIds: string[],
   activeGymId: string | null,
   openSessions: Array<{ gymId: string | null }>,
 ): Array<string | null> {
-  return [...new Set([activeGymId, ...openSessions.map((session) => session.gymId)])];
+  return [
+    ...new Set([...ownedGymIds, activeGymId, ...openSessions.map((session) => session.gymId)]),
+  ];
 }
 
 export function mergeMobileEquipmentReturnRecommendations(
@@ -284,7 +289,8 @@ export async function buildMobileBootstrap(userId: string) {
   const workouts = [...new Map(bootstrapWorkouts.map((workout) => [workout.id, workout])).values()];
   const programExercises = workouts.flatMap((workout) => workout.exercises);
   const exerciseIds = [...new Set(programExercises.map((item) => item.exerciseId))];
-  const historyGymIds = mobileHistoryGymIds(user.activeGymId, openSessions);
+  const allOwnedGymIds = gyms.map((gym) => gym.id);
+  const historyGymIds = mobileHistoryGymIds(allOwnedGymIds, user.activeGymId, openSessions);
   const historyGyms = historyGymIds.flatMap((gymId) => {
     if (gymId == null) return [null];
     const gym = gymsById.get(gymId);
@@ -326,6 +332,7 @@ export async function buildMobileBootstrap(userId: string) {
       ? Promise.all(
           workouts.map(async (workout) => {
             const workoutGyms = mobileWorkoutGymIds(
+              allOwnedGymIds,
               user.activeGymId,
               openSessions,
               workout.id,

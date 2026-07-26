@@ -4,6 +4,7 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -60,6 +61,43 @@ data class SetRecommendation(
     val fatigueLoss: Double,
     val confidence: String,
 )
+
+fun resolveSharedNextSetTarget(
+    programExercise: ProgramExerciseDto,
+    returnRecommendation: ReturnRecommendationDto?,
+): ProgramExerciseDto? = returnRecommendation?.let { recommendation ->
+    programExercise.copy(
+        targetSets = recommendation.targetSets,
+        targetDropSets = if (recommendation.mode == "normal") {
+            programExercise.targetDropSets
+        } else {
+            0
+        },
+        targetRIR = recommendation.targetRIR,
+    )
+}
+
+fun recommendNextSetFromSharedContract(
+    programExercise: ProgramExerciseDto,
+    returnRecommendation: ReturnRecommendationDto?,
+    completedSets: List<LocalSetEntity>,
+    recoverySec: Int?,
+    sameMuscleSuperset: Boolean = false,
+    allowLoadIncrease: Boolean = true,
+    constraints: LoadConstraints? = null,
+): SetRecommendation? {
+    val sharedRecommendation = returnRecommendation ?: return null
+    val target = resolveSharedNextSetTarget(programExercise, sharedRecommendation) ?: return null
+    return recommendNextSet(
+        programExercise = target,
+        completedSets = completedSets,
+        recoverySec = recoverySec,
+        sameMuscleSuperset = sameMuscleSuperset,
+        allowLoadIncrease = allowLoadIncrease,
+        maxWeight = sharedRecommendation.weightCeiling,
+        constraints = constraints,
+    )
+}
 
 fun resolveExerciseInventory(
     programExercise: ProgramExerciseDto,

@@ -10,6 +10,7 @@ import {
   constrainGymWeightAtOrBelow,
   type GymLoadConstraints,
 } from '@/lib/gym-loads';
+import type { ReturnRecommendation } from '@/lib/return-to-training';
 
 export const MIN_FATIGUE_RATE = 0.25;
 export const MAX_FATIGUE_RATE = 2;
@@ -72,6 +73,13 @@ interface RecommendationInput {
   // Optional session-only ceiling used while recalibrating after a long break.
   maxWeight?: number | null;
   loadConstraints?: GymLoadConstraints | null;
+}
+
+interface SharedRecommendationInput extends Omit<RecommendationInput, 'maxWeight'> {
+  returnRecommendation:
+    | Pick<ReturnRecommendation, 'mode' | 'targetSets' | 'targetRIR' | 'weightCeiling'>
+    | null
+    | undefined;
 }
 
 interface FirstWorkingSetRecommendationInput {
@@ -200,6 +208,36 @@ export function resolveIntraSetConfig(
       MAX_LOAD_ADJUSTMENT_PCT,
     ),
   };
+}
+
+export function resolveSharedNextSetTarget<T extends ProgramExercise & { exercise: Exercise }>(
+  programExercise: T,
+  returnRecommendation:
+    | Pick<ReturnRecommendation, 'mode' | 'targetSets' | 'targetRIR'>
+    | null
+    | undefined,
+): T | null {
+  if (!returnRecommendation) return null;
+  return {
+    ...programExercise,
+    targetSets: returnRecommendation.targetSets,
+    targetDropSets: returnRecommendation.mode === 'normal' ? programExercise.targetDropSets : 0,
+    targetRIR: returnRecommendation.targetRIR,
+  };
+}
+
+export function recommendNextIntraSetFromSharedContract({
+  programExercise,
+  returnRecommendation,
+  ...input
+}: SharedRecommendationInput): IntraSetRecommendation | null {
+  const target = resolveSharedNextSetTarget(programExercise, returnRecommendation);
+  if (!target || !returnRecommendation) return null;
+  return recommendNextIntraSet({
+    ...input,
+    programExercise: target,
+    maxWeight: returnRecommendation.weightCeiling,
+  });
 }
 
 export function recommendNextIntraSet({

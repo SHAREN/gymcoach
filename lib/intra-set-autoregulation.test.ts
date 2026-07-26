@@ -4,7 +4,10 @@ import {
   defaultIntraSetConfig,
   recommendFirstWorkingSet,
   recommendNextIntraSet,
+  recommendNextIntraSetFromSharedContract,
 } from '@/lib/intra-set-autoregulation';
+import type { ReturnRecommendation } from '@/lib/return-to-training';
+import type { GymLoadConstraints } from '@/lib/gym-loads';
 
 const squat: Exercise = {
   id: 'squat',
@@ -53,6 +56,32 @@ function makePe(
     loadAdjustmentPct: null,
     ...overrides,
     exercise,
+  };
+}
+
+function sharedRecommendation(overrides: Partial<ReturnRecommendation> = {}): ReturnRecommendation {
+  return {
+    mode: 'normal',
+    exerciseGapDays: 5,
+    returnGapDays: 5,
+    muscleGapDays: 5,
+    muscleMaintained: true,
+    recentMuscleSets: 6,
+    baselineMuscleSetsPer28Days: 24,
+    recentVolumeRatio: 1,
+    targetSets: 3,
+    targetRIR: 2,
+    weightCeiling: null,
+    suggestedWeight: null,
+    startFraction: null,
+    calibrationRequired: false,
+    historySessionCount: 3,
+    recentHistorySessionCount: 3,
+    longTermHistorySessionCount: 0,
+    nonComparableHistorySessionCount: 0,
+    historyBasis: 'recent-exact',
+    confidence: 'high',
+    ...overrides,
   };
 }
 
@@ -270,5 +299,94 @@ describe('recommendNextIntraSet', () => {
     });
 
     expect(result).toMatchObject({ weight: 100, reps: 11 });
+  });
+});
+
+describe('shared next-set golden contract', () => {
+  const exercise = makePe(curl, {
+    targetRepsMin: 10,
+    targetRepsMax: 10,
+    autoregulationMode: 'PRESERVE_RIR',
+    fatigueRate: 0.5,
+    loadAdjustmentPct: 3,
+  });
+  const completedSets = [{ weight: 32.5, reps: 12, rir: 2 }];
+  const loadConstraints: GymLoadConstraints = {
+    equipmentType: 'DUMBBELL',
+    dumbbellWeights: [30, 32.5, 35],
+  };
+
+  it('matches the return target for 32.5 kg x 12 at RIR 2', () => {
+    const result = recommendNextIntraSetFromSharedContract({
+      programExercise: exercise,
+      returnRecommendation: sharedRecommendation({
+        mode: 'muscle-reintro',
+        targetSets: 1,
+        targetRIR: 4,
+        weightCeiling: 32.5,
+      }),
+      completedSets,
+      recoverySec: 120,
+      loadConstraints,
+    });
+
+    expect(result).toEqual({
+      mode: 'PRESERVE_RIR',
+      weight: 32.5,
+      reps: 10,
+      rir: 4,
+      reason: 'adjust-reps',
+      predictedRepsAtSameLoad: 10,
+      fatigueLoss: 0.5,
+      confidence: 'medium',
+    });
+  });
+
+  it('fails closed when the shared session state is missing or stale', () => {
+    expect(
+      recommendNextIntraSetFromSharedContract({
+        programExercise: exercise,
+        returnRecommendation: null,
+        completedSets,
+        recoverySec: 120,
+        loadConstraints,
+      }),
+    ).toBeNull();
+  });
+
+  it('rounds at or below the return ceiling instead of crossing an equipment step', () => {
+    const result = recommendNextIntraSetFromSharedContract({
+      programExercise: exercise,
+      returnRecommendation: sharedRecommendation({
+        mode: 'exercise-reintro',
+        targetRIR: 3,
+        weightCeiling: 33,
+      }),
+      completedSets: [{ weight: 32.5, reps: 12, rir: 5 }],
+      recoverySec: 120,
+      loadConstraints,
+    });
+
+    expect(result?.weight).toBe(32.5);
+    expect(result?.weight).toBeLessThanOrEqual(33);
+    expect(result?.rir).toBe(3);
+  });
+
+  it('preserves the ordinary unrestricted scenario', () => {
+    const result = recommendNextIntraSetFromSharedContract({
+      programExercise: exercise,
+      returnRecommendation: sharedRecommendation(),
+      completedSets,
+      recoverySec: 120,
+      loadConstraints,
+    });
+
+    expect(result).toMatchObject({
+      weight: 35,
+      reps: 10,
+      rir: 2,
+      reason: 'increase-load',
+      confidence: 'medium',
+    });
   });
 });

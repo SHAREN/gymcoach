@@ -435,7 +435,7 @@ describe('Android mobile API', () => {
       (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
     ).recommendation;
 
-    expect(body.calculationVersion).toBe('2026-07-18-multi-muscle-load-v1');
+    expect(body.calculationVersion).toBe('2026-07-27-next-set-return-parity-v1');
     expect(recommendation).toMatchObject({
       mode: 'muscle-reintro',
       historyBasis: 'long-term-exact',

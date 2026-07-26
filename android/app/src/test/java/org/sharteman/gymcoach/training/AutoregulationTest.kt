@@ -13,6 +13,7 @@ import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
 import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 
 class AutoregulationTest {
     @Test
@@ -70,6 +71,88 @@ class AutoregulationTest {
 
         requireNotNull(recommendation)
         assertEquals(20.0, recommendation.weight, 0.001)
+    }
+
+    @Test
+    fun sharedGoldenReturnTargetMatchesWebForThirtyTwoPointFiveByTwelveAtRirTwo() {
+        val recommendation = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = returnRecommendation(
+                mode = "muscle-reintro",
+                targetSets = 1,
+                targetRir = 4,
+                weightCeiling = 32.5,
+            ),
+            completedSets = listOf(set(weight = 32.5, reps = 12, rir = 2)),
+            recoverySec = 120,
+            constraints = parityLoadConstraints(),
+        )
+
+        requireNotNull(recommendation)
+        assertEquals(32.5, recommendation.weight, 0.001)
+        assertEquals(10, recommendation.reps)
+        assertEquals(4, recommendation.rir)
+        assertEquals("adjust-reps", recommendation.reason)
+        assertEquals(10, recommendation.predictedRepsAtSameLoad)
+        assertEquals(0.5, recommendation.fatigueLoss, 0.001)
+        assertEquals("medium", recommendation.confidence)
+    }
+
+    @Test
+    fun sharedGoldenMissingOrStaleStateFailsClosed() {
+        val recommendation = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = null,
+            completedSets = listOf(set(weight = 32.5, reps = 12, rir = 2)),
+            recoverySec = 120,
+            constraints = parityLoadConstraints(),
+        )
+
+        assertEquals(null, recommendation)
+    }
+
+    @Test
+    fun sharedGoldenEquipmentStepCannotCrossReturnCeiling() {
+        val recommendation = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = returnRecommendation(
+                mode = "exercise-reintro",
+                targetSets = 2,
+                targetRir = 3,
+                weightCeiling = 33.0,
+            ),
+            completedSets = listOf(set(weight = 32.5, reps = 12, rir = 5)),
+            recoverySec = 120,
+            constraints = parityLoadConstraints(),
+        )
+
+        requireNotNull(recommendation)
+        assertEquals(32.5, recommendation.weight, 0.001)
+        assertTrue(recommendation.weight <= 33.0)
+        assertEquals(3, recommendation.rir)
+    }
+
+    @Test
+    fun sharedGoldenNormalSessionKeepsOrdinaryProgression() {
+        val recommendation = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = returnRecommendation(
+                mode = "normal",
+                targetSets = 3,
+                targetRir = 2,
+                weightCeiling = null,
+            ),
+            completedSets = listOf(set(weight = 32.5, reps = 12, rir = 2)),
+            recoverySec = 120,
+            constraints = parityLoadConstraints(),
+        )
+
+        requireNotNull(recommendation)
+        assertEquals(35.0, recommendation.weight, 0.001)
+        assertEquals(10, recommendation.reps)
+        assertEquals(2, recommendation.rir)
+        assertEquals("increase-load", recommendation.reason)
+        assertEquals("medium", recommendation.confidence)
     }
 
     @Test
@@ -476,6 +559,55 @@ class AutoregulationTest {
             category = if (muscle == "BICEPS") "ISOLATION" else "COMPOUND",
             equipmentType = equipmentType,
         ),
+    )
+
+    private fun parityProgramExercise() = ProgramExerciseDto(
+        id = "pe_parity",
+        workoutId = "workout_parity",
+        exerciseId = "exercise_parity",
+        order = 1,
+        targetSets = 3,
+        targetRepsMin = 10,
+        targetRepsMax = 10,
+        targetRIR = 2,
+        restSec = 120,
+        autoregulationMode = "PRESERVE_RIR",
+        fatigueRate = 0.5,
+        loadAdjustmentPct = 3.0,
+        exercise = ExerciseDto(
+            id = "exercise_parity",
+            name = "Parity dumbbell curl",
+            muscleGroup = "BICEPS",
+            category = "ISOLATION",
+            equipmentType = "DUMBBELL",
+        ),
+    )
+
+    private fun parityLoadConstraints() = LoadConstraints(
+        equipmentType = "DUMBBELL",
+        dumbbellWeights = listOf(30.0, 32.5, 35.0),
+    )
+
+    private fun returnRecommendation(
+        mode: String,
+        targetSets: Int,
+        targetRir: Int,
+        weightCeiling: Double?,
+    ) = ReturnRecommendationDto(
+        mode = mode,
+        exerciseGapDays = 60,
+        returnGapDays = 60,
+        muscleGapDays = 60,
+        targetSets = targetSets,
+        targetRIR = targetRir,
+        suggestedWeight = weightCeiling,
+        weightCeiling = weightCeiling,
+        calibrationRequired = mode != "normal",
+        historySessionCount = 3,
+        recentHistorySessionCount = 1,
+        longTermHistorySessionCount = 2,
+        historyBasis = "recent-and-long-term",
+        confidence = "medium",
     )
 
     private fun selectorized(id: String, exerciseId: String, loads: List<Double>) =

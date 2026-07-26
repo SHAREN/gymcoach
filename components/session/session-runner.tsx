@@ -35,7 +35,8 @@ import {
 } from '@/lib/progression';
 import {
   recommendFirstWorkingSet,
-  recommendNextIntraSet,
+  recommendNextIntraSetFromSharedContract,
+  resolveSharedNextSetTarget,
   type IntraSetRecommendation,
 } from '@/lib/intra-set-autoregulation';
 import {
@@ -349,15 +350,7 @@ export function SessionRunner({
               selectedEquipmentId,
             );
         const override = targetSetOverrides[pe.id];
-        const effective =
-          !recommendation || recommendation.mode === 'normal'
-            ? pe
-            : {
-                ...pe,
-                targetSets: recommendation.targetSets,
-                targetDropSets: 0,
-                targetRIR: recommendation.targetRIR,
-              };
+        const effective = resolveSharedNextSetTarget(pe, recommendation) ?? pe;
         return override == null ? effective : { ...effective, targetSets: override };
       }),
     [
@@ -597,7 +590,7 @@ export function SessionRunner({
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
     if (!lastWorkingSet) {
       const returnRecommendation = returnRecommendationFor(pe);
-      if (returnRecommendation && returnRecommendation.mode !== 'normal') return null;
+      if (!returnRecommendation || returnRecommendation.mode !== 'normal') return null;
 
       const previousPerformance = selectLastPerformanceForEquipment(
         lastPerformances[pe.exerciseId],
@@ -641,13 +634,13 @@ export function SessionRunner({
         (typeof groupSoreness === 'number' && groupSoreness >= SORENESS_HOLD_AT_OR_ABOVE));
     const allowLoadIncrease = !deloadActive && !recoveryBlocksIncrease;
 
-    return recommendNextIntraSet({
+    return recommendNextIntraSetFromSharedContract({
       programExercise: pe,
+      returnRecommendation: returnRecommendationFor(pe),
       completedSets,
       recoverySec: Math.max(0, (atMs - lastWorkingSet.createdAt) / 1000),
       sameMuscleSuperset,
       allowLoadIncrease,
-      maxWeight: returnRecommendationFor(pe)?.weightCeiling ?? null,
       loadConstraints: loadConstraintsFor(pe),
     });
   }
