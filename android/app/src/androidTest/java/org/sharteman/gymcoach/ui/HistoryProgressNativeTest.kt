@@ -1,17 +1,34 @@
 package org.sharteman.gymcoach.ui
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.MobileDeloadStatusDto
+import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.GymDto
+import org.sharteman.gymcoach.data.model.GymEquipmentDto
+import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
+import org.sharteman.gymcoach.data.model.ProfileDto
 import org.sharteman.gymcoach.data.model.MobileExerciseRecordDto
 import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
 import org.sharteman.gymcoach.data.model.MobileHistoryProgramDto
@@ -54,6 +71,83 @@ class HistoryProgressNativeTest {
     }
 
     @Test
+    fun finishedWorkoutUsesSharedEditorForEquipmentEditAddDeleteAndReload() {
+        val source = FakeHistorySource(historySnapshot())
+        val originalFinishedAt = source.finishedAt
+        compose.setContent {
+            GymCoachTheme {
+                HistoryScreen(
+                    onBack = {},
+                    dataSource = source,
+                    bootstrap = historyBootstrap(),
+                )
+            }
+        }
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("history-session-session-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("history-session-session-1").performClick()
+        compose.onNodeWithTag("strength-set-editor-finished_edit")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("active-set-options").assertDoesNotExist()
+        compose.onNodeWithTag("apply-set-recommendation").assertDoesNotExist()
+        saveScreenshot("ihc-finished-shared-editor.png")
+
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-set-equipment").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Cable B").fetchSemanticsNodes().size > 1
+        }
+        saveScreenshot("ihc-equipment-correction.png")
+        compose.onAllNodesWithText("Cable B")[1].performClick()
+        compose.onNodeWithTag("completed-set-1-save").performClick()
+        compose.waitUntil(5_000) {
+            source.updatedRequest?.equipmentSnapshotAction == "REPLACE"
+        }
+        assertEquals("equipment-b", source.updatedRequest?.gymEquipmentId)
+
+        compose.onNodeWithTag("active-set-confirm").performScrollTo().performClick()
+        compose.waitUntil(5_000) { source.addedRequest != null }
+        assertEquals("equipment-a", source.addedRequest?.gymEquipmentId)
+        compose.onNodeWithTag("completed-set-2-edit").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("history-strength-summary-pullup")
+            .performScrollTo().assertTextContains("180", substring = true)
+        saveScreenshot("ihc-added-set.png")
+
+        compose.onNodeWithTag("completed-set-1-delete").performScrollTo().performClick()
+        compose.onNodeWithTag("finished-set-delete-confirm").assertIsDisplayed()
+        saveScreenshot("ihc-delete-confirmation.png")
+        compose.onNodeWithTag("finished-set-delete-confirm").performClick()
+        compose.waitUntil(5_000) { source.deletedSetId == "set" }
+        assertEquals(listOf(source.addedRequest?.id), source.setIds)
+        assertEquals(originalFinishedAt, source.finishedAt)
+        assertTrue(source.refreshCount >= 4)
+    }
+
+    @Test
+    fun failedFinishedEditKeepsTheSharedEditorAndPreviousRow() {
+        val source = FakeHistorySource(historySnapshot()).apply { failNextMutation = true }
+        compose.setContent {
+            GymCoachTheme { HistoryScreen(onBack = {}, dataSource = source) }
+        }
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("history-session-session-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("history-session-session-1").performClick()
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-1-save").performClick()
+        compose.waitUntil(5_000) { source.failedMutationCount == 1 }
+        compose.onNodeWithTag("completed-set-1-save").assertIsDisplayed()
+        compose.onNodeWithText(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                org.sharteman.gymcoach.R.string.history_edit_error,
+            ),
+        ).assertIsDisplayed()
+    }
+
+    @Test
     fun progressShowsAllServerBackedDashboardBlocks() {
         compose.setContent {
             GymCoachTheme {
@@ -81,14 +175,98 @@ class HistoryProgressNativeTest {
         }
     }
 
+    private fun saveScreenshot(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/GymCoachTests")
+        }
+        val uri = requireNotNull(
+            context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values),
+        )
+        context.contentResolver.openOutputStream(uri).use { output ->
+            requireNotNull(output)
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                .compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
+    }
+
     private class FakeHistorySource(private var snapshot: MobileHistorySnapshot) : HistoryProgressDataSource {
         var deletedSessionId: String? = null
+        var updatedRequest: HistoricalSetUpdateRequest? = null
+        var addedRequest: HistoricalSetAddRequest? = null
+        var deletedSetId: String? = null
+        var failNextMutation: Boolean = false
+        var failedMutationCount: Int = 0
+        var refreshCount: Int = 0
+        val finishedAt: String get() = snapshot.sessions.single().finishedAt
+        val setIds: List<String> get() = snapshot.sessions.single().exercises.single().sets.map { it.id }
 
         override suspend fun cachedHistory(month: String, programId: String?) = snapshot
-        override suspend fun refreshHistory(month: String, programId: String?) = snapshot
+        override suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot {
+            refreshCount += 1
+            return snapshot
+        }
         override suspend fun deleteHistorySession(sessionId: String) {
             deletedSessionId = sessionId
             snapshot = snapshot.copy(sessions = snapshot.sessions.filterNot { it.id == sessionId })
+        }
+        override suspend fun updateHistoricalSet(setId: String, request: HistoricalSetUpdateRequest) {
+            if (failNextMutation) {
+                failNextMutation = false
+                failedMutationCount += 1
+                error("offline")
+            }
+            updatedRequest = request
+            snapshot = snapshot.mapStrengthSets { set ->
+                if (set.id == setId) {
+                    set.copy(
+                        weight = request.weight,
+                        effectiveWeight = request.weight,
+                        reps = request.reps,
+                        rir = request.rir,
+                        gymEquipmentId = request.gymEquipmentId ?: set.gymEquipmentId,
+                        equipmentNameSnapshot = if (request.gymEquipmentId == "equipment-b") {
+                            "Cable B"
+                        } else {
+                            set.equipmentNameSnapshot
+                        },
+                    )
+                } else {
+                    set
+                }
+            }
+        }
+        override suspend fun addHistoricalSet(sessionId: String, request: HistoricalSetAddRequest) {
+            addedRequest = request
+            val session = snapshot.sessions.single()
+            val exercise = session.exercises.single()
+            val added = MobileHistorySetDto(
+                id = request.id,
+                setNumber = (exercise.sets.maxOfOrNull { it.setNumber } ?: 0) + 1,
+                weight = request.weight,
+                effectiveWeight = request.weight,
+                reps = request.reps,
+                rir = request.rir,
+                completedAt = session.finishedAt,
+                gymEquipmentId = request.gymEquipmentId,
+                equipmentNameSnapshot = "Cable A",
+                selectedLoadKg = request.weight,
+            )
+            snapshot = snapshot.copy(
+                sessions = listOf(
+                    session.copy(
+                        workingSets = session.workingSets + 1,
+                        exercises = listOf(exercise.copy(sets = exercise.sets + added)),
+                    ),
+                ),
+            ).recomputeStrengthTotals()
+        }
+        override suspend fun deleteHistoricalSet(setId: String) {
+            deletedSetId = setId
+            snapshot = snapshot.mapStrengthSets { set -> set.takeUnless { it.id == setId } }
         }
         override suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int) = Unit
         override suspend fun deleteGoal(goalId: String) = Unit
@@ -101,7 +279,7 @@ class HistoryProgressNativeTest {
     private fun historySnapshot(): MobileHistorySnapshot {
         val now = Instant.now()
         return MobileHistorySnapshot(
-            schemaVersion = 1,
+            schemaVersion = 2,
             generatedAt = now.toString(),
             month = YearMonth.now().toString(),
             programs = listOf(MobileHistoryProgramDto("program", "Upper Lower")),
@@ -114,6 +292,7 @@ class HistoryProgressNativeTest {
                 workoutName = "Upper",
                 startedAt = now.toString(),
                 finishedAt = now.plusSeconds(3_600).toString(),
+                gymId = "gym-1",
                 durationMin = 60,
                 notes = "Strong session",
                 sessionRpe = 7,
@@ -126,6 +305,7 @@ class HistoryProgressNativeTest {
                         muscleGroup = "BACK_WIDTH",
                         category = "COMPOUND",
                         usesBodyweight = true,
+                        equipmentType = "CABLE",
                         volume = 480.0,
                         estimated1RM = 96.0,
                         sets = listOf(
@@ -137,6 +317,9 @@ class HistoryProgressNativeTest {
                                 reps = 6,
                                 rir = 2,
                                 completedAt = now.plusSeconds(600).toString(),
+                                gymEquipmentId = "equipment-a",
+                                equipmentNameSnapshot = "Cable A",
+                                selectedLoadKg = 10.0,
                             ),
                         ),
                     ),
@@ -145,6 +328,42 @@ class HistoryProgressNativeTest {
         ),
         )
     }
+
+    private fun historyBootstrap() = BootstrapResponse(
+        schemaVersion = 9,
+        calculationVersion = "history-editor-test",
+        serverTime = Instant.now().toString(),
+        profile = ProfileDto(id = "user", email = "user@example.com", activeGymId = "gym-1"),
+        gyms = listOf(
+            GymDto(
+                id = "gym-1",
+                name = "History gym",
+                inventoryMode = "EQUIPMENT_FIRST",
+                exerciseConfigs = listOf(
+                    GymExerciseConfigDto(
+                        id = "config",
+                        gymId = "gym-1",
+                        exerciseId = "pullup",
+                        preferredEquipmentId = "equipment-a",
+                    ),
+                ),
+                equipment = listOf(
+                    historyEquipment("equipment-a", "Cable A", listOf(10.0, 20.0, 30.0)),
+                    historyEquipment("equipment-b", "Cable B", listOf(20.0, 30.0, 40.0)),
+                ),
+            ),
+        ),
+    )
+
+    private fun historyEquipment(id: String, name: String, weights: List<Double>) = GymEquipmentDto(
+        id = id,
+        gymId = "gym-1",
+        name = name,
+        equipmentType = "CABLE",
+        loadType = "SELECTORIZED",
+        weightOptions = weights,
+        exerciseLinks = listOf(GymEquipmentExerciseDto(id, "pullup")),
+    )
 
     private fun progressSnapshot() = MobileProgressSnapshot(
         schemaVersion = 3,
@@ -194,3 +413,36 @@ class HistoryProgressNativeTest {
         ),
     )
 }
+
+private fun MobileHistorySnapshot.mapStrengthSets(
+    transform: (MobileHistorySetDto) -> MobileHistorySetDto?,
+): MobileHistorySnapshot = copy(
+    sessions = sessions.map { session ->
+        session.copy(
+            exercises = session.exercises.map { exercise ->
+                exercise.copy(sets = exercise.sets.mapNotNull(transform))
+            },
+        )
+    },
+).recomputeStrengthTotals()
+
+private fun MobileHistorySnapshot.recomputeStrengthTotals(): MobileHistorySnapshot = copy(
+    sessions = sessions.map { session ->
+        val exercises = session.exercises.map { exercise ->
+            val working = exercise.sets.filterNot { it.isWarmup }
+            exercise.copy(
+                volume = working.sumOf { it.effectiveWeight * it.reps },
+                estimated1RM = working.maxOfOrNull {
+                    it.effectiveWeight * (1.0 + it.reps / 30.0)
+                } ?: 0.0,
+            )
+        }
+        session.copy(
+            exercises = exercises,
+            workingSets = exercises.sumOf { exercise ->
+                exercise.sets.count { !it.isWarmup }
+            },
+            volume = exercises.sumOf { it.volume },
+        )
+    },
+)

@@ -1,6 +1,9 @@
 package org.sharteman.gymcoach.data.model
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class MobileProgressGoalDto(
@@ -116,6 +119,7 @@ data class MobileHistorySessionDto(
     val workoutName: String? = null,
     val startedAt: String,
     val finishedAt: String,
+    val gymId: String? = null,
     val durationMin: Int,
     val notes: String? = null,
     val sessionRpe: Int? = null,
@@ -139,6 +143,7 @@ data class MobileHistoryExerciseDto(
     val muscleGroup: String,
     val category: String,
     val usesBodyweight: Boolean = false,
+    val equipmentType: String = "OTHER",
     val volume: Double,
     val estimated1RM: Double,
     val cardio: MobileHistoryCardioDto? = null,
@@ -162,4 +167,32 @@ data class MobileHistorySetDto(
     val isDropSet: Boolean = false,
     val recoverySec: Int? = null,
     val completedAt: String,
+    val gymEquipmentId: String? = null,
+    val equipmentNameSnapshot: String? = null,
+    val selectedLoadKg: Double? = null,
+    val selectedLoadMultiplierSnapshot: Double? = null,
+    val nominalResistanceKg: Double? = null,
+    val equipmentLoadSnapshot: JsonElement? = null,
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class HistoricalSetUpdateRequest(
+    val weight: Double,
+    val reps: Int,
+    val rir: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val gymEquipmentId: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val equipmentSnapshotAction: String? = null,
+)
+
+@Serializable
+data class HistoricalSetAddRequest(
+    val id: String,
+    val exerciseId: String,
+    val gymEquipmentId: String? = null,
+    val weight: Double,
+    val reps: Int,
+    val rir: Int? = null,
 )

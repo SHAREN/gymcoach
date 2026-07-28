@@ -372,6 +372,7 @@ fun GymCoachApp(
                     onBack = { navController.popBackStack() },
                     initialSessionId = entry.arguments?.getString("sessionId"),
                     initialMonthKey = entry.arguments?.getString("month"),
+                    bootstrap = bootstrap,
                 )
             }
             composable(

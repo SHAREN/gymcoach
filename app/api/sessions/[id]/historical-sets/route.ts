@@ -7,6 +7,7 @@ import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 import { resolveEquipmentLoadProfile } from '@/lib/gym-loads';
 import { rederiveGoalAchievement } from '@/lib/set-goal-sync';
 import type { Prisma } from '@/lib/prisma-client';
+import { Prisma as PrismaRuntime } from '@/prisma/generated/client';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -38,69 +39,102 @@ export async function POST(req: Request, props: Params) {
     }
 
     const data = await parseJsonBody(req, historicalSetInputSchema);
-    const created = await db.$transaction(async (tx) => {
-      const exercise = await tx.exercise.findFirst({
-        where: {
-          id: data.exerciseId,
-          userId,
-          sessionMemberships: { some: { sessionId: session.id } },
-        },
-        select: { id: true, category: true },
-      });
-      if (!exercise) {
-        throw new ApiError(400, 'Exercise is not part of this session.');
-      }
-      if (exercise.category === 'CARDIO') {
-        throw new ApiError(400, 'Historical cardio rows are read-only.');
-      }
-
-      if (!data.gymEquipmentId) {
-        if (session.gym?.inventoryMode === 'EQUIPMENT_FIRST') {
-          throw new ApiError(400, 'Select linked equipment before saving this set.');
+    let created;
+    try {
+      created = await db.$transaction(async (tx) => {
+        if (data.id) {
+          const existing = await tx.set.findUnique({
+            where: { id: data.id },
+            include: { session: { select: { userId: true } } },
+          });
+          if (existing) {
+            assertIdempotentHistoricalSet(existing, data, userId, session.id);
+            return existing;
+          }
         }
-        await assertWebSetEquipmentMayBeNull(tx, {
-          userId,
-          sessionGymId: session.gymId,
-          exerciseId: exercise.id,
+        const exercise = await tx.exercise.findFirst({
+          where: {
+            id: data.exerciseId,
+            userId,
+            sessionMemberships: { some: { sessionId: session.id } },
+          },
+          select: { id: true, category: true },
         });
-      } else {
-        await assertHistoricalLoadIsAttainable(tx, {
+        if (!exercise) {
+          throw new ApiError(400, 'Exercise is not part of this session.');
+        }
+        if (exercise.category === 'CARDIO') {
+          throw new ApiError(400, 'Historical cardio rows are read-only.');
+        }
+
+        if (!data.gymEquipmentId) {
+          if (session.gym?.inventoryMode === 'EQUIPMENT_FIRST') {
+            throw new ApiError(400, 'Select linked equipment before saving this set.');
+          }
+          await assertWebSetEquipmentMayBeNull(tx, {
+            userId,
+            sessionGymId: session.gymId,
+            exerciseId: exercise.id,
+          });
+        } else {
+          await assertHistoricalLoadIsAttainable(tx, {
+            userId,
+            sessionGymId: session.gymId,
+            exerciseId: exercise.id,
+            gymEquipmentId: data.gymEquipmentId,
+            selectedLoadKg: data.weight,
+          });
+        }
+
+        const equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
           userId,
           sessionGymId: session.gymId,
           exerciseId: exercise.id,
           gymEquipmentId: data.gymEquipmentId,
           selectedLoadKg: data.weight,
         });
+        const lastSet = await tx.set.findFirst({
+          where: { sessionId: session.id, exerciseId: exercise.id },
+          orderBy: { setNumber: 'desc' },
+          select: { setNumber: true },
+        });
+
+        return tx.set.create({
+          data: {
+            id: data.id,
+            sessionId: session.id,
+            exerciseId: exercise.id,
+            setNumber: (lastSet?.setNumber ?? 0) + 1,
+            weight: data.weight,
+            reps: data.reps,
+            rir: data.rir ?? null,
+            isWarmup: false,
+            isDropSet: false,
+            completedAt,
+            ...equipmentSnapshot,
+          },
+        });
+      });
+    } catch (error) {
+      if (
+        data.id &&
+        error instanceof PrismaRuntime.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await db.set.findUnique({
+          where: { id: data.id },
+          include: { session: { select: { userId: true } } },
+        });
+        if (existing) {
+          assertIdempotentHistoricalSet(existing, data, userId, session.id);
+          created = existing;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
       }
-
-      const equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
-        userId,
-        sessionGymId: session.gymId,
-        exerciseId: exercise.id,
-        gymEquipmentId: data.gymEquipmentId,
-        selectedLoadKg: data.weight,
-      });
-      const lastSet = await tx.set.findFirst({
-        where: { sessionId: session.id, exerciseId: exercise.id },
-        orderBy: { setNumber: 'desc' },
-        select: { setNumber: true },
-      });
-
-      return tx.set.create({
-        data: {
-          sessionId: session.id,
-          exerciseId: exercise.id,
-          setNumber: (lastSet?.setNumber ?? 0) + 1,
-          weight: data.weight,
-          reps: data.reps,
-          rir: data.rir ?? null,
-          isWarmup: false,
-          isDropSet: false,
-          completedAt,
-          ...equipmentSnapshot,
-        },
-      });
-    });
+    }
 
     try {
       await rederiveGoalAchievement(userId, data.exerciseId);
@@ -111,6 +145,39 @@ export async function POST(req: Request, props: Params) {
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     return handleApiError(err);
+  }
+}
+
+function assertIdempotentHistoricalSet(
+  existing: {
+    sessionId: string;
+    exerciseId: string;
+    gymEquipmentId: string | null;
+    weight: number;
+    reps: number;
+    rir: number | null;
+    session: { userId: string };
+  },
+  data: {
+    exerciseId: string;
+    gymEquipmentId?: string | null;
+    weight: number;
+    reps: number;
+    rir?: number | null;
+  },
+  userId: string,
+  sessionId: string,
+) {
+  const sameMutation =
+    existing.session.userId === userId &&
+    existing.sessionId === sessionId &&
+    existing.exerciseId === data.exerciseId &&
+    existing.gymEquipmentId === (data.gymEquipmentId ?? null) &&
+    Math.abs(existing.weight - data.weight) < 0.001 &&
+    existing.reps === data.reps &&
+    existing.rir === (data.rir ?? null);
+  if (!sameMutation) {
+    throw new ApiError(409, 'Historical set id already belongs to another mutation.');
   }
 }
 

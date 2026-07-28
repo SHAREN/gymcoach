@@ -120,13 +120,18 @@ describe('POST /api/sessions/[id]/historical-sets', () => {
     });
 
     mockUserId.mockResolvedValue(owner.id);
+    const clientSetId = 'mob_set_history_idempotent_01';
+    const requestBody = {
+      id: clientSetId,
+      exerciseId: exercise.id,
+      gymEquipmentId: equipment.id,
+      weight: 20,
+      reps: 9,
+      rir: 1,
+    };
     const response = await addHistoricalSet(
       jsonRequest(`http://test.local/api/sessions/${session.id}/historical-sets`, {
-        exerciseId: exercise.id,
-        gymEquipmentId: equipment.id,
-        weight: 20,
-        reps: 9,
-        rir: 1,
+        ...requestBody,
       }),
       { params: Promise.resolve({ id: session.id }) },
     );
@@ -134,6 +139,7 @@ describe('POST /api/sessions/[id]/historical-sets', () => {
     expect(response.status).toBe(201);
     const created = await response.json();
     expect(created).toMatchObject({
+      id: clientSetId,
       setNumber: 2,
       weight: 20,
       reps: 9,
@@ -149,6 +155,49 @@ describe('POST /api/sessions/[id]/historical-sets', () => {
         selectedLoadKg: 20,
       }),
     });
+    const retryResponse = await addHistoricalSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/historical-sets`, requestBody),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(retryResponse.status).toBe(201);
+    expect(await retryResponse.json()).toMatchObject({ id: clientSetId, setNumber: 2 });
+    expect(await db.set.count({ where: { id: clientSetId } })).toBe(1);
+    const conflictingRetryResponse = await addHistoricalSet(
+      jsonRequest(`http://test.local/api/sessions/${session.id}/historical-sets`, {
+        ...requestBody,
+        reps: 8,
+      }),
+      { params: Promise.resolve({ id: session.id }) },
+    );
+    expect(conflictingRetryResponse.status).toBe(409);
+    expect(await db.set.count({ where: { id: clientSetId } })).toBe(1);
+    const concurrentRequestBody = {
+      ...requestBody,
+      id: 'mob_set_history_concurrent_01',
+      weight: 30,
+    };
+    const concurrentResponses = await Promise.all([
+      addHistoricalSet(
+        jsonRequest(
+          `http://test.local/api/sessions/${session.id}/historical-sets`,
+          concurrentRequestBody,
+        ),
+        { params: Promise.resolve({ id: session.id }) },
+      ),
+      addHistoricalSet(
+        jsonRequest(
+          `http://test.local/api/sessions/${session.id}/historical-sets`,
+          concurrentRequestBody,
+        ),
+        { params: Promise.resolve({ id: session.id }) },
+      ),
+    ]);
+    expect(concurrentResponses.map((response) => response.status)).toEqual([201, 201]);
+    expect(await Promise.all(concurrentResponses.map((response) => response.json()))).toEqual([
+      expect.objectContaining({ id: concurrentRequestBody.id }),
+      expect.objectContaining({ id: concurrentRequestBody.id }),
+    ]);
+    expect(await db.set.count({ where: { id: concurrentRequestBody.id } })).toBe(1);
     expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({
       startedAt,
       finishedAt,

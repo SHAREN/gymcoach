@@ -73,6 +73,7 @@ export type SetUpdateInput = z.infer<typeof setUpdateSchema>;
 // the client.
 export const historicalSetInputSchema = setInputSchema
   .pick({
+    id: true,
     exerciseId: true,
     gymEquipmentId: true,
     weight: true,

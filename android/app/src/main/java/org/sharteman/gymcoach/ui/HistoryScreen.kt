@@ -38,6 +38,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -60,15 +62,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.MobileHistoryCardioDto
 import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
 import org.sharteman.gymcoach.data.model.MobileHistorySessionDto
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
+import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
 import org.sharteman.gymcoach.data.repository.HistoryProgressDataSource
 import org.sharteman.gymcoach.data.repository.HistoryOfflineCacheMissException
 import org.sharteman.gymcoach.training.roundWeight
+import org.sharteman.gymcoach.training.LoadConstraints
+import org.sharteman.gymcoach.training.SetTableMetric
+import org.sharteman.gymcoach.training.fromDisplayWeight
+import org.sharteman.gymcoach.training.resolveExerciseInventory
+import org.sharteman.gymcoach.training.selectedEquipment
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import org.sharteman.gymcoach.training.toDisplayWeight
 import java.time.Instant
@@ -78,6 +92,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,6 +101,7 @@ fun HistoryScreen(
     initialSessionId: String? = null,
     initialMonthKey: String? = null,
     dataSource: HistoryProgressDataSource? = null,
+    bootstrap: BootstrapResponse? = null,
 ) {
     val context = LocalContext.current
     val defaultRepository = remember(context) { HistoryProgressRepository(context) }
@@ -103,6 +119,19 @@ fun HistoryScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableStateOf(0) }
     var programDialogOpen by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val mutationError = stringResource(R.string.history_edit_error)
+
+    suspend fun refreshAfterMutation(): Boolean = try {
+        snapshot = repository.refreshHistory(monthKey, programId)
+        showingCache = false
+        true
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        snackbar.showSnackbar(mutationError)
+        false
+    }
 
     LaunchedEffect(monthKey, programId, refreshNonce) {
         val cached = repository.cachedHistory(monthKey, programId)
@@ -178,12 +207,56 @@ fun HistoryScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         if (selectedSession != null) {
             HistorySessionDetail(
                 session = selectedSession,
                 unit = snapshot?.unit ?: "KG",
+                bootstrap = bootstrap,
                 modifier = Modifier.padding(padding),
+                onUpdateSet = { set, weight, reps, rir, replacementEquipmentId ->
+                    try {
+                        repository.updateHistoricalSet(
+                            set.id,
+                            HistoricalSetUpdateRequest(
+                                weight = weight,
+                                reps = reps,
+                                rir = rir,
+                                gymEquipmentId = replacementEquipmentId,
+                                equipmentSnapshotAction = replacementEquipmentId?.let { "REPLACE" },
+                            ),
+                        )
+                        refreshAfterMutation()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(mutationError)
+                        false
+                    }
+                },
+                onAddSet = { request ->
+                    try {
+                        repository.addHistoricalSet(selectedSession.id, request)
+                        refreshAfterMutation()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(mutationError)
+                        false
+                    }
+                },
+                onDeleteSet = { set ->
+                    try {
+                        repository.deleteHistoricalSet(set.id)
+                        refreshAfterMutation()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(mutationError)
+                        false
+                    }
+                },
                 onDelete = {
                     scope.launch {
                         loading = true
@@ -465,8 +538,12 @@ private fun HistorySessionCard(
 private fun HistorySessionDetail(
     session: MobileHistorySessionDto,
     unit: String,
+    bootstrap: BootstrapResponse?,
     modifier: Modifier,
     onDelete: () -> Unit,
+    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?, String?) -> Boolean,
+    onAddSet: suspend (HistoricalSetAddRequest) -> Boolean,
+    onDeleteSet: suspend (LocalSetEntity) -> Boolean,
 ) {
     var deleteDialog by rememberSaveable { mutableStateOf(false) }
     LazyColumn(
@@ -506,7 +583,15 @@ private fun HistorySessionDetail(
             }
         }
         items(session.exercises, key = { it.id }) { exercise ->
-            HistoryExerciseCard(exercise, unit)
+            HistoryExerciseCard(
+                session = session,
+                exercise = exercise,
+                unit = unit,
+                bootstrap = bootstrap,
+                onUpdateSet = onUpdateSet,
+                onAddSet = onAddSet,
+                onDeleteSet = onDeleteSet,
+            )
         }
         item {
             OutlinedButton(
@@ -542,7 +627,15 @@ private fun HistorySessionDetail(
 }
 
 @Composable
-private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String) {
+private fun HistoryExerciseCard(
+    session: MobileHistorySessionDto,
+    exercise: MobileHistoryExerciseDto,
+    unit: String,
+    bootstrap: BootstrapResponse?,
+    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?, String?) -> Boolean,
+    onAddSet: suspend (HistoricalSetAddRequest) -> Boolean,
+    onDeleteSet: suspend (LocalSetEntity) -> Boolean,
+) {
     val context = historyLocaleContext(LocalContext.current)
     val kilometerUnit = context.getString(R.string.history_kilometer_unit)
     val meterUnit = context.getString(R.string.history_meter_unit)
@@ -566,14 +659,23 @@ private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String
                         formatHistoryWeight(exercise.volume, unit),
                         formatHistoryWeight(exercise.estimated1RM, unit),
                     ),
+                    modifier = Modifier.testTag("history-strength-summary-${exercise.id}"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                StrengthSetHeader(unit)
+                HistoricalStrengthExerciseEditor(
+                    session = session,
+                    exercise = exercise,
+                    unit = unit,
+                    bootstrap = bootstrap,
+                    onUpdateSet = onUpdateSet,
+                    onAddSet = onAddSet,
+                    onDeleteSet = onDeleteSet,
+                )
             }
-            exercise.sets.forEach { set ->
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                if (exercise.category == "CARDIO") {
+            if (exercise.category == "CARDIO") {
+                exercise.sets.forEach { set ->
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         HistoryCell(set.setNumber.toString(), 0.5f)
                         HistoryCell(formatHistoryDuration(set.durationSec), 1f)
@@ -581,35 +683,189 @@ private fun HistoryExerciseCard(exercise: MobileHistoryExerciseDto, unit: String
                         HistoryCell(set.avgHr?.let { "$it" } ?: "-", 0.8f)
                         HistoryCell(set.maxHr?.let { "$it" } ?: "-", 0.8f)
                     }
-                } else {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        HistoryCell(set.setNumber.toString(), 0.45f)
-                        HistoryCell(formatHistoryWeight(set.effectiveWeight, unit), 1.25f)
-                        HistoryCell(set.reps.toString(), 0.7f)
-                        HistoryCell(set.rir?.toString() ?: "-", 0.6f)
-                        HistoryCell(setTypeLabel(set.isWarmup, set.isDropSet), 1.1f)
-                    }
-                    if (exercise.usesBodyweight && set.weight != set.effectiveWeight) {
+                    set.notes?.takeIf { it.isNotBlank() }?.let { note ->
                         Text(
                             stringResource(
-                                R.string.history_external_load,
-                                formatHistoryWeight(set.weight, unit),
+                                R.string.history_set_note,
+                                set.setNumber,
+                                note,
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                set.notes?.takeIf { it.isNotBlank() }?.let { note ->
-                    Text(
-                        stringResource(R.string.history_set_note, set.setNumber, note),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }
+}
+
+@Composable
+private fun HistoricalStrengthExerciseEditor(
+    session: MobileHistorySessionDto,
+    exercise: MobileHistoryExerciseDto,
+    unit: String,
+    bootstrap: BootstrapResponse?,
+    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?, String?) -> Boolean,
+    onAddSet: suspend (HistoricalSetAddRequest) -> Boolean,
+    onDeleteSet: suspend (LocalSetEntity) -> Boolean,
+) {
+    val localSets = remember(exercise.sets) {
+        exercise.sets.map { set ->
+            LocalSetEntity(
+                id = set.id,
+                sessionId = session.id,
+                exerciseId = exercise.id,
+                gymEquipmentId = set.gymEquipmentId,
+                equipmentNameSnapshot = set.equipmentNameSnapshot,
+                selectedLoadKg = set.selectedLoadKg,
+                selectedLoadMultiplierSnapshot = set.selectedLoadMultiplierSnapshot,
+                nominalResistanceKg = set.nominalResistanceKg,
+                equipmentLoadSnapshotJson = set.equipmentLoadSnapshot?.toString(),
+                setNumber = set.setNumber,
+                weight = set.weight,
+                reps = set.reps,
+                rir = set.rir,
+                notes = set.notes,
+                isWarmup = set.isWarmup,
+                isDropSet = set.isDropSet,
+                recoverySec = set.recoverySec,
+                completedAt = set.completedAt,
+            )
+        }
+    }
+    val target = remember(session.id, exercise) {
+        ProgramExerciseDto(
+            id = "finished:${session.id}:${exercise.id}",
+            workoutId = session.id,
+            exerciseId = exercise.id,
+            order = 0,
+            targetSets = (localSets.count { !it.isWarmup } + 1).coerceAtLeast(1),
+            targetRepsMin = localSets.lastOrNull()?.reps ?: 8,
+            targetRepsMax = localSets.lastOrNull()?.reps ?: 12,
+            targetRIR = localSets.lastOrNull()?.rir ?: 2,
+            restSec = 0,
+            exercise = ExerciseDto(
+                id = exercise.id,
+                name = exercise.name,
+                muscleGroup = exercise.muscleGroup,
+                category = exercise.category,
+                usesBodyweight = exercise.usesBodyweight,
+                equipmentType = exercise.equipmentType,
+            ),
+        )
+    }
+    val gym = bootstrap?.gyms?.firstOrNull { it.id == session.gymId }
+    var selectedEquipmentId by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf(localSets.lastOrNull { it.gymEquipmentId != null }?.gymEquipmentId)
+    }
+    val inventory = resolveExerciseInventory(target, gym, selectedEquipmentId)
+    val selectedProfile = selectedEquipment(inventory)
+    LaunchedEffect(inventory.constraints.equipmentId) {
+        if (selectedEquipmentId == null) selectedEquipmentId = inventory.constraints.equipmentId
+    }
+    val last = localSets.lastOrNull()
+    var weightText by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf(
+            formatHistoryEditorValue(
+                toDisplayWeight(last?.selectedLoadKg ?: last?.weight ?: inventory.weightOptions.firstOrNull() ?: 0.0, unit),
+            ),
+        )
+    }
+    var repsText by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf((last?.reps ?: 8).toString())
+    }
+    var rirText by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf(last?.rir?.toString() ?: "")
+    }
+    var pendingAddId by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf(newHistoricalSetId())
+    }
+    var metrics by rememberSaveable(session.id, exercise.id) {
+        mutableStateOf(listOf(SetTableMetric.ONE_RM))
+    }
+
+    if (!inventory.isAvailable || inventory.equipment.isNotEmpty()) {
+        EquipmentSelectorCard(
+            inventoryAvailable = inventory.isAvailable,
+            equipment = inventory.equipment,
+            selectedEquipmentId = selectedProfile?.equipmentId,
+            selectionRequired = inventory.requiresEquipmentSelection && selectedProfile == null,
+            onSelect = { equipmentId ->
+                selectedEquipmentId = equipmentId
+                inventory.equipment.firstOrNull { it.equipmentId == equipmentId }
+                    ?.attainableLoads
+                    ?.minByOrNull { candidate ->
+                        val current = weightText.replace(',', '.').toDoubleOrNull()
+                            ?.let { fromDisplayWeight(it, unit) }
+                            ?: candidate
+                        kotlin.math.abs(candidate - current)
+                    }
+                    ?.let { weightText = formatHistoryEditorValue(toDisplayWeight(it, unit)) }
+            },
+        )
+    }
+
+    StrengthSetEditor(
+        mode = StrengthSetEditorMode.FINISHED_EDIT,
+        sets = localSets,
+        target = target,
+        lastPerformance = null,
+        unit = unit,
+        metrics = metrics,
+        onMetricToggle = { metric, enabled ->
+            metrics = org.sharteman.gymcoach.training.setTableMetricEnabled(metrics, metric, enabled)
+        },
+        loadConstraints = inventory.constraints,
+        selectedEquipment = selectedProfile,
+        submissionEnabled = inventory.isAvailable &&
+            (!inventory.requiresEquipmentSelection || selectedProfile != null),
+        recommendation = null,
+        weightText = weightText,
+        repsText = repsText,
+        rirText = rirText,
+        notesText = "",
+        isWarmup = false,
+        isDropSet = false,
+        onWeightChange = { weightText = it },
+        onRepsChange = { repsText = it },
+        onRirChange = { rirText = it },
+        onNotesChange = {},
+        onWarmupChange = {},
+        onDropSetChange = {},
+        onUpdateSet = onUpdateSet,
+        onDelete = onDeleteSet,
+        onTargetSetsChange = {},
+        onConfirm = confirm@{
+            val displayWeight = weightText.replace(',', '.').toDoubleOrNull()
+            val weight = displayWeight?.let { roundWeight(fromDisplayWeight(it, unit), 2) }
+            val reps = repsText.toIntOrNull()
+            val rir = if (rirText.isBlank()) null else rirText.toIntOrNull()
+            if (weight == null || reps == null || (!rirText.isBlank() && rir == null)) {
+                return@confirm false
+            }
+            val saved = onAddSet(
+                HistoricalSetAddRequest(
+                    id = pendingAddId,
+                    exerciseId = exercise.id,
+                    gymEquipmentId = selectedProfile?.equipmentId,
+                    weight = weight,
+                    reps = reps,
+                    rir = rir,
+                ),
+            )
+            if (saved) pendingAddId = newHistoricalSetId()
+            saved
+        },
+    )
+}
+
+private fun newHistoricalSetId(): String =
+    "mob_set_${UUID.randomUUID().toString().replace("-", "")}"
+
+private fun formatHistoryEditorValue(value: Double): String {
+    val rounded = roundWeight(value, 2)
+    return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
 
 @Composable

@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.sharteman.gymcoach.data.model.MobileGoalRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetClearRequest
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetRequest
@@ -27,6 +29,15 @@ interface HistoryProgressDataSource {
     suspend fun cachedHistory(month: String, programId: String?): MobileHistorySnapshot?
     suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot
     suspend fun deleteHistorySession(sessionId: String)
+    suspend fun updateHistoricalSet(setId: String, request: HistoricalSetUpdateRequest) {
+        throw UnsupportedOperationException("Historical set editing is unavailable.")
+    }
+    suspend fun addHistoricalSet(sessionId: String, request: HistoricalSetAddRequest) {
+        throw UnsupportedOperationException("Historical set editing is unavailable.")
+    }
+    suspend fun deleteHistoricalSet(setId: String) {
+        throw UnsupportedOperationException("Historical set editing is unavailable.")
+    }
     suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int)
     suspend fun deleteGoal(goalId: String)
     suspend fun saveVolumeTarget(muscleGroup: String, mev: Int, mrv: Int)
@@ -106,6 +117,30 @@ class HistoryProgressRepository(
         scheduleSync()
     }
 
+    override suspend fun updateHistoricalSet(setId: String, request: HistoricalSetUpdateRequest) {
+        val account = onlineCredentials()
+        endpointResolver.execute { baseUrl ->
+            api.updateHistoricalSet(baseUrl, account.token, setId, request)
+        }
+        cache.clearUser(account.userId)
+    }
+
+    override suspend fun addHistoricalSet(sessionId: String, request: HistoricalSetAddRequest) {
+        val account = onlineCredentials()
+        endpointResolver.execute { baseUrl ->
+            api.addHistoricalSet(baseUrl, account.token, sessionId, request)
+        }
+        cache.clearUser(account.userId)
+    }
+
+    override suspend fun deleteHistoricalSet(setId: String) {
+        val account = onlineCredentials()
+        endpointResolver.execute { baseUrl ->
+            api.deleteHistoricalSet(baseUrl, account.token, setId)
+        }
+        cache.clearUser(account.userId)
+    }
+
     override suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int) {
         val account = credentials()
         endpointResolver.execute { baseUrl ->
@@ -179,10 +214,19 @@ class HistoryProgressRepository(
         val token = accountStore.getAccessToken() ?: throw MobileAuthenticationRequiredException()
         return Credentials(userId, accountStore.primaryServerUrl, token)
     }
+
+    private fun onlineCredentials(): Credentials {
+        if (!networkStatus.isConnected()) throw HistoryOfflineMutationException()
+        return credentials()
+    }
 }
 
 class HistoryOfflineCacheMissException : IOException(
     "No network connection and no cached history data.",
+)
+
+class HistoryOfflineMutationException : IOException(
+    "Historical workout changes require a server connection.",
 )
 
 private data class Credentials(

@@ -140,6 +140,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
+import kotlin.math.abs
 
 private const val WORKOUT_UI_PREFERENCES = "gymcoach-workout-ui"
 private const val SET_TABLE_METRIC_KEY = "set-table-metric"
@@ -533,7 +534,8 @@ fun WorkoutScreen(
                 }
             }
             item {
-                WorkoutSetTable(
+                StrengthSetEditor(
+                    mode = StrengthSetEditorMode.ACTIVE,
                     sets = currentSets,
                     target = target,
                     lastPerformance = previousPerformance,
@@ -563,7 +565,7 @@ fun WorkoutScreen(
                         isDropSet = it
                         if (it) isWarmup = false
                     },
-                    onUpdateSet = { set, weight, reps, rir ->
+                    onUpdateSet = { set, weight, reps, rir, _ ->
                         runWorkoutSetMutation(snackbar, setUpdateError) {
                             repository.updateSet(set, weight, reps, rir)
                         }
@@ -1375,7 +1377,7 @@ internal fun ReturnCalibrationEvidence(recommendation: ReturnRecommendationDto) 
 }
 
 @Composable
-private fun EquipmentSelectorCard(
+internal fun EquipmentSelectorCard(
     inventoryAvailable: Boolean,
     equipment: List<ResolvedEquipmentLoadProfile>,
     selectedEquipmentId: String?,
@@ -1452,8 +1454,11 @@ private fun loadConstraintsForSet(
     }
 }
 
+internal enum class StrengthSetEditorMode { ACTIVE, FINISHED_EDIT }
+
 @Composable
-private fun WorkoutSetTable(
+internal fun StrengthSetEditor(
+    mode: StrengthSetEditorMode,
     sets: List<LocalSetEntity>,
     target: ProgramExerciseDto,
     lastPerformance: LastPerformanceDto?,
@@ -1476,7 +1481,7 @@ private fun WorkoutSetTable(
     onNotesChange: (String) -> Unit,
     onWarmupChange: (Boolean) -> Unit,
     onDropSetChange: (Boolean) -> Unit,
-    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?) -> Boolean,
+    onUpdateSet: suspend (LocalSetEntity, Double, Int, Int?, String?) -> Boolean,
     onDelete: suspend (LocalSetEntity) -> Boolean,
     onTargetSetsChange: (Int) -> Unit,
     onConfirm: suspend () -> Boolean,
@@ -1491,6 +1496,9 @@ private fun WorkoutSetTable(
     var editingWeightText by rememberSaveable(target.id) { mutableStateOf("") }
     var editingRepsText by rememberSaveable(target.id) { mutableStateOf("") }
     var editingRirText by rememberSaveable(target.id) { mutableStateOf("") }
+    var editingReplacementEquipmentId by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
+    var equipmentPickerSetId by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
+    var pendingDeleteConfirmationId by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
     var updatingSetId by remember(target.id) { mutableStateOf<String?>(null) }
     var deletingSetId by remember(target.id) { mutableStateOf<String?>(null) }
     var submittingSet by remember(target.id) { mutableStateOf(false) }
@@ -1499,18 +1507,26 @@ private fun WorkoutSetTable(
     fun mutationInProgress() = updatingSetId != null || deletingSetId != null || submittingSet
     val mutationBusy = mutationInProgress()
     val pickerSet = displaySets.firstOrNull { it.set.id == pickerSetId }?.set
-    val pickerLoadConstraints = pickerSet?.let { loadConstraintsForSet(loadConstraints, it) }
-        ?: loadConstraints
+    val pickerLoadConstraints = pickerSet?.let { set ->
+        editingReplacementEquipmentId
+            ?.takeIf { editingSetId == set.id }
+            ?.let { replacementId -> loadConstraints.copy(equipmentId = replacementId) }
+            ?: loadConstraintsForSet(loadConstraints, set)
+    } ?: loadConstraints
     val completedPlannedRows = displaySets.count { !it.set.isWarmup }
     val plannedRows = target.targetSets + target.targetDropSets
     val activeNumber = displaySets.count { it.workingNumber != null } + 1
-    val upcomingSets = upcomingWorkoutSets(
-        displayedSets = displaySets,
-        targetWorkingSets = target.targetSets,
-        targetDropSets = target.targetDropSets,
-        activeIsWarmup = isWarmup,
-        activeIsDropSet = isDropSet,
-    )
+    val upcomingSets = if (mode == StrengthSetEditorMode.ACTIVE) {
+        upcomingWorkoutSets(
+            displayedSets = displaySets,
+            targetWorkingSets = target.targetSets,
+            targetDropSets = target.targetDropSets,
+            activeIsWarmup = isWarmup,
+            activeIsDropSet = isDropSet,
+        )
+    } else {
+        emptyList()
+    }
     val referenceWeightText = if (pickerSetId != null) editingWeightText else weightText
     val referenceWeightKg = referenceWeightText.replace(',', '.').toDoubleOrNull()
         ?.let { fromDisplayWeight(it, unit) }
@@ -1529,7 +1545,8 @@ private fun WorkoutSetTable(
         .sorted()
     val currentRecommendationKey = recommendationKey(recommendation)
     val applyRecommendationDescription = stringResource(R.string.apply_set_recommendation)
-    val recommendationActionVisible = recommendation != null && !isWarmup && !isDropSet
+    val recommendationActionVisible = mode == StrengthSetEditorMode.ACTIVE &&
+        recommendation != null && !isWarmup && !isDropSet
     val canApplyRecommendation = !mutationBusy && submissionEnabled && recommendationActionVisible && recommendationCanApply(
         appliedKey = appliedRecommendationKey,
         currentKey = currentRecommendationKey,
@@ -1546,6 +1563,7 @@ private fun WorkoutSetTable(
             editingWeightText = draft.weightText
             editingRepsText = draft.repsText
             editingRirText = draft.rirText
+            editingReplacementEquipmentId = null
         }
         return true
     }
@@ -1560,7 +1578,14 @@ private fun WorkoutSetTable(
         editingSetId = null
         pickerSetId = null
         pickerKind = null
+        editingReplacementEquipmentId = null
+        equipmentPickerSetId = null
     }
+
+    fun constraintsForEditingSet(set: LocalSetEntity): LoadConstraints =
+        editingReplacementEquipmentId?.let { replacementId ->
+            loadConstraints.copy(equipmentId = replacementId)
+        } ?: loadConstraintsForSet(loadConstraints, set)
 
     fun saveEditedSet(
         set: LocalSetEntity,
@@ -1572,11 +1597,19 @@ private fun WorkoutSetTable(
     ) {
         if (mutationInProgress()) return
         val parsed = draft.parse(unit) ?: return
-        if (!isAchievableLoad(loadConstraintsForSet(loadConstraints, set), parsed.weight)) return
+        if (!isAchievableLoad(constraintsForEditingSet(set), parsed.weight)) return
         updatingSetId = set.id
         scope.launch {
             try {
-                if (onUpdateSet(set, parsed.weight, parsed.reps, parsed.rir) && editingSetId == set.id) {
+                if (
+                    onUpdateSet(
+                        set,
+                        parsed.weight,
+                        parsed.reps,
+                        parsed.rir,
+                        editingReplacementEquipmentId,
+                    ) && editingSetId == set.id
+                ) {
                     stopEditing()
                 }
             } finally {
@@ -1627,7 +1660,10 @@ private fun WorkoutSetTable(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .testTag("strength-set-editor-${mode.name.lowercase(Locale.ROOT)}"),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1635,7 +1671,8 @@ private fun WorkoutSetTable(
         SetTableHeader(
             unit = unit,
             metrics = metrics,
-            onSetCountClick = { setCountOpen = true },
+            setCountEnabled = mode == StrengthSetEditorMode.ACTIVE,
+            onSetCountClick = { if (mode == StrengthSetEditorMode.ACTIVE) setCountOpen = true },
             onMetricClick = { metricDialogOpen = true },
         )
         displaySets.forEach { displaySet ->
@@ -1651,7 +1688,7 @@ private fun WorkoutSetTable(
                 interactionEnabled = !mutationBusy,
                 weightIsAllowed = editingWeightText.replace(',', '.').toDoubleOrNull()
                     ?.let { fromDisplayWeight(it, unit) }
-                    ?.let { isAchievableLoad(loadConstraintsForSet(loadConstraints, set), it) } == true,
+                    ?.let { isAchievableLoad(constraintsForEditingSet(set), it) } == true,
                 weightText = editingWeightText,
                 repsText = editingRepsText,
                 rirText = editingRirText,
@@ -1661,8 +1698,38 @@ private fun WorkoutSetTable(
                 onEdit = { startEditing(set) },
                 onSave = { saveEditedSet(set) },
                 onCancel = ::stopEditing,
-                onDelete = { deleteCompletedSet(set) },
+                onDelete = {
+                    if (mode == StrengthSetEditorMode.FINISHED_EDIT) {
+                        pendingDeleteConfirmationId = set.id
+                    } else {
+                        deleteCompletedSet(set)
+                    }
+                },
             )
+            if (
+                mode == StrengthSetEditorMode.FINISHED_EDIT &&
+                editingSetId == set.id &&
+                loadConstraints.equipmentOptions.isNotEmpty()
+            ) {
+                val replacementName = editingReplacementEquipmentId?.let { replacementId ->
+                    loadConstraints.equipmentOptions.firstOrNull {
+                        it.equipmentId == replacementId
+                    }?.equipmentName
+                }
+                TextButton(
+                    onClick = { equipmentPickerSetId = set.id },
+                    enabled = !mutationBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("completed-set-${set.id}-equipment"),
+                ) {
+                    Text(
+                        replacementName
+                            ?: set.equipmentNameSnapshot
+                            ?: stringResource(R.string.history_edit_equipment),
+                    )
+                }
+            }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f)) {
@@ -1770,11 +1837,12 @@ private fun WorkoutSetTable(
                 metrics = metrics,
             )
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-        Column(
+        if (mode == StrengthSetEditorMode.ACTIVE) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+            ) {
             TextButton(
                 onClick = { optionsExpanded = !optionsExpanded },
                 modifier = Modifier.testTag("active-set-options"),
@@ -1819,6 +1887,7 @@ private fun WorkoutSetTable(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
             }
         }
     }
@@ -1873,7 +1942,73 @@ private fun WorkoutSetTable(
             },
         )
     }
-    if (setCountOpen) {
+    equipmentPickerSetId?.let { targetSetId ->
+        val targetSet = sets.firstOrNull { it.id == targetSetId }
+        if (targetSet != null) {
+            AlertDialog(
+                onDismissRequest = { equipmentPickerSetId = null },
+                title = { Text(stringResource(R.string.history_edit_equipment)) },
+                text = {
+                    EquipmentSelectorCard(
+                        inventoryAvailable = loadConstraints.isAvailable,
+                        equipment = loadConstraints.equipmentOptions,
+                        selectedEquipmentId = editingReplacementEquipmentId ?: targetSet.gymEquipmentId,
+                        selectionRequired = false,
+                        onSelect = { equipmentId ->
+                            editingReplacementEquipmentId = equipmentId
+                            val profile = loadConstraints.equipmentOptions.firstOrNull {
+                                it.equipmentId == equipmentId
+                            }
+                            val currentWeight = editingWeightText.replace(',', '.').toDoubleOrNull()
+                                ?.let { fromDisplayWeight(it, unit) }
+                                ?: targetSet.weight
+                            profile?.attainableLoads?.minByOrNull { candidate ->
+                                abs(candidate - currentWeight)
+                            }?.let { attainable ->
+                                editingWeightText = formatWeight(
+                                    roundWeight(toDisplayWeight(attainable, unit), 2),
+                                )
+                            }
+                            equipmentPickerSetId = null
+                        },
+                    )
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { equipmentPickerSetId = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+    }
+    pendingDeleteConfirmationId?.let { setId ->
+        val set = sets.firstOrNull { it.id == setId }
+        if (set != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDeleteConfirmationId = null },
+                title = { Text(stringResource(R.string.history_delete_set_title)) },
+                text = { Text(stringResource(R.string.history_delete_set_description)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingDeleteConfirmationId = null
+                            deleteCompletedSet(set)
+                        },
+                        modifier = Modifier.testTag("finished-set-delete-confirm"),
+                    ) {
+                        Text(stringResource(R.string.delete))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteConfirmationId = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+    }
+    if (setCountOpen && mode == StrengthSetEditorMode.ACTIVE) {
         PlannedSetCountDialog(
             totalSets = plannedRows,
             minSets = max(1 + target.targetDropSets, completedPlannedRows),
@@ -1898,6 +2033,7 @@ private fun WorkoutSetTable(
 private fun SetTableHeader(
     unit: String,
     metrics: List<SetTableMetric>,
+    setCountEnabled: Boolean,
     onSetCountClick: () -> Unit,
     onMetricClick: () -> Unit,
 ) {
@@ -1910,7 +2046,7 @@ private fun SetTableHeader(
                 .weight(0.52f)
                 .height(30.dp)
                 .testTag("set-count-button")
-                .clickable(onClick = onSetCountClick),
+                .clickable(enabled = setCountEnabled, onClick = onSetCountClick),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1919,12 +2055,14 @@ private fun SetTableHeader(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Icon(
-                Icons.Outlined.Tune,
-                contentDescription = stringResource(R.string.choose_set_count),
-                modifier = Modifier.align(Alignment.TopEnd).size(11.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (setCountEnabled) {
+                Icon(
+                    Icons.Outlined.Tune,
+                    contentDescription = stringResource(R.string.choose_set_count),
+                    modifier = Modifier.align(Alignment.TopEnd).size(11.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         TableHeaderCell(unit.uppercase(Locale.getDefault()), 1.25f)
         TableHeaderCell("REPS", 0.9f)
@@ -3140,7 +3278,8 @@ internal fun WorkoutScreenPreview(
                 )
             }
             item {
-                WorkoutSetTable(
+                StrengthSetEditor(
+                    mode = StrengthSetEditorMode.ACTIVE,
                     sets = if (previewSelectedIndex == 0) sets else emptyList(),
                     target = previewTarget,
                     lastPerformance = previous,
@@ -3165,7 +3304,7 @@ internal fun WorkoutScreenPreview(
                     onNotesChange = { notes = it },
                     onWarmupChange = { warmup = it },
                     onDropSetChange = { dropSet = it },
-                    onUpdateSet = { set, updatedWeight, updatedReps, updatedRir ->
+                    onUpdateSet = { set, updatedWeight, updatedReps, updatedRir, _ ->
                         sets = sets.map { currentSet ->
                             if (currentSet.id == set.id) {
                                 currentSet.copy(

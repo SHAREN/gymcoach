@@ -29,6 +29,18 @@ so Android does not maintain a second set of hard-coded defaults. The selected
 thumbnail stays fully vivid; inactive thumbnail images use a short GPU alpha
 transition while status, completion and superset indicators remain undimmed.
 
+Completed strength sessions opened from native History use the same
+`StrengthSetEditor` as an active workout in an explicit `FINISHED_EDIT` mode.
+That mode can correct weight, repetitions, RIR and supported equipment, delete
+a set with confirmation, or append a set to an exercise already retained in
+the session. It preserves frozen equipment snapshots unless equipment is
+explicitly replaced, validates new loads against the current linked inventory,
+and refreshes server-derived counts, volume and e1RM after every successful
+mutation. Historical mutations require a live server connection and use the
+owner-scoped PATCH, DELETE and idempotent historical-add routes; they never
+enter the active workout outbox. The session remains finished and the editor
+does not expose rest timers, recommendations, auto-advance or target changes.
+
 MCP, LLM coach replies and AI program generation are online-only. Their absence
 must never prevent recording or finishing a native workout. Cached coach and
 chat history may be displayed offline, while new requests can only be answered

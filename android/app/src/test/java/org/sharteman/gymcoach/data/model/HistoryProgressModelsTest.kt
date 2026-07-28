@@ -50,13 +50,14 @@ class HistoryProgressModelsTest {
         val snapshot = json.decodeFromString<MobileHistorySnapshot>(
             """
             {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
               "generatedAt": "2026-07-14T10:00:00.000Z",
               "month": "2026-07",
               "sessions": [{
                 "id": "session",
                 "startedAt": "2026-07-10T10:00:00.000Z",
                 "finishedAt": "2026-07-10T11:00:00.000Z",
+                "gymId": "gym-1",
                 "durationMin": 60,
                 "workingSets": 2,
                 "volume": 480,
@@ -65,6 +66,7 @@ class HistoryProgressModelsTest {
                   "name": "Pull-up",
                   "muscleGroup": "BACK_WIDTH",
                   "category": "COMPOUND",
+                  "equipmentType": "CABLE",
                   "volume": 480,
                   "estimated1RM": 96,
                   "sets": [{
@@ -74,6 +76,12 @@ class HistoryProgressModelsTest {
                     "effectiveWeight": 80,
                     "reps": 6,
                     "rir": 2,
+                    "gymEquipmentId": "cable-a",
+                    "equipmentNameSnapshot": "Cable A",
+                    "selectedLoadKg": 10,
+                    "selectedLoadMultiplierSnapshot": 0.5,
+                    "nominalResistanceKg": 5,
+                    "equipmentLoadSnapshot": {"version": 2, "loadType": "SELECTORIZED"},
                     "completedAt": "2026-07-10T10:10:00.000Z"
                   }]
                 }]
@@ -85,5 +93,9 @@ class HistoryProgressModelsTest {
         val set = snapshot.sessions.single().exercises.single().sets.single()
         assertEquals(80.0, set.effectiveWeight, 0.0)
         assertEquals(2, set.rir)
+        assertEquals("gym-1", snapshot.sessions.single().gymId)
+        assertEquals("CABLE", snapshot.sessions.single().exercises.single().equipmentType)
+        assertEquals("cable-a", set.gymEquipmentId)
+        assertEquals(5.0, set.nominalResistanceKg ?: 0.0, 0.0)
     }
 }

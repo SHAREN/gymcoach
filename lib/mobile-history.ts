@@ -3,7 +3,7 @@ import { sumCardioWorkingSets } from '@/lib/cardio';
 import { getMonthQueryRange } from '@/lib/history-calendar';
 import { applyBodyweight, best1RM, totalVolume } from '@/lib/stats';
 
-export const MOBILE_HISTORY_SCHEMA_VERSION = 1;
+export const MOBILE_HISTORY_SCHEMA_VERSION = 2;
 
 export interface MobileHistoryProgram {
   id: string;
@@ -32,6 +32,12 @@ export interface MobileHistorySet {
   isDropSet: boolean;
   recoverySec: number | null;
   completedAt: string;
+  gymEquipmentId: string | null;
+  equipmentNameSnapshot: string | null;
+  selectedLoadKg: number | null;
+  selectedLoadMultiplierSnapshot: number | null;
+  nominalResistanceKg: number | null;
+  equipmentLoadSnapshot: unknown;
 }
 
 export interface MobileHistoryExercise {
@@ -40,6 +46,7 @@ export interface MobileHistoryExercise {
   muscleGroup: string;
   category: string;
   usesBodyweight: boolean;
+  equipmentType: string;
   volume: number;
   estimated1RM: number;
   cardio: MobileHistoryCardioSummary | null;
@@ -53,6 +60,7 @@ export interface MobileHistorySession {
   workoutName: string | null;
   startedAt: string;
   finishedAt: string;
+  gymId: string | null;
   durationMin: number;
   notes: string | null;
   sessionRpe: number | null;
@@ -102,6 +110,22 @@ export async function buildMobileHistory(
                 muscleGroup: true,
                 category: true,
                 usesBodyweight: true,
+                equipmentType: true,
+              },
+            },
+          },
+        },
+        exerciseMemberships: {
+          orderBy: [{ addedAt: 'asc' }, { ordinal: 'asc' }],
+          include: {
+            exercise: {
+              select: {
+                id: true,
+                name: true,
+                muscleGroup: true,
+                category: true,
+                usesBodyweight: true,
+                equipmentType: true,
               },
             },
           },
@@ -148,15 +172,22 @@ export async function buildMobileHistory(
         (set) => set.exercise.category === 'CARDIO' && set.durationSec != null,
       );
       const isCardio = workingSets.length > 0 && cardioSets.length === workingSets.length;
-      const exerciseOrder: string[] = [];
+      const exerciseOrder = session.exerciseMemberships.map((membership) => membership.exerciseId);
       const byExercise = new Map<string, typeof session.sets>();
+      const exerciseById = new Map(
+        session.exerciseMemberships.map((membership) => [
+          membership.exerciseId,
+          membership.exercise,
+        ]),
+      );
       for (const set of session.sets) {
         const values = byExercise.get(set.exerciseId);
         if (values) values.push(set);
         else {
-          exerciseOrder.push(set.exerciseId);
+          if (!exerciseById.has(set.exerciseId)) exerciseOrder.push(set.exerciseId);
           byExercise.set(set.exerciseId, [set]);
         }
+        exerciseById.set(set.exerciseId, set.exercise);
       }
 
       return {
@@ -166,6 +197,7 @@ export async function buildMobileHistory(
         workoutName: session.workout?.name ?? null,
         startedAt: session.startedAt.toISOString(),
         finishedAt: session.finishedAt!.toISOString(),
+        gymId: session.gymId,
         durationMin: Math.round(
           (session.finishedAt!.getTime() - session.startedAt.getTime()) / 60_000,
         ),
@@ -175,9 +207,9 @@ export async function buildMobileHistory(
         volume: totalVolume(adjustedAll),
         cardio: isCardio ? cardioSummary(cardioSets) : null,
         exercises: exerciseOrder.flatMap((exerciseId) => {
-          const sets = byExercise.get(exerciseId);
-          const exercise = sets?.[0]?.exercise;
-          if (!sets || !exercise) return [];
+          const sets = byExercise.get(exerciseId) ?? [];
+          const exercise = exerciseById.get(exerciseId);
+          if (!exercise) return [];
           const adjusted = applyBodyweight(
             sets.map((set) => ({
               weight: set.weight,
@@ -195,6 +227,7 @@ export async function buildMobileHistory(
               muscleGroup: exercise.muscleGroup,
               category: exercise.category,
               usesBodyweight: exercise.usesBodyweight,
+              equipmentType: exercise.equipmentType,
               volume: totalVolume(adjusted),
               estimated1RM: +best1RM(adjusted).toFixed(1),
               cardio: exercise.category === 'CARDIO' ? cardioSummary(sets) : null,
@@ -214,6 +247,12 @@ export async function buildMobileHistory(
                 isDropSet: set.isDropSet,
                 recoverySec: set.recoverySec,
                 completedAt: set.completedAt.toISOString(),
+                gymEquipmentId: set.gymEquipmentId,
+                equipmentNameSnapshot: set.equipmentNameSnapshot,
+                selectedLoadKg: set.selectedLoadKg,
+                selectedLoadMultiplierSnapshot: set.selectedLoadMultiplierSnapshot,
+                nominalResistanceKg: set.nominalResistanceKg,
+                equipmentLoadSnapshot: set.equipmentLoadSnapshot,
               })),
             },
           ];

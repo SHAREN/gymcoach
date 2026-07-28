@@ -123,7 +123,7 @@ describe('mobile history', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       month: '2026-07',
       selectedProgramId: program.id,
       unit: 'KG',
@@ -138,6 +138,7 @@ describe('mobile history', () => {
       durationMin: 60,
       notes: 'Felt strong',
       sessionRpe: 7,
+      gymId: null,
       workingSets: 2,
       volume: 480,
     });
@@ -145,6 +146,7 @@ describe('mobile history', () => {
       name: 'Pull-up',
       volume: 480,
       estimated1RM: 96,
+      equipmentType: 'OTHER',
     });
     expect(body.sessions[0].exercises[0].sets[1]).toMatchObject({
       weight: 10,
@@ -153,6 +155,8 @@ describe('mobile history', () => {
       rir: 2,
       recoverySec: 150,
       notes: 'Clean reps',
+      gymEquipmentId: null,
+      equipmentLoadSnapshot: null,
     });
     expect(body.sessions[0].exercises[1]).toMatchObject({
       name: 'Running',

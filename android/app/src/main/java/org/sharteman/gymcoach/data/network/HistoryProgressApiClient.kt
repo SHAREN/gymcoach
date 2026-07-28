@@ -11,6 +11,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.sharteman.gymcoach.data.model.ApiErrorResponse
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
 import org.sharteman.gymcoach.data.model.MobileGoalRequest
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.MobileVolumeTargetClearRequest
@@ -52,6 +54,45 @@ class HistoryProgressApiClient : HistoryMutationRemote {
         executeWithoutBody(
             Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/api/mobile/history/$sessionId")
+                .bearer(token)
+                .delete()
+                .build(),
+        )
+    }
+
+    suspend fun updateHistoricalSet(
+        baseUrl: String,
+        token: String,
+        setId: String,
+        request: HistoricalSetUpdateRequest,
+    ) {
+        executeWithoutBody(
+            Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/api/sets/$setId")
+                .bearer(token)
+                .patch(json.encodeToString(request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+        )
+    }
+
+    suspend fun addHistoricalSet(
+        baseUrl: String,
+        token: String,
+        sessionId: String,
+        request: HistoricalSetAddRequest,
+    ) {
+        post(
+            baseUrl,
+            token,
+            "api/sessions/$sessionId/historical-sets",
+            json.encodeToString(request),
+        )
+    }
+
+    suspend fun deleteHistoricalSet(baseUrl: String, token: String, setId: String) {
+        executeWithoutBody(
+            Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/api/sets/$setId")
                 .bearer(token)
                 .delete()
                 .build(),
