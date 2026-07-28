@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,8 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,12 +75,23 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.Locale
 
+@Immutable
 private data class HomeDestination(
+    val key: String,
     val title: String,
     val subtitle: String,
     val icon: ImageVector,
     val onClick: () -> Unit,
+)
+
+@Immutable
+private data class HomeWorkoutItem(
+    val id: String,
+    val name: String,
+    val details: String,
+    val canStart: Boolean,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,67 +130,138 @@ fun HomeScreen(
     var showReadinessDialog by remember { mutableStateOf(false) }
     var selectedWorkout by remember { mutableStateOf<WorkoutDto?>(null) }
     val gyms = bootstrap?.gyms.orEmpty()
-    val gymIds = gyms.map { it.id }
+    val gymIds = remember(gyms) { gyms.map { it.id } }
     var selectedGymId by rememberSaveable(bootstrap?.profile?.activeGymId, gymIds) {
         mutableStateOf(initialGymSelection(bootstrap?.profile?.activeGymId, gymIds))
     }
     val workouts = bootstrap?.activeProgram?.workouts.orEmpty()
+    val workoutById = remember(workouts) { workouts.associateBy { it.id } }
+    val resources = LocalContext.current.resources
+    val configuration = LocalConfiguration.current
+    val locale = configuration.locales[0] ?: Locale.getDefault()
+    val workoutItems = remember(workouts, locale, resources) {
+        workouts.map { workout ->
+            val exerciseCount = workout.exercises.size
+            val exerciseCountLabel = resources.getQuantityString(
+                R.plurals.exercise_count,
+                exerciseCount,
+                exerciseCount,
+            )
+            HomeWorkoutItem(
+                id = workout.id,
+                name = workout.name,
+                details = listOfNotNull(exerciseCountLabel, workoutDayName(workout.dayOfWeek, locale))
+                    .joinToString(" · "),
+                canStart = workout.exercises.isNotEmpty(),
+            )
+        }
+    }
     val openSession = openSessions.firstOrNull()
     val openWorkout = openSession?.let { active ->
         workouts.firstOrNull { it.id == active.workoutId }
             ?: bootstrap?.openSessions?.firstOrNull { it.id == active.id }?.workout
     }
 
-    val destinations = listOf(
+    val programsTitle = stringResource(R.string.programs_title)
+    val programsDescription = stringResource(R.string.home_programs_description)
+    val exercisesTitle = stringResource(R.string.exercise_catalog_title)
+    val exercisesDescription = stringResource(R.string.home_exercises_description)
+    val historyTitle = stringResource(R.string.history_native_title)
+    val historyDescription = stringResource(R.string.home_history_description)
+    val progressTitle = stringResource(R.string.progress_title)
+    val progressDescription = stringResource(R.string.home_progress_description)
+    val coachTitle = stringResource(R.string.coach_native_title)
+    val coachDescription = stringResource(R.string.home_coach_description)
+    val chatTitle = stringResource(R.string.coach_chat_title)
+    val chatDescription = stringResource(R.string.home_chat_description)
+    val settingsTitle = stringResource(R.string.settings)
+    val settingsDescription = stringResource(R.string.home_settings_description)
+    val webTitle = stringResource(R.string.web_panel)
+    val webDescription = stringResource(R.string.home_web_description)
+    val destinations = remember(
+        programsTitle,
+        programsDescription,
+        exercisesTitle,
+        exercisesDescription,
+        historyTitle,
+        historyDescription,
+        progressTitle,
+        progressDescription,
+        coachTitle,
+        coachDescription,
+        chatTitle,
+        chatDescription,
+        settingsTitle,
+        settingsDescription,
+        webTitle,
+        webDescription,
+        onPrograms,
+        onExerciseCatalog,
+        onHistory,
+        onProgress,
+        onCoach,
+        onChat,
+        onSettings,
+        onWebPanel,
+    ) { listOf(
         HomeDestination(
-            stringResource(R.string.programs_title),
-            stringResource(R.string.home_programs_description),
+            "programs",
+            programsTitle,
+            programsDescription,
             Icons.AutoMirrored.Outlined.List,
             onPrograms,
         ),
         HomeDestination(
-            stringResource(R.string.exercise_catalog_title),
-            stringResource(R.string.home_exercises_description),
+            "exercises",
+            exercisesTitle,
+            exercisesDescription,
             Icons.Outlined.FitnessCenter,
             onExerciseCatalog,
         ),
         HomeDestination(
-            stringResource(R.string.history_native_title),
-            stringResource(R.string.home_history_description),
+            "history",
+            historyTitle,
+            historyDescription,
             Icons.Outlined.History,
             onHistory,
         ),
         HomeDestination(
-            stringResource(R.string.progress_title),
-            stringResource(R.string.home_progress_description),
+            "progress",
+            progressTitle,
+            progressDescription,
             Icons.AutoMirrored.Outlined.TrendingUp,
             onProgress,
         ),
         HomeDestination(
-            stringResource(R.string.coach_native_title),
-            stringResource(R.string.home_coach_description),
+            "coach",
+            coachTitle,
+            coachDescription,
             Icons.Outlined.Psychology,
             onCoach,
         ),
         HomeDestination(
-            stringResource(R.string.coach_chat_title),
-            stringResource(R.string.home_chat_description),
+            "chat",
+            chatTitle,
+            chatDescription,
             Icons.AutoMirrored.Outlined.Chat,
             onChat,
         ),
         HomeDestination(
-            stringResource(R.string.settings),
-            stringResource(R.string.home_settings_description),
+            "settings",
+            settingsTitle,
+            settingsDescription,
             Icons.Outlined.Settings,
             onSettings,
         ),
         HomeDestination(
-            stringResource(R.string.web_panel),
-            stringResource(R.string.home_web_description),
+            "web",
+            webTitle,
+            webDescription,
             Icons.Outlined.Language,
             onWebPanel,
         ),
-    )
+    ) }
+    val destinationRows = remember(destinations) { homeDestinationRows(destinations) }
 
     Scaffold(
         topBar = {
@@ -214,14 +298,18 @@ fun HomeScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp)
+                .testTag("home-dashboard-list"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            item(key = "connection", contentType = "status") {
                 ConnectionStatus(online, syncing, pendingCount)
             }
             if (syncIssue != null) {
-                item {
+                item(key = "sync-issue", contentType = "status") {
                     SyncIssueCard(
                         syncIssue = syncIssue,
                         syncing = syncing,
@@ -231,7 +319,7 @@ fun HomeScreen(
                 }
             }
             if (openSession != null) {
-                item {
+                item(key = "active-session", contentType = "session") {
                     ActiveSessionCard(
                         session = openSession,
                         workoutName = openWorkout?.name,
@@ -239,7 +327,7 @@ fun HomeScreen(
                     )
                 }
             }
-            item {
+            item(key = "readiness", contentType = "readiness") {
                 ReadinessCard(
                     readiness = bootstrap?.readiness,
                     online = online,
@@ -248,7 +336,7 @@ fun HomeScreen(
             }
             if (openSession == null) {
                 if (gyms.isNotEmpty()) {
-                    item {
+                    item(key = "gym-selector", contentType = "gym-selector") {
                         GymSelector(
                             gyms = gyms.map { it.id to it.name },
                             selectedGymId = selectedGymId,
@@ -256,7 +344,7 @@ fun HomeScreen(
                         )
                     }
                 }
-                item {
+                item(key = "workout-heading", contentType = "heading") {
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(stringResource(R.string.start_workout_title), style = MaterialTheme.typography.titleLarge)
                         bootstrap?.activeProgram?.let {
@@ -269,38 +357,45 @@ fun HomeScreen(
                     }
                 }
                 if (workouts.isEmpty()) {
-                    item {
+                    item(key = "empty-program", contentType = "empty") {
                         EmptyProgramCard(onPrograms)
                     }
                 } else {
-                    items(workouts, key = { it.id }) { workout ->
+                    items(
+                        items = workoutItems,
+                        key = { "workout-${it.id}" },
+                        contentType = { "workout" },
+                    ) { item ->
+                        val workout = requireNotNull(workoutById[item.id])
                         WorkoutRow(
-                            workout = workout,
+                            item = item,
                             onOpen = { selectedWorkout = workout },
                             onStart = { onStartWorkout(workout, selectedGymId) },
                         )
                     }
                 }
             }
-            item {
+            item(key = "sections-heading", contentType = "heading") {
                 Text(stringResource(R.string.home_sections), style = MaterialTheme.typography.titleLarge)
             }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    destinations.chunked(2).forEach { row ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            row.forEach { destination ->
-                                DestinationCard(destination, Modifier.weight(1f))
-                            }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
+            items(
+                items = destinationRows,
+                key = { "destination-row-${it.first().key}" },
+                contentType = { "destination-row" },
+            ) { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    row.forEach { destination ->
+                        DestinationCard(destination, Modifier.weight(1f))
+                    }
+                    if (row.size == 1) {
+                        Spacer(Modifier.weight(1f))
                     }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
+            item(key = "bottom-spacer", contentType = "spacer") { Spacer(Modifier.height(24.dp)) }
         }
     }
 
@@ -557,42 +652,30 @@ private fun EmptyProgramCard(onPrograms: () -> Unit) {
 
 @Composable
 private fun WorkoutRow(
-    workout: WorkoutDto,
+    item: HomeWorkoutItem,
     onOpen: () -> Unit,
     onStart: () -> Unit,
 ) {
     Card(
         onClick = onOpen,
-        modifier = Modifier.fillMaxWidth().testTag("home-workout-${workout.id}"),
+        modifier = Modifier.fillMaxWidth().testTag("home-workout-${item.id}"),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(workout.name, style = MaterialTheme.typography.titleMedium)
+                Text(item.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    buildString {
-                        append(
-                            pluralStringResource(
-                                R.plurals.exercise_count,
-                                workout.exercises.size,
-                                workout.exercises.size,
-                            ),
-                        )
-                        workoutDayName(workout.dayOfWeek)?.let {
-                            append(" · ")
-                            append(it)
-                        }
-                    },
+                    item.details,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Button(
                 onClick = onStart,
-                enabled = workout.exercises.isNotEmpty(),
-                modifier = Modifier.testTag("home-workout-start-${workout.id}"),
+                enabled = item.canStart,
+                modifier = Modifier.testTag("home-workout-start-${item.id}"),
             ) {
                 Text(stringResource(R.string.start))
             }
@@ -601,7 +684,10 @@ private fun WorkoutRow(
 }
 
 @Composable
-private fun DestinationCard(destination: HomeDestination, modifier: Modifier = Modifier) {
+private fun DestinationCard(
+    destination: HomeDestination,
+    modifier: Modifier = Modifier,
+) {
     Card(onClick = destination.onClick, modifier = modifier.height(118.dp)) {
         Column(
             modifier = Modifier.fillMaxSize().padding(12.dp),
@@ -762,3 +848,5 @@ private fun formatSessionStartedAt(value: String): String = runCatching {
 
 internal fun initialGymSelection(activeGymId: String?, gymIds: List<String>): String? =
     activeGymId?.takeIf { it in gymIds } ?: gymIds.firstOrNull()
+
+internal fun <T> homeDestinationRows(destinations: List<T>): List<List<T>> = destinations.chunked(2)

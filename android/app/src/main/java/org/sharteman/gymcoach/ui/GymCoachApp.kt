@@ -23,11 +23,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.programs.ExerciseInput
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
@@ -46,6 +49,132 @@ private const val WEB_ROUTE = "web"
 private const val SETTINGS_ROUTE = "settings"
 private const val COACHING_PROFILE_ROUTE = "coaching-profile"
 private const val WATCH_DIAGNOSTICS_ROUTE = "watch-diagnostics"
+
+@Composable
+private fun HomeRoute(
+    repository: GymCoachRepository,
+    bootstrap: BootstrapResponse?,
+    online: Boolean,
+    syncing: Boolean,
+    onSyncingChange: (Boolean) -> Unit,
+    syncAllPending: suspend () -> Boolean,
+    snackbar: SnackbarHostState,
+    syncFailedMessage: String,
+    syncBlockedMessage: String,
+    readinessSavedMessage: String,
+    scope: CoroutineScope,
+    onAuthenticationRequired: () -> Unit,
+    onOpenSession: (String) -> Unit,
+    onStartWorkout: (WorkoutDto, String?) -> Unit,
+    onEditWorkout: (String, String) -> Unit,
+    onOpenProgram: (String) -> Unit,
+    serverUrl: String,
+    onPrograms: () -> Unit,
+    onExerciseCatalog: () -> Unit,
+    onHistory: () -> Unit,
+    onProgress: () -> Unit,
+    onCoach: () -> Unit,
+    onChat: () -> Unit,
+    onSettings: () -> Unit,
+    onWebPanel: () -> Unit,
+    currentVersion: String,
+    onDownloadUpdate: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val openSessions by repository.openSessions.collectAsState(initial = emptyList())
+    val pendingCount by repository.pendingCount.collectAsState(initial = 0)
+    val syncIssue by repository.syncIssue.collectAsState(initial = null)
+    val offlinePendingFlow = remember(repository) { OfflineRuntime.pendingCount() }
+    val offlineIssuesFlow = remember(repository) { OfflineRuntime.issues() }
+    val offlinePendingCount by offlinePendingFlow.collectAsState(initial = 0)
+    val offlineIssues by offlineIssuesFlow.collectAsState(initial = emptyList())
+    val offlineIssue = offlineIssues.firstOrNull()
+    val displayedSyncIssue = syncIssue ?: offlineIssue?.let {
+        SyncIssue(
+            operationId = it.operationId,
+            message = it.message,
+            kind = syncIssueKind(it.message),
+            canRetry = true,
+        )
+    }
+    HomeScreen(
+        email = repository.email,
+        bootstrap = bootstrap,
+        openSessions = openSessions,
+        pendingCount = pendingCount + offlinePendingCount,
+        syncIssue = displayedSyncIssue,
+        online = online,
+        syncing = syncing,
+        onOpenSession = onOpenSession,
+        onStartWorkout = onStartWorkout,
+        onEditWorkout = onEditWorkout,
+        onOpenProgram = onOpenProgram,
+        serverUrl = serverUrl,
+        onSync = {
+            scope.launch {
+                onSyncingChange(true)
+                runCatching { syncAllPending() }
+                    .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
+                    .onFailure {
+                        if (it is MobileAuthenticationRequiredException) onAuthenticationRequired()
+                        else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                    }
+                onSyncingChange(false)
+            }
+        },
+        onRetrySyncIssue = {
+            scope.launch {
+                onSyncingChange(true)
+                runCatching {
+                    if (syncIssue != null) {
+                        repository.retryBlockedChange()
+                    } else {
+                        offlineIssue?.let { OfflineRuntime.controller()?.retry(it.operationId) }
+                    }
+                    syncAllPending()
+                }
+                    .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
+                    .onFailure {
+                        if (it is MobileAuthenticationRequiredException) onAuthenticationRequired()
+                        else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                    }
+                onSyncingChange(false)
+            }
+        },
+        onDiscardSyncIssue = {
+            scope.launch {
+                runCatching {
+                    if (syncIssue != null) {
+                        repository.discardBlockedChange()
+                    } else {
+                        offlineIssue?.let { OfflineRuntime.controller()?.discard(it.operationId) }
+                    }
+                }.onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+            }
+        },
+        onSaveReadiness = { readiness, sleepQuality, note ->
+            if (!online) {
+                false
+            } else {
+                runCatching { repository.saveReadiness(readiness, sleepQuality, note) }
+                    .onSuccess { snackbar.showSnackbar(readinessSavedMessage) }
+                    .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                    .isSuccess
+            }
+        },
+        onPrograms = onPrograms,
+        onExerciseCatalog = onExerciseCatalog,
+        onHistory = onHistory,
+        onProgress = onProgress,
+        onCoach = onCoach,
+        onChat = onChat,
+        onSettings = onSettings,
+        onWebPanel = onWebPanel,
+        currentVersion = currentVersion,
+        onDownloadUpdate = onDownloadUpdate,
+        onLogout = onLogout,
+    )
+}
 
 @Composable
 fun GymCoachApp(
@@ -74,24 +203,6 @@ fun GymCoachApp(
         accessToken?.let { token -> ProgramsCatalogRepository.remote(repository.serverUrl, token) }
     }
     val bootstrap by repository.bootstrap.collectAsState(initial = null)
-    val openSessions by repository.openSessions.collectAsState(initial = emptyList())
-    val progress by repository.progress.collectAsState(initial = null)
-    val pendingCount by repository.pendingCount.collectAsState(initial = 0)
-    val syncIssue by repository.syncIssue.collectAsState(initial = null)
-    val offlinePendingFlow = remember(loggedIn) { OfflineRuntime.pendingCount() }
-    val offlineIssuesFlow = remember(loggedIn) { OfflineRuntime.issues() }
-    val offlinePendingCount by offlinePendingFlow.collectAsState(initial = 0)
-    val offlineIssues by offlineIssuesFlow.collectAsState(initial = emptyList())
-    val offlineIssue = offlineIssues.firstOrNull()
-    val displayedSyncIssue = syncIssue ?: offlineIssue?.let {
-        SyncIssue(
-            operationId = it.operationId,
-            message = it.message,
-            kind = syncIssueKind(it.message),
-            canRetry = true,
-        )
-    }
-    val totalPendingCount = pendingCount + offlinePendingCount
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -110,10 +221,12 @@ fun GymCoachApp(
             }
         }
 
-    suspend fun syncAllPending(): Boolean {
-        val workoutAccepted = repository.syncPending()
-        val offlineAccepted = OfflineRuntime.syncPending()
-        return workoutAccepted && offlineAccepted
+    val syncAllPending: suspend () -> Boolean = remember(repository) {
+        {
+            val workoutAccepted = repository.syncPending()
+            val offlineAccepted = OfflineRuntime.syncPending()
+            workoutAccepted && offlineAccepted
+        }
     }
 
     fun openWebPath(path: String) {
@@ -164,14 +277,19 @@ fun GymCoachApp(
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = HOME_ROUTE) {
             composable(HOME_ROUTE) {
-                HomeScreen(
-                    email = repository.email,
+                HomeRoute(
+                    repository = repository,
                     bootstrap = bootstrap,
-                    openSessions = openSessions,
-                    pendingCount = totalPendingCount,
-                    syncIssue = displayedSyncIssue,
                     online = online,
                     syncing = syncing,
+                    onSyncingChange = { syncing = it },
+                    syncAllPending = syncAllPending,
+                    snackbar = snackbar,
+                    syncFailedMessage = syncFailedMessage,
+                    syncBlockedMessage = syncBlockedMessage,
+                    readinessSavedMessage = readinessSavedMessage,
+                    scope = scope,
+                    onAuthenticationRequired = { loggedIn = false },
                     onOpenSession = { sessionId -> navController.navigate("session/$sessionId") },
                     onStartWorkout = { workout, gymId ->
                         scope.launch {
@@ -188,59 +306,6 @@ fun GymCoachApp(
                         navController.navigate("programs/${Uri.encode(programId)}")
                     },
                     serverUrl = repository.serverUrl,
-                    onSync = {
-                        scope.launch {
-                            syncing = true
-                            runCatching { syncAllPending() }
-                                .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
-                                .onFailure {
-                                    if (it is MobileAuthenticationRequiredException) loggedIn = false
-                                    else snackbar.showSnackbar(it.message ?: syncFailedMessage)
-                                }
-                            syncing = false
-                        }
-                    },
-                    onRetrySyncIssue = {
-                        scope.launch {
-                            syncing = true
-                            runCatching {
-                                if (syncIssue != null) {
-                                    repository.retryBlockedChange()
-                                } else {
-                                    offlineIssue?.let { OfflineRuntime.controller()?.retry(it.operationId) }
-                                }
-                                syncAllPending()
-                            }
-                                .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
-                                .onFailure {
-                                    if (it is MobileAuthenticationRequiredException) loggedIn = false
-                                    else snackbar.showSnackbar(it.message ?: syncFailedMessage)
-                                }
-                            syncing = false
-                        }
-                    },
-                    onDiscardSyncIssue = {
-                        scope.launch {
-                            runCatching {
-                                if (syncIssue != null) {
-                                    repository.discardBlockedChange()
-                                } else {
-                                    offlineIssue?.let { OfflineRuntime.controller()?.discard(it.operationId) }
-                                }
-                            }
-                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
-                        }
-                    },
-                    onSaveReadiness = { readiness, sleepQuality, note ->
-                        if (!online) {
-                            false
-                        } else {
-                            runCatching { repository.saveReadiness(readiness, sleepQuality, note) }
-                                .onSuccess { snackbar.showSnackbar(readinessSavedMessage) }
-                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
-                                .isSuccess
-                        }
-                    },
                     onPrograms = { navController.navigate("programs") },
                     onExerciseCatalog = { navController.navigate("exercises") },
                     onHistory = { navController.navigate("history") },
@@ -324,6 +389,7 @@ fun GymCoachApp(
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
+                    val progress by repository.progress.collectAsState(initial = null)
                     LaunchedEffect(online) {
                         if (online) {
                             runCatching { repository.refreshBootstrap() }
@@ -385,6 +451,7 @@ fun GymCoachApp(
                     },
                 ),
             ) { entry ->
+                val progress by repository.progress.collectAsState(initial = null)
                 ProgressScreen(
                     snapshot = progress,
                     unit = bootstrap?.profile?.unit ?: "KG",

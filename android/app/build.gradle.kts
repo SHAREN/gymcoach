@@ -37,8 +37,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 46
-        versionName = "0.4.36"
+        versionCode = 47
+        versionName = "0.4.37"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -64,6 +64,15 @@ android {
                 "proguard-rules.pro",
             )
         }
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            versionNameSuffix = "-benchmark"
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
+            buildConfigField("String", "WATCH_TRANSPORT_MODE", "simulator".asBuildConfigString())
+        }
     }
 
     compileOptions {
@@ -77,6 +86,7 @@ android {
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    sourceSets.getByName("benchmark").java.srcDir("src/release/java")
     sourceSets.getByName("test").resources.srcDir(
         rootProject.projectDir.parentFile.resolve("shared-contracts/examples"),
     )

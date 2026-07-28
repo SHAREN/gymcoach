@@ -6,6 +6,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -176,7 +177,70 @@ class HomeScreenNativeTest {
         assertTrue(startedWorkoutId == workout.id)
     }
 
-    private fun bootstrap(workout: WorkoutDto) = BootstrapResponse(
+    @Test
+    fun longDashboardKeepsTheLastDestinationReachable() {
+        var webOpened = false
+        val workouts = List(16) { index ->
+            workout().copy(
+                id = "workout_$index",
+                name = "Тренировка ${index + 1}",
+                order = index,
+            )
+        }
+        composeRule.setContent {
+            val baseContext = LocalContext.current
+            val baseConfiguration = LocalConfiguration.current
+            val configuration = remember(baseConfiguration) {
+                Configuration(baseConfiguration).apply { setLocale(Locale("ru")) }
+            }
+            val localizedContext = remember(baseContext, configuration) {
+                baseContext.createConfigurationContext(configuration)
+            }
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides configuration,
+            ) {
+                GymCoachTheme(darkTheme = true) {
+                    HomeScreen(
+                        email = "user@example.com",
+                        bootstrap = bootstrap(workouts),
+                        openSessions = emptyList(),
+                        pendingCount = 0,
+                        syncIssue = null,
+                        online = true,
+                        syncing = false,
+                        onOpenSession = {},
+                        onStartWorkout = { _, _ -> },
+                        onSync = {},
+                        onRetrySyncIssue = {},
+                        onDiscardSyncIssue = {},
+                        onSaveReadiness = { _, _, _ -> true },
+                        onPrograms = {},
+                        onExerciseCatalog = {},
+                        onHistory = {},
+                        onProgress = {},
+                        onCoach = {},
+                        onChat = {},
+                        onSettings = {},
+                        onWebPanel = { webOpened = true },
+                        currentVersion = "test",
+                        onDownloadUpdate = {},
+                        onLogout = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("home-dashboard-list")
+            .performScrollToNode(hasText("Веб-панель"))
+        composeRule.onNodeWithText("Веб-панель").assertIsDisplayed().performClick()
+
+        assertTrue(webOpened)
+    }
+
+    private fun bootstrap(workout: WorkoutDto) = bootstrap(listOf(workout))
+
+    private fun bootstrap(workouts: List<WorkoutDto>) = BootstrapResponse(
         schemaVersion = 1,
         calculationVersion = "test",
         serverTime = "2026-07-14T12:00:00Z",
@@ -185,7 +249,7 @@ class HomeScreenNativeTest {
             id = "program",
             name = "Силовая",
             phase = "ACTIVE",
-            workouts = listOf(workout),
+            workouts = workouts,
         ),
         readiness = ReadinessDto(
             readiness = 4,
