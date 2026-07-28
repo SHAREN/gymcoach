@@ -34,6 +34,15 @@
     <string name="equipment_selection_required">Выберите тренажёр для этого подхода.</string>
     <string name="exercise_equipment_unavailable">Упражнение недоступно на сохранённом оборудовании этого зала.</string>
     <string name="return_calibration_title">Калибровка после перерыва</string>
+    <string name="equipment_calibration_title">Калибровка на текущем оборудовании</string>
+    <string name="equipment_calibration_description">Движение хорошо знакомо по %1$d тренировкам, но эти килограммы нельзя считать точной нагрузкой для конкретного тренажёра.</string>
+    <string name="movement_confidence_low">Знакомство с движением: низкая уверенность.</string>
+    <string name="movement_confidence_medium">Знакомство с движением: средняя уверенность.</string>
+    <string name="movement_confidence_high">Знакомство с движением: высокая уверенность.</string>
+    <string name="equipment_confidence_low">Нагрузка на этом оборудовании: низкая уверенность.</string>
+    <string name="equipment_confidence_medium">Нагрузка на этом оборудовании: средняя уверенность.</string>
+    <string name="equipment_confidence_high">Нагрузка на этом оборудовании: высокая уверенность.</string>
+    <string name="equipment_calibration_progress">Подтверждено рабочих подходов на этом оборудовании: %1$d из 2.</string>
     <string name="return_confidence_low">Достоверность истории: низкая.</string>
     <string name="return_confidence_medium">Достоверность истории: средняя.</string>
     <string name="return_confidence_high">Достоверность истории: высокая.</string>
@@ -43,7 +52,7 @@
     <string name="return_history_none">Точной истории нагрузки на текущем оборудовании нет.</string>
     <string name="return_gap">Консервативность возврата учитывает перерыв в упражнении: %1$d дней.</string>
     <string name="return_prior_gap">Последняя точная тренировка была недавно, но до неё был перерыв %1$d дней, поэтому калибровка сохраняется.</string>
-    <string name="return_non_comparable_history">Тренировки на другом или отвязанном оборудовании, веса которых не пересчитывались: %1$d.</string>
+    <string name="return_non_comparable_history">Тренировок без точной привязки к текущему оборудованию: %1$d. Они подтверждают знакомство с движением, но не точную эквивалентность тренажёра.</string>
     <string name="return_calibration_targets">Цель калибровки: %1$d подход(а), не ниже RIR %2$d. Следующий подход адаптируется по записанному RIR и не превышает предел.</string>
     <string name="nominal_resistance_estimate">Оценочное номинальное сопротивление: %1$s %2$s</string>
     <string name="nominal_short">Номинально: %1$s %2$s</string>
@@ -284,6 +293,10 @@
     <string name="workout_reset_online_required">Для сброса нужна связь с сервером. Без сети поставьте тренировку на паузу.</string>
     <string name="workout_reset_error">Не удалось сбросить тренировку. Локальные данные не удалены.</string>
     <string name="exercise_actions">Действия с упражнением</string>
+    <string name="exercise_parameters_section">Параметры упражнения</string>
+    <string name="exercise_actions_section">Действия</string>
+    <string name="exercise_value_not_set">Не задано</string>
+    <string name="exercise_note_empty">Заметки нет</string>
     <string name="exercise_actions_for">Действия: %1$s</string>
     <string name="exercise_target_sets">Целевые подходы</string>
     <string name="exercise_target_reps">Целевой диапазон повторов</string>

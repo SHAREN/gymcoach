@@ -15,14 +15,18 @@ interface Props {
 export function ReturnToTrainingNotice({ recommendation, unit, usesBodyweight }: Props) {
   const t = useTranslations('session.returnToTraining');
   const locale = useLocale();
-  if (!recommendation || recommendation.mode === 'normal') return null;
+  if (!recommendation || !recommendation.calibrationRequired) return null;
 
   const description =
-    recommendation.mode === 'exercise-reintro'
-      ? t('exerciseReintro', { days: recommendation.exerciseGapDays ?? 42 })
-      : recommendation.mode === 'muscle-reintro'
-        ? t('muscleReintro')
-        : t('newExercise');
+    recommendation.calibrationKind === 'equipment'
+      ? t('equipmentCalibration', {
+          sessions: recommendation.strengthSummary.movement.sessionCount,
+        })
+      : recommendation.mode === 'exercise-reintro'
+        ? t('exerciseReintro', { days: recommendation.exerciseGapDays ?? 42 })
+        : recommendation.mode === 'muscle-reintro'
+          ? t('muscleReintro')
+          : t('newExercise');
   const historyReason =
     recommendation.historyBasis === 'recent-and-long-term'
       ? t('historyRecentAndLongTerm', {
@@ -47,13 +51,16 @@ export function ReturnToTrainingNotice({ recommendation, unit, usesBodyweight }:
       <div className="flex items-start gap-2.5">
         <RotateCcw className="mt-0.5 size-4 shrink-0" aria-hidden />
         <div className="min-w-0 space-y-1 text-xs leading-relaxed sm:text-sm">
-          <p className="font-semibold">{t('title')}</p>
+          <p className="font-semibold">
+            {recommendation.calibrationKind === 'equipment' ? t('equipmentTitle') : t('title')}
+          </p>
           <p>{description}</p>
           <p data-testid="return-history-confidence">
-            {t(`confidence.${recommendation.confidence}`)}
+            {t(`movementConfidence.${recommendation.strengthSummary.movement.confidence}`)}
           </p>
+          <p>{t(`equipmentConfidence.${recommendation.strengthSummary.equipment.confidence}`)}</p>
           <p>{historyReason}</p>
-          {recommendation.returnGapDays != null && (
+          {recommendation.calibrationKind === 'return' && recommendation.returnGapDays != null && (
             <p>
               {priorReturnGap
                 ? t('priorReturnGap', { days: recommendation.returnGapDays })

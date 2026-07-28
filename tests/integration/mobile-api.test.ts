@@ -330,7 +330,7 @@ describe('Android mobile API', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       profile: {
         email: seeded.user.email,
         activeGymId: seeded.gym.id,
@@ -435,8 +435,8 @@ describe('Android mobile API', () => {
       (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
     ).recommendation;
 
-    expect(body.schemaVersion).toBe(8);
-    expect(body.calculationVersion).toBe('2026-07-27-next-set-return-parity-v1');
+    expect(body.schemaVersion).toBe(9);
+    expect(body.calculationVersion).toBe('2026-07-27-long-term-strength-calibration-v2');
     expect(body.activeWorkoutExerciseDefaults).toEqual({
       targetSets: 4,
       targetDropSets: 0,
@@ -455,9 +455,90 @@ describe('Android mobile API', () => {
       longTermHistorySessionCount: 3,
       confidence: 'low',
       startFraction: 0.65,
+      calibrationKind: 'return',
+      strengthSummary: {
+        anchorScope: 'exact-equipment',
+        movement: { sessionCount: 3, workingSetCount: 3 },
+        equipment: { sessionCount: 3, workingSetCount: 3 },
+      },
+    });
+    expect(body.longTermStrengthSummaryByExerciseId[seeded.exercise.id]).toMatchObject({
+      movement: { sessionCount: 3, workingSetCount: 3 },
+      equipment: [
+        expect.objectContaining({
+          gymId: seeded.gym.id,
+          gymEquipmentId: seeded.equipment.id,
+          sessionCount: 3,
+          workingSetCount: 3,
+        }),
+      ],
     });
     expect(recommendation.exerciseGapDays).toBeGreaterThanOrEqual(179);
     expect(recommendation.suggestedWeight).toBeGreaterThan(20);
+  });
+
+  it('uses exact-exercise unlinked long-term history without sending all raw sessions', async () => {
+    const seeded = await seedUser('mobile-unlinked-strength@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const currentTime = new Date();
+    const daysAgo = (days: number) => new Date(currentTime.getTime() - days * 86_400_000);
+
+    for (let index = 0; index < 25; index += 1) {
+      const startedAt = daysAgo(14 + index * 14);
+      await db.session.create({
+        data: {
+          userId: seeded.user.id,
+          workoutId: seeded.workout.id,
+          programId: seeded.workout.programId,
+          gymId: seeded.gym.id,
+          startedAt,
+          finishedAt: new Date(startedAt.getTime() + 3_600_000),
+          sets: {
+            create: {
+              exerciseId: seeded.exercise.id,
+              setNumber: 1,
+              weight: 70 + (index % 3) * 5,
+              reps: 10,
+              rir: 2,
+              completedAt: new Date(startedAt.getTime() + 60_000),
+            },
+          },
+        },
+      });
+    }
+
+    const response = await bootstrap(
+      new Request('http://test.local/api/mobile/bootstrap', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const recommendation = body.returnRecommendationsByEquipmentByWorkout[seeded.workout.id][
+      seeded.programExercise.id
+    ].find(
+      (item: { gymEquipmentId: string | null }) => item.gymEquipmentId === seeded.equipment.id,
+    ).recommendation;
+
+    expect(recommendation).toMatchObject({
+      mode: 'normal',
+      calibrationKind: 'equipment',
+      calibrationRequired: true,
+      targetSets: 2,
+      targetRIR: 3,
+      strengthSummary: {
+        anchorScope: 'exact-exercise-unlinked',
+        movement: { sessionCount: 25, workingSetCount: 25, confidence: 'high' },
+        equipment: { sessionCount: 0, workingSetCount: 0, confidence: 'low' },
+      },
+    });
+    expect(recommendation.suggestedWeight).toBeGreaterThan(20);
+    expect(body.exerciseHistoryByExerciseId[seeded.exercise.id]).toHaveLength(12);
+    expect(body.longTermStrengthSummaryByExerciseId[seeded.exercise.id].movement).toMatchObject({
+      sessionCount: 25,
+      workingSetCount: 25,
+      confidence: 'high',
+    });
   });
 
   it('returns up to 12 recent completed sessions per exercise', async () => {

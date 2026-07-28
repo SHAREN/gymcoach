@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calculateReturnRecommendation,
+  resolveEquipmentCalibrationProgress,
   RETURN_EXTENDED_GAP_DAYS,
   RETURN_MODERATE_GAP_DAYS,
   type ReturnProgramExercise,
@@ -67,6 +68,354 @@ const olympDumbbells = {
 };
 
 describe('return-to-training recommendations', () => {
+  it('uses a large exact-exercise unlinked history to calibrate new equipment above its minimum', () => {
+    const unlinked = historySessions(
+      Array.from({ length: 25 }, (_, index) => ({
+        days: 14 + index * 14,
+        weight: index === 0 ? 45 : 40 + (index % 6),
+        reps: 10,
+        rir: 2,
+      })),
+    );
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(14),
+        exerciseSessions: [],
+        generalExerciseSessions: unlinked,
+        unlinkedExerciseSessions: unlinked,
+        hasConcreteEquipmentTarget: true,
+        nonComparableExerciseSessions: 25,
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'CABLE',
+        weightOptions: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
+      },
+    });
+
+    expect(result).toMatchObject({
+      mode: 'normal',
+      calibrationKind: 'equipment',
+      calibrationRequired: true,
+      targetSets: 2,
+      targetRIR: 3,
+      historySessionCount: 0,
+      suggestedWeight: 35,
+      strengthSummary: {
+        anchorScope: 'exact-exercise-unlinked',
+        movement: { sessionCount: 25, confidence: 'high' },
+        equipment: { workingSetCount: 0, confidence: 'low' },
+      },
+    });
+    expect(result.suggestedWeight).toBeGreaterThan(5);
+  });
+
+  it('does not cliff-reset a 40-day large unlinked history to the equipment minimum', () => {
+    const unlinked = historySessions(
+      Array.from({ length: 10 }, (_, index) => ({
+        days: 40 + index * 21,
+        weight: 40 + (index % 2) * 5,
+        reps: 10,
+      })),
+    );
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(40),
+        exerciseSessions: [],
+        generalExerciseSessions: unlinked,
+        unlinkedExerciseSessions: unlinked,
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 15, 20, 25, 30, 35, 40] },
+    });
+
+    expect(result.calibrationKind).toBe('equipment');
+    expect(result.suggestedWeight).toBeGreaterThan(5);
+  });
+
+  it('keeps the first bench working set above an empty bar after a 60-day gap', () => {
+    const barbellExercise: ReturnProgramExercise = {
+      ...programExercise,
+      exerciseId: 'bench-press',
+      exercise: { ...programExercise.exercise, equipmentType: 'BARBELL' },
+    };
+    const unlinked = historySessions([
+      { days: 60, weight: 80, reps: 8 },
+      { days: 75, weight: 75, reps: 10 },
+      { days: 120, weight: 70, reps: 10 },
+      { days: 240, weight: 90, reps: 10 },
+    ]);
+    const result = calculateReturnRecommendation({
+      programExercise: barbellExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(60),
+        exerciseSessions: [],
+        generalExerciseSessions: unlinked,
+        unlinkedExerciseSessions: unlinked,
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: {
+        equipmentType: 'BARBELL',
+        barWeights: [20],
+        plateWeights: [1.25, 2.5, 5, 10, 15, 20],
+      },
+    });
+
+    expect(result.mode).toBe('exercise-reintro');
+    expect(result.suggestedWeight).toBeGreaterThan(20);
+    expect(result.suggestedWeight).toBeLessThan(80);
+  });
+
+  it('degrades an unlinked long-term anchor gradually across existing return bands', () => {
+    const calculate = (gapDays: number) => {
+      const unlinked = historySessions([
+        { days: gapDays, weight: 45, reps: 10 },
+        { days: gapDays + 14, weight: 42, reps: 10 },
+        { days: gapDays + 28, weight: 40, reps: 10 },
+      ]);
+      return calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: null,
+          generalExerciseLastPerformedAt: daysAgo(gapDays),
+          exerciseSessions: [],
+          generalExerciseSessions: unlinked,
+          unlinkedExerciseSessions: unlinked,
+          hasConcreteEquipmentTarget: true,
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: [2, 5, 10, 15, 20, 25, 30, 35, 40],
+        },
+      });
+    };
+    const short = calculate(60);
+    const moderate = calculate(100);
+    const extended = calculate(180);
+
+    expect(short.suggestedWeight).toBeGreaterThanOrEqual(moderate.suggestedWeight!);
+    expect(moderate.suggestedWeight).toBeGreaterThanOrEqual(extended.suggestedWeight!);
+    expect(extended.suggestedWeight).toBeGreaterThan(2);
+  });
+
+  it('does not reset an experienced dumbbell user to 2 kg outside the short history window', () => {
+    const unlinked = historySessions([
+      { days: 90, weight: 30, reps: 10 },
+      { days: 120, weight: 28, reps: 10 },
+      { days: 180, weight: 26, reps: 10 },
+    ]);
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(90),
+        exerciseSessions: [],
+        generalExerciseSessions: unlinked,
+        unlinkedExerciseSessions: unlinked,
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'DUMBBELL', dumbbellWeights: [2, 5, 10, 15, 20, 25, 30] },
+    });
+
+    expect(result.suggestedWeight).toBeGreaterThan(2);
+  });
+
+  it.each([
+    { exactSets: 0, expectedRequired: true, expectedTargetSets: 2 },
+    { exactSets: 1, expectedRequired: true, expectedTargetSets: 1 },
+    { exactSets: 2, expectedRequired: false, expectedTargetSets: 4 },
+  ])(
+    'confirms concrete equipment after $exactSets valid set(s)',
+    ({ exactSets, expectedRequired, expectedTargetSets }) => {
+      const exactSessions =
+        exactSets === 0
+          ? []
+          : [
+              {
+                sessionId: 'equipment-session',
+                performedAt: daysAgo(7),
+                sets: Array.from({ length: exactSets }, () => ({
+                  weight: 30,
+                  reps: 10,
+                  rir: 3,
+                  isDropSet: false,
+                })),
+              },
+            ];
+      const unlinked = historySessions([
+        { days: 21, weight: 40 },
+        { days: 35, weight: 42 },
+        { days: 49, weight: 45 },
+      ]);
+      const result = calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: exactSets > 0 ? daysAgo(7) : null,
+          generalExerciseLastPerformedAt: exactSets > 0 ? daysAgo(7) : daysAgo(21),
+          exerciseSessions: exactSessions,
+          generalExerciseSessions: [...exactSessions, ...unlinked],
+          unlinkedExerciseSessions: unlinked,
+          hasConcreteEquipmentTarget: true,
+        }),
+        now,
+        loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 15, 20, 25, 30, 35] },
+      });
+
+      expect(result.calibrationRequired).toBe(expectedRequired);
+      expect(result.targetSets).toBe(expectedTargetSets);
+    },
+  );
+
+  it('clears equipment-only calibration after two current exact-equipment sets', () => {
+    const base = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(14),
+        exerciseSessions: [],
+        generalExerciseSessions: sessions(40),
+        unlinkedExerciseSessions: sessions(40),
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 20, 30, 40] },
+    });
+    const completedSet = (id: string, gymEquipmentId: string) => ({
+      id,
+      gymEquipmentId,
+      weight: 30,
+      reps: 10,
+      rir: 3,
+      isWarmup: false,
+      isDropSet: false,
+    });
+
+    const one = resolveEquipmentCalibrationProgress({
+      programExercise,
+      recommendation: base,
+      completedSets: [completedSet('one', 'cable-a')],
+      gymEquipmentId: 'cable-a',
+    });
+    const two = resolveEquipmentCalibrationProgress({
+      programExercise,
+      recommendation: base,
+      completedSets: [completedSet('one', 'cable-a'), completedSet('two', 'cable-a')],
+      gymEquipmentId: 'cable-a',
+    });
+    const otherMachine = resolveEquipmentCalibrationProgress({
+      programExercise,
+      recommendation: base,
+      completedSets: [completedSet('one', 'cable-b'), completedSet('two', 'cable-b')],
+      gymEquipmentId: 'cable-a',
+    });
+
+    expect(one?.calibrationRequired).toBe(true);
+    expect(one?.strengthSummary.equipment).toMatchObject({
+      calibrationSetCount: 1,
+      confidence: 'medium',
+    });
+    expect(two).toMatchObject({
+      mode: 'normal',
+      calibrationKind: 'none',
+      calibrationRequired: false,
+      targetSets: programExercise.targetSets,
+      targetRIR: programExercise.targetRIR,
+      weightCeiling: null,
+    });
+    expect(otherMachine?.calibrationRequired).toBe(true);
+  });
+
+  it('allows an explicit safety ceiling below the history-derived start', () => {
+    const unlinked = historySessions([
+      { days: 60, weight: 45 },
+      { days: 75, weight: 42 },
+      { days: 90, weight: 40 },
+    ]);
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: daysAgo(60),
+        exerciseSessions: [],
+        generalExerciseSessions: unlinked,
+        unlinkedExerciseSessions: unlinked,
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 15, 20, 25, 30, 35] },
+      safetyWeightCeiling: 10,
+    });
+
+    expect(result.suggestedWeight).toBe(10);
+    expect(result.weightCeiling).toBe(10);
+  });
+
+  it('does not confirm equipment from sets without recorded RIR feedback', () => {
+    const exactSessions: ReturnHistorySession[] = [
+      {
+        sessionId: 'missing-rir',
+        performedAt: daysAgo(7),
+        sets: [
+          { weight: 30, reps: 10, rir: null, isDropSet: false },
+          { weight: 30, reps: 10, rir: null, isDropSet: false },
+        ],
+      },
+    ];
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(7),
+        generalExerciseLastPerformedAt: daysAgo(7),
+        exerciseSessions: exactSessions,
+        generalExerciseSessions: exactSessions,
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 20, 30] },
+    });
+
+    expect(result.calibrationRequired).toBe(true);
+    expect(result.strengthSummary.equipment).toMatchObject({
+      workingSetCount: 2,
+      calibrationSetCount: 0,
+      confidence: 'low',
+    });
+  });
+
+  it('keeps the equipment minimum for a genuinely new user without usable history', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: null,
+        generalExerciseLastPerformedAt: null,
+        muscleLastPerformedAt: null,
+        recentMuscleSets: 0,
+        baselineMuscleSetsPer28Days: 0,
+        exerciseSessions: [],
+        generalExerciseSessions: [],
+        unlinkedExerciseSessions: [],
+        hasConcreteEquipmentTarget: true,
+      }),
+      now,
+      loadConstraints: { equipmentType: 'CABLE', weightOptions: [5, 10, 15] },
+    });
+
+    expect(result).toMatchObject({
+      calibrationKind: 'equipment',
+      suggestedWeight: 5,
+      targetRIR: 3,
+    });
+  });
+
   it('does not infer detraining when a user has no history at all', () => {
     const result = calculateReturnRecommendation({
       programExercise,
@@ -419,33 +768,33 @@ describe('return-to-training recommendations', () => {
     { label: 'recent weak record', recentWeight: 5, olderWeights: [40] },
     { label: 'two older records with a PR', recentWeight: 40, olderWeights: [40, 200] },
     { label: 'two older records with a weak outlier', recentWeight: 40, olderWeights: [40, 5] },
-  ])('uses equipment-floor calibration for conflicting sparse history: $label', ({
-    recentWeight,
-    olderWeights,
-  }) => {
-    const result = calculateReturnRecommendation({
-      programExercise,
-      history: history({
-        exerciseLastPerformedAt: daysAgo(3),
-        exerciseSessions: historySessions([
-          { days: 3, weight: recentWeight },
-          ...olderWeights.map((weight, index) => ({ days: 90 + index * 10, weight })),
-        ]),
-      }),
-      now,
-      loadConstraints: {
-        equipmentType: 'DUMBBELL',
-        dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
-      },
-    });
+  ])(
+    'uses equipment-floor calibration for conflicting sparse history: $label',
+    ({ recentWeight, olderWeights }) => {
+      const result = calculateReturnRecommendation({
+        programExercise,
+        history: history({
+          exerciseLastPerformedAt: daysAgo(3),
+          exerciseSessions: historySessions([
+            { days: 3, weight: recentWeight },
+            ...olderWeights.map((weight, index) => ({ days: 90 + index * 10, weight })),
+          ]),
+        }),
+        now,
+        loadConstraints: {
+          equipmentType: 'DUMBBELL',
+          dumbbellWeights: Array.from({ length: 100 }, (_, index) => index + 1),
+        },
+      });
 
-    expect(result).toMatchObject({
-      historyBasis: 'recent-and-long-term',
-      confidence: 'low',
-      weightCeiling: null,
-      suggestedWeight: 1,
-    });
-  });
+      expect(result).toMatchObject({
+        historyBasis: 'recent-and-long-term',
+        confidence: 'low',
+        weightCeiling: null,
+        suggestedWeight: 1,
+      });
+    },
+  );
 
   it.each([{ olderWeights: [40] }, { olderWeights: [40, 42] }])(
     'keeps sparse older-only exact history eligible at low confidence: $olderWeights',

@@ -68,10 +68,10 @@ fun resolveSharedNextSetTarget(
 ): ProgramExerciseDto? = returnRecommendation?.let { recommendation ->
     programExercise.copy(
         targetSets = recommendation.targetSets,
-        targetDropSets = if (recommendation.mode == "normal") {
-            programExercise.targetDropSets
-        } else {
+        targetDropSets = if (recommendation.calibrationRequired) {
             0
+        } else {
+            programExercise.targetDropSets
         },
         targetRIR = recommendation.targetRIR,
     )

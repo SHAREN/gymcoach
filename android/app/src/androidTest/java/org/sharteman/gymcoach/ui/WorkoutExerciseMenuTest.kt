@@ -40,15 +40,59 @@ class WorkoutExerciseMenuTest {
             "exercise-menu-replace",
             "exercise-menu-remove",
             "exercise-menu-information",
-        ).forEach { composeRule.onNodeWithTag(it).assertIsDisplayed() }
+        ).forEach { composeRule.onNodeWithTag(it).performScrollTo().assertIsDisplayed() }
+        composeRule.onNodeWithTag("exercise-menu-parameters-section").assertIsDisplayed()
+        composeRule.onNodeWithTag("exercise-menu-actions-section").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("exercise-menu-destructive-section").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(composeRule.activity.getString(R.string.exercise_note_empty))
+            .performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(composeRule.activity.getString(R.string.exercise_add_action))
             .assertDoesNotExist()
-        composeRule.onNodeWithText(composeRule.activity.getString(R.string.cancel)).performClick()
+        composeRule.onNodeWithTag("exercise-menu-close").performClick()
 
         composeRule.onNodeWithContentDescription(
             composeRule.activity.getString(R.string.workout_controls),
         ).performClick()
         composeRule.onNodeWithTag("workout-replace-exercise").assertDoesNotExist()
+    }
+
+    @Test
+    fun longTitleEquipmentSubtitleAndCompactSheetRemainScrollable() {
+        val longName = "Single-arm cable triceps extension with rope and controlled eccentric"
+        composeRule.setContent {
+            GymCoachTheme(darkTheme = true) {
+                WorkoutScreenPreview(
+                    firstExerciseName = longName,
+                    firstEquipmentName = "Selectorized cable crossover × ½",
+                )
+            }
+        }
+
+        openMenu()
+        composeRule.onNodeWithTag("exercise-menu-title").assertTextContains(longName)
+        composeRule.onNodeWithTag("exercise-menu-equipment")
+            .assertTextContains("Selectorized cable crossover × ½")
+        composeRule.onNodeWithTag("exercise-menu-scroll").assert(
+            SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange),
+        )
+        composeRule.onNodeWithTag("exercise-menu-destructive-section")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("exercise-menu-remove").performClick()
+        composeRule.onNodeWithTag("exercise-menu-destructive-confirmation").assertIsDisplayed()
+        composeRule.onNodeWithTag("exercise-menu-back").performClick()
+        composeRule.onNodeWithTag("exercise-menu-parameters-section").assertIsDisplayed()
+    }
+
+    @Test
+    fun systemBackDismissesTheBottomSheet() {
+        setContent()
+        openMenu()
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.onNodeWithTag("active-exercise-menu").assertDoesNotExist()
     }
 
     @Test
@@ -92,14 +136,14 @@ class WorkoutExerciseMenuTest {
         composeRule.onNodeWithTag("exercise-reps-save").performClick()
         openMenu()
         composeRule.onNodeWithTag("exercise-menu-target-reps").assertTextContains("8-12")
-        composeRule.onNodeWithText(composeRule.activity.getString(R.string.cancel)).performClick()
+        composeRule.onNodeWithTag("exercise-menu-close").performClick()
 
         openMenu()
         composeRule.onNodeWithTag("exercise-menu-drop-sets").performClick()
         composeRule.onNodeWithTag("exercise-drop-sets-2").performClick()
         openMenu()
         composeRule.onNodeWithTag("exercise-menu-drop-sets").assertTextContains("2")
-        composeRule.onNodeWithText(composeRule.activity.getString(R.string.cancel)).performClick()
+        composeRule.onNodeWithTag("exercise-menu-close").performClick()
 
         openMenu()
         composeRule.onNodeWithTag("exercise-menu-note").performClick()
@@ -165,4 +209,5 @@ class WorkoutExerciseMenuTest {
         composeRule.onNodeWithTag("active-exercise-actions").performScrollTo().performClick()
         composeRule.onNodeWithTag("active-exercise-menu").assertIsDisplayed()
     }
+
 }

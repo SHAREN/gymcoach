@@ -67,14 +67,14 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
         if (!('exerciseId' in where)) return [];
         const gymId = (where.session as { gymId?: string | null } | undefined)?.gymId;
-        return [
-          deletedGymBRow,
-          cableBRow,
-          cableARow,
-          nullGymARow,
-          nullGymBRow,
-          nullNoGymRow,
-        ].filter((row) => gymId === undefined || row.session.gymId === gymId);
+        const before = (where.completedAt as { lt?: Date } | undefined)?.lt;
+        return [deletedGymBRow, cableBRow, cableARow, nullGymARow, nullGymBRow, nullNoGymRow]
+          .filter(
+            (row) =>
+              (gymId === undefined || row.session.gymId === gymId) &&
+              (before === undefined || row.completedAt < before),
+          )
+          .sort((left, right) => right.completedAt.getTime() - left.completedAt.getTime());
       }),
       findFirst: vi.fn(async () => ({ completedAt: cableBRow.completedAt })),
     },
@@ -150,10 +150,26 @@ describe('equipment-specific return-to-training history', () => {
       (item) => item.gymEquipmentId === 'cable-b',
     )?.recommendation;
 
-    expect(cableA).toMatchObject({ mode: 'exercise-reintro', exerciseGapDays: 75 });
+    expect(cableA).toMatchObject({
+      mode: 'normal',
+      exerciseGapDays: 1,
+      calibrationKind: 'equipment',
+      calibrationRequired: true,
+      targetSets: 1,
+      strengthSummary: {
+        movement: { sessionCount: 5, confidence: 'high' },
+        equipment: { workingSetCount: 1, confidence: 'medium' },
+      },
+    });
     expect(cableA?.weightCeiling).not.toBe(cableB?.weightCeiling);
-    expect(cableB).toMatchObject({ mode: 'normal', exerciseGapDays: 5 });
-    expect(cableA?.nonComparableHistorySessionCount).toBe(5);
+    expect(cableA?.suggestedWeight).toBe(10);
+    expect(cableA?.strengthSummary.equipment.lastReliableLoad).toBe(20);
+    expect(cableB).toMatchObject({
+      mode: 'normal',
+      exerciseGapDays: 1,
+      calibrationKind: 'equipment',
+    });
+    expect(cableA?.nonComparableHistorySessionCount).toBe(4);
   });
 
   it('keeps null-equipment return history scoped to its gym', async () => {
@@ -191,7 +207,7 @@ describe('equipment-specific return-to-training history', () => {
     expect(gymBRecommendations['pe-1']?.[0]).toMatchObject({
       gymId: 'gym-b',
       gymEquipmentId: null,
-      recommendation: { exerciseGapDays: 25 },
+      recommendation: { exerciseGapDays: 1 },
     });
   });
 
@@ -222,7 +238,7 @@ describe('equipment-specific return-to-training history', () => {
     expect(recommendations['pe-1']?.[0]).toMatchObject({
       gymId: null,
       gymEquipmentId: null,
-      recommendation: { exerciseGapDays: 35 },
+      recommendation: { exerciseGapDays: 1 },
     });
   });
 

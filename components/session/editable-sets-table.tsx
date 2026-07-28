@@ -162,7 +162,7 @@ function initialDraft(
   if (
     loggedSets.length === 0 &&
     returnRecommendation != null &&
-    returnRecommendation.mode !== 'normal'
+    returnRecommendation.calibrationRequired
   ) {
     return {
       weight: returnRecommendation.suggestedWeight ?? 0,

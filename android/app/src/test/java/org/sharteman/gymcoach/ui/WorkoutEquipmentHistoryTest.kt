@@ -12,11 +12,176 @@ import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
 import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
+import org.sharteman.gymcoach.data.model.LongTermStrengthSummaryDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
+import org.sharteman.gymcoach.data.model.StrengthEvidenceSummaryDto
 
 class WorkoutEquipmentHistoryTest {
     private val json = Json { ignoreUnknownKeys = true }
+
+    @Test
+    fun `decodes compact long-term movement and equipment strength summaries`() {
+        val bootstrap = json.decodeFromString<BootstrapResponse>(
+            """
+            {
+              "schemaVersion": 9,
+              "calculationVersion": "2026-07-27-long-term-strength-calibration-v2",
+              "serverTime": "2026-07-27T10:00:00.000Z",
+              "profile": {"id": "user-1", "email": "user@example.com"},
+              "longTermStrengthSummaryByExerciseId": {
+                "pressdown": {
+                  "movement": {
+                    "sessionCount": 25,
+                    "workingSetCount": 117,
+                    "lastPerformedAt": "2026-07-13T10:00:00.000Z",
+                    "lastReliableLoad": 40,
+                    "recentStrengthAnchor": 55,
+                    "historicalStrengthAnchor": 60,
+                    "confidence": "high"
+                  },
+                  "equipment": [{
+                    "gymId": "gym-1",
+                    "gymEquipmentId": "cable-half",
+                    "sessionCount": 0,
+                    "workingSetCount": 0,
+                    "confidence": "low"
+                  }]
+                }
+              },
+              "returnRecommendationsByEquipmentByWorkout": {
+                "workout-1": {
+                  "program-exercise-1": [{
+                    "gymId": "gym-1",
+                    "gymEquipmentId": "cable-half",
+                    "recommendation": {
+                      "mode": "normal",
+                      "exerciseGapDays": 14,
+                      "returnGapDays": 14,
+                      "targetSets": 2,
+                      "targetRIR": 3,
+                      "suggestedWeight": 35,
+                      "weightCeiling": 40,
+                      "calibrationRequired": true,
+                      "calibrationKind": "equipment",
+                      "strengthSummary": {
+                        "anchorScope": "exact-exercise-unlinked",
+                        "movement": {"sessionCount": 25, "workingSetCount": 117, "confidence": "high"},
+                        "equipment": {"sessionCount": 0, "workingSetCount": 0, "confidence": "low"}
+                      }
+                    }
+                  }]
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val summary = bootstrap.longTermStrengthSummaryByExerciseId.getValue("pressdown")
+        assertEquals(25, summary.movement.sessionCount)
+        assertEquals(117, summary.movement.workingSetCount)
+        assertEquals("high", summary.movement.confidence)
+        assertEquals("cable-half", summary.equipment.single().gymEquipmentId)
+        assertEquals("low", summary.equipment.single().confidence)
+        val recommendation = bootstrap.returnRecommendationsByEquipmentByWorkout
+            .getValue("workout-1")
+            .getValue("program-exercise-1")
+            .single()
+            .recommendation
+        assertEquals("equipment", recommendation.calibrationKind)
+        assertEquals(35.0, recommendation.suggestedWeight ?: 0.0, 0.001)
+        assertEquals(40.0, recommendation.weightCeiling ?: 0.0, 0.001)
+        assertEquals(3, recommendation.targetRIR)
+    }
+
+    @Test
+    fun `equipment calibration clears only after two valid sets on the selected equipment`() {
+        val exercise = ProgramExerciseDto(
+            id = "program-exercise-1",
+            workoutId = "workout-1",
+            exerciseId = "pressdown",
+            order = 0,
+            targetSets = 4,
+            targetRepsMin = 8,
+            targetRepsMax = 12,
+            targetRIR = 2,
+            restSec = 90,
+            exercise = ExerciseDto(
+                id = "pressdown",
+                name = "Cable pressdown",
+                muscleGroup = "TRICEPS",
+                category = "ISOLATION",
+                equipmentType = "CABLE",
+            ),
+        )
+        fun recommendation(serverSets: Int) = ReturnRecommendationDto(
+            mode = "normal",
+            targetSets = (2 - serverSets).coerceAtLeast(1),
+            targetRIR = 3,
+            suggestedWeight = 30.0,
+            weightCeiling = 35.0,
+            calibrationRequired = true,
+            calibrationKind = "equipment",
+            strengthSummary = LongTermStrengthSummaryDto(
+                movement = StrengthEvidenceSummaryDto(sessionCount = 25, confidence = "high"),
+                equipment = StrengthEvidenceSummaryDto(
+                    sessionCount = if (serverSets > 0) 1 else 0,
+                    workingSetCount = serverSets,
+                    calibrationSetCount = serverSets,
+                    confidence = if (serverSets > 0) "medium" else "low",
+                ),
+                anchorScope = "exact-exercise-unlinked",
+            ),
+        )
+        fun set(id: String, equipmentId: String, number: Int) = LocalSetEntity(
+            id = id,
+            sessionId = "session-1",
+            exerciseId = exercise.exerciseId,
+            gymEquipmentId = equipmentId,
+            setNumber = number,
+            weight = 30.0,
+            reps = 10,
+            rir = 3,
+            completedAt = "2026-07-27T10:00:00.000Z",
+        )
+
+        val zero = resolveEquipmentCalibrationProgress(exercise, recommendation(0), emptyList(), "cable-a")
+        val one = resolveEquipmentCalibrationProgress(
+            exercise,
+            recommendation(0),
+            listOf(set("set-1", "cable-a", 1)),
+            "cable-a",
+        )
+        val two = resolveEquipmentCalibrationProgress(
+            exercise,
+            recommendation(0),
+            listOf(set("set-1", "cable-a", 1), set("set-2", "cable-a", 2)),
+            "cable-a",
+        )
+        val oneHistoricalPlusOneCurrent = resolveEquipmentCalibrationProgress(
+            exercise,
+            recommendation(1),
+            listOf(set("set-2", "cable-a", 2)),
+            "cable-a",
+        )
+        val wrongEquipment = resolveEquipmentCalibrationProgress(
+            exercise,
+            recommendation(0),
+            listOf(set("set-b-1", "cable-b", 1), set("set-b-2", "cable-b", 2)),
+            "cable-a",
+        )
+
+        assertEquals(true, zero?.calibrationRequired)
+        assertEquals(true, one?.calibrationRequired)
+        assertEquals(1, one?.strengthSummary?.equipment?.calibrationSetCount)
+        assertEquals("medium", one?.strengthSummary?.equipment?.confidence)
+        assertEquals(false, two?.calibrationRequired)
+        assertEquals("normal", two?.mode)
+        assertEquals(4, two?.targetSets)
+        assertEquals(2, two?.targetRIR)
+        assertEquals(false, oneHistoricalPlusOneCurrent?.calibrationRequired)
+        assertEquals(true, wrongEquipment?.calibrationRequired)
+    }
 
     @Test
     fun `selects older equipment B history and recommendation when A is latest`() {

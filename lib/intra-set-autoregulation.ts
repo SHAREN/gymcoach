@@ -77,7 +77,10 @@ interface RecommendationInput {
 
 interface SharedRecommendationInput extends Omit<RecommendationInput, 'maxWeight'> {
   returnRecommendation:
-    | Pick<ReturnRecommendation, 'mode' | 'targetSets' | 'targetRIR' | 'weightCeiling'>
+    | Pick<
+        ReturnRecommendation,
+        'mode' | 'targetSets' | 'targetRIR' | 'weightCeiling' | 'calibrationRequired'
+      >
     | null
     | undefined;
 }
@@ -213,7 +216,7 @@ export function resolveIntraSetConfig(
 export function resolveSharedNextSetTarget<T extends ProgramExercise & { exercise: Exercise }>(
   programExercise: T,
   returnRecommendation:
-    | Pick<ReturnRecommendation, 'mode' | 'targetSets' | 'targetRIR'>
+    | Pick<ReturnRecommendation, 'mode' | 'targetSets' | 'targetRIR' | 'calibrationRequired'>
     | null
     | undefined,
 ): T | null {
@@ -221,7 +224,7 @@ export function resolveSharedNextSetTarget<T extends ProgramExercise & { exercis
   return {
     ...programExercise,
     targetSets: returnRecommendation.targetSets,
-    targetDropSets: returnRecommendation.mode === 'normal' ? programExercise.targetDropSets : 0,
+    targetDropSets: returnRecommendation.calibrationRequired ? 0 : programExercise.targetDropSets,
     targetRIR: returnRecommendation.targetRIR,
   };
 }

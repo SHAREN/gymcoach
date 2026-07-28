@@ -144,7 +144,13 @@ export async function getReturnToTrainingRecommendations({
         pe.id,
         calculateReturnRecommendation({
           programExercise: pe,
-          history: buildReturnHistory(pe, matchingRows, rows, historyData),
+          history: buildReturnHistory(
+            pe,
+            matchingRows,
+            rows,
+            historyData,
+            exactTarget?.gymEquipmentId ?? null,
+          ),
           now,
           bodyweight,
           loadConstraints: loadConstraintsFor(pe, gym, exactTarget?.gymEquipmentId),
@@ -193,6 +199,7 @@ export async function getReturnToTrainingRecommendationsByEquipment({
             ),
             historyData.exerciseRows.get(pe.exerciseId) ?? [],
             historyData,
+            target.gymEquipmentId,
           ),
           now,
           bodyweight,
@@ -313,6 +320,7 @@ function buildReturnHistory(
   rows: ExerciseHistoryRow[],
   allExerciseRows: ExerciseHistoryRow[],
   data: ReturnHistoryData,
+  gymEquipmentId: string | null,
 ): ReturnTrainingHistory {
   const baselineSets = data.baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
   const comparableSessionIds = new Set(rows.map((row) => row.sessionId));
@@ -323,11 +331,17 @@ function buildReturnHistory(
   );
   return {
     exerciseLastPerformedAt: rows[0]?.completedAt ?? null,
+    generalExerciseLastPerformedAt: allExerciseRows[0]?.completedAt ?? null,
     muscleLastPerformedAt: data.latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
     recentMuscleSets: data.recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
     baselineMuscleSetsPer28Days:
       baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
     exerciseSessions: groupHistoricalSessions(rows),
+    generalExerciseSessions: groupHistoricalSessions(allExerciseRows),
+    unlinkedExerciseSessions: groupHistoricalSessions(
+      allExerciseRows.filter(isUnlinkedEquipmentHistory),
+    ),
+    hasConcreteEquipmentTarget: gymEquipmentId != null,
     nonComparableExerciseSessions: nonComparableSessionIds.size,
   };
 }
@@ -370,6 +384,14 @@ function isComparableEquipmentHistory(
   gymEquipmentId: string | null,
 ): boolean {
   if (gymEquipmentId != null) return row.gymEquipmentId === gymEquipmentId;
+  return (
+    row.gymEquipmentId == null &&
+    row.equipmentNameSnapshot == null &&
+    row.equipmentLoadSnapshot == null
+  );
+}
+
+function isUnlinkedEquipmentHistory(row: ExerciseHistoryRow): boolean {
   return (
     row.gymEquipmentId == null &&
     row.equipmentNameSnapshot == null &&

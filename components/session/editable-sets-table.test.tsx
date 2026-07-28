@@ -675,7 +675,7 @@ describe('EditableSetsTable', () => {
     expect(screen.getByText('25 kg')).toBeInTheDocument();
   });
 
-  it('prefills a conservative return load instead of copying stale history', () => {
+  it('keeps the conservative return anchor when a separate planned deload is active', () => {
     render(
       <EditableSetsTable
         programExercise={{ ...(programExercise as object), targetSets: 2, targetRIR: 3 } as never}
@@ -719,9 +719,31 @@ describe('EditableSetsTable', () => {
           nonComparableHistorySessionCount: 0,
           historyBasis: 'long-term-exact',
           confidence: 'medium',
+          calibrationKind: 'return',
+          strengthSummary: {
+            movement: {
+              sessionCount: 3,
+              workingSetCount: 9,
+              lastPerformedAt: '2026-05-01T10:00:00.000Z',
+              lastReliableLoad: 19,
+              recentStrengthAnchor: null,
+              historicalStrengthAnchor: 25,
+              confidence: 'high',
+            },
+            equipment: {
+              sessionCount: 3,
+              workingSetCount: 9,
+              lastPerformedAt: '2026-05-01T10:00:00.000Z',
+              lastReliableLoad: 19,
+              recentStrengthAnchor: null,
+              historicalStrengthAnchor: 25,
+              confidence: 'high',
+            },
+            anchorScope: 'exact-equipment',
+          },
         }}
         readiness={null}
-        deloadActive={false}
+        deloadActive={true}
         unit="KG"
         onSubmit={vi.fn()}
         onUpdateSet={vi.fn()}

@@ -271,13 +271,22 @@ Current windows and ratios:
   through 167 days and 65% at 168 days or longer.
 
 Only valid non-warm-up, non-drop working sessions with positive repetitions
-participate in exact-load history. Same-exercise history remains eligible
-regardless of age, but its load anchor is scoped to the current gym and exact
-physical equipment identity. A live `gymEquipmentId = null` row is comparable
-to a manual or legacy null-equipment path only when it has no frozen equipment
-name or load-profile snapshot. Deleted or unlinked equipment, another physical
-machine and related exercises may lower confidence or inform muscle readiness,
-but their loads MUST NOT be converted into a current exact weight.
+participate in load history. Exact physical-equipment history remains the
+highest-confidence load source and remains eligible regardless of age. A live
+`gymEquipmentId = null` row with no frozen equipment name or load-profile
+snapshot is legacy exact-exercise history with unknown equipment identity. It
+may provide a low-equipment-confidence provisional calibration anchor for the
+same exact exercise, using the existing return fractions and conservative RIR,
+but it MUST NOT be presented as exact machine equivalence. A row with a deleted
+equipment snapshot, another explicit physical machine, a different exercise or
+a merely similar name is not eligible for that provisional numerical anchor.
+Those records may support movement familiarity or muscle readiness only.
+
+The exact-exercise gap is calculated from the exercise's general history, not
+from the absence of current-equipment rows. Missing `gymEquipmentId` therefore
+MUST NOT turn a familiar movement into a general deload or falsely imply a
+long break. Movement-history confidence and current-equipment load confidence
+are separate fields.
 
 A valid recent exact-equipment session is the primary current-capability signal
 even when it is the only recent observation. If it occurred within 14 days and
@@ -313,6 +322,18 @@ Current modes:
 Drop sets are disabled during return calibration. These changes apply only to
 the active session and MUST NOT silently rewrite the saved program.
 
+Concrete-equipment calibration is separate from those return modes. When a
+specific equipment item has fewer than two valid bound working sets with
+recorded RIR, the first
+remaining calibration sets are limited to at least RIR 3 and drop sets are
+disabled. Two valid working sets on that exact equipment item confirm the
+equipment for this contract; the equipment-only card then disappears and
+subsequent same-session recommendations use those equipment-scoped sets. A
+switch to another `gymEquipmentId` starts that equipment-specific confirmation
+independently. This two-set confirmation rule is an engineering heuristic.
+General deload or recovery signals remain separate and MUST NOT erase either
+the exact-equipment or exact-exercise long-term strength anchor.
+
 For every valid exact-equipment session, calculate one session capacity:
 
 ```text
@@ -336,8 +357,10 @@ wrong. With no recent evidence, fewer than three older sessions likewise remain
 eligible as the low-confidence long-term-only anchor. Long-term exact history
 remains eligible regardless of age; at least three older sessions are required
 before it is treated as robust enough to bound and blend with recent evidence.
-Without exact comparable history, the application uses calibration or the
-lightest current-equipment load and does not borrow another machine's number.
+Without exact-equipment history, eligible legacy unlinked history for the same
+exact exercise supplies a provisional calibration anchor. If neither source is
+usable, the application uses the lightest current-equipment load. It never
+borrows another explicit machine's number or a related exercise's number.
 
 ```text
 historicalCapacity = robust weighted anchors, confirmed recent-only anchor,
@@ -358,6 +381,13 @@ increase above the return ceiling. If the calculated non-bodyweight ceiling is
 below the lightest attainable current-equipment load, that lightest load becomes
 both the starting load and session ceiling instead of emitting an impossible
 zero-kilogram option.
+
+Mobile bootstrap schema 9 also carries a compact long-term strength summary
+instead of the raw multi-year set history. For each exact exercise it includes
+the last reliable load/date, recent and historical capacity anchors, session
+and working-set counts, confidence, current-equipment summaries and the anchor
+scope. These values reuse the same return-history capacity functions. The raw
+Android history list remains capped at the latest 12 sessions for display.
 
 The Epley equation, all windows and gap bands, latest-eight median, rolling
 three-session floor, 85% floor ratio, 75/25 weighting, 75-125% bound,
@@ -1113,3 +1143,16 @@ keeps direct and indirect counts separate, makes optional equivalent-set
 metadata visible and versioned, applies no coefficient to unknown participation,
 and uses movement, fatigue and joint tags as descriptive inputs rather than
 universal safety or recovery scores.
+
+A fourteenth access attempt on 2026-07-27 for task `gymcoach-3en` targeted the
+same `ИИ тренер` notebook (`92a3e4db-1980-486c-9fee-24e8607f1cd5`) but the
+standard local client returned `Authentication expired` while inspecting the
+notebook. No new percentage, detraining curve or training-science claim was
+introduced. The implementation mechanically reuses the source-backed findings
+and documented engineering constants from the tenth, eleventh and twelfth
+reviews: gradual individualized return, preserved long-term strength context,
+movement/equipment specificity, conservative RIR calibration, existing
+85/80/75 percent return bands and exact-equipment preference. Extending the
+same-exercise legacy unlinked anchor to provisional equipment calibration and
+confirming equipment after two valid sets are explicitly engineering product
+heuristics.

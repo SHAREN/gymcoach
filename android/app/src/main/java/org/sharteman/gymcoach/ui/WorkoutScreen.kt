@@ -276,7 +276,12 @@ fun WorkoutScreen(
             gymId = session?.gymId,
             gymEquipmentId = equipmentIdsByExercise[exercise.id],
         )
-        recommendation?.let { exercise.id to it }
+        resolveEquipmentCalibrationProgress(
+            exercise = exercise,
+            recommendation = recommendation,
+            sets = allSets,
+            gymEquipmentId = equipmentIdsByExercise[exercise.id],
+        )?.let { exercise.id to it }
     }.toMap()
     val currentEquipmentId = equipmentIdsByExercise[current.id]
     val inventory = resolveExerciseInventory(current, gym, currentEquipmentId)
@@ -682,6 +687,7 @@ fun WorkoutScreen(
         ActiveExerciseMenuDialog(
             exercise = current,
             exercises = exercises,
+            equipmentName = selectedProfile?.equipmentName,
             busy = exerciseMutationBusy,
             onUpdate = { updated ->
                 scope.launch {
@@ -1238,7 +1244,7 @@ private fun ExerciseSummaryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (returnRecommendation != null && returnRecommendation.mode != "normal") {
+            if (returnRecommendation?.calibrationRequired == true) {
                 ReturnCalibrationEvidence(returnRecommendation)
             }
         }
@@ -1246,7 +1252,7 @@ private fun ExerciseSummaryCard(
 }
 
 @Composable
-private fun ReturnCalibrationEvidence(recommendation: ReturnRecommendationDto) {
+internal fun ReturnCalibrationEvidence(recommendation: ReturnRecommendationDto) {
     val evidence = returnCalibrationEvidence(recommendation) ?: return
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("return-calibration-evidence"),
@@ -1258,57 +1264,98 @@ private fun ReturnCalibrationEvidence(recommendation: ReturnRecommendationDto) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                stringResource(R.string.return_calibration_title),
+                stringResource(
+                    if (evidence.calibrationKind == "equipment") {
+                        R.string.equipment_calibration_title
+                    } else {
+                        R.string.return_calibration_title
+                    },
+                ),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
+            if (evidence.calibrationKind == "equipment") {
+                Text(
+                    stringResource(
+                        R.string.equipment_calibration_description,
+                        evidence.movementSessionCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
             Text(
                 stringResource(
-                    when (evidence.confidence) {
-                        "high" -> R.string.return_confidence_high
-                        "medium" -> R.string.return_confidence_medium
-                        else -> R.string.return_confidence_low
+                    when (evidence.movementConfidence) {
+                        "high" -> R.string.movement_confidence_high
+                        "medium" -> R.string.movement_confidence_medium
+                        else -> R.string.movement_confidence_low
                     },
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
             Text(
-                when (evidence.historyBasis) {
-                    "recent-and-long-term" -> stringResource(
-                        R.string.return_history_recent_and_long_term,
-                        evidence.recentHistorySessionCount,
-                        evidence.longTermHistorySessionCount,
-                    )
-                    "recent-exact" -> stringResource(
-                        R.string.return_history_recent,
-                        evidence.recentHistorySessionCount,
-                    )
-                    "long-term-exact" -> stringResource(
-                        R.string.return_history_long_term,
-                        evidence.longTermHistorySessionCount,
-                    )
-                    else -> stringResource(R.string.return_history_none)
-                },
+                stringResource(
+                    when (evidence.equipmentConfidence) {
+                        "high" -> R.string.equipment_confidence_high
+                        "medium" -> R.string.equipment_confidence_medium
+                        else -> R.string.equipment_confidence_low
+                    },
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
-            evidence.returnGapDays?.let { returnGapDays ->
+            if (evidence.calibrationKind != "equipment") {
                 Text(
-                    if (evidence.followsPriorGap) {
-                        stringResource(R.string.return_prior_gap, returnGapDays)
-                    } else {
-                        stringResource(R.string.return_gap, returnGapDays)
+                    when (evidence.historyBasis) {
+                        "recent-and-long-term" -> stringResource(
+                            R.string.return_history_recent_and_long_term,
+                            evidence.recentHistorySessionCount,
+                            evidence.longTermHistorySessionCount,
+                        )
+                        "recent-exact" -> stringResource(
+                            R.string.return_history_recent,
+                            evidence.recentHistorySessionCount,
+                        )
+                        "long-term-exact" -> stringResource(
+                            R.string.return_history_long_term,
+                            evidence.longTermHistorySessionCount,
+                        )
+                        else -> stringResource(R.string.return_history_none)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                 )
+            }
+            if (evidence.calibrationKind == "return") {
+                evidence.returnGapDays?.let { returnGapDays ->
+                    Text(
+                        if (evidence.followsPriorGap) {
+                            stringResource(R.string.return_prior_gap, returnGapDays)
+                        } else {
+                            stringResource(R.string.return_gap, returnGapDays)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
             }
             if (evidence.nonComparableHistorySessionCount > 0) {
                 Text(
                     stringResource(
                         R.string.return_non_comparable_history,
                         evidence.nonComparableHistorySessionCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            if (evidence.calibrationKind == "equipment") {
+                Text(
+                    stringResource(
+                        R.string.equipment_calibration_progress,
+                        evidence.equipmentWorkingSetCount.coerceAtMost(2),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -2944,13 +2991,15 @@ internal fun WorkoutScreenPreview(
     onDeleteSet: (suspend (LocalSetEntity) -> Boolean)? = null,
     onConfirmSet: (suspend () -> Boolean)? = null,
     onUpdateExercise: (suspend (ExerciseDto, ExerciseInput) -> ExerciseDto)? = null,
+    firstExerciseName: String = "Romanian Deadlift · Barbell",
+    firstEquipmentName: String? = null,
 ) {
     var exercises by remember {
         mutableStateOf(
             listOf(
             previewProgramExercise(
                 id = "romanian-deadlift",
-                name = "Romanian Deadlift · Barbell",
+                name = firstExerciseName,
                 muscleGroup = "HAMSTRINGS",
                 order = 0,
                 targetSets = 5,
@@ -3187,6 +3236,7 @@ internal fun WorkoutScreenPreview(
         ActiveExerciseMenuDialog(
             exercise = previewTarget,
             exercises = exercises,
+            equipmentName = firstEquipmentName,
             busy = false,
             onUpdate = { updated ->
                 exercises = exercises.map { if (it.id == updated.id) updated else it }

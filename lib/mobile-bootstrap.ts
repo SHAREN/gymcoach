@@ -17,9 +17,10 @@ import {
 import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 import { ACTIVE_WORKOUT_EXERCISE_DEFAULTS } from '@/lib/active-workout-exercise-defaults';
+import type { StrengthEvidenceSummary } from '@/lib/return-to-training';
 
-export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 8;
-export const MOBILE_CALCULATION_VERSION = '2026-07-27-next-set-return-parity-v1';
+export const MOBILE_BOOTSTRAP_SCHEMA_VERSION = 9;
+export const MOBILE_CALCULATION_VERSION = '2026-07-27-long-term-strength-calibration-v2';
 export const MOBILE_EXERCISE_HISTORY_SESSION_LIMIT = 12;
 
 interface MobileExerciseHistoryRow {
@@ -383,6 +384,47 @@ export async function buildMobileBootstrap(userId: string) {
     equipmentLastPerformances,
     equipmentReturnEntries,
   );
+  const returnByWorkout = Object.fromEntries(returnEntries);
+  const equipmentReturnByWorkout = Object.fromEntries(equipmentReturnEntries);
+  const longTermStrengthSummaryByExerciseId: Record<
+    string,
+    {
+      movement: StrengthEvidenceSummary;
+      equipment: Array<
+        StrengthEvidenceSummary & { gymId: string | null; gymEquipmentId: string | null }
+      >;
+    }
+  > = {};
+  for (const workout of workouts) {
+    for (const programExercise of workout.exercises) {
+      const fallback = returnByWorkout[workout.id]?.[programExercise.id];
+      const equipmentRecommendations =
+        equipmentReturnByWorkout[workout.id]?.[programExercise.id] ?? [];
+      const movement =
+        equipmentRecommendations[0]?.recommendation.strengthSummary.movement ??
+        fallback?.strengthSummary.movement;
+      if (!movement) continue;
+      const existing = longTermStrengthSummaryByExerciseId[programExercise.exerciseId];
+      const equipmentByIdentity = new Map(
+        (existing?.equipment ?? []).map((item) => [
+          `${item.gymId ?? ''}\u0000${item.gymEquipmentId ?? ''}`,
+          item,
+        ]),
+      );
+      for (const item of equipmentRecommendations) {
+        const identity = `${item.gymId ?? ''}\u0000${item.gymEquipmentId ?? ''}`;
+        equipmentByIdentity.set(identity, {
+          gymId: item.gymId,
+          gymEquipmentId: item.gymEquipmentId,
+          ...item.recommendation.strengthSummary.equipment,
+        });
+      }
+      longTermStrengthSummaryByExerciseId[programExercise.exerciseId] = {
+        movement,
+        equipment: [...equipmentByIdentity.values()],
+      };
+    }
+  }
   const readinessAgeHours = latestReadiness
     ? (Date.now() - latestReadiness.createdAt.getTime()) / 3_600_000
     : null;
@@ -450,7 +492,8 @@ export async function buildMobileBootstrap(userId: string) {
     lastPerformances: serializedPerformances,
     ...equipmentHistoryContract,
     exerciseHistoryByExerciseId,
-    returnRecommendationsByWorkout: Object.fromEntries(returnEntries),
+    longTermStrengthSummaryByExerciseId,
+    returnRecommendationsByWorkout: returnByWorkout,
     readiness,
   };
 }

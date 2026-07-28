@@ -68,6 +68,28 @@ function recommendation(
       nonComparableHistorySessionCount: 0,
       historyBasis: 'recent-exact',
       confidence: 'high',
+      calibrationKind: 'none',
+      strengthSummary: {
+        movement: {
+          sessionCount: 3,
+          workingSetCount: 9,
+          lastPerformedAt: '2026-07-10T10:00:00.000Z',
+          lastReliableLoad: suggestedWeight,
+          recentStrengthAnchor: suggestedWeight,
+          historicalStrengthAnchor: null,
+          confidence: 'high',
+        },
+        equipment: {
+          sessionCount: 3,
+          workingSetCount: 9,
+          lastPerformedAt: '2026-07-10T10:00:00.000Z',
+          lastReliableLoad: suggestedWeight,
+          recentStrengthAnchor: suggestedWeight,
+          historicalStrengthAnchor: null,
+          confidence: 'high',
+        },
+        anchorScope: 'exact-equipment',
+      },
     },
   };
 }

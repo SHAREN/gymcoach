@@ -79,7 +79,10 @@ import {
   type GymLoadConstraints,
   type ResolvedExerciseInventory,
 } from '@/lib/gym-loads';
-import type { ReturnRecommendation } from '@/lib/return-to-training';
+import {
+  resolveEquipmentCalibrationProgress,
+  type ReturnRecommendation,
+} from '@/lib/return-to-training';
 import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-history';
 import {
   DROP_SET_TRANSITION_REST_SEC,
@@ -332,39 +335,6 @@ export function SessionRunner({
   // workout without supersets this is exactly the stored order.
   const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
   const programExercises = supersetView.ordered;
-  const effectiveProgramExercises = useMemo<ProgramExerciseWithExercise[]>(
-    () =>
-      programExercises.map((pe) => {
-        const inventory = resolveSessionExerciseInventory(sessionGym, pe);
-        const selectedEquipmentId = resolveSelectedEquipmentId(
-          inventory,
-          selectedEquipmentByExercise[pe.exerciseId],
-        );
-        const recommendation = requiresEquipmentSelection(
-          inventory,
-          selectedEquipmentByExercise[pe.exerciseId],
-        )
-          ? undefined
-          : selectReturnRecommendationForEquipment(
-              returnRecommendations[pe.id],
-              selectedEquipmentId,
-            );
-        const override = targetSetOverrides[pe.id];
-        const effective = resolveSharedNextSetTarget(pe, recommendation) ?? pe;
-        return override == null ? effective : { ...effective, targetSets: override };
-      }),
-    [
-      programExercises,
-      returnRecommendations,
-      selectedEquipmentByExercise,
-      sessionGym,
-      targetSetOverrides,
-    ],
-  );
-  const effectiveProgramExerciseById = useMemo(
-    () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
-    [effectiveProgramExercises],
-  );
   const initialProgramExerciseId =
     (initialExerciseId
       ? programExercises.find((pe) => pe.exerciseId === initialExerciseId)?.id
@@ -446,7 +416,6 @@ export function SessionRunner({
   const selectedIndex = programExercises.findIndex((pe) => pe.id === selectedProgramExerciseId);
   const currentIdx = selectedIndex >= 0 ? selectedIndex : 0;
   const currentPE = programExercises[currentIdx];
-  const currentTarget = effectiveProgramExercises[currentIdx];
 
   useEffect(() => {
     if (pendingProgramExerciseId) {
@@ -569,6 +538,48 @@ export function SessionRunner({
   const setsByExercise = allSetsByExercise;
   const visibleSets = liveSets;
 
+  const effectiveProgramExercises = useMemo<ProgramExerciseWithExercise[]>(
+    () =>
+      programExercises.map((pe) => {
+        const inventory = resolveSessionExerciseInventory(sessionGym, pe);
+        const selectedEquipmentId = resolveSelectedEquipmentId(
+          inventory,
+          selectedEquipmentByExercise[pe.exerciseId],
+        );
+        const serverRecommendation = requiresEquipmentSelection(
+          inventory,
+          selectedEquipmentByExercise[pe.exerciseId],
+        )
+          ? undefined
+          : selectReturnRecommendationForEquipment(
+              returnRecommendations[pe.id],
+              selectedEquipmentId,
+            );
+        const recommendation = resolveEquipmentCalibrationProgress({
+          programExercise: pe,
+          recommendation: serverRecommendation,
+          completedSets: setsByExercise.get(pe.exerciseId) ?? [],
+          gymEquipmentId: selectedEquipmentId,
+        });
+        const override = targetSetOverrides[pe.id];
+        const effective = resolveSharedNextSetTarget(pe, recommendation) ?? pe;
+        return override == null ? effective : { ...effective, targetSets: override };
+      }),
+    [
+      programExercises,
+      returnRecommendations,
+      selectedEquipmentByExercise,
+      sessionGym,
+      setsByExercise,
+      targetSetOverrides,
+    ],
+  );
+  const effectiveProgramExerciseById = useMemo(
+    () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
+    [effectiveProgramExercises],
+  );
+  const currentTarget = effectiveProgramExercises[currentIdx];
+
   const programExerciseByExerciseId = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.exerciseId, pe])),
     [effectiveProgramExercises],
@@ -590,7 +601,7 @@ export function SessionRunner({
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
     if (!lastWorkingSet) {
       const returnRecommendation = returnRecommendationFor(pe);
-      if (!returnRecommendation || returnRecommendation.mode !== 'normal') return null;
+      if (!returnRecommendation || returnRecommendation.calibrationRequired) return null;
 
       const previousPerformance = selectLastPerformanceForEquipment(
         lastPerformances[pe.exerciseId],
@@ -672,10 +683,17 @@ export function SessionRunner({
     if (requiresEquipmentSelection(inventory, selectedEquipmentByExercise[pe.exerciseId])) {
       return undefined;
     }
-    return selectReturnRecommendationForEquipment(
+    const selectedEquipmentId = selectedEquipmentIdFor(pe, inventory);
+    const recommendation = selectReturnRecommendationForEquipment(
       returnRecommendations[pe.id],
-      selectedEquipmentIdFor(pe, inventory),
+      selectedEquipmentId,
     );
+    return resolveEquipmentCalibrationProgress({
+      programExercise: pe,
+      recommendation,
+      completedSets: setsByExercise.get(pe.exerciseId) ?? [],
+      gymEquipmentId: selectedEquipmentId,
+    });
   }
 
   // Prior-session sets per exercise, the PR baseline for the post-session

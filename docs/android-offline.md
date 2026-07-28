@@ -18,6 +18,11 @@ session, record session RPE and receive the deterministic next-set
 recommendation locally. The active exercise card also exposes the native
 workout-plan actions available on the web: target sets and repetitions, drop
 sets, supersets, program notes, replacement, removal and exercise information.
+The vertical action trigger opens one scrollable Material 3 bottom sheet. Its
+header separates the wrapping exercise name from the muted equipment subtitle;
+parameter rows, ordinary actions and the destructive remove action have
+separate semantic sections and normal touch targets. Parameter subflows and the
+existing remove confirmation preserve their prior mutation contracts.
 Exercise addition remains a separate terminal `+` tile in the exercise strip.
 The bootstrap carries the same initial prescription used by the web add flow,
 so Android does not maintain a second set of hard-coded defaults. The selected
@@ -147,6 +152,16 @@ rounding. If the scoped recommendation is missing from an old or incomplete
 bootstrap, the native client does not produce or prefill a next-set
 recommendation from unrestricted program targets; it waits for refreshed
 shared state instead of bypassing a possible return ceiling.
+
+Bootstrap schema 9 adds a compact long-term strength summary for each exact
+exercise. It separates familiarity with the movement from confidence in the
+load on a concrete equipment ID and includes only aggregate anchors, counts and
+dates. Android still receives at most 12 raw display-history sessions. Legacy
+sets without an equipment ID may seed a conservative same-exercise calibration
+start, while explicit other-machine or stale/deleted equipment snapshots never
+become exact-equipment load history. Equipment-only calibration uses at most
+the first two valid bound working sets at RIR 3 or higher, then the card closes
+and the active runner uses those equipment-scoped sets.
 
 Missing RIR lowers recommendation confidence. No offline calculation invokes an
 LLM or invents a replacement for missing data.

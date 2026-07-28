@@ -53,7 +53,11 @@ internal fun selectReturnRecommendationForEquipment(
     }
 
 internal data class ReturnCalibrationEvidence(
-    val confidence: String,
+    val calibrationKind: String,
+    val movementConfidence: String,
+    val equipmentConfidence: String,
+    val movementSessionCount: Int,
+    val equipmentWorkingSetCount: Int,
     val historyBasis: String,
     val recentHistorySessionCount: Int,
     val longTermHistorySessionCount: Int,
@@ -65,10 +69,14 @@ internal data class ReturnCalibrationEvidence(
 internal fun returnCalibrationEvidence(
     recommendation: ReturnRecommendationDto?,
 ): ReturnCalibrationEvidence? = recommendation
-    ?.takeIf { it.mode != "normal" }
+    ?.takeIf { it.calibrationRequired }
     ?.let {
         ReturnCalibrationEvidence(
-            confidence = it.confidence,
+            calibrationKind = it.calibrationKind,
+            movementConfidence = it.strengthSummary.movement.confidence,
+            equipmentConfidence = it.strengthSummary.equipment.confidence,
+            movementSessionCount = it.strengthSummary.movement.sessionCount,
+            equipmentWorkingSetCount = it.strengthSummary.equipment.calibrationSetCount,
             historyBasis = it.historyBasis,
             recentHistorySessionCount = it.recentHistorySessionCount,
             longTermHistorySessionCount = it.longTermHistorySessionCount,
@@ -79,6 +87,53 @@ internal fun returnCalibrationEvidence(
                 it.returnGapDays > it.exerciseGapDays,
         )
     }
+
+internal fun resolveEquipmentCalibrationProgress(
+    exercise: ProgramExerciseDto,
+    recommendation: ReturnRecommendationDto?,
+    sets: List<LocalSetEntity>,
+    gymEquipmentId: String?,
+): ReturnRecommendationDto? {
+    if (
+        recommendation == null ||
+        recommendation.calibrationKind != "equipment" ||
+        !recommendation.calibrationRequired ||
+        gymEquipmentId == null
+    ) {
+        return recommendation
+    }
+    val currentValidSets = sets.count { set ->
+        set.exerciseId == exercise.exerciseId &&
+            set.gymEquipmentId == gymEquipmentId &&
+            !set.deleted &&
+            !set.isWarmup &&
+            !set.isDropSet &&
+            set.reps > 0 &&
+            set.weight >= 0 &&
+            set.rir != null
+    }
+    val confirmedSets = recommendation.strengthSummary.equipment.calibrationSetCount + currentValidSets
+    if (confirmedSets < 2) {
+        return recommendation.copy(
+            strengthSummary = recommendation.strengthSummary.copy(
+                equipment = recommendation.strengthSummary.equipment.copy(
+                    calibrationSetCount = confirmedSets,
+                    confidence = if (confirmedSets == 1) "medium" else "low",
+                ),
+            ),
+        )
+    }
+    return recommendation.copy(
+        mode = "normal",
+        targetSets = exercise.targetSets,
+        targetRIR = exercise.targetRIR,
+        suggestedWeight = null,
+        weightCeiling = null,
+        startFraction = null,
+        calibrationRequired = false,
+        calibrationKind = "none",
+    )
+}
 
 internal fun resolveWorkoutEquipmentId(
     exercise: ProgramExerciseDto,
@@ -113,7 +168,7 @@ internal fun workoutExerciseSetProgress(
 ): List<WorkoutExerciseSetProgress> = exercises.map { exercise ->
     val recommendation = returnRecommendations[exercise.id]
     val plannedRows = (recommendation?.targetSets ?: exercise.targetSets) +
-        if (recommendation?.mode != null && recommendation.mode != "normal") {
+        if (recommendation?.calibrationRequired == true) {
             0
         } else {
             exercise.targetDropSets

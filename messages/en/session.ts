@@ -90,6 +90,9 @@ export const session = {
   },
   returnToTraining: {
     title: 'Return calibration',
+    equipmentTitle: 'Calibration on current equipment',
+    equipmentCalibration:
+      'This movement is well known from {sessions} recorded session(s), but the stored loads cannot be treated as exact values for this specific machine.',
     exerciseReintro:
       'This exercise was last performed {days} days ago. Muscle readiness from other movements does not fully restore exercise-specific coordination.',
     muscleReintro:
@@ -105,6 +108,16 @@ export const session = {
       low: 'History confidence: low.',
       medium: 'History confidence: medium.',
       high: 'History confidence: high.',
+    },
+    movementConfidence: {
+      low: 'Movement familiarity: low confidence.',
+      medium: 'Movement familiarity: medium confidence.',
+      high: 'Movement familiarity: high confidence.',
+    },
+    equipmentConfidence: {
+      low: 'Load on this equipment: low confidence.',
+      medium: 'Load on this equipment: medium confidence.',
+      high: 'Load on this equipment: high confidence.',
     },
     historyRecentAndLongTerm:
       '{recent} recent exact-equipment session(s) are primary and checked against {longTerm} older exact-equipment session(s).',

@@ -24,6 +24,28 @@ const recommendation: ReturnRecommendation = {
   nonComparableHistorySessionCount: 2,
   historyBasis: 'recent-and-long-term',
   confidence: 'medium',
+  calibrationKind: 'return',
+  strengthSummary: {
+    movement: {
+      sessionCount: 4,
+      workingSetCount: 12,
+      lastPerformedAt: '2026-07-09T10:00:00.000Z',
+      lastReliableLoad: 70,
+      recentStrengthAnchor: 80,
+      historicalStrengthAnchor: 78,
+      confidence: 'medium',
+    },
+    equipment: {
+      sessionCount: 4,
+      workingSetCount: 12,
+      lastPerformedAt: '2026-07-09T10:00:00.000Z',
+      lastReliableLoad: 70,
+      recentStrengthAnchor: 80,
+      historicalStrengthAnchor: 78,
+      confidence: 'medium',
+    },
+    anchorScope: 'exact-equipment',
+  },
 };
 
 describe('ReturnToTrainingNotice', () => {
@@ -33,7 +55,7 @@ describe('ReturnToTrainingNotice', () => {
     );
 
     expect(screen.getByTestId('return-history-confidence')).toHaveTextContent(
-      'History confidence: medium.',
+      'Movement familiarity: medium confidence.',
     );
     expect(
       screen.getByText(
@@ -55,5 +77,54 @@ describe('ReturnToTrainingNotice', () => {
     expect(
       screen.getByText('Do not exceed the history-based ceiling today: 70 kg.'),
     ).toBeInTheDocument();
+  });
+
+  it('separates familiar movement confidence from unknown current-equipment load', () => {
+    render(
+      <ReturnToTrainingNotice
+        recommendation={{
+          ...recommendation,
+          mode: 'normal',
+          calibrationKind: 'equipment',
+          exerciseGapDays: 14,
+          returnGapDays: 14,
+          historySessionCount: 0,
+          recentHistorySessionCount: 0,
+          longTermHistorySessionCount: 0,
+          historyBasis: 'none',
+          confidence: 'low',
+          strengthSummary: {
+            anchorScope: 'exact-exercise-unlinked',
+            movement: {
+              ...recommendation.strengthSummary.movement,
+              sessionCount: 25,
+              workingSetCount: 117,
+              confidence: 'high',
+            },
+            equipment: {
+              sessionCount: 0,
+              workingSetCount: 0,
+              lastPerformedAt: null,
+              lastReliableLoad: null,
+              recentStrengthAnchor: null,
+              historicalStrengthAnchor: null,
+              confidence: 'low',
+            },
+          },
+        }}
+        unit="KG"
+        usesBodyweight={false}
+      />,
+    );
+
+    expect(screen.getByText('Calibration on current equipment')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This movement is well known from 25 recorded session(s), but the stored loads cannot be treated as exact values for this specific machine.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Movement familiarity: high confidence.')).toBeInTheDocument();
+    expect(screen.getByText('Load on this equipment: low confidence.')).toBeInTheDocument();
+    expect(screen.queryByText('History confidence: low.')).not.toBeInTheDocument();
   });
 });

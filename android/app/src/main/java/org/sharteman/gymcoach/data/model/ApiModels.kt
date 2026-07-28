@@ -48,6 +48,8 @@ data class BootstrapResponse(
     val lastPerformances: Map<String, LastPerformanceDto> = emptyMap(),
     val lastPerformancesByEquipment: Map<String, List<LastPerformanceDto>> = emptyMap(),
     val exerciseHistoryByExerciseId: Map<String, List<ExerciseHistorySessionDto>> = emptyMap(),
+    val longTermStrengthSummaryByExerciseId: Map<String, MobileLongTermStrengthSummaryDto> =
+        emptyMap(),
     val returnRecommendationsByWorkout: Map<String, Map<String, ReturnRecommendationDto>> = emptyMap(),
     val returnRecommendationsByEquipmentByWorkout: Map<
         String,
@@ -338,6 +340,47 @@ data class ReturnRecommendationDto(
     val nonComparableHistorySessionCount: Int = 0,
     val historyBasis: String = "none",
     val confidence: String = "low",
+    val calibrationKind: String = "none",
+    val strengthSummary: LongTermStrengthSummaryDto = LongTermStrengthSummaryDto(),
+)
+
+@Serializable
+data class StrengthEvidenceSummaryDto(
+    val sessionCount: Int = 0,
+    val workingSetCount: Int = 0,
+    val calibrationSetCount: Int = 0,
+    val lastPerformedAt: String? = null,
+    val lastReliableLoad: Double? = null,
+    val recentStrengthAnchor: Double? = null,
+    val historicalStrengthAnchor: Double? = null,
+    val confidence: String = "low",
+)
+
+@Serializable
+data class LongTermStrengthSummaryDto(
+    val movement: StrengthEvidenceSummaryDto = StrengthEvidenceSummaryDto(),
+    val equipment: StrengthEvidenceSummaryDto = StrengthEvidenceSummaryDto(),
+    val anchorScope: String = "none",
+)
+
+@Serializable
+data class EquipmentStrengthEvidenceSummaryDto(
+    val gymId: String? = null,
+    val gymEquipmentId: String? = null,
+    val sessionCount: Int = 0,
+    val workingSetCount: Int = 0,
+    val calibrationSetCount: Int = 0,
+    val lastPerformedAt: String? = null,
+    val lastReliableLoad: Double? = null,
+    val recentStrengthAnchor: Double? = null,
+    val historicalStrengthAnchor: Double? = null,
+    val confidence: String = "low",
+)
+
+@Serializable
+data class MobileLongTermStrengthSummaryDto(
+    val movement: StrengthEvidenceSummaryDto = StrengthEvidenceSummaryDto(),
+    val equipment: List<EquipmentStrengthEvidenceSummaryDto> = emptyList(),
 )
 
 @Serializable

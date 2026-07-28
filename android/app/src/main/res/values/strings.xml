@@ -32,6 +32,15 @@
     <string name="equipment_selection_required">Select the machine used for this set.</string>
     <string name="exercise_equipment_unavailable">This exercise is not available with the saved equipment in this gym.</string>
     <string name="return_calibration_title">Return calibration</string>
+    <string name="equipment_calibration_title">Calibration on current equipment</string>
+    <string name="equipment_calibration_description">This movement is well known from %1$d recorded session(s), but those kilograms are not an exact load for this specific machine.</string>
+    <string name="movement_confidence_low">Movement familiarity: low confidence.</string>
+    <string name="movement_confidence_medium">Movement familiarity: medium confidence.</string>
+    <string name="movement_confidence_high">Movement familiarity: high confidence.</string>
+    <string name="equipment_confidence_low">Load on this equipment: low confidence.</string>
+    <string name="equipment_confidence_medium">Load on this equipment: medium confidence.</string>
+    <string name="equipment_confidence_high">Load on this equipment: high confidence.</string>
+    <string name="equipment_calibration_progress">Confirmed working sets on this equipment: %1$d of 2.</string>
     <string name="return_confidence_low">History confidence: low.</string>
     <string name="return_confidence_medium">History confidence: medium.</string>
     <string name="return_confidence_high">History confidence: high.</string>
@@ -41,7 +50,7 @@
     <string name="return_history_none">No exact current-equipment load history is available.</string>
     <string name="return_gap">Return conservatism uses a %1$d-day exact-exercise gap.</string>
     <string name="return_prior_gap">The latest exact session was recent, but it followed a %1$d-day gap, so calibration remains active.</string>
-    <string name="return_non_comparable_history">Sessions from other or unlinked equipment not converted into this load: %1$d.</string>
+    <string name="return_non_comparable_history">Sessions without exact current-equipment identity: %1$d. They support movement history, not precise machine equivalence.</string>
     <string name="return_calibration_targets">Calibration target: %1$d set(s), at least RIR %2$d. The next set adapts from recorded RIR without exceeding the ceiling.</string>
     <string name="nominal_resistance_estimate">Estimated nominal resistance: %1$s %2$s</string>
     <string name="nominal_short">Nominal: %1$s %2$s</string>
@@ -282,6 +291,10 @@
     <string name="workout_reset_online_required">Reset requires a server connection. Pause the workout if you are offline.</string>
     <string name="workout_reset_error">The workout could not be reset. Nothing was deleted locally.</string>
     <string name="exercise_actions">Exercise actions</string>
+    <string name="exercise_parameters_section">Exercise parameters</string>
+    <string name="exercise_actions_section">Actions</string>
+    <string name="exercise_value_not_set">Not set</string>
+    <string name="exercise_note_empty">No note</string>
     <string name="exercise_actions_for">Actions for %1$s</string>
     <string name="exercise_target_sets">Target sets</string>
     <string name="exercise_target_reps">Target repetition range</string>

@@ -81,6 +81,28 @@ function sharedRecommendation(overrides: Partial<ReturnRecommendation> = {}): Re
     nonComparableHistorySessionCount: 0,
     historyBasis: 'recent-exact',
     confidence: 'high',
+    calibrationKind: 'none',
+    strengthSummary: {
+      movement: {
+        sessionCount: 3,
+        workingSetCount: 9,
+        lastPerformedAt: '2026-07-07T12:00:00.000Z',
+        lastReliableLoad: 32.5,
+        recentStrengthAnchor: 45,
+        historicalStrengthAnchor: null,
+        confidence: 'high',
+      },
+      equipment: {
+        sessionCount: 3,
+        workingSetCount: 9,
+        lastPerformedAt: '2026-07-07T12:00:00.000Z',
+        lastReliableLoad: 32.5,
+        recentStrengthAnchor: 45,
+        historicalStrengthAnchor: null,
+        confidence: 'high',
+      },
+      anchorScope: 'exact-equipment',
+    },
     ...overrides,
   };
 }

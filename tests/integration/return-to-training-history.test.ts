@@ -300,13 +300,26 @@ describe('return-to-training history builder', () => {
     )?.recommendation;
 
     expect(stationA).toMatchObject({
-      mode: 'exercise-reintro',
-      exerciseGapDays: 180,
+      mode: 'normal',
+      exerciseGapDays: 1,
+      calibrationKind: 'none',
+      calibrationRequired: false,
       historySessionCount: 3,
       longTermHistorySessionCount: 3,
       historyBasis: 'long-term-exact',
-      suggestedWeight: 50,
+      suggestedWeight: null,
       nonComparableHistorySessionCount: 61,
+      strengthSummary: {
+        anchorScope: 'exact-equipment',
+        movement: { sessionCount: 64, confidence: 'high' },
+        equipment: {
+          sessionCount: 3,
+          workingSetCount: 3,
+          calibrationSetCount: 3,
+          lastReliableLoad: 60,
+        },
+      },
     });
+    expect(stationA?.strengthSummary.equipment.historicalStrengthAnchor).toBeGreaterThan(80);
   });
 });

@@ -137,7 +137,8 @@ test('a 60-80 kg exact bench history produces a bounded explained return load in
 
   const notice = page.getByTestId('return-to-training-notice');
   await expect(notice).toBeVisible();
-  await expect(notice).toContainText('History confidence: low.');
+  await expect(notice).toContainText('Movement familiarity: high confidence.');
+  await expect(notice).toContainText('Load on this equipment: high confidence.');
   await expect(notice).toContainText(
     'No recent exact-equipment session is available. The load anchor uses 3 older exact-equipment session(s).',
   );

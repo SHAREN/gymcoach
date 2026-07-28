@@ -33,6 +33,7 @@ export const RETURN_RECENT_CAPACITY_WEIGHT = 0.75;
 export const RETURN_LONG_TERM_CAPACITY_WEIGHT = 0.25;
 export const RETURN_RECENT_ANCHOR_MIN_RATIO = 0.75;
 export const RETURN_RECENT_ANCHOR_MAX_RATIO = 1.25;
+export const EQUIPMENT_CALIBRATION_WORKING_SETS = 2;
 
 export type ReturnMode = 'normal' | 'exercise-reintro' | 'muscle-reintro' | 'new-exercise';
 export type ReturnConfidence = 'low' | 'medium' | 'high';
@@ -41,6 +42,25 @@ export type ReturnHistoryBasis =
   | 'recent-exact'
   | 'long-term-exact'
   | 'recent-and-long-term';
+export type CalibrationKind = 'none' | 'return' | 'equipment';
+export type StrengthAnchorScope = 'none' | 'exact-equipment' | 'exact-exercise-unlinked';
+
+export interface StrengthEvidenceSummary {
+  sessionCount: number;
+  workingSetCount: number;
+  calibrationSetCount?: number;
+  lastPerformedAt: string | null;
+  lastReliableLoad: number | null;
+  recentStrengthAnchor: number | null;
+  historicalStrengthAnchor: number | null;
+  confidence: ReturnConfidence;
+}
+
+export interface LongTermStrengthSummary {
+  movement: StrengthEvidenceSummary;
+  equipment: StrengthEvidenceSummary;
+  anchorScope: StrengthAnchorScope;
+}
 
 export interface ReturnHistorySession {
   sessionId: string;
@@ -50,10 +70,14 @@ export interface ReturnHistorySession {
 
 export interface ReturnTrainingHistory {
   exerciseLastPerformedAt: Date | null;
+  generalExerciseLastPerformedAt?: Date | null;
   muscleLastPerformedAt: Date | null;
   recentMuscleSets: number;
   baselineMuscleSetsPer28Days: number;
   exerciseSessions: ReturnHistorySession[];
+  generalExerciseSessions?: ReturnHistorySession[];
+  unlinkedExerciseSessions?: ReturnHistorySession[];
+  hasConcreteEquipmentTarget?: boolean;
   nonComparableExerciseSessions?: number;
 }
 
@@ -78,6 +102,8 @@ export interface ReturnRecommendation {
   nonComparableHistorySessionCount: number;
   historyBasis: ReturnHistoryBasis;
   confidence: ReturnConfidence;
+  calibrationKind: CalibrationKind;
+  strengthSummary: LongTermStrengthSummary;
 }
 
 export type ReturnProgramExercise = Pick<
@@ -93,6 +119,74 @@ interface CalculateReturnRecommendationInput {
   now: Date;
   bodyweight?: number | null;
   loadConstraints?: GymLoadConstraints | null;
+  safetyWeightCeiling?: number | null;
+}
+
+interface EquipmentCalibrationProgressInput {
+  programExercise: Pick<ProgramExercise, 'targetSets' | 'targetRIR'>;
+  recommendation: ReturnRecommendation | null | undefined;
+  completedSets: Array<{
+    gymEquipmentId?: string | null;
+    weight: number;
+    reps: number;
+    rir?: number | null;
+    isWarmup: boolean;
+    isDropSet: boolean;
+    deleted?: boolean;
+  }>;
+  gymEquipmentId: string | null;
+}
+
+export function resolveEquipmentCalibrationProgress({
+  programExercise,
+  recommendation,
+  completedSets,
+  gymEquipmentId,
+}: EquipmentCalibrationProgressInput): ReturnRecommendation | undefined {
+  if (
+    !recommendation ||
+    recommendation.calibrationKind !== 'equipment' ||
+    !recommendation.calibrationRequired ||
+    gymEquipmentId == null
+  ) {
+    return recommendation ?? undefined;
+  }
+  const currentValidSets = completedSets.filter(
+    (set) =>
+      set.gymEquipmentId === gymEquipmentId &&
+      set.deleted !== true &&
+      !set.isWarmup &&
+      !set.isDropSet &&
+      set.reps > 0 &&
+      set.weight >= 0 &&
+      set.rir != null,
+  ).length;
+  const confirmedSets =
+    (recommendation.strengthSummary.equipment.calibrationSetCount ?? 0) + currentValidSets;
+  if (confirmedSets < EQUIPMENT_CALIBRATION_WORKING_SETS) {
+    return {
+      ...recommendation,
+      strengthSummary: {
+        ...recommendation.strengthSummary,
+        equipment: {
+          ...recommendation.strengthSummary.equipment,
+          calibrationSetCount: confirmedSets,
+          confidence: confirmedSets === 1 ? 'medium' : 'low',
+        },
+      },
+    };
+  }
+  return {
+    ...recommendation,
+    mode: 'normal',
+    targetSets: programExercise.targetSets,
+    targetRIR: programExercise.targetRIR,
+    suggestedWeight: null,
+    weightCeiling: null,
+    startFraction: null,
+    calibrationRequired: false,
+    calibrationKind: 'none',
+  };
 }
 
 export function calculateReturnRecommendation({
@@ -101,9 +195,15 @@ export function calculateReturnRecommendation({
   now,
   bodyweight = null,
   loadConstraints = null,
+  safetyWeightCeiling = null,
 }: CalculateReturnRecommendationInput): ReturnRecommendation {
-  const exerciseGapDays = daysSince(history.exerciseLastPerformedAt, now);
-  const returnGapDays = resolveReturnGapDays(exerciseGapDays, history.exerciseSessions, now);
+  const generalExerciseSessions = history.generalExerciseSessions ?? history.exerciseSessions;
+  const generalExerciseLastPerformedAt =
+    history.generalExerciseLastPerformedAt === undefined
+      ? history.exerciseLastPerformedAt
+      : history.generalExerciseLastPerformedAt;
+  const exerciseGapDays = daysSince(generalExerciseLastPerformedAt, now);
+  const returnGapDays = resolveReturnGapDays(exerciseGapDays, generalExerciseSessions, now);
   const muscleGapDays = daysSince(history.muscleLastPerformedAt, now);
   const recentVolumeRatio = volumeRatio(
     history.recentMuscleSets,
@@ -116,7 +216,7 @@ export function calculateReturnRecommendation({
     (history.baselineMuscleSetsPer28Days <= 0 ||
       (recentVolumeRatio != null && recentVolumeRatio >= MAINTAINED_MUSCLE_VOLUME_RATIO));
 
-  const historyEvidence = historicalCapacityEvidence({
+  const exactEquipmentEvidence = historicalCapacityEvidence({
     programExercise,
     sessions: history.exerciseSessions,
     now,
@@ -124,8 +224,37 @@ export function calculateReturnRecommendation({
     bodyweight,
     nonComparableHistorySessionCount: history.nonComparableExerciseSessions ?? 0,
   });
+  const unlinkedExerciseEvidence = historicalCapacityEvidence({
+    programExercise,
+    sessions: history.unlinkedExerciseSessions ?? [],
+    now,
+    returnGapDays,
+    bodyweight,
+    nonComparableHistorySessionCount: 0,
+  });
+  const exactEquipmentCalibrationSetCount = countCalibrationSets(history.exerciseSessions);
+  const equipmentCalibrationRequired =
+    history.hasConcreteEquipmentTarget === true &&
+    exactEquipmentCalibrationSetCount < EQUIPMENT_CALIBRATION_WORKING_SETS;
+  const strengthSummary = buildLongTermStrengthSummary({
+    generalExerciseSessions,
+    exactEquipmentSessions: history.exerciseSessions,
+    unlinkedExerciseEvidence,
+    exactEquipmentEvidence,
+  });
+  const strengthSummaryWithAnchorScope: LongTermStrengthSummary = {
+    ...strengthSummary,
+    anchorScope:
+      exactEquipmentEvidence.capacity != null
+        ? 'exact-equipment'
+        : unlinkedExerciseEvidence.capacity != null
+          ? 'exact-exercise-unlinked'
+          : 'none',
+  };
   const mode = resolveReturnMode(programExercise.exercise.category, returnGapDays, muscleGapDays);
-  if (mode === 'normal') {
+  const calibrationKind: CalibrationKind =
+    mode !== 'normal' ? 'return' : equipmentCalibrationRequired ? 'equipment' : 'none';
+  if (calibrationKind === 'none') {
     return {
       mode,
       exerciseGapDays,
@@ -141,21 +270,32 @@ export function calculateReturnRecommendation({
       suggestedWeight: null,
       startFraction: null,
       calibrationRequired: false,
-      ...historyEvidence.summary,
+      calibrationKind,
+      strengthSummary: strengthSummaryWithAnchorScope,
+      ...exactEquipmentEvidence.summary,
     };
   }
 
-  const broadReturn = mode === 'muscle-reintro' || !muscleMaintained;
-  const targetSets = Math.min(programExercise.targetSets, broadReturn ? 1 : 2);
+  const broadReturn = mode !== 'normal' && (mode === 'muscle-reintro' || !muscleMaintained);
+  const calibrationSetTarget =
+    calibrationKind === 'equipment'
+      ? Math.max(1, EQUIPMENT_CALIBRATION_WORKING_SETS - exactEquipmentCalibrationSetCount)
+      : broadReturn
+        ? 1
+        : 2;
+  const targetSets = Math.min(programExercise.targetSets, calibrationSetTarget);
   const targetRIR = Math.max(programExercise.targetRIR, broadReturn ? 4 : 3);
   const startFraction = returnStartFraction(returnGapDays, broadReturn);
+  const loadEvidence =
+    exactEquipmentEvidence.capacity != null ? exactEquipmentEvidence : unlinkedExerciseEvidence;
   const loadTargets = historicalLoadTargets({
     programExercise,
-    evidence: historyEvidence,
+    evidence: loadEvidence,
     targetRIR,
     startFraction,
     bodyweight,
     loadConstraints,
+    safetyWeightCeiling,
   });
 
   const suggestedWeight =
@@ -177,7 +317,9 @@ export function calculateReturnRecommendation({
     suggestedWeight,
     startFraction,
     calibrationRequired: true,
-    ...historyEvidence.summary,
+    calibrationKind,
+    strengthSummary: strengthSummaryWithAnchorScope,
+    ...exactEquipmentEvidence.summary,
   };
 }
 
@@ -205,6 +347,7 @@ function historicalLoadTargets({
   startFraction,
   bodyweight,
   loadConstraints,
+  safetyWeightCeiling,
 }: {
   programExercise: ReturnProgramExercise;
   evidence: HistoricalCapacityEvidence;
@@ -212,6 +355,7 @@ function historicalLoadTargets({
   startFraction: number;
   bodyweight: number | null;
   loadConstraints: GymLoadConstraints | null;
+  safetyWeightCeiling: number | null;
 }): { weightCeiling: number | null; suggestedWeight: number | null } {
   if (loadConstraints?.isAvailable === false) {
     return { weightCeiling: null, suggestedWeight: null };
@@ -258,6 +402,17 @@ function historicalLoadTargets({
       ? Math.min(achievableWeightCeiling, equipmentFloor)
       : roundedSuggestedWeight;
 
+  if (safetyWeightCeiling != null && safetyWeightCeiling >= 0) {
+    const safeCeiling = roundLoadDown(
+      safetyWeightCeiling,
+      programExercise.exercise.category,
+      loadConstraints,
+    );
+    return {
+      weightCeiling: Math.min(achievableWeightCeiling, safeCeiling),
+      suggestedWeight: Math.min(suggestedWeight, safeCeiling),
+    };
+  }
   return { weightCeiling: achievableWeightCeiling, suggestedWeight };
 }
 
@@ -269,6 +424,11 @@ interface SessionCapacityEvidence {
 
 interface HistoricalCapacityEvidence {
   capacity: number | null;
+  recentAnchor: number | null;
+  longTermAnchor: number | null;
+  lastReliableLoad: number | null;
+  lastPerformedAt: Date | null;
+  workingSetCount: number;
   summary: Pick<
     ReturnRecommendation,
     | 'historySessionCount'
@@ -397,6 +557,11 @@ function historicalCapacityEvidence({
 
   return {
     capacity,
+    recentAnchor,
+    longTermAnchor,
+    lastReliableLoad: latestReliableLoad(sessions),
+    lastPerformedAt: estimates[0]?.performedAt ?? null,
+    workingSetCount: countWorkingSets(sessions),
     summary: {
       historySessionCount: estimates.length,
       recentHistorySessionCount: recent.length,
@@ -406,6 +571,106 @@ function historicalCapacityEvidence({
       confidence,
     },
   };
+}
+
+function buildLongTermStrengthSummary({
+  generalExerciseSessions,
+  exactEquipmentSessions,
+  unlinkedExerciseEvidence,
+  exactEquipmentEvidence,
+}: {
+  generalExerciseSessions: ReturnHistorySession[];
+  exactEquipmentSessions: ReturnHistorySession[];
+  unlinkedExerciseEvidence: HistoricalCapacityEvidence;
+  exactEquipmentEvidence: HistoricalCapacityEvidence;
+}): LongTermStrengthSummary {
+  const movementSessionCount = countUsableSessions(generalExerciseSessions);
+  const movementWorkingSetCount = countWorkingSets(generalExerciseSessions);
+  const movementLastPerformedAt = latestPerformedAt(generalExerciseSessions);
+  return {
+    movement: {
+      sessionCount: movementSessionCount,
+      workingSetCount: movementWorkingSetCount,
+      calibrationSetCount: countCalibrationSets(generalExerciseSessions),
+      lastPerformedAt:
+        (unlinkedExerciseEvidence.lastPerformedAt ?? movementLastPerformedAt)?.toISOString() ??
+        null,
+      lastReliableLoad: unlinkedExerciseEvidence.lastReliableLoad,
+      recentStrengthAnchor: roundNullable(unlinkedExerciseEvidence.recentAnchor),
+      historicalStrengthAnchor: roundNullable(unlinkedExerciseEvidence.longTermAnchor),
+      confidence: confidenceFromMovementSessions(movementSessionCount),
+    },
+    equipment: {
+      sessionCount: countUsableSessions(exactEquipmentSessions),
+      workingSetCount: exactEquipmentEvidence.workingSetCount,
+      calibrationSetCount: countCalibrationSets(exactEquipmentSessions),
+      lastPerformedAt: exactEquipmentEvidence.lastPerformedAt?.toISOString() ?? null,
+      lastReliableLoad: exactEquipmentEvidence.lastReliableLoad,
+      recentStrengthAnchor: roundNullable(exactEquipmentEvidence.recentAnchor),
+      historicalStrengthAnchor: roundNullable(exactEquipmentEvidence.longTermAnchor),
+      confidence: confidenceFromEquipmentSets(countCalibrationSets(exactEquipmentSessions)),
+    },
+    anchorScope: 'none',
+  };
+}
+
+function confidenceFromMovementSessions(sessionCount: number): ReturnConfidence {
+  if (sessionCount >= RETURN_ROBUST_ANCHOR_MIN_SESSIONS) return 'high';
+  return sessionCount > 0 ? 'medium' : 'low';
+}
+
+function confidenceFromEquipmentSets(workingSetCount: number): ReturnConfidence {
+  if (workingSetCount >= EQUIPMENT_CALIBRATION_WORKING_SETS) return 'high';
+  return workingSetCount === 1 ? 'medium' : 'low';
+}
+
+function countUsableSessions(sessions: ReturnHistorySession[]): number {
+  return sessions.filter(hasUsableWorkingSet).length;
+}
+
+function countWorkingSets(sessions: ReturnHistorySession[]): number {
+  return sessions.reduce(
+    (total, session) =>
+      total +
+      session.sets.filter((set) => !set.isDropSet && set.reps > 0 && set.weight >= 0).length,
+    0,
+  );
+}
+
+function countCalibrationSets(sessions: ReturnHistorySession[]): number {
+  return sessions.reduce(
+    (total, session) =>
+      total +
+      session.sets.filter(
+        (set) => !set.isDropSet && set.reps > 0 && set.weight >= 0 && set.rir != null,
+      ).length,
+    0,
+  );
+}
+
+function latestPerformedAt(sessions: ReturnHistorySession[]): Date | null {
+  return sessions
+    .filter(hasUsableWorkingSet)
+    .reduce<Date | null>(
+      (latest, session) =>
+        latest == null || session.performedAt > latest ? session.performedAt : latest,
+      null,
+    );
+}
+
+function latestReliableLoad(sessions: ReturnHistorySession[]): number | null {
+  const latest = [...sessions]
+    .filter(hasUsableWorkingSet)
+    .sort((left, right) => right.performedAt.getTime() - left.performedAt.getTime())[0];
+  if (!latest) return null;
+  const weights = latest.sets
+    .filter((set) => !set.isDropSet && set.reps > 0 && set.weight >= 0)
+    .map((set) => set.weight);
+  return weights.length > 0 ? Math.max(...weights) : null;
+}
+
+function roundNullable(value: number | null): number | null {
+  return value == null ? null : round(value);
 }
 
 function strongestEstablishedAnchor(estimates: SessionCapacityEvidence[]): number | null {
