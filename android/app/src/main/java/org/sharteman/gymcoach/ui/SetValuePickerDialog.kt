@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
@@ -103,8 +102,6 @@ fun SetValuePickerDialog(
     onConfirm: (String) -> Unit,
 ) {
     var manualValue by rememberSaveable(kind, value) { mutableStateOf(normalizePickerInput(value)) }
-    val manualEntryActive = rememberSaveable(kind, value) { mutableStateOf(false) }
-    val suppressScrollPreviewUntilIdle = rememberSaveable(kind, value) { mutableStateOf(false) }
     var confirmationStarted by rememberSaveable(kind, value) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val pickerScope = rememberCoroutineScope()
@@ -116,17 +113,26 @@ fun SetValuePickerDialog(
     }
     val openingNumericValue = parsePickerNumber(normalizePickerInput(value))
     val numericValue = parsePickerNumber(manualValue)
-    val matchingIndex = optionValues.indexOfFirst { option ->
-        if (option == null) manualValue.isBlank() else numericValue != null && nearlyEqual(option, numericValue)
+    val openingMatchingIndex = optionValues.indexOfFirst { option ->
+        if (option == null) value.isBlank() else openingNumericValue != null && nearlyEqual(option, openingNumericValue)
     }
-    val selectedIndex = matchingIndex.coerceAtLeast(0)
-    val initialWeightIndex = if (openingNumericValue == null) {
+    val initialSelectedIndex = if (openingMatchingIndex >= 0) {
+        openingMatchingIndex
+    } else if (openingNumericValue == null) {
         0
     } else {
-        normalizedOptions.indices.minByOrNull { index ->
-            abs(normalizedOptions[index] - openingNumericValue)
+        optionValues.indices.minByOrNull { index ->
+            optionValues[index]?.let { abs(it - openingNumericValue) } ?: Double.MAX_VALUE
         } ?: 0
     }
+    val manualEntryActive = rememberSaveable(kind, value) {
+        mutableStateOf(
+            kind == SetValuePickerKind.REPS &&
+                normalizePickerInput(value).isNotBlank() &&
+                openingMatchingIndex < 0,
+        )
+    }
+    val suppressScrollPreviewUntilIdle = rememberSaveable(kind, value) { mutableStateOf(false) }
     val valid = when (kind) {
         SetValuePickerKind.WEIGHT -> numericValue != null &&
             fromDisplayWeight(numericValue, unit) in 0.0..500.0
@@ -178,13 +184,6 @@ fun SetValuePickerDialog(
         onConfirm(confirmed)
     }
 
-    LaunchedEffect(kind, value, normalizedOptions) {
-        if (kind == SetValuePickerKind.WEIGHT) return@LaunchedEffect
-        if (optionValues.isNotEmpty()) {
-            listState.scrollToItem((selectedIndex - 2).coerceAtLeast(0))
-        }
-    }
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -199,62 +198,43 @@ fun SetValuePickerDialog(
             Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
                 PickerHeader(kind = kind, unit = unit, onDismiss = onDismiss)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
-                if (kind == SetValuePickerKind.WEIGHT) {
-                    WeightPickerOptions(
-                        options = normalizedOptions,
-                        initialSelectedIndex = initialWeightIndex,
-                        selectedValue = numericValue,
-                        unit = unit,
-                        listState = listState,
-                        manualEntryActive = manualEntryActive,
-                        suppressScrollPreviewUntilIdle = suppressScrollPreviewUntilIdle,
-                        onScrollPreviewSuppressionEnded = {
-                            suppressScrollPreviewUntilIdle.value = false
-                        },
-                        onWeightScrollStarted = {
-                            manualEntryActive.value = false
-                        },
-                        onPreviewChange = { option ->
-                            manualEntryActive.value = false
-                            suppressScrollPreviewUntilIdle.value = false
-                            manualValue = formatPickerNumber(option)
-                        },
-                        onConfirm = { option ->
-                            val formatted = formatPickerNumber(option)
-                            manualEntryActive.value = false
-                            suppressScrollPreviewUntilIdle.value = false
-                            manualValue = formatted
-                            if (fromDisplayWeight(option, unit) in 0.0..500.0) {
-                                confirmOnce(formatted)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                    )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        items(optionValues, key = { it?.toString() ?: "none" }) { option ->
-                            val selected = if (option == null) {
-                                manualValue.isBlank()
-                            } else {
-                                numericValue != null && nearlyEqual(option, numericValue)
-                            }
-                            PickerOption(
-                                label = pickerOptionLabel(option, kind, unit),
-                                selected = selected,
-                                tag = "set-value-option-${kind.name}-${option?.let(::formatPickerNumber) ?: "none"}",
-                                onClick = {
-                                    manualValue = option?.let(::formatPickerNumber).orEmpty()
-                                },
-                            )
+                SnapValuePickerOptions(
+                    kind = kind,
+                    options = optionValues,
+                    initialSelectedIndex = initialSelectedIndex,
+                    selectedValue = numericValue,
+                    selectedBlank = manualValue.isBlank(),
+                    unit = unit,
+                    blankStateDescription = stringResource(R.string.not_specified),
+                    listState = listState,
+                    manualEntryActive = manualEntryActive,
+                    suppressScrollPreviewUntilIdle = suppressScrollPreviewUntilIdle,
+                    onScrollPreviewSuppressionEnded = {
+                        suppressScrollPreviewUntilIdle.value = false
+                    },
+                    onScrollStarted = {
+                        manualEntryActive.value = false
+                    },
+                    onPreviewChange = { option ->
+                        manualEntryActive.value = false
+                        suppressScrollPreviewUntilIdle.value = false
+                        manualValue = option?.let(::formatPickerNumber).orEmpty()
+                    },
+                    onConfirm = { option ->
+                        val formatted = option?.let(::formatPickerNumber).orEmpty()
+                        manualEntryActive.value = false
+                        suppressScrollPreviewUntilIdle.value = false
+                        manualValue = formatted
+                        val optionValid = when (kind) {
+                            SetValuePickerKind.WEIGHT -> option != null &&
+                                fromDisplayWeight(option, unit) in 0.0..500.0
+                            SetValuePickerKind.REPS -> option?.roundToInt()?.let { it in 1..100 } == true
+                            SetValuePickerKind.RIR -> option == null || option.roundToInt() in 0..5
                         }
-                    }
-                }
+                        if (optionValid) confirmOnce(formatted)
+                    },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -283,7 +263,7 @@ fun SetValuePickerDialog(
                         PickerKeypad(
                             decimal = kind == SetValuePickerKind.WEIGHT,
                             onKey = { key ->
-                                if (kind == SetValuePickerKind.WEIGHT) {
+                                if (kind != SetValuePickerKind.RIR) {
                                     manualEntryActive.value = true
                                     suppressScrollPreviewUntilIdle.value = listState.isScrollInProgress
                                     pickerScope.launch { listState.stopScroll() }
@@ -329,22 +309,25 @@ private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -
 }
 
 @Composable
-private fun WeightPickerOptions(
-    options: List<Double>,
+private fun SnapValuePickerOptions(
+    kind: SetValuePickerKind,
+    options: List<Double?>,
     initialSelectedIndex: Int,
     selectedValue: Double?,
+    selectedBlank: Boolean,
     unit: String,
+    blankStateDescription: String,
     listState: LazyListState,
     manualEntryActive: State<Boolean>,
     suppressScrollPreviewUntilIdle: State<Boolean>,
     onScrollPreviewSuppressionEnded: () -> Unit,
-    onWeightScrollStarted: () -> Unit,
-    onPreviewChange: (Double) -> Unit,
-    onConfirm: (Double) -> Unit,
+    onScrollStarted: () -> Unit,
+    onPreviewChange: (Double?) -> Unit,
+    onConfirm: (Double?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (options.isEmpty()) {
-        Box(modifier = modifier.testTag("weight-picker-viewport"))
+        Box(modifier = modifier.testTag(pickerElementTag(kind, "viewport")))
         return
     }
 
@@ -353,7 +336,7 @@ private fun WeightPickerOptions(
     var centeredIndex by rememberSaveable(options, targetIndex) { mutableIntStateOf(targetIndex) }
     val currentPreviewChange by rememberUpdatedState(onPreviewChange)
     val currentScrollPreviewSuppressionEnded by rememberUpdatedState(onScrollPreviewSuppressionEnded)
-    val currentWeightScrollStarted by rememberUpdatedState(onWeightScrollStarted)
+    val currentScrollStarted by rememberUpdatedState(onScrollStarted)
     val flingBehavior = rememberSnapFlingBehavior(
         lazyListState = listState,
         snapPosition = SnapPosition.Center,
@@ -389,7 +372,7 @@ private fun WeightPickerOptions(
                     }
                     manualEntryActive.value -> {
                         if (isScrolling && !wasScrolling) {
-                            currentWeightScrollStarted()
+                            currentScrollStarted()
                             currentPreviewChange(options[index])
                         }
                     }
@@ -400,21 +383,25 @@ private fun WeightPickerOptions(
         }
     }
 
-    BoxWithConstraints(modifier = modifier.testTag("weight-picker-viewport")) {
+    BoxWithConstraints(modifier = modifier.testTag(pickerElementTag(kind, "viewport"))) {
         val centerPadding = ((maxHeight - PickerOptionHeight) / 2).coerceAtLeast(0.dp)
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().testTag("weight-picker-list"),
+            modifier = Modifier.fillMaxSize().testTag(pickerElementTag(kind, "list")),
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = centerPadding),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             flingBehavior = flingBehavior,
         ) {
-            itemsIndexed(options, key = { _, option -> option.toString() }) { _, option ->
+            itemsIndexed(options, key = { _, option -> option?.toString() ?: "none" }) { _, option ->
                 PickerOption(
-                    label = pickerOptionLabel(option, SetValuePickerKind.WEIGHT, unit),
-                    selected = selectedValue != null && nearlyEqual(option, selectedValue),
-                    tag = "set-value-option-WEIGHT-${formatPickerNumber(option)}",
+                    label = pickerOptionLabel(option, kind, unit),
+                    selected = if (option == null) {
+                        selectedBlank
+                    } else {
+                        selectedValue != null && nearlyEqual(option, selectedValue)
+                    },
+                    tag = "set-value-option-${kind.name}-${option?.let(::formatPickerNumber) ?: "none"}",
                     onClick = { onConfirm(option) },
                 )
             }
@@ -425,9 +412,11 @@ private fun WeightPickerOptions(
                 .fillMaxWidth()
                 .height(PickerOptionHeight)
                 .padding(horizontal = 10.dp)
-                .testTag("weight-picker-pointer")
+                .testTag(pickerElementTag(kind, "pointer"))
                 .semantics {
-                    stateDescription = formatPickerNumber(options[centeredIndex])
+                    stateDescription = options[centeredIndex]
+                        ?.let(::formatPickerNumber)
+                        ?: blankStateDescription
                 },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -436,13 +425,13 @@ private fun WeightPickerOptions(
                 imageVector = Icons.Outlined.ChevronRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(38.dp).testTag("weight-picker-pointer-left"),
+                modifier = Modifier.size(38.dp).testTag(pickerElementTag(kind, "pointer-left")),
             )
             Icon(
                 imageVector = Icons.Outlined.ChevronLeft,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(38.dp).testTag("weight-picker-pointer-right"),
+                modifier = Modifier.size(38.dp).testTag(pickerElementTag(kind, "pointer-right")),
             )
         }
     }
@@ -701,6 +690,9 @@ private fun pickerOptionLabel(value: Double?, kind: SetValuePickerKind, unit: St
     }
     return formatPickerNumber(value) + suffix
 }
+
+private fun pickerElementTag(kind: SetValuePickerKind, element: String): String =
+    "${kind.name.lowercase(Locale.ROOT)}-picker-$element"
 
 private fun appendPickerKey(current: String, key: String, kind: SetValuePickerKind): String {
     if (key == "backspace") return current.dropLast(1)

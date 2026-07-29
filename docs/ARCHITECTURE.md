@@ -61,6 +61,10 @@ state silently.
   protects the newest queued choice from a stale refresh. Historical and
   per-set equipment edits continue to update only their frozen set snapshots;
   they do not change the exercise default.
+- `SetValuePickerDialog` uses one centered snap-wheel implementation for
+  weight, repetitions, and RIR in both active and finished-set editing. RIR
+  includes an explicit unspecified option; repetitions retain the numeric
+  keypad for valid values outside the common wheel range.
 
 ### Huawei Lite Wearable
 

@@ -76,7 +76,7 @@ class WorkoutSetEditingParityTest {
     fun reappliesWeightRepsAndRirWithoutOpeningSetCount() {
         setWorkoutContent()
 
-        chooseActiveValue("active-weight-picker", "set-value-option-WEIGHT-100", appliesImmediately = true)
+        chooseActiveValue("active-weight-picker", "set-value-option-WEIGHT-100")
         chooseActiveValue("active-reps-picker", "set-value-option-REPS-12")
         chooseActiveValue("active-rir-picker", "set-value-option-RIR-4")
 
@@ -93,6 +93,31 @@ class WorkoutSetEditingParityTest {
 
         composeRule.onNodeWithTag("set-count-button").performClick()
         composeRule.onNodeWithTag("set-count-dialog").assertIsDisplayed()
+    }
+
+    @Test
+    fun completedSetRepsAndBlankRirUseTheSharedPicker() {
+        setWorkoutContent()
+
+        composeRule.onNodeWithTag("completed-set-1-edit").performClick()
+        composeRule.onNodeWithTag("completed-set-1-reps-editor").performClick()
+        composeRule.onNodeWithTag("reps-picker-pointer-left").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-REPS-12").performClick()
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithTag("completed-set-1-reps-editor")
+                .fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("completed-set-1-reps").assertTextContains("12")
+
+        composeRule.onNodeWithTag("completed-set-1-edit").performClick()
+        composeRule.onNodeWithTag("completed-set-1-rir-editor").performClick()
+        composeRule.onNodeWithTag("rir-picker-pointer-left").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-RIR-none").performClick()
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithTag("completed-set-1-rir-editor")
+                .fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("completed-set-1-rir").assertTextContains("–")
     }
 
     @Test
@@ -171,11 +196,9 @@ class WorkoutSetEditingParityTest {
     private fun chooseActiveValue(
         fieldTag: String,
         optionTag: String,
-        appliesImmediately: Boolean = false,
     ) {
         composeRule.onNodeWithTag(fieldTag).performClick()
         composeRule.onNodeWithTag(optionTag).performClick()
-        if (!appliesImmediately) composeRule.onNodeWithTag("set-value-apply").performClick()
     }
 
     private fun setWorkoutContent(

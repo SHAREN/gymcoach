@@ -197,6 +197,99 @@ class SetValuePickerDialogTest {
         assertSymmetricConfirmationGeometry()
     }
 
+    @Test
+    fun repsUseTheSharedCenteredSnapWheelAndChevrons() {
+        setPicker(
+            kind = SetValuePickerKind.REPS,
+            value = "12",
+            options = (1..30).map(Int::toDouble),
+        )
+
+        waitForPointerValue("12", SetValuePickerKind.REPS)
+        assertOptionCentered("set-value-option-REPS-12", SetValuePickerKind.REPS)
+        composeRule.onNodeWithTag("reps-picker-pointer-left").fetchSemanticsNode()
+        composeRule.onNodeWithTag("reps-picker-pointer-right").fetchSemanticsNode()
+
+        composeRule.onNodeWithTag("reps-picker-list").performTouchInput { swipeUp() }
+        composeRule.waitUntil(5_000) { pointerValue(SetValuePickerKind.REPS) != "12" }
+        assertEquals(pointerValue(SetValuePickerKind.REPS), fieldText())
+    }
+
+    @Test
+    fun repsKeepManualValuesBeyondTheCommonWheelRange() {
+        var confirmedValue: String? = null
+        setPicker(
+            kind = SetValuePickerKind.REPS,
+            value = "12",
+            options = (1..30).map(Int::toDouble),
+            onConfirm = { confirmedValue = it },
+        )
+        waitForPointerValue("12", SetValuePickerKind.REPS)
+
+        repeat(2) { composeRule.onNodeWithTag("set-value-key-backspace").performClick() }
+        composeRule.onNodeWithTag("set-value-key-7").performClick()
+        composeRule.onNodeWithTag("set-value-key-5").performClick()
+        composeRule.onNodeWithTag("set-value-field-text").assertTextContains("75")
+        composeRule.onNodeWithTag("set-value-apply").performClick()
+
+        assertEquals("75", confirmedValue)
+    }
+
+    @Test
+    fun repsPreserveAnOpeningManualValueOutsideTheWheelRange() {
+        var confirmedValue: String? = null
+        setPicker(
+            kind = SetValuePickerKind.REPS,
+            value = "75",
+            options = (1..30).map(Int::toDouble),
+            onConfirm = { confirmedValue = it },
+        )
+
+        waitForPointerValue("30", SetValuePickerKind.REPS)
+        composeRule.onNodeWithTag("set-value-field-text").assertTextContains("75")
+        composeRule.onNodeWithTag("set-value-apply").performClick()
+
+        assertEquals("75", confirmedValue)
+    }
+
+    @Test
+    fun rirIncludesBlankAndUsesTheSharedSnapWheel() {
+        var confirmedValue: String? = null
+        setPicker(
+            kind = SetValuePickerKind.RIR,
+            value = "",
+            options = (0..5).map(Int::toDouble),
+            onConfirm = { confirmedValue = it },
+        )
+        val notSpecified = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(org.sharteman.gymcoach.R.string.not_specified)
+
+        waitForPointerValue(notSpecified, SetValuePickerKind.RIR)
+        assertOptionCentered("set-value-option-RIR-none", SetValuePickerKind.RIR)
+        composeRule.onNodeWithTag("rir-picker-pointer-left").fetchSemanticsNode()
+        composeRule.onNodeWithTag("rir-picker-pointer-right").fetchSemanticsNode()
+        composeRule.onNodeWithTag("rir-picker-list").performTouchInput { swipeUp() }
+        composeRule.waitUntil(5_000) { pointerValue(SetValuePickerKind.RIR) != notSpecified }
+        composeRule.onNodeWithTag("set-value-option-RIR-4").performClick()
+
+        assertEquals("4", confirmedValue)
+    }
+
+    @Test
+    fun rirBlankOptionConfirmsAnUnspecifiedValue() {
+        var confirmedValue: String? = null
+        setPicker(
+            kind = SetValuePickerKind.RIR,
+            value = "2",
+            options = (0..5).map(Int::toDouble),
+            onConfirm = { confirmedValue = it },
+        )
+
+        composeRule.onNodeWithTag("set-value-option-RIR-none").performClick()
+
+        assertEquals("", confirmedValue)
+    }
+
     private fun setHostedWeightPicker(confirmations: AtomicInteger) {
         composeRule.setContent {
             GymCoachTheme {
@@ -242,12 +335,36 @@ class SetValuePickerDialogTest {
         }
     }
 
-    private fun waitForPointerValue(expected: String) {
-        composeRule.waitUntil(5_000) { pointerValue() == expected }
+    private fun setPicker(
+        kind: SetValuePickerKind,
+        value: String,
+        options: List<Double>,
+        onConfirm: (String) -> Unit = {},
+    ) {
+        composeRule.setContent {
+            GymCoachTheme {
+                SetValuePickerDialog(
+                    kind = kind,
+                    value = value,
+                    options = options,
+                    unit = "KG",
+                    loadConstraints = null,
+                    onDismiss = {},
+                    onConfirm = onConfirm,
+                )
+            }
+        }
     }
 
-    private fun pointerValue(): String = composeRule
-        .onNodeWithTag("weight-picker-pointer")
+    private fun waitForPointerValue(
+        expected: String,
+        kind: SetValuePickerKind = SetValuePickerKind.WEIGHT,
+    ) {
+        composeRule.waitUntil(5_000) { pointerValue(kind) == expected }
+    }
+
+    private fun pointerValue(kind: SetValuePickerKind = SetValuePickerKind.WEIGHT): String = composeRule
+        .onNodeWithTag("${kind.name.lowercase()}-picker-pointer")
         .fetchSemanticsNode()
         .config[SemanticsProperties.StateDescription]
 
@@ -317,8 +434,11 @@ class SetValuePickerDialogTest {
         }
     }
 
-    private fun assertOptionCentered(optionTag: String) {
-        val pointerCenter = composeRule.onNodeWithTag("weight-picker-pointer")
+    private fun assertOptionCentered(
+        optionTag: String,
+        kind: SetValuePickerKind = SetValuePickerKind.WEIGHT,
+    ) {
+        val pointerCenter = composeRule.onNodeWithTag("${kind.name.lowercase()}-picker-pointer")
             .fetchSemanticsNode().boundsInRoot.center.y
         val optionCenter = composeRule.onNodeWithTag(optionTag)
             .fetchSemanticsNode().boundsInRoot.center.y
