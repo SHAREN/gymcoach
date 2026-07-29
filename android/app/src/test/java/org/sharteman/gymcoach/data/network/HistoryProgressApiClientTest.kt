@@ -69,7 +69,9 @@ class HistoryProgressApiClientTest {
         assertEquals("PATCH", update.method)
         assertEquals("/api/sets/set-1", update.path)
         assertEquals("Bearer token-1", update.getHeader("Authorization"))
-        assertTrue(update.body.readUtf8().contains("\"equipmentSnapshotAction\":\"REPLACE\""))
+        val updateBody = update.body.readUtf8()
+        assertTrue(updateBody.contains("\"equipmentSnapshotAction\":\"REPLACE\""))
+        assertTrue(!updateBody.contains("preferredEquipmentId"))
 
         val preserve = server.takeRequest()
         assertEquals("PATCH", preserve.method)
@@ -80,7 +82,9 @@ class HistoryProgressApiClientTest {
         val add = server.takeRequest()
         assertEquals("POST", add.method)
         assertEquals("/api/sessions/session-1/historical-sets", add.path)
-        assertTrue(add.body.readUtf8().contains("\"id\":\"mob_set_retry_1\""))
+        val addBody = add.body.readUtf8()
+        assertTrue(addBody.contains("\"id\":\"mob_set_retry_1\""))
+        assertTrue(!addBody.contains("preferredEquipmentId"))
 
         val delete = server.takeRequest()
         assertEquals("DELETE", delete.method)

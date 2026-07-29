@@ -536,6 +536,17 @@ interface GymCoachDao {
     }
 
     @Transaction
+    suspend fun saveBootstrapAndReplaceOperations(
+        bootstrap: BootstrapCacheEntity,
+        operationIdsToRemove: List<String>,
+        operation: SyncOutboxEntity,
+    ) {
+        saveBootstrap(bootstrap)
+        if (operationIdsToRemove.isNotEmpty()) removeOperations(operationIdsToRemove)
+        enqueue(operation)
+    }
+
+    @Transaction
     suspend fun saveExerciseReplacement(
         bootstrap: BootstrapCacheEntity,
         operation: SyncOutboxEntity,

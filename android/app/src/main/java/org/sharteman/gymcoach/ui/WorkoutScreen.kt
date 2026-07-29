@@ -210,6 +210,7 @@ fun WorkoutScreen(
     val exerciseChangeError = stringResource(R.string.exercise_change_error)
     val exerciseRemoveError = stringResource(R.string.exercise_remove_error)
     val exerciseAddError = stringResource(R.string.exercise_add_error)
+    val equipmentPreferenceSaveError = stringResource(R.string.equipment_preference_save_error)
 
     if (session == null || workout == null) {
         Scaffold(topBar = { TopAppBar(title = { Text("GymCoach") }) }) { padding ->
@@ -527,8 +528,27 @@ fun WorkoutScreen(
                         selectedEquipmentId = selectedProfile?.equipmentId,
                         selectionRequired = inventory.requiresEquipmentSelection && selectedProfile == null,
                         onSelect = { equipmentId ->
-                            selectedEquipmentByExercise = selectedEquipmentByExercise +
-                                (workoutEquipmentSelectionKey(current) to equipmentId)
+                            val key = workoutEquipmentSelectionKey(current)
+                            val previous = selectedEquipmentByExercise[key]
+                            selectedEquipmentByExercise = selectedEquipmentByExercise + (key to equipmentId)
+                            scope.launch {
+                                runCatching {
+                                    repository.updatePreferredEquipment(
+                                        gymId = requireNotNull(gym).id,
+                                        exerciseId = current.exerciseId,
+                                        preferredEquipmentId = equipmentId,
+                                    )
+                                }.onFailure {
+                                    if (selectedEquipmentByExercise[key] == equipmentId) {
+                                        selectedEquipmentByExercise = if (previous == null) {
+                                            selectedEquipmentByExercise - key
+                                        } else {
+                                            selectedEquipmentByExercise + (key to previous)
+                                        }
+                                    }
+                                    snackbar.showSnackbar(equipmentPreferenceSaveError)
+                                }
+                            }
                         },
                     )
                 }
@@ -1412,6 +1432,7 @@ internal fun EquipmentSelectorCard(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(equipment, key = { it.equipmentId }) { option ->
                         FilterChip(
+                            modifier = Modifier.testTag("equipment-option-${option.equipmentId}"),
                             selected = option.equipmentId == selectedEquipmentId,
                             onClick = { onSelect(option.equipmentId) },
                             label = { Text(option.equipmentName) },

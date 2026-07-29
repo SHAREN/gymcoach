@@ -371,6 +371,181 @@ describe('Android mobile API', () => {
     });
   });
 
+  it('persists exact exercise equipment preferences in order and reconciles stale selections safely', async () => {
+    const seeded = await seedUser('mobile-preferred-equipment@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const alternate = await db.gymEquipment.create({
+      data: {
+        gymId: seeded.gym.id,
+        name: '15 kg system bar',
+        equipmentType: 'BARBELL',
+        loadType: 'PLATE_LOADED',
+        baseLoadKg: 15,
+        platePoolId: seeded.equipment.platePoolId,
+        loadingSides: 2,
+        systemBarbellFamily: 'LARGE',
+        exerciseLinks: { create: { exerciseId: seeded.exercise.id } },
+      },
+    });
+    const first = {
+      operationId: 'preferred_equipment_first',
+      type: 'UPDATE_PREFERRED_EQUIPMENT',
+      gymId: seeded.gym.id,
+      exerciseId: seeded.exercise.id,
+      preferredEquipmentId: seeded.equipment.id,
+    };
+    const latest = {
+      ...first,
+      operationId: 'preferred_equipment_latest',
+      preferredEquipmentId: alternate.id,
+    };
+
+    const ordered = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        { operations: [first, latest] },
+        accessToken,
+      ),
+    );
+    expect(ordered.status).toBe(200);
+    expect((await ordered.json()).results).toMatchObject([
+      { status: 'APPLIED', result: { preferredEquipmentId: seeded.equipment.id } },
+      { status: 'APPLIED', result: { preferredEquipmentId: alternate.id } },
+    ]);
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: {
+          gymId_exerciseId: { gymId: seeded.gym.id, exerciseId: seeded.exercise.id },
+        },
+      }),
+    ).toMatchObject({ preferredEquipmentId: alternate.id, isEquipmentMirror: false });
+
+    const replay = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [latest] }, accessToken),
+    );
+    expect((await replay.json()).results[0]).toMatchObject({
+      status: 'DUPLICATE',
+      result: { preferredEquipmentId: alternate.id },
+    });
+
+    const unlinked = await db.gymEquipment.create({
+      data: {
+        gymId: seeded.gym.id,
+        name: 'Unlinked machine',
+        equipmentType: 'MACHINE',
+      },
+    });
+    const stale = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              ...latest,
+              operationId: 'preferred_equipment_stale',
+              preferredEquipmentId: unlinked.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await stale.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: { preferredEquipmentId: alternate.id, changed: false },
+    });
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: {
+          gymId_exerciseId: { gymId: seeded.gym.id, exerciseId: seeded.exercise.id },
+        },
+      }),
+    ).toMatchObject({ preferredEquipmentId: alternate.id });
+
+    await db.gymEquipmentExercise.delete({
+      where: {
+        equipmentId_exerciseId: {
+          equipmentId: alternate.id,
+          exerciseId: seeded.exercise.id,
+        },
+      },
+    });
+    const removedLink = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              ...latest,
+              operationId: 'preferred_equipment_removed_link',
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await removedLink.json()).results[0]).toMatchObject({
+      status: 'APPLIED',
+      result: { preferredEquipmentId: null, changed: true },
+    });
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: {
+          gymId_exerciseId: { gymId: seeded.gym.id, exerciseId: seeded.exercise.id },
+        },
+      }),
+    ).toMatchObject({ preferredEquipmentId: null });
+  });
+
+  it('isolates mobile equipment preferences by gym', async () => {
+    const seeded = await seedUser('mobile-preferred-gym@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const secondGym = await db.gym.create({
+      data: { userId: seeded.user.id, name: 'Second gym' },
+    });
+    const secondBar = await db.gymEquipment.create({
+      data: {
+        gymId: secondGym.id,
+        name: 'Second gym bar',
+        equipmentType: 'BARBELL',
+        exerciseLinks: { create: { exerciseId: seeded.exercise.id } },
+      },
+    });
+
+    const response = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'preferred_equipment_second_gym',
+              type: 'UPDATE_PREFERRED_EQUIPMENT',
+              gymId: secondGym.id,
+              exerciseId: seeded.exercise.id,
+              preferredEquipmentId: secondBar.id,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await response.json()).results[0]).toMatchObject({ status: 'APPLIED' });
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: {
+          gymId_exerciseId: { gymId: seeded.gym.id, exerciseId: seeded.exercise.id },
+        },
+      }),
+    ).toMatchObject({ preferredEquipmentId: seeded.equipment.id });
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: {
+          gymId_exerciseId: { gymId: secondGym.id, exerciseId: seeded.exercise.id },
+        },
+      }),
+    ).toMatchObject({ preferredEquipmentId: secondBar.id });
+  });
+
   it('keeps an open return session out of its own mobile history and exposes evidence fields', async () => {
     const seeded = await seedUser('mobile-return-history@test.dev');
     const { accessToken } = await loginDevice(seeded.user.email);

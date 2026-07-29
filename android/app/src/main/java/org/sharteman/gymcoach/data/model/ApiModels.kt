@@ -524,6 +524,15 @@ data class UpdateTargetSetsOperation(
 ) : SyncOperation
 
 @Serializable
+@SerialName("UPDATE_PREFERRED_EQUIPMENT")
+data class UpdatePreferredEquipmentOperation(
+    override val operationId: String,
+    val gymId: String,
+    val exerciseId: String,
+    val preferredEquipmentId: String? = null,
+) : SyncOperation
+
+@Serializable
 data class MobileWorkoutExerciseMutationDto(
     val id: String,
     val exerciseId: String,

@@ -31,6 +31,7 @@
     <string name="weight">Вес</string>
     <string name="displayed_load">Вес на шкале</string>
     <string name="select_equipment">Оборудование</string>
+    <string name="equipment_preference_save_error">Не удалось сохранить оборудование по умолчанию. Повторите попытку.</string>
     <string name="equipment_selection_required">Выберите тренажёр для этого подхода.</string>
     <string name="exercise_equipment_unavailable">Упражнение недоступно на сохранённом оборудовании этого зала.</string>
     <string name="return_calibration_title">Калибровка после перерыва</string>

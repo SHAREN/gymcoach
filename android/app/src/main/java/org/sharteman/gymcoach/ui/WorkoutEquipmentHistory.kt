@@ -143,15 +143,25 @@ internal fun resolveWorkoutEquipmentId(
 ): String? {
     if (selectedEquipmentId != null) return selectedEquipmentId
 
+    val inventory = resolveExerciseInventory(exercise, gym)
+    selectedEquipment(inventory)?.equipmentId?.let { preferred ->
+        return preferred
+    }
+
     val lastRecordedSet = sets
         .asSequence()
         .filter { set ->
             set.exerciseId == exercise.exerciseId && !set.deleted
         }
         .maxWithOrNull(compareBy<LocalSetEntity> { it.completedAt }.thenBy { it.setNumber })
-    if (lastRecordedSet != null) return lastRecordedSet.gymEquipmentId
+    if (
+        lastRecordedSet?.gymEquipmentId != null &&
+        inventory.equipment.any { it.equipmentId == lastRecordedSet.gymEquipmentId }
+    ) {
+        return lastRecordedSet.gymEquipmentId
+    }
 
-    return selectedEquipment(resolveExerciseInventory(exercise, gym))?.equipmentId
+    return null
 }
 
 internal data class WorkoutExerciseSetProgress(

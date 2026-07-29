@@ -40,6 +40,7 @@ import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySetDto
 import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
+import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.LoginRequest
 import org.sharteman.gymcoach.data.model.LoginResponse
 import org.sharteman.gymcoach.data.model.MobileFrozenEquipmentLoadSnapshot
@@ -58,6 +59,7 @@ import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
 import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
+import org.sharteman.gymcoach.data.model.UpdatePreferredEquipmentOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.model.mergeCoachingProfilesByTimestamp
@@ -87,6 +89,7 @@ import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.training.FrozenEquipmentLoadState
 import org.sharteman.gymcoach.training.frozenEquipmentLoadState
 import org.sharteman.gymcoach.training.isAchievableLoad
+import org.sharteman.gymcoach.training.resolveEquipmentType
 import java.time.Duration
 import java.time.Instant
 import java.io.IOException
@@ -263,6 +266,7 @@ class GymCoachRepository(
                     ?.set
                     ?.sessionId
             is UpdateTargetSetsOperation -> null
+            is UpdatePreferredEquipmentOperation -> null
             is MutateWorkoutExercisesOperation -> null
             is ReplaceProgramExerciseOperation -> null
             null -> null
@@ -343,6 +347,7 @@ class GymCoachRepository(
                     is DeleteSessionOperation -> queued.sessionId == sessionId
                     is DeleteSetOperation -> queued.setId in localSetIds
                     is UpdateTargetSetsOperation -> false
+                    is UpdatePreferredEquipmentOperation -> false
                     is MutateWorkoutExercisesOperation -> false
                     is ReplaceProgramExerciseOperation -> false
                     null -> entry.operationId == blocked.operationId
@@ -498,6 +503,16 @@ class GymCoachRepository(
                             current,
                             operation.programExerciseId,
                             operation.replacementExerciseId,
+                        )
+                    }
+                    is UpdatePreferredEquipmentOperation -> if (entry.status == "BLOCKED") {
+                        current
+                    } else {
+                        updatePreferredEquipmentInBootstrap(
+                            current,
+                            operation.gymId,
+                            operation.exerciseId,
+                            operation.preferredEquipmentId,
                         )
                     }
                     else -> current
@@ -925,6 +940,65 @@ class GymCoachRepository(
             outbox(operation),
         )
         scheduleSyncNow()
+    }
+
+    suspend fun updatePreferredEquipment(
+        gymId: String,
+        exerciseId: String,
+        preferredEquipmentId: String,
+    ) {
+        val changed = bootstrapCacheMutex.withLock {
+            val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
+            val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+            val gym = requireNotNull(bootstrap.gyms.firstOrNull { it.id == gymId }) {
+                "Gym was not found in the cached program."
+            }
+            val exercise = requireNotNull(bootstrap.catalog.firstOrNull { it.id == exerciseId }) {
+                "Exercise was not found in the cached catalog."
+            }
+            val expectedEquipmentType = resolveEquipmentType(exercise.equipmentType, exercise.name)
+            require(
+                gym.equipment.any { equipment ->
+                    equipment.id == preferredEquipmentId &&
+                        equipment.equipmentType == expectedEquipmentType &&
+                        equipment.exerciseLinks.any { it.exerciseId == exerciseId }
+                },
+            ) { "Equipment is not linked to this exercise in the selected gym." }
+            val currentPreference = gym.exerciseConfigs
+                .firstOrNull { it.exerciseId == exerciseId }
+                ?.preferredEquipmentId
+            if (currentPreference == preferredEquipmentId) return@withLock false
+            val priorOperations = dao.queuedOperations().mapNotNull { entry ->
+                val operation = runCatching {
+                    api.json.decodeFromString<SyncOperation>(entry.payloadJson)
+                }.getOrNull() as? UpdatePreferredEquipmentOperation
+                entry.operationId.takeIf {
+                    operation?.gymId == gymId && operation.exerciseId == exerciseId
+                }
+            }
+            val updated = updatePreferredEquipmentInBootstrap(
+                bootstrap,
+                gymId,
+                exerciseId,
+                preferredEquipmentId,
+            )
+            val operation = UpdatePreferredEquipmentOperation(
+                operationId = operationId(),
+                gymId = gymId,
+                exerciseId = exerciseId,
+                preferredEquipmentId = preferredEquipmentId,
+            )
+            dao.saveBootstrapAndReplaceOperations(
+                bootstrap = cached.copy(
+                    payloadJson = api.json.encodeToString(updated),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+                operationIdsToRemove = priorOperations,
+                operation = outbox(operation),
+            )
+            true
+        }
+        if (changed) scheduleSyncSafely()
     }
 
     suspend fun updateProgramExercisePrescription(
@@ -1670,6 +1744,7 @@ class GymCoachRepository(
                 is DeleteSetOperation -> queued.setId in localSetIds ||
                     queuedSetSessions[queued.setId] == sessionId
                 is UpdateTargetSetsOperation,
+                is UpdatePreferredEquipmentOperation,
                 is MutateWorkoutExercisesOperation,
                 is ReplaceProgramExerciseOperation,
                 null,
@@ -2934,6 +3009,7 @@ internal fun pendingMutationTargets(
                 deletedSessionIds += operation.sessionId
             }
             is UpdateTargetSetsOperation -> Unit
+            is UpdatePreferredEquipmentOperation -> Unit
             is MutateWorkoutExercisesOperation -> sessionIds += operation.sessionId
             is ReplaceProgramExerciseOperation -> Unit
         }
@@ -3160,6 +3236,38 @@ internal fun updateProgramExerciseTargetSets(
             session.copy(workout = session.workout?.let(::updateWorkout))
         },
     )
+}
+
+internal fun updatePreferredEquipmentInBootstrap(
+    bootstrap: BootstrapResponse,
+    gymId: String,
+    exerciseId: String,
+    preferredEquipmentId: String?,
+): BootstrapResponse {
+    val exercise = bootstrap.catalog.firstOrNull { it.id == exerciseId }
+    val expectedEquipmentType = exercise?.let { resolveEquipmentType(it.equipmentType, it.name) }
+    return bootstrap.copy(gyms = bootstrap.gyms.map { gym ->
+        if (gym.id != gymId) return@map gym
+        val linkedPreference = preferredEquipmentId?.takeIf { equipmentId ->
+            gym.equipment.any { equipment ->
+                equipment.id == equipmentId &&
+                    equipment.equipmentType == expectedEquipmentType &&
+                    equipment.exerciseLinks.any { it.exerciseId == exerciseId }
+            }
+        }
+        val current = gym.exerciseConfigs.firstOrNull { it.exerciseId == exerciseId }
+        if (current == null && linkedPreference == null) return@map gym
+        val updatedConfig = current?.copy(preferredEquipmentId = linkedPreference)
+            ?: GymExerciseConfigDto(
+                gymId = gymId,
+                exerciseId = exerciseId,
+                preferredEquipmentId = linkedPreference,
+            )
+        gym.copy(
+            exerciseConfigs = gym.exerciseConfigs
+                .filterNot { it.exerciseId == exerciseId } + updatedConfig,
+        )
+    })
 }
 
 internal fun applyExerciseInputToBootstrap(

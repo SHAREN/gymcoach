@@ -19,6 +19,76 @@ export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image
 export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[number];
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
+export async function setPreferredExerciseEquipment(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  gymId: string,
+  exerciseId: string,
+  preferredEquipmentId: string | null,
+  invalidPreference: 'REJECT' | 'CLEAR' = 'REJECT',
+): Promise<{ preferredEquipmentId: string | null; changed: boolean }> {
+  const gym = await tx.gym.findFirst({ where: { id: gymId, userId }, select: { id: true } });
+  if (!gym) throw new ApiError(400, 'Invalid gym.');
+  const exercise = await tx.exercise.findFirst({
+    where: { id: exerciseId, userId },
+    select: { id: true, name: true, equipmentType: true },
+  });
+  if (!exercise) throw new ApiError(400, 'Invalid exercise.');
+  const current = await tx.gymExerciseConfig.findUnique({
+    where: { gymId_exerciseId: { gymId, exerciseId } },
+    select: { preferredEquipmentId: true },
+  });
+
+  let resolvedPreference = preferredEquipmentId;
+  if (preferredEquipmentId) {
+    const preferred = await tx.gymEquipment.findFirst({
+      where: {
+        id: preferredEquipmentId,
+        gymId,
+        gym: { userId },
+        exerciseLinks: { some: { exerciseId } },
+      },
+      select: { id: true, equipmentType: true },
+    });
+    const exerciseType = resolveEquipmentType(exercise.equipmentType, exercise.name);
+    if (!preferred || preferred.equipmentType !== exerciseType) {
+      if (invalidPreference === 'REJECT') {
+        throw new ApiError(400, 'Preferred equipment must be linked and match the exercise type.');
+      }
+      if (current?.preferredEquipmentId !== preferredEquipmentId) {
+        return {
+          preferredEquipmentId: current?.preferredEquipmentId ?? null,
+          changed: false,
+        };
+      }
+      resolvedPreference = null;
+    }
+  }
+
+  if (current?.preferredEquipmentId === resolvedPreference) {
+    return { preferredEquipmentId: resolvedPreference, changed: false };
+  }
+  if (resolvedPreference) {
+    await tx.gymExerciseConfig.upsert({
+      where: { gymId_exerciseId: { gymId, exerciseId } },
+      update: { preferredEquipmentId: resolvedPreference, isEquipmentMirror: false },
+      create: {
+        gymId,
+        exerciseId,
+        isAvailable: true,
+        preferredEquipmentId: resolvedPreference,
+        isEquipmentMirror: false,
+      },
+    });
+  } else {
+    await tx.gymExerciseConfig.updateMany({
+      where: { gymId, exerciseId },
+      data: { preferredEquipmentId: null },
+    });
+  }
+  return { preferredEquipmentId: resolvedPreference, changed: true };
+}
+
 type UpsertGymEquipmentInput = GymEquipmentInput & {
   // REST and older Android clients may request an availability-only
   // GymExerciseConfig mirror. Equipment-first callers omit it and rely on

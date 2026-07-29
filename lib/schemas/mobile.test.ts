@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { mobileSyncBatchSchema, mobileSyncOperationSchema } from '@/lib/schemas/mobile';
 
 describe('mobileSyncOperationSchema', () => {
+  it('accepts an exact gym and exercise equipment preference', () => {
+    expect(
+      mobileSyncOperationSchema.parse({
+        operationId: 'preferred_equipment_schema_01',
+        type: 'UPDATE_PREFERRED_EQUIPMENT',
+        gymId: 'gym_schema_01',
+        exerciseId: 'exercise_schema_01',
+        preferredEquipmentId: 'equipment_schema_01',
+      }),
+    ).toMatchObject({
+      type: 'UPDATE_PREFERRED_EQUIPMENT',
+      gymId: 'gym_schema_01',
+      exerciseId: 'exercise_schema_01',
+      preferredEquipmentId: 'equipment_schema_01',
+    });
+  });
+
   it('accepts bounded planned set count updates', () => {
     expect(
       mobileSyncOperationSchema.parse({

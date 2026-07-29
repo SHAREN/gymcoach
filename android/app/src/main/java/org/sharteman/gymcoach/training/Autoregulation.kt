@@ -530,7 +530,7 @@ private fun adjustWeight(weight: Double, adjustmentPct: Double, increment: Doubl
     return roundTo(rounded)
 }
 
-private fun resolveEquipmentType(type: String, name: String): String {
+internal fun resolveEquipmentType(type: String, name: String): String {
     if (type != "OTHER") return type
     val lower = name.lowercase()
     return when {

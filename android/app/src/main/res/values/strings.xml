@@ -29,6 +29,7 @@
     <string name="weight">Weight</string>
     <string name="displayed_load">Displayed load</string>
     <string name="select_equipment">Equipment</string>
+    <string name="equipment_preference_save_error">The equipment default could not be saved. Try again.</string>
     <string name="equipment_selection_required">Select the machine used for this set.</string>
     <string name="exercise_equipment_unavailable">This exercise is not available with the saved equipment in this gym.</string>
     <string name="return_calibration_title">Return calibration</string>

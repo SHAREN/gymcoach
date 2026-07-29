@@ -206,6 +206,12 @@ export const mobileSyncOperationSchema = z
       previousTargetSets: z.number().int().min(1).max(20),
     }),
     operationBase.extend({
+      type: z.literal('UPDATE_PREFERRED_EQUIPMENT'),
+      gymId: opaqueId,
+      exerciseId: opaqueId,
+      preferredEquipmentId: opaqueId.nullable(),
+    }),
+    operationBase.extend({
       type: z.literal('MUTATE_WORKOUT_EXERCISES'),
       sessionId: opaqueId,
       workoutId: opaqueId,
@@ -255,7 +261,11 @@ export const mobileSyncOperationSchema = z
           }
         });
       }
-      if (!operation.previousExercises.some((item) => item.exerciseId === operation.previousActiveExerciseId)) {
+      if (
+        !operation.previousExercises.some(
+          (item) => item.exerciseId === operation.previousActiveExerciseId,
+        )
+      ) {
         ctx.addIssue({
           code: 'custom',
           path: ['previousActiveExerciseId'],

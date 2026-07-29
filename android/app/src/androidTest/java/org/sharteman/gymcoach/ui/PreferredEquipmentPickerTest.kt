@@ -1,11 +1,17 @@
 package org.sharteman.gymcoach.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -25,6 +31,7 @@ import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.training.resolveExerciseInventory
 import org.sharteman.gymcoach.training.selectedEquipment
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
+import java.util.concurrent.atomic.AtomicInteger
 
 class PreferredEquipmentPickerTest {
     @get:Rule
@@ -141,6 +148,79 @@ class PreferredEquipmentPickerTest {
             .fetchSemanticsNode().config[SemanticsProperties.StateDescription]
         assertNotEquals(initialPlatePreview, updatedPlatePreview)
         assertEquals(centeredWeight, updatedPlatePreview)
+    }
+
+    @Test
+    fun exerciseLevelSelectorUpdatesItsExplicitPreferenceCallback() {
+        val exercise = ProgramExerciseDto(
+            id = "pe_selector",
+            workoutId = "workout_selector",
+            exerciseId = "exercise_selector",
+            order = 1,
+            targetSets = 3,
+            targetRepsMin = 8,
+            targetRepsMax = 12,
+            targetRIR = 2,
+            restSec = 90,
+            exercise = ExerciseDto(
+                id = "exercise_selector",
+                name = "Cable pressdown",
+                muscleGroup = "TRICEPS",
+                category = "ISOLATION",
+                equipmentType = "CABLE",
+            ),
+        )
+        val gym = GymDto(
+            id = "gym_selector",
+            name = "Selector gym",
+            inventoryMode = "EQUIPMENT_FIRST",
+            equipment = listOf(
+                GymEquipmentDto(
+                    id = "cable_a",
+                    gymId = "gym_selector",
+                    name = "Cable A",
+                    equipmentType = "CABLE",
+                    loadType = "SELECTORIZED",
+                    weightOptions = listOf(5.0, 10.0),
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+                GymEquipmentDto(
+                    id = "cable_b",
+                    gymId = "gym_selector",
+                    name = "Cable B",
+                    equipmentType = "CABLE",
+                    loadType = "SELECTORIZED",
+                    weightOptions = listOf(5.0, 10.0),
+                    exerciseLinks = listOf(
+                        GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                    ),
+                ),
+            ),
+        )
+        val equipment = resolveExerciseInventory(exercise, gym).equipment
+        val preferenceWrites = AtomicInteger(0)
+
+        composeRule.setContent {
+            var selected by remember { mutableStateOf("cable_a") }
+            GymCoachTheme {
+                EquipmentSelectorCard(
+                    inventoryAvailable = true,
+                    equipment = equipment,
+                    selectedEquipmentId = selected,
+                    selectionRequired = false,
+                    onSelect = { equipmentId ->
+                        selected = equipmentId
+                        preferenceWrites.incrementAndGet()
+                    },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("equipment-option-cable_b").performClick()
+        composeRule.onNodeWithTag("equipment-option-cable_b").assertIsSelected()
+        assertEquals(1, preferenceWrites.get())
     }
 
     private fun plateLoadedBar(

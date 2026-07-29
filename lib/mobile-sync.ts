@@ -8,6 +8,7 @@ import type { MobileSyncOperation } from '@/lib/schemas/mobile';
 import { validateSetForCategory } from '@/lib/schemas/set';
 import { rederiveGoalAchievement, stampGoalIfAchieved } from '@/lib/set-goal-sync';
 import { resolveSetEquipmentUpdate } from '@/lib/set-equipment';
+import { setPreferredExerciseEquipment } from '@/lib/gym-equipment';
 
 export interface MobileSyncResult {
   operationId: string;
@@ -348,6 +349,21 @@ async function applyOperationInTransaction(
         previousTargetSets: current.targetSets,
         targetSets: operation.targetSets,
         changed: true,
+      };
+    }
+    case 'UPDATE_PREFERRED_EQUIPMENT': {
+      const preference = await setPreferredExerciseEquipment(
+        tx,
+        userId,
+        operation.gymId,
+        operation.exerciseId,
+        operation.preferredEquipmentId,
+        'CLEAR',
+      );
+      return {
+        entityType: 'GYM_EXERCISE_CONFIG',
+        entityId: `${operation.gymId}:${operation.exerciseId}`,
+        ...preference,
       };
     }
     case 'MUTATE_WORKOUT_EXERCISES': {

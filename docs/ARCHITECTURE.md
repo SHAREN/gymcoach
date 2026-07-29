@@ -55,6 +55,12 @@ state silently.
   command coordination, Wear Engine transport, and diagnostics.
 - `android/app/src/test/` and `android/app/src/androidTest/`: JVM and emulator
   coverage.
+- The active workout equipment selector persists one concrete
+  `preferredEquipmentId` for the exact gym and exercise through the ordered
+  Room mobile outbox. Cached bootstrap state is updated optimistically and
+  protects the newest queued choice from a stale refresh. Historical and
+  per-set equipment edits continue to update only their frozen set snapshots;
+  they do not change the exercise default.
 
 ### Huawei Lite Wearable
 

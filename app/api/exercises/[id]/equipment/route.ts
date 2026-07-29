@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
-import { reconcileLegacyExerciseConfigMirrors } from '@/lib/gym-equipment';
+import {
+  reconcileLegacyExerciseConfigMirrors,
+  setPreferredExerciseEquipment,
+} from '@/lib/gym-equipment';
 import { exerciseEquipmentUpdateSchema } from '@/lib/schemas/exercise';
 import { resolveEquipmentType } from '@/lib/gym-loads';
 
@@ -116,27 +119,13 @@ export async function PATCH(req: Request, props: Params) {
               })),
             });
           }
-          if (selection.preferredEquipmentId) {
-            await tx.gymExerciseConfig.upsert({
-              where: { gymId_exerciseId: { gymId: selection.gymId, exerciseId: id } },
-              update: {
-                preferredEquipmentId: selection.preferredEquipmentId,
-                isEquipmentMirror: false,
-              },
-              create: {
-                gymId: selection.gymId,
-                exerciseId: id,
-                isAvailable: true,
-                preferredEquipmentId: selection.preferredEquipmentId,
-                isEquipmentMirror: false,
-              },
-            });
-          } else {
-            await tx.gymExerciseConfig.updateMany({
-              where: { gymId: selection.gymId, exerciseId: id },
-              data: { preferredEquipmentId: null },
-            });
-          }
+          await setPreferredExerciseEquipment(
+            tx,
+            userId,
+            selection.gymId,
+            id,
+            selection.preferredEquipmentId,
+          );
           const systemBarIds = managedBarIdsByGym.get(selection.gymId) ?? [];
           if (resolvedExerciseType === 'BARBELL' && systemBarIds.length > 0) {
             const supportsSystemProfile = systemBarIds.every((equipmentId) =>

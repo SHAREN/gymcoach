@@ -369,33 +369,33 @@ class WorkoutEquipmentHistoryTest {
             equipmentRecommendation("cable-b", targetSets = 2, mode = "exercise-reintro"),
         )
 
-        val recordedEquipmentId = resolveWorkoutEquipmentId(
+        val persistedEquipmentId = resolveWorkoutEquipmentId(
             exercise = exercise,
             gym = gym,
             sets = recordedSets,
             selectedEquipmentId = null,
         )
-        val cableBRecommendation = selectReturnRecommendationForEquipment(
+        val persistedRecommendation = selectReturnRecommendationForEquipment(
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
             fallbackGymId = "gym-1",
             gymId = "gym-1",
-            gymEquipmentId = recordedEquipmentId,
+            gymEquipmentId = persistedEquipmentId,
         )
-        val cableBProgress = workoutExerciseSetProgress(
+        val persistedProgress = workoutExerciseSetProgress(
             exercises = listOf(exercise),
             sets = recordedSets,
-            returnRecommendations = mapOf(exercise.id to requireNotNull(cableBRecommendation)),
+            returnRecommendations = mapOf(exercise.id to requireNotNull(persistedRecommendation)),
         )
 
         val selectedEquipmentId = resolveWorkoutEquipmentId(
             exercise = exercise,
             gym = gym,
             sets = recordedSets,
-            selectedEquipmentId = "cable-a",
+            selectedEquipmentId = "cable-b",
         )
-        val cableARecommendation = selectReturnRecommendationForEquipment(
+        val explicitRecommendation = selectReturnRecommendationForEquipment(
             recommendations = recommendations,
             fallback = null,
             fallbackPerformance = null,
@@ -403,18 +403,18 @@ class WorkoutEquipmentHistoryTest {
             gymId = "gym-1",
             gymEquipmentId = selectedEquipmentId,
         )
-        val cableAProgress = workoutExerciseSetProgress(
+        val explicitProgress = workoutExerciseSetProgress(
             exercises = listOf(exercise),
             sets = recordedSets,
-            returnRecommendations = mapOf(exercise.id to requireNotNull(cableARecommendation)),
+            returnRecommendations = mapOf(exercise.id to requireNotNull(explicitRecommendation)),
         )
 
-        assertEquals("cable-b", recordedEquipmentId)
-        assertEquals(2, cableBProgress.single().plannedRows)
-        assertEquals(2, cableBProgress.sumOf { progress -> progress.plannedRows })
-        assertEquals("cable-a", selectedEquipmentId)
-        assertEquals(3, cableAProgress.single().plannedRows)
-        assertEquals(3, cableAProgress.sumOf { progress -> progress.plannedRows })
+        assertEquals("cable-a", persistedEquipmentId)
+        assertEquals(3, persistedProgress.single().plannedRows)
+        assertEquals(3, persistedProgress.sumOf { progress -> progress.plannedRows })
+        assertEquals("cable-b", selectedEquipmentId)
+        assertEquals(2, explicitProgress.single().plannedRows)
+        assertEquals(2, explicitProgress.sumOf { progress -> progress.plannedRows })
     }
 
     @Test

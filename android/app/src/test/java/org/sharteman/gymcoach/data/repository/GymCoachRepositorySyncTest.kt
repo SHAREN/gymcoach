@@ -51,6 +51,7 @@ import org.sharteman.gymcoach.data.model.FinishSessionOperation
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
+import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.GymPlateInventoryItemDto
 import org.sharteman.gymcoach.data.model.GymPlatePoolDto
 import org.sharteman.gymcoach.data.model.LoginRequest
@@ -75,6 +76,7 @@ import org.sharteman.gymcoach.data.model.SyncOperationResult
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.MobileSessionPayload
 import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
+import org.sharteman.gymcoach.data.model.UpdatePreferredEquipmentOperation
 import org.sharteman.gymcoach.data.model.UpsertSetOperation
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.network.MobileApi
@@ -1531,6 +1533,89 @@ class GymCoachRepositorySyncTest {
         assertEquals("Controlled eccentric", updated.notes)
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
         assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun preferredEquipmentIsOptimisticDurableAndProtectedFromStaleBootstrap() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        fixture.repository.refreshBootstrap()
+
+        fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_b")
+
+        assertEquals("equipment_b", fixture.dao.cachedPreferredEquipment("gym_1", "exercise_1"))
+        val queued = fixture.dao.queuedOperations()
+        assertEquals(1, queued.size)
+        assertEquals("equipment_b", fixture.decodePreferredEquipmentOperation(queued.single()).preferredEquipmentId)
+        val scheduledAfterFirstSelection = fixture.syncCounter.count
+
+        fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_b")
+
+        assertEquals(listOf(queued.single().operationId), fixture.dao.queuedOperations().map { it.operationId })
+        assertEquals(scheduledAfterFirstSelection, fixture.syncCounter.count)
+
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        val refreshed = fixture.repository.refreshBootstrap()
+        assertEquals(
+            "equipment_b",
+            refreshed.gyms.single().exerciseConfigs.single().preferredEquipmentId,
+        )
+
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = { fixture.syncCounter.count++ },
+            schedulePeriodicSync = {},
+        )
+        assertEquals(
+            "equipment_b",
+            restarted.cachedBootstrapSnapshot()?.gyms?.single()?.exerciseConfigs?.single()
+                ?.preferredEquipmentId,
+        )
+    }
+
+    @Test
+    fun newerPreferredEquipmentReplacesOlderQueuedChoiceAndSurvivesOfflineRetry() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        fixture.repository.refreshBootstrap()
+        fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_b")
+        fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_a")
+
+        val queued = fixture.dao.queuedOperations()
+        assertEquals(1, queued.size)
+        assertEquals("equipment_a", fixture.decodePreferredEquipmentOperation(queued.single()).preferredEquipmentId)
+
+        fixture.api.syncFailure = IOException("offline")
+        assertTrue(runCatching { fixture.repository.syncPending() }.exceptionOrNull() is IOException)
+        assertEquals("equipment_a", fixture.dao.cachedPreferredEquipment("gym_1", "exercise_1"))
+        assertEquals(1, fixture.dao.queuedOperations().size)
+
+        fixture.api.syncFailure = null
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        assertTrue(fixture.repository.syncPending())
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals("equipment_a", fixture.dao.cachedPreferredEquipment("gym_1", "exercise_1"))
+    }
+
+    @Test
+    fun invalidOrUnlinkedPreferredEquipmentNeverChangesCacheOrOutbox() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        fixture.repository.refreshBootstrap()
+
+        val result = runCatching {
+            fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_unlinked")
+        }
+        val wrongType = runCatching {
+            fixture.repository.updatePreferredEquipment("gym_1", "exercise_1", "equipment_wrong")
+        }
+
+        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(wrongType.exceptionOrNull() is IllegalArgumentException)
+        assertEquals("equipment_a", fixture.dao.cachedPreferredEquipment("gym_1", "exercise_1"))
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -3085,6 +3170,51 @@ class GymCoachRepositorySyncTest {
             ),
         )
 
+    private fun preferredEquipmentBootstrap(
+        preferredEquipmentId: String?,
+    ): BootstrapResponse {
+        val base = bootstrapWithTargetSets(3)
+        fun equipment(id: String, name: String) = GymEquipmentDto(
+            id = id,
+            gymId = "gym_1",
+            name = name,
+            equipmentType = "BARBELL",
+            loadType = "PLATE_LOADED",
+            baseLoadKg = if (id == "equipment_a") 20.0 else 15.0,
+            exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = "exercise_1")),
+        )
+        return base.copy(
+            profile = base.profile.copy(activeGymId = "gym_1"),
+            gyms = listOf(
+                GymDto(
+                    id = "gym_1",
+                    name = "Preferred equipment gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    exerciseConfigs = listOf(
+                        GymExerciseConfigDto(
+                            gymId = "gym_1",
+                            exerciseId = "exercise_1",
+                            preferredEquipmentId = preferredEquipmentId,
+                        ),
+                    ),
+                    equipment = listOf(
+                        equipment("equipment_a", "20 kg bar"),
+                        equipment("equipment_b", "15 kg bar"),
+                        GymEquipmentDto(
+                            id = "equipment_wrong",
+                            gymId = "gym_1",
+                            name = "Wrong machine",
+                            equipmentType = "MACHINE",
+                            exerciseLinks = listOf(
+                                GymEquipmentExerciseDto(exerciseId = "exercise_1"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
     private fun equipmentSnapshotRevision(set: LocalSetEntity): String? =
         set.equipmentLoadSnapshotJson?.let { snapshot ->
             TestApi.jsonConfig.parseToJsonElement(snapshot)
@@ -3322,6 +3452,11 @@ class GymCoachRepositorySyncTest {
 
         fun decodeTargetSetsOperation(entity: SyncOutboxEntity): UpdateTargetSetsOperation =
             api.json.decodeFromString<SyncOperation>(entity.payloadJson) as UpdateTargetSetsOperation
+
+        fun decodePreferredEquipmentOperation(
+            entity: SyncOutboxEntity,
+        ): UpdatePreferredEquipmentOperation =
+            api.json.decodeFromString<SyncOperation>(entity.payloadJson) as UpdatePreferredEquipmentOperation
 
         fun decodeReplacementOperation(entity: SyncOutboxEntity): ReplaceProgramExerciseOperation =
             api.json.decodeFromString<SyncOperation>(entity.payloadJson) as ReplaceProgramExerciseOperation
@@ -3859,6 +3994,16 @@ class GymCoachRepositorySyncTest {
             val decoded = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(cached.payloadJson)
             findProgramExerciseTargetSets(decoded, "program_exercise_1")
         }
+
+        suspend fun cachedPreferredEquipment(gymId: String, exerciseId: String): String? =
+            getBootstrap()?.let { cached ->
+                TestApi.jsonConfig.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                    .gyms
+                    .firstOrNull { it.id == gymId }
+                    ?.exerciseConfigs
+                    ?.firstOrNull { it.exerciseId == exerciseId }
+                    ?.preferredEquipmentId
+            }
 
         private fun updateOperation(operationId: String, transform: (SyncOutboxEntity) -> SyncOutboxEntity) {
             val index = outbox.indexOfFirst { it.operationId == operationId }
