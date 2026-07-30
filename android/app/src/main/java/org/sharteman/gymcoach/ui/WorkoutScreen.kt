@@ -289,7 +289,7 @@ fun WorkoutScreen(
     val inventory = resolveExerciseInventory(current, gym, currentEquipmentId)
     val selectedProfile = selectedEquipment(inventory)
     val legacyLastPerformance = bootstrap?.lastPerformances?.get(current.exerciseId)
-    val lastPerformance = selectLastPerformanceForEquipment(
+    val equipmentLastPerformance = selectLastPerformanceForEquipment(
         performances = bootstrap?.lastPerformancesByEquipment?.get(current.exerciseId),
         fallback = legacyLastPerformance,
         gymId = session?.gymId,
@@ -302,9 +302,15 @@ fun WorkoutScreen(
     val comparableSets = selectedProfile?.let { profile ->
         currentSets.filter { it.gymEquipmentId == profile.equipmentId }
     } ?: currentSets
-    val previousPerformance = lastPerformance?.takeIf {
-        it.sessionId != sessionId
-    }
+    val previousPerformanceSelection = selectPreviousExercisePerformance(
+        exerciseId = current.exerciseId,
+        historyByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty(),
+        fallback = legacyLastPerformance,
+        currentSessionId = sessionId,
+        gymId = session?.gymId,
+        gymEquipmentId = currentEquipmentId,
+    )
+    val previousPerformance = previousPerformanceSelection?.performance
     val exerciseSetProgress = workoutExerciseSetProgress(
         exercises = exercises,
         sets = allSets,
@@ -389,7 +395,7 @@ fun WorkoutScreen(
         recommendation = recommendation,
         equipmentId = selectedProfile?.equipmentId,
         returnSuggestedWeight = returnRecommendation?.suggestedWeight,
-        lastPerformanceSessionId = lastPerformance?.sessionId,
+        lastPerformanceSessionId = equipmentLastPerformance?.sessionId,
     )
     var lastAppliedAutofillKey by rememberSaveable(current.id, current.exerciseId) {
         mutableStateOf<String?>(null)
@@ -431,7 +437,7 @@ fun WorkoutScreen(
         } else {
             recommendation?.weight
                 ?: returnRecommendation.suggestedWeight
-                ?: lastPerformance?.maxWeight
+                ?: equipmentLastPerformance?.maxWeight
         }
         val initialWeight = if (returnRecommendation == null) {
             null
@@ -507,7 +513,10 @@ fun WorkoutScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .testTag("workout-content"),
             contentPadding = PaddingValues(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -676,13 +685,10 @@ fun WorkoutScreen(
                     )
                 }
             }
-            if (
-                previousPerformance != null &&
-                previousPerformance.sets.isNotEmpty()
-            ) {
+            if (previousPerformanceSelection != null) {
                 item {
                     PreviousPerformanceCard(
-                        performance = previousPerformance,
+                        selection = previousPerformanceSelection,
                         unit = unit,
                         metrics = setTableMetrics,
                         onMetricToggle = onSetTableMetricToggle,
@@ -2644,15 +2650,19 @@ internal fun RestTimerCard(
 }
 
 @Composable
-private fun PreviousPerformanceCard(
-    performance: LastPerformanceDto,
+internal fun PreviousPerformanceCard(
+    selection: PreviousPerformanceSelection,
     unit: String,
     metrics: List<SetTableMetric>,
     onMetricToggle: (SetTableMetric, Boolean) -> Unit,
 ) {
+    val performance = selection.performance
     var metricDialogOpen by rememberSaveable { mutableStateOf(false) }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .testTag("previous-performance-card"),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
         colors = CardDefaults.cardColors(
@@ -2660,15 +2670,45 @@ private fun PreviousPerformanceCard(
         ),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                stringResource(
-                    R.string.previous_workout,
-                    formatPerformanceDate(performance.sessionStartedAt),
-                ),
+            Column(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    stringResource(
+                        R.string.previous_workout,
+                        formatPerformanceDate(performance.sessionStartedAt),
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (selection.equipmentNames.isNotEmpty()) {
+                    Text(
+                        stringResource(
+                            R.string.previous_workout_equipment,
+                            selection.equipmentNames.joinToString(),
+                        ),
+                        modifier = Modifier.testTag("previous-performance-equipment"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                when (selection.comparability) {
+                    PreviousPerformanceComparability.EXACT_EQUIPMENT -> Unit
+                    PreviousPerformanceComparability.EQUIPMENT_NOT_RECORDED -> Text(
+                        stringResource(R.string.previous_workout_equipment_not_recorded),
+                        modifier = Modifier.testTag("previous-performance-provenance"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    PreviousPerformanceComparability.DIFFERENT_EQUIPMENT -> Text(
+                        stringResource(R.string.previous_workout_different_equipment),
+                        modifier = Modifier.testTag("previous-performance-provenance"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp)) {
                 TableHeaderCell("#", 0.52f)
@@ -3205,19 +3245,23 @@ internal fun WorkoutScreenPreview(
         )
     }
     val previous = remember {
-        LastPerformanceDto(
-            exerciseId = "romanian-deadlift",
-            sessionId = "previous-session",
-            sessionStartedAt = "2026-07-06T10:00:00Z",
-            sets = listOf(
-                PerformanceSetDto(95.0, 10, 2),
-                PerformanceSetDto(95.0, 10, 2),
-                PerformanceSetDto(95.0, 9, 1),
-                PerformanceSetDto(90.0, 10, 2),
-                PerformanceSetDto(85.0, 12, 1, isDropSet = true),
+        PreviousPerformanceSelection(
+            performance = LastPerformanceDto(
+                exerciseId = "romanian-deadlift",
+                sessionId = "previous-session",
+                sessionStartedAt = "2026-07-06T10:00:00Z",
+                sets = listOf(
+                    PerformanceSetDto(95.0, 10, 2),
+                    PerformanceSetDto(95.0, 10, 2),
+                    PerformanceSetDto(95.0, 9, 1),
+                    PerformanceSetDto(90.0, 10, 2),
+                    PerformanceSetDto(85.0, 12, 1, isDropSet = true),
+                ),
+                maxWeight = 95.0,
+                repsAtMaxWeight = 10,
             ),
-            maxWeight = 95.0,
-            repsAtMaxWeight = 10,
+            comparability = PreviousPerformanceComparability.DIFFERENT_EQUIPMENT,
+            equipmentNames = listOf("Olympic bar"),
         )
     }
     var weight by remember { mutableStateOf("97.5") }
@@ -3286,7 +3330,10 @@ internal fun WorkoutScreenPreview(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .testTag("workout-content"),
             contentPadding = PaddingValues(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -3303,7 +3350,7 @@ internal fun WorkoutScreenPreview(
                     mode = StrengthSetEditorMode.ACTIVE,
                     sets = if (previewSelectedIndex == 0) sets else emptyList(),
                     target = previewTarget,
-                    lastPerformance = previous,
+                    lastPerformance = previous.performance,
                     unit = "KG",
                     metrics = metrics,
                     onMetricToggle = { metric, enabled ->
@@ -3360,7 +3407,7 @@ internal fun WorkoutScreenPreview(
             }
             item {
                 PreviousPerformanceCard(
-                    performance = previous,
+                    selection = previous,
                     unit = "KG",
                     metrics = metrics,
                     onMetricToggle = { metric, enabled ->
@@ -3485,7 +3532,7 @@ internal fun WorkoutScreenPreview(
         ExerciseDetailsDialog(
             exercise = exercise,
             history = emptyList(),
-            fallbackPerformance = previous.copy(exerciseId = exercise.id),
+            fallbackPerformance = previous.performance.copy(exerciseId = exercise.id),
             progressPoints = emptyList(),
             unit = "KG",
             serverUrl = "https://gymcoach7.sharteman.duckdns.org",

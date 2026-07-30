@@ -27,11 +27,14 @@ interface MobileExerciseHistoryRow {
   exerciseId: string;
   sessionId: string;
   startedAt: Date;
+  gymId: string | null;
   setNumber: number;
   weight: number;
   reps: number;
   rir: number | null;
   isDropSet: boolean;
+  gymEquipmentId: string | null;
+  equipmentName: string | null;
   durationSec: number | null;
   distanceM: number | null;
   avgHr: number | null;
@@ -41,12 +44,15 @@ interface MobileExerciseHistoryRow {
 interface MobileExerciseHistorySession {
   sessionId: string;
   startedAt: string;
+  gymId: string | null;
   sets: Array<{
     setNumber: number;
     weight: number;
     reps: number;
     rir: number | null;
     isDropSet: boolean;
+    gymEquipmentId: string | null;
+    equipmentName: string | null;
     durationSec: number | null;
     distanceM: number | null;
     avgHr: number | null;
@@ -161,11 +167,14 @@ export async function buildMobileBootstrap(userId: string) {
         ranked."exerciseId" AS "exerciseId",
         ranked."sessionId" AS "sessionId",
         ranked."startedAt" AS "startedAt",
+        training_session."gymId" AS "gymId",
         logged_set."setNumber" AS "setNumber",
         logged_set.weight,
         logged_set.reps,
         logged_set.rir,
         logged_set."isDropSet" AS "isDropSet",
+        logged_set."gymEquipmentId" AS "gymEquipmentId",
+        logged_set."equipmentNameSnapshot" AS "equipmentName",
         logged_set."durationSec" AS "durationSec",
         logged_set."distanceM" AS "distanceM",
         logged_set."avgHr" AS "avgHr",
@@ -174,6 +183,8 @@ export async function buildMobileBootstrap(userId: string) {
       INNER JOIN "Set" AS logged_set
         ON logged_set."sessionId" = ranked."sessionId"
         AND logged_set."exerciseId" = ranked."exerciseId"
+      INNER JOIN "Session" AS training_session
+        ON training_session.id = ranked."sessionId"
       WHERE ranked.session_rank <= ${MOBILE_EXERCISE_HISTORY_SESSION_LIMIT}
         AND logged_set."isWarmup" = false
       ORDER BY
@@ -447,6 +458,7 @@ export async function buildMobileBootstrap(userId: string) {
       session = {
         sessionId: row.sessionId,
         startedAt: row.startedAt.toISOString(),
+        gymId: row.gymId,
         sets: [],
       };
       exerciseSessions.push(session);
@@ -457,6 +469,8 @@ export async function buildMobileBootstrap(userId: string) {
       reps: row.reps,
       rir: row.rir,
       isDropSet: row.isDropSet,
+      gymEquipmentId: row.gymEquipmentId,
+      equipmentName: row.equipmentName,
       durationSec: row.durationSec,
       distanceM: row.distanceM,
       avgHr: row.avgHr,

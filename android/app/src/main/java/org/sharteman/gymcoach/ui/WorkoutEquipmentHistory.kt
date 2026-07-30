@@ -2,12 +2,15 @@ package org.sharteman.gymcoach.ui
 
 import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.EquipmentReturnRecommendationDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.LastPerformanceDto
+import org.sharteman.gymcoach.data.model.PerformanceSetDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 import org.sharteman.gymcoach.training.resolveExerciseInventory
 import org.sharteman.gymcoach.training.selectedEquipment
+import java.time.Instant
 
 internal fun sameEquipmentIdentity(
     firstGymId: String?,
@@ -28,6 +31,131 @@ internal fun selectLastPerformanceForEquipment(
     ?: fallback?.takeIf { performance ->
         sameEquipmentIdentity(performance.gymId, performance.gymEquipmentId, gymId, gymEquipmentId)
     }
+
+internal enum class PreviousPerformanceComparability {
+    EXACT_EQUIPMENT,
+    EQUIPMENT_NOT_RECORDED,
+    DIFFERENT_EQUIPMENT,
+}
+
+internal data class PreviousPerformanceSelection(
+    val performance: LastPerformanceDto,
+    val comparability: PreviousPerformanceComparability,
+    val equipmentNames: List<String>,
+)
+
+/**
+ * Selects display-only exercise history. The selected equipment is deliberately
+ * not part of candidate selection; it is used only to describe comparability.
+ * Equipment-aware recommendations continue to use selectLastPerformanceForEquipment.
+ */
+internal fun selectPreviousExercisePerformance(
+    exerciseId: String,
+    historyByExerciseId: Map<String, List<ExerciseHistorySessionDto>>,
+    fallback: LastPerformanceDto?,
+    currentSessionId: String,
+    gymId: String?,
+    gymEquipmentId: String?,
+): PreviousPerformanceSelection? {
+    val historyCandidates = historyByExerciseId[exerciseId]
+        .orEmpty()
+        .asSequence()
+        .filter { it.sessionId != currentSessionId && it.sets.isNotEmpty() }
+        .distinctBy { it.sessionId }
+        .map { session ->
+            val sets = session.sets.map { set ->
+                PerformanceSetDto(
+                    weight = set.weight,
+                    reps = set.reps,
+                    rir = set.rir,
+                    isDropSet = set.isDropSet,
+                    gymEquipmentId = set.gymEquipmentId,
+                )
+            }
+            val maxWeight = sets.maxOf { it.weight }
+            PreviousPerformanceCandidate(
+                performance = LastPerformanceDto(
+                    exerciseId = exerciseId,
+                    sessionId = session.sessionId,
+                    sessionStartedAt = session.startedAt,
+                    gymId = session.gymId,
+                    gymEquipmentId = sets.mapNotNull { it.gymEquipmentId }.distinct()
+                        .singleOrNull(),
+                    equipmentName = session.sets.mapNotNull { it.equipmentName?.trim() }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                        .singleOrNull(),
+                    sets = sets,
+                    maxWeight = maxWeight,
+                    repsAtMaxWeight = sets.filter { it.weight == maxWeight }.maxOf { it.reps },
+                ),
+                equipmentNames = session.sets.mapNotNull { it.equipmentName?.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct(),
+                sourcePriority = 1,
+            )
+        }
+        .toList()
+
+    val fallbackCandidate = fallback
+        ?.takeIf {
+            it.exerciseId == exerciseId &&
+                it.sessionId != currentSessionId &&
+                it.sets.isNotEmpty()
+        }
+        ?.let { performance ->
+            PreviousPerformanceCandidate(
+                performance = performance.copy(
+                    sets = performance.sets.map { set ->
+                        if (set.gymEquipmentId != null || performance.gymEquipmentId == null) {
+                            set
+                        } else {
+                            set.copy(gymEquipmentId = performance.gymEquipmentId)
+                        }
+                    },
+                ),
+                equipmentNames = listOfNotNull(performance.equipmentName?.trim())
+                    .filter { it.isNotEmpty() },
+                sourcePriority = 0,
+            )
+        }
+    val selected = (historyCandidates + listOfNotNull(fallbackCandidate))
+        .maxWithOrNull(
+            compareBy<PreviousPerformanceCandidate>(
+                { performanceTimestamp(it.performance.sessionStartedAt) },
+                { it.sourcePriority },
+            ),
+        )
+        ?: return null
+
+    val recordedEquipmentIds = selected.performance.sets
+        .mapNotNull { it.gymEquipmentId }
+        .distinct()
+    val hasUnrecordedEquipment = selected.performance.sets.any { it.gymEquipmentId == null }
+    val comparability = when {
+        recordedEquipmentIds.isEmpty() || hasUnrecordedEquipment ->
+            PreviousPerformanceComparability.EQUIPMENT_NOT_RECORDED
+        selected.performance.gymId != gymId ||
+            gymEquipmentId == null ||
+            recordedEquipmentIds.any { it != gymEquipmentId } ->
+            PreviousPerformanceComparability.DIFFERENT_EQUIPMENT
+        else -> PreviousPerformanceComparability.EXACT_EQUIPMENT
+    }
+    return PreviousPerformanceSelection(
+        performance = selected.performance,
+        comparability = comparability,
+        equipmentNames = selected.equipmentNames,
+    )
+}
+
+private data class PreviousPerformanceCandidate(
+    val performance: LastPerformanceDto,
+    val equipmentNames: List<String>,
+    val sourcePriority: Int,
+)
+
+private fun performanceTimestamp(value: String): Long =
+    runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(Long.MIN_VALUE)
 
 internal fun selectReturnRecommendationForEquipment(
     recommendations: List<EquipmentReturnRecommendationDto>?,

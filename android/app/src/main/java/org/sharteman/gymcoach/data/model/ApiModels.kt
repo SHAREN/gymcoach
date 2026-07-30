@@ -305,6 +305,7 @@ data class PerformanceSetDto(
 data class ExerciseHistorySessionDto(
     val sessionId: String,
     val startedAt: String,
+    val gymId: String? = null,
     val sets: List<ExerciseHistorySetDto> = emptyList(),
     val localOnly: Boolean = false,
 )
@@ -316,6 +317,8 @@ data class ExerciseHistorySetDto(
     val reps: Int,
     val rir: Int? = null,
     val isDropSet: Boolean = false,
+    val gymEquipmentId: String? = null,
+    val equipmentName: String? = null,
     val durationSec: Int? = null,
     val distanceM: Double? = null,
     val avgHr: Int? = null,

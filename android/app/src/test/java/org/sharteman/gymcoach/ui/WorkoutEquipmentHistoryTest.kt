@@ -7,6 +7,8 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.EquipmentReturnRecommendationDto
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
+import org.sharteman.gymcoach.data.model.ExerciseHistorySetDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
@@ -566,6 +568,209 @@ class WorkoutEquipmentHistoryTest {
         assertEquals(mapOf(workoutEquipmentSelectionKey(second) to "cable-b"), retained)
     }
 
+    @Test
+    fun `display history remains visible when selected equipment changes`() {
+        val history = mapOf(
+            "ez-curl" to listOf(
+                historySession(
+                    sessionId = "previous-ez",
+                    gymEquipmentId = "ez-bar-a",
+                    equipmentName = "EZ bar A",
+                ),
+            ),
+        )
+
+        val onOtherBar = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = history,
+            fallback = null,
+            currentSessionId = "current",
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-b",
+        )
+        val onOriginalBar = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = history,
+            fallback = null,
+            currentSessionId = "current",
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-a",
+        )
+
+        assertEquals("previous-ez", onOtherBar?.performance?.sessionId)
+        assertEquals(onOtherBar?.performance?.sets, onOriginalBar?.performance?.sets)
+        assertEquals(
+            PreviousPerformanceComparability.DIFFERENT_EQUIPMENT,
+            onOtherBar?.comparability,
+        )
+        assertEquals(
+            PreviousPerformanceComparability.EXACT_EQUIPMENT,
+            onOriginalBar?.comparability,
+        )
+        assertEquals(listOf("EZ bar A"), onOtherBar?.equipmentNames)
+    }
+
+    @Test
+    fun `legacy unlinked history is displayable without mixing similar exercises`() {
+        val history = mapOf(
+            "ez-curl" to listOf(
+                historySession(
+                    sessionId = "legacy-ez",
+                    gymEquipmentId = null,
+                    equipmentName = null,
+                ),
+            ),
+            "barbell-curl" to listOf(
+                historySession(
+                    sessionId = "similar-name-other-id",
+                    gymEquipmentId = "straight-bar",
+                    equipmentName = "Straight bar",
+                ),
+            ),
+        )
+
+        val selected = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = history,
+            fallback = null,
+            currentSessionId = "current",
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-a",
+        )
+
+        assertEquals("legacy-ez", selected?.performance?.sessionId)
+        assertEquals(1, selected?.performance?.sets?.size)
+        assertEquals(
+            PreviousPerformanceComparability.EQUIPMENT_NOT_RECORDED,
+            selected?.comparability,
+        )
+    }
+
+    @Test
+    fun `missing exact exercise history stays empty`() {
+        val selected = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = mapOf(
+                "barbell-curl" to listOf(
+                    historySession(
+                        sessionId = "other-exercise",
+                        gymEquipmentId = "straight-bar",
+                        equipmentName = "Straight bar",
+                    ),
+                ),
+            ),
+            fallback = null,
+            currentSessionId = "current",
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-a",
+        )
+
+        assertEquals(null, selected)
+    }
+
+    @Test
+    fun `exercise and fallback sources do not duplicate a previous session`() {
+        val session = historySession(
+            sessionId = "same-session",
+            gymEquipmentId = "ez-bar-a",
+            equipmentName = "EZ bar A",
+        )
+        val fallback = LastPerformanceDto(
+            exerciseId = "ez-curl",
+            sessionId = "same-session",
+            sessionStartedAt = session.startedAt,
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-a",
+            equipmentName = "EZ bar A",
+            sets = listOf(
+                org.sharteman.gymcoach.data.model.PerformanceSetDto(
+                    weight = 30.0,
+                    reps = 10,
+                    rir = 2,
+                    gymEquipmentId = "ez-bar-a",
+                ),
+            ),
+            maxWeight = 30.0,
+            repsAtMaxWeight = 10,
+        )
+
+        val selected = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = mapOf("ez-curl" to listOf(session, session)),
+            fallback = fallback,
+            currentSessionId = "current",
+            gymId = "gym-1",
+            gymEquipmentId = "ez-bar-a",
+        )
+
+        assertEquals("same-session", selected?.performance?.sessionId)
+        assertEquals(1, selected?.performance?.sets?.size)
+    }
+
+    @Test
+    fun `display fallback excludes current session and recommendation remains equipment scoped`() {
+        val previous = historySession(
+            sessionId = "previous",
+            gymEquipmentId = "ez-bar-a",
+            equipmentName = "EZ bar A",
+        )
+        val current = historySession(
+            sessionId = "current",
+            gymEquipmentId = "ez-bar-b",
+            equipmentName = "EZ bar B",
+        ).copy(startedAt = "2026-07-20T10:00:00.000Z")
+        val history = mapOf("ez-curl" to listOf(current, previous))
+        val displayOnBarA = selectPreviousExercisePerformance(
+            "ez-curl", history, null, "current", "gym-1", "ez-bar-a",
+        )
+        val displayOnBarB = selectPreviousExercisePerformance(
+            "ez-curl", history, null, "current", "gym-1", "ez-bar-b",
+        )
+        val recommendations = listOf(
+            equipmentRecommendation("ez-bar-a", targetSets = 3, mode = "normal"),
+            equipmentRecommendation("ez-bar-b", targetSets = 2, mode = "exercise-reintro"),
+        )
+        val recommendationA = selectReturnRecommendationForEquipment(
+            recommendations, null, null, null, "gym-1", "ez-bar-a",
+        )
+        val recommendationB = selectReturnRecommendationForEquipment(
+            recommendations, null, null, null, "gym-1", "ez-bar-b",
+        )
+
+        assertEquals("previous", displayOnBarA?.performance?.sessionId)
+        assertEquals(
+            displayOnBarA?.performance?.sets,
+            displayOnBarB?.performance?.sets,
+        )
+        assertEquals(3, recommendationA?.targetSets)
+        assertEquals(2, recommendationB?.targetSets)
+    }
+
+    @Test
+    fun `gym switch and deleted equipment snapshot remain visible as different equipment`() {
+        val deletedSnapshot = historySession(
+            sessionId = "deleted-snapshot-session",
+            gymEquipmentId = "deleted-ez-bar",
+            equipmentName = "Archived EZ bar",
+        ).copy(gymId = "old-gym")
+
+        val selected = selectPreviousExercisePerformance(
+            exerciseId = "ez-curl",
+            historyByExerciseId = mapOf("ez-curl" to listOf(deletedSnapshot)),
+            fallback = null,
+            currentSessionId = "current",
+            gymId = "new-gym",
+            gymEquipmentId = "new-ez-bar",
+        )
+
+        assertEquals("deleted-snapshot-session", selected?.performance?.sessionId)
+        assertEquals(listOf("Archived EZ bar"), selected?.equipmentNames)
+        assertEquals(
+            PreviousPerformanceComparability.DIFFERENT_EQUIPMENT,
+            selected?.comparability,
+        )
+    }
+
     private fun nullEquipmentPerformance(
         gymId: String?,
         sessionId: String,
@@ -578,6 +783,26 @@ class WorkoutEquipmentHistoryTest {
         gymEquipmentId = null,
         maxWeight = maxWeight,
         repsAtMaxWeight = 10,
+    )
+
+    private fun historySession(
+        sessionId: String,
+        gymEquipmentId: String?,
+        equipmentName: String?,
+    ) = ExerciseHistorySessionDto(
+        sessionId = sessionId,
+        startedAt = "2026-07-10T10:00:00.000Z",
+        gymId = "gym-1",
+        sets = listOf(
+            ExerciseHistorySetDto(
+                setNumber = 1,
+                weight = 30.0,
+                reps = 10,
+                rir = 2,
+                gymEquipmentId = gymEquipmentId,
+                equipmentName = equipmentName,
+            ),
+        ),
     )
 
     private fun equipment(id: String) = GymEquipmentDto(

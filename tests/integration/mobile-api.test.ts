@@ -822,6 +822,7 @@ describe('Android mobile API', () => {
     expect(history[0]).toEqual({
       sessionId: 'mobile_history_session_13',
       startedAt: '2026-01-14T10:00:00.000Z',
+      gymId: null,
       sets: [
         {
           setNumber: 2,
@@ -829,6 +830,8 @@ describe('Android mobile API', () => {
           reps: 8,
           rir: 2,
           isDropSet: false,
+          gymEquipmentId: null,
+          equipmentName: null,
           durationSec: null,
           distanceM: null,
           avgHr: null,
@@ -840,6 +843,8 @@ describe('Android mobile API', () => {
           reps: 6,
           rir: 1,
           isDropSet: true,
+          gymEquipmentId: null,
+          equipmentName: null,
           durationSec: null,
           distanceM: null,
           avgHr: null,
@@ -851,6 +856,7 @@ describe('Android mobile API', () => {
     expect(body.exerciseHistoryByExerciseId[cardio.id][0]).toEqual({
       sessionId: 'mobile_history_session_13',
       startedAt: '2026-01-14T10:00:00.000Z',
+      gymId: null,
       sets: [
         {
           setNumber: 1,
@@ -858,6 +864,8 @@ describe('Android mobile API', () => {
           reps: 1,
           rir: null,
           isDropSet: false,
+          gymEquipmentId: null,
+          equipmentName: null,
           durationSec: 1_800,
           distanceM: 5_000,
           avgHr: 142,
@@ -868,6 +876,55 @@ describe('Android mobile API', () => {
     expect(
       history.some((session: { sessionId: string }) => session.sessionId.includes('open')),
     ).toBe(false);
+  });
+
+  it('preserves exercise history equipment provenance without duplicating sets', async () => {
+    const seeded = await seedUser('mobile-history-equipment@test.dev');
+    const startedAt = new Date('2026-07-20T10:00:00.000Z');
+    const session = await db.session.create({
+      data: {
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        gymId: seeded.gym.id,
+        startedAt,
+        finishedAt: new Date(startedAt.getTime() + 3_600_000),
+        sets: {
+          create: {
+            exerciseId: seeded.exercise.id,
+            gymEquipmentId: seeded.equipment.id,
+            equipmentNameSnapshot: seeded.equipment.name,
+            setNumber: 1,
+            weight: 35,
+            reps: 10,
+            rir: 2,
+            completedAt: new Date(startedAt.getTime() + 60_000),
+          },
+        },
+      },
+    });
+    const { accessToken } = await loginDevice(seeded.user.email);
+
+    const response = await bootstrap(
+      new Request('http://test.local/api/mobile/bootstrap', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    const body = await response.json();
+    const history = body.exerciseHistoryByExerciseId[seeded.exercise.id];
+
+    expect(history[0]).toMatchObject({
+      sessionId: session.id,
+      gymId: seeded.gym.id,
+      sets: [
+        {
+          gymEquipmentId: seeded.equipment.id,
+          equipmentName: seeded.equipment.name,
+          weight: 35,
+          reps: 10,
+        },
+      ],
+    });
+    expect(history[0].sets).toHaveLength(1);
   });
 
   it('applies an offline workout exactly once and preserves client timestamps', async () => {

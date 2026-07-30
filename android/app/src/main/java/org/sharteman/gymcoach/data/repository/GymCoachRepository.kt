@@ -3364,6 +3364,7 @@ internal fun mergeLocalExerciseHistory(
                 localByExercise.getOrPut(exerciseId, ::mutableListOf) += ExerciseHistorySessionDto(
                     sessionId = session.id,
                     startedAt = session.startedAt,
+                    gymId = session.gymId,
                     localOnly = true,
                     sets = exerciseSets.sortedWith(compareBy<LocalSetEntity> { it.setNumber }.thenBy { it.completedAt })
                         .map { set ->
@@ -3373,6 +3374,8 @@ internal fun mergeLocalExerciseHistory(
                                 reps = set.reps,
                                 rir = set.rir,
                                 isDropSet = set.isDropSet,
+                                gymEquipmentId = set.gymEquipmentId,
+                                equipmentName = set.equipmentNameSnapshot,
                                 durationSec = set.durationSec,
                                 distanceM = set.distanceM,
                                 avgHr = set.avgHr,

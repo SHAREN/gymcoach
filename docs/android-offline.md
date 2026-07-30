@@ -175,6 +175,14 @@ become exact-equipment load history. Equipment-only calibration uses at most
 the first two valid bound working sets at RIR 3 or higher, then the card closes
 and the active runner uses those equipment-scoped sets.
 
+The active workout's previous-performance display selects the latest completed
+session by exact `exerciseId` from those raw display-history sessions. A
+different, deleted or unrecorded `gymEquipmentId` never hides that session.
+Frozen equipment names are shown when available, and the UI labels unrecorded
+or different-equipment provenance. This display contract is intentionally
+separate from equipment-scoped return recommendations, calibration, confidence,
+load ceilings and plate/load calculations.
+
 Missing RIR lowers recommendation confidence. No offline calculation invokes an
 LLM or invents a replacement for missing data.
 

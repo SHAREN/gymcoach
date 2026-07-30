@@ -27,12 +27,22 @@ class ExerciseHistoryMergeTest {
                 ),
             ),
         )
-        val session = session("session-local", "2026-07-14T08:00:00Z")
+        val session = session("session-local", "2026-07-14T08:00:00Z", gymId = "gym-1")
         val merged = mergeLocalExerciseHistory(
             bootstrap,
             sessions = listOf(
                 session to listOf(
-                    set("working", session.id, "bench", 2, weight = 80.0, reps = 6, rir = 1),
+                    set(
+                        "working",
+                        session.id,
+                        "bench",
+                        2,
+                        weight = 80.0,
+                        reps = 6,
+                        rir = 1,
+                        gymEquipmentId = "bar-a",
+                        equipmentNameSnapshot = "Olympic bar",
+                    ),
                     set("warmup", session.id, "bench", 1, weight = 20.0, reps = 10, isWarmup = true),
                     set(
                         "cardio",
@@ -52,7 +62,11 @@ class ExerciseHistoryMergeTest {
 
         assertEquals(1, merged.exerciseHistoryByExerciseId.getValue("bench").size)
         assertTrue(merged.exerciseHistoryByExerciseId.getValue("bench").single().localOnly)
-        assertEquals(80.0, merged.exerciseHistoryByExerciseId.getValue("bench")[0].sets.single().weight, 0.0)
+        val bench = merged.exerciseHistoryByExerciseId.getValue("bench").single()
+        assertEquals("gym-1", bench.gymId)
+        assertEquals(80.0, bench.sets.single().weight, 0.0)
+        assertEquals("bar-a", bench.sets.single().gymEquipmentId)
+        assertEquals("Olympic bar", bench.sets.single().equipmentName)
         val cardio = merged.exerciseHistoryByExerciseId.getValue("running")[0].sets.single()
         assertEquals(3_907, cardio.durationSec)
         assertEquals(5_000.0, cardio.distanceM!!, 0.0)
@@ -95,10 +109,15 @@ class ExerciseHistoryMergeTest {
         exerciseHistoryByExerciseId = history,
     )
 
-    private fun session(id: String, startedAt: String, finished: Boolean = true) = LocalSessionEntity(
+    private fun session(
+        id: String,
+        startedAt: String,
+        finished: Boolean = true,
+        gymId: String? = null,
+    ) = LocalSessionEntity(
         id = id,
         workoutId = "workout",
-        gymId = null,
+        gymId = gymId,
         startedAt = startedAt,
         finishedAt = if (finished) "2026-07-15T09:00:00Z" else null,
     )
@@ -117,10 +136,14 @@ class ExerciseHistoryMergeTest {
         maxHr: Int? = null,
         isWarmup: Boolean = false,
         deleted: Boolean = false,
+        gymEquipmentId: String? = null,
+        equipmentNameSnapshot: String? = null,
     ) = LocalSetEntity(
         id = id,
         sessionId = sessionId,
         exerciseId = exerciseId,
+        gymEquipmentId = gymEquipmentId,
+        equipmentNameSnapshot = equipmentNameSnapshot,
         setNumber = setNumber,
         weight = weight,
         reps = reps,

@@ -65,6 +65,9 @@
     <string name="drop_set">Дроп-сет</string>
     <string name="tempo_value">Темп: %1$s</string>
     <string name="previous_workout">Предыдущая тренировка · %1$s</string>
+    <string name="previous_workout_equipment">Оборудование: %1$s</string>
+    <string name="previous_workout_equipment_not_recorded">Оборудование в прошлой тренировке не указано</string>
+    <string name="previous_workout_different_equipment">Выполнено на другом оборудовании</string>
     <string name="confirm_set">Подтвердить подход</string>
     <string name="next_set">Следующий подход</string>
     <string name="rest">Отдых</string>

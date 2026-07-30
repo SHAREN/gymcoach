@@ -63,6 +63,9 @@
     <string name="drop_set">Drop set</string>
     <string name="tempo_value">Tempo: %1$s</string>
     <string name="previous_workout">Previous workout · %1$s</string>
+    <string name="previous_workout_equipment">Equipment: %1$s</string>
+    <string name="previous_workout_equipment_not_recorded">Equipment was not recorded for this workout</string>
+    <string name="previous_workout_different_equipment">Performed on different equipment</string>
     <string name="confirm_set">Complete set</string>
     <string name="next_set">Next set</string>
     <string name="rest">Rest</string>
