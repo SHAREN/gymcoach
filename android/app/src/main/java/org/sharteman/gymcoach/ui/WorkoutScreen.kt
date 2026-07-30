@@ -123,6 +123,7 @@ import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.isAchievableLoad
 import org.sharteman.gymcoach.training.nominalResistanceKg
 import org.sharteman.gymcoach.training.normalizeSetTableMetrics
+import org.sharteman.gymcoach.training.plannedDeloadWeight
 import org.sharteman.gymcoach.training.recommendNextSetFromSharedContract
 import org.sharteman.gymcoach.training.resolveExerciseInventory
 import org.sharteman.gymcoach.training.resolveSharedNextSetTarget
@@ -356,6 +357,13 @@ fun WorkoutScreen(
         readiness.readiness <= 2 || (readiness.soreness?.get(current.exercise.muscleGroup) ?: 0) >= 4
     } ?: false
     val loadConstraints = inventory.constraints
+    val plannedDeloadCeiling = if (bootstrap?.profile?.deloadActive == true) {
+        equipmentLastPerformance?.maxWeight?.let { previousWeight ->
+            plannedDeloadWeight(previousWeight, loadConstraints)
+        }
+    } else {
+        null
+    }
     val recommendation = recommendNextSetFromSharedContract(
         programExercise = current,
         returnRecommendation = returnRecommendation,
@@ -363,6 +371,7 @@ fun WorkoutScreen(
         recoverySec = recoverySec,
         sameMuscleSuperset = sameMuscleSuperset,
         allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
+        plannedDeloadCeiling = plannedDeloadCeiling,
         constraints = loadConstraints,
     )
 
@@ -443,12 +452,15 @@ fun WorkoutScreen(
         ) {
             return@LaunchedEffect
         }
-        val candidateWeight = if (returnRecommendation == null) {
+        val rawCandidateWeight = if (returnRecommendation == null) {
             null
         } else {
             recommendation?.weight
                 ?: returnRecommendation.suggestedWeight
                 ?: equipmentLastPerformance?.maxWeight
+        }
+        val candidateWeight = rawCandidateWeight?.let { candidate ->
+            plannedDeloadCeiling?.let { ceiling -> minOf(candidate, ceiling) } ?: candidate
         }
         val initialWeight = if (returnRecommendation == null) {
             null

@@ -21,6 +21,7 @@ import {
   isDeloadActive,
   recommendDeload,
 } from '@/lib/deload';
+import { loadDeloadActivity } from '@/lib/deload-history';
 import { COACH_SYSTEM_PROMPT } from '@/lib/prompts/coach-system-prompt';
 import { exerciseRecords, type ExerciseRecord } from '@/lib/records';
 import { getLlmProvider } from '@/lib/llm';
@@ -174,6 +175,10 @@ interface FatigueSummary {
   deloadRecommended: boolean;
   // Short human-readable reasons (same lines the progress page shows).
   deloadReasons: string[];
+  deloadState?: 'none' | 'stall-signal' | 'planned-deload' | 'recovery-break-completed';
+  daysSinceLastMeaningfulWorkout?: number | null;
+  recent7DayCompletedWorkouts?: number;
+  recent7DayWorkingSets?: number;
   // True while the user runs a planned deload week (issue #112), so the coach
   // supports the deload already underway instead of recommending one. Additive
   // input signal; the output contract is unchanged.
@@ -333,7 +338,7 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
     fetchActiveProgram(userId),
     fetchLatestReadiness(userId, now),
     fetchGoalsSummary(userId, bodyweight),
-    fetchFatigueSummary(userId, bodyweight, now),
+    fetchFatigueSummary(userId, bodyweight, now, user?.weeklyFrequency ?? null),
     fetchRecordsSummary(userId, bodyweight),
     db.set.findMany({
       where: {
@@ -350,6 +355,8 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
         distanceM: true,
         sessionId: true,
         exerciseId: true,
+        gymEquipmentId: true,
+        equipmentNameSnapshot: true,
         exercise: {
           select: {
             id: true,
@@ -801,6 +808,7 @@ async function fetchFatigueSummary(
   userId: string,
   bodyweight: number | null,
   now: Date,
+  plannedWeeklyFrequency: number | null,
   // deloadActive is derived from the user row in buildCoachPayload, so this
   // helper returns everything but that flag.
 ): Promise<Omit<FatigueSummary, 'deloadActive'>> {
@@ -809,7 +817,7 @@ async function fetchFatigueSummary(
   since.setUTCDate(since.getUTCDate() - FATIGUE_WINDOW_WEEKS * 7);
   const readinessSince = addDays(now, -DELOAD_READINESS_MAX_AGE_DAYS);
 
-  const [sets, recentCheckins] = await Promise.all([
+  const [sets, recentCheckins, deloadActivity] = await Promise.all([
     db.set.findMany({
       where: {
         isWarmup: false,
@@ -823,6 +831,8 @@ async function fetchFatigueSummary(
         durationSec: true,
         sessionId: true,
         exerciseId: true,
+        gymEquipmentId: true,
+        equipmentNameSnapshot: true,
         exercise: { select: { name: true, usesBodyweight: true } },
         session: { select: { startedAt: true } },
       },
@@ -831,8 +841,9 @@ async function fetchFatigueSummary(
       where: { userId, createdAt: { gte: readinessSince } },
       orderBy: { createdAt: 'desc' },
       take: DELOAD_READINESS_LOOKBACK,
-      select: { readiness: true },
+      select: { readiness: true, sleepQuality: true, soreness: true },
     }),
+    loadDeloadActivity(userId, now, plannedWeeklyFrequency),
   ]);
 
   const setsByExercise = new Map<string, typeof sets>();
@@ -856,6 +867,8 @@ async function fetchFatigueSummary(
           sessionId: s.sessionId,
           sessionStartedAt: s.session.startedAt,
           usesBodyweight: first.exercise.usesBodyweight,
+          gymEquipmentId: s.gymEquipmentId,
+          equipmentNameSnapshot: s.equipmentNameSnapshot,
         })),
         bodyweight,
       ),
@@ -869,11 +882,17 @@ async function fetchFatigueSummary(
   const recommendation = recommendDeload({
     stalledExerciseNames: stalledExercises,
     recentReadiness: recentCheckins.map((c) => c.readiness),
+    latestRecovery: recentCheckins[0] ?? null,
+    activity: deloadActivity,
   });
   return {
     stalledExercises,
     deloadRecommended: recommendation.recommended,
     deloadReasons: recommendation.reasons.map(deloadReasonLine),
+    deloadState: recommendation.state,
+    daysSinceLastMeaningfulWorkout: recommendation.activity.daysSinceLastMeaningfulWorkout,
+    recent7DayCompletedWorkouts: recommendation.activity.recent7DayCompletedWorkouts,
+    recent7DayWorkingSets: recommendation.activity.recent7DayWorkingSets,
   };
 }
 
@@ -1069,5 +1088,10 @@ export async function callCoach(payload: CoachPayload): Promise<CoachCompletion>
     maxTokens: 8000,
   });
 
-  return { markdown: text, modelUsed, promptText: userMessage, auditPrompt: createCoachAuditPrompt() };
+  return {
+    markdown: text,
+    modelUsed,
+    promptText: userMessage,
+    auditPrompt: createCoachAuditPrompt(),
+  };
 }

@@ -69,9 +69,21 @@ data class MobileDeloadStatusDto(
     val recommended: Boolean = false,
     val active: Boolean = false,
     val until: String? = null,
+    val state: String = "none",
     val stalledExerciseNames: List<String> = emptyList(),
     val averageReadiness: Double? = null,
     val readinessCheckins: Int? = null,
+    val latestSleepQuality: Int? = null,
+    val maxReportedSoreness: Int? = null,
+    val daysSinceLastMeaningfulWorkout: Double? = null,
+    val recent7DayCompletedWorkouts: Int = 0,
+    val recent7DayWorkingSets: Int = 0,
+    val recent14DayCompletedWorkouts: Int = 0,
+    val recent14DayWorkingSets: Int = 0,
+    val actualWeeklyFrequency28Days: Double = 0.0,
+    val plannedWeeklyFrequency: Int? = null,
+    val workingSetRatio: Double? = null,
+    val sessionFrequencyRatio: Double? = null,
 )
 
 @Serializable

@@ -21,6 +21,10 @@ export interface CoachContextSummary {
   deloadActive: boolean;
   deloadRecommended: boolean;
   deloadReasons: string[];
+  deloadState?: 'none' | 'stall-signal' | 'planned-deload' | 'recovery-break-completed';
+  daysSinceLastMeaningfulWorkout?: number | null;
+  recent7DayCompletedWorkouts?: number;
+  recent7DayWorkingSets?: number;
   conditioning: {
     currentMinutes: number;
     currentKm: number;
@@ -60,6 +64,10 @@ export function summarizeCoachPayload(payload: CoachPayload): CoachContextSummar
     deloadActive: payload.fatigue.deloadActive,
     deloadRecommended: payload.fatigue.deloadRecommended,
     deloadReasons: payload.fatigue.deloadReasons,
+    deloadState: payload.fatigue.deloadState ?? 'none',
+    daysSinceLastMeaningfulWorkout: payload.fatigue.daysSinceLastMeaningfulWorkout ?? null,
+    recent7DayCompletedWorkouts: payload.fatigue.recent7DayCompletedWorkouts ?? 0,
+    recent7DayWorkingSets: payload.fatigue.recent7DayWorkingSets ?? 0,
     conditioning: {
       currentMinutes: payload.conditioning.weekCurrent.minutes,
       currentKm: payload.conditioning.weekCurrent.km,

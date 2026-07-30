@@ -4,6 +4,8 @@ import {
   getReturnToTrainingRecommendations,
   getReturnToTrainingRecommendationsByEquipment,
 } from '@/lib/return-to-training-history';
+import { reviewedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
+import { MuscleGroup } from '@/lib/prisma-client';
 
 const now = new Date('2026-07-12T12:00:00.000Z');
 
@@ -12,6 +14,101 @@ function daysAgo(days: number): Date {
 }
 
 describe('return-to-training history builder', () => {
+  it('uses related horizontal presses for movement exposure without transferring weights', async () => {
+    const user = await db.user.create({
+      data: { email: 'return-movement-family@test.dev', passwordHash: 'x' },
+    });
+    const pressProfile = reviewedExerciseLoadProfile({
+      primaryMuscles: [MuscleGroup.CHEST],
+      secondaryMuscles: [MuscleGroup.TRICEPS, MuscleGroup.SHOULDERS_FRONT],
+      movementPatterns: ['HORIZONTAL_PUSH'],
+      fatigueTags: ['SYSTEMIC_COMPOUND'],
+      jointStress: ['SHOULDER', 'ELBOW'],
+    });
+    const bench = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+        loadProfile: pressProfile,
+      },
+    });
+    const smith = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Smith Machine Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'MACHINE',
+        loadProfile: pressProfile,
+      },
+    });
+    for (const age of [60, 70, 80]) {
+      const session = await db.session.create({
+        data: { userId: user.id, startedAt: daysAgo(age) },
+      });
+      await db.set.create({
+        data: {
+          sessionId: session.id,
+          exerciseId: bench.id,
+          setNumber: 1,
+          weight: 80,
+          reps: 8,
+          rir: 2,
+          completedAt: daysAgo(age),
+        },
+      });
+    }
+    for (const age of [5, 8, 35, 42]) {
+      const session = await db.session.create({
+        data: { userId: user.id, startedAt: daysAgo(age) },
+      });
+      await db.set.createMany({
+        data: [1, 2].map((setNumber) => ({
+          sessionId: session.id,
+          exerciseId: smith.id,
+          setNumber,
+          weight: 200,
+          reps: 10,
+          rir: 2,
+          completedAt: daysAgo(age),
+        })),
+      });
+    }
+
+    const recommendations = await getReturnToTrainingRecommendations({
+      userId: user.id,
+      programExercises: [
+        {
+          id: 'bench-return',
+          exerciseId: bench.id,
+          targetSets: 4,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise: bench,
+        },
+      ],
+      excludeSessionId: null,
+      now,
+      gym: {
+        dumbbellWeights: [],
+        plateWeights: [1.25, 2.5, 5, 10, 20],
+        barWeights: [20],
+        exerciseConfigs: [],
+      },
+    });
+
+    expect(recommendations['bench-return']).toMatchObject({
+      mode: 'exercise-reintro',
+      movementMaintained: true,
+      targetSets: 2,
+      targetRIR: 3,
+    });
+    expect(recommendations['bench-return']!.suggestedWeight).toBeLessThan(80);
+  });
+
   it('separates a stale exercise from a recently trained primary muscle', async () => {
     const user = await db.user.create({
       data: { email: 'return-history@test.dev', passwordHash: 'x', bodyweight: 80 },

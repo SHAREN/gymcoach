@@ -62,6 +62,8 @@ data class SetRecommendation(
     val confidence: String,
 )
 
+const val PLANNED_DELOAD_LOAD_FRACTION = 0.10
+
 fun resolveSharedNextSetTarget(
     programExercise: ProgramExerciseDto,
     returnRecommendation: ReturnRecommendationDto?,
@@ -85,6 +87,7 @@ fun recommendNextSetFromSharedContract(
     recoverySec: Int?,
     sameMuscleSuperset: Boolean = false,
     allowLoadIncrease: Boolean = true,
+    plannedDeloadCeiling: Double? = null,
     constraints: LoadConstraints? = null,
 ): SetRecommendation? {
     val sharedRecommendation = returnRecommendation ?: return null
@@ -95,7 +98,10 @@ fun recommendNextSetFromSharedContract(
         recoverySec = recoverySec,
         sameMuscleSuperset = sameMuscleSuperset,
         allowLoadIncrease = allowLoadIncrease,
-        maxWeight = sharedRecommendation.weightCeiling,
+        maxWeight = listOfNotNull(
+            sharedRecommendation.weightCeiling,
+            plannedDeloadCeiling,
+        ).minOrNull(),
         constraints = constraints,
     )
 }
@@ -331,6 +337,13 @@ fun recommendNextSet(
         confidence = if (lastSet.rir == null) "low" else if (workingSets.size >= 3) "high" else "medium",
     )
 }
+
+fun plannedDeloadWeight(referenceWeight: Double, constraints: LoadConstraints?): Double =
+    constrainGymWeight(
+        targetWeight = referenceWeight * (1.0 - PLANNED_DELOAD_LOAD_FRACTION),
+        referenceWeight = referenceWeight,
+        constraints = constraints,
+    )
 
 fun gymWeightOptions(constraints: LoadConstraints?, referenceWeight: Double): List<Double> {
     if (constraints == null || !constraints.isAvailable) return emptyList()

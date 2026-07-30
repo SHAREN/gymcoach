@@ -730,6 +730,34 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
     return exercise;
   }
 
+  async function seedContinuedActivity(userId: string) {
+    const exercise = await db.exercise.create({
+      data: {
+        userId,
+        name: `Improving activity ${userId}`,
+        muscleGroup: 'BACK_THICKNESS',
+        category: 'COMPOUND',
+      },
+    });
+    for (const [index, days] of [42, 35, 28, 21, 5, 2].entries()) {
+      const startedAt = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const session = await db.session.create({
+        data: { userId, startedAt, finishedAt: startedAt },
+      });
+      await db.set.create({
+        data: {
+          sessionId: session.id,
+          exerciseId: exercise.id,
+          setNumber: 1,
+          weight: 80 + index * 5,
+          reps: 5,
+          rir: 2,
+          completedAt: startedAt,
+        },
+      });
+    }
+  }
+
   it('reports no fatigue for a fresh user', async () => {
     const user = await makeUser('fatigue-fresh@test.dev');
     const payload = await buildCoachPayload(user.id);
@@ -738,6 +766,10 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
       deloadRecommended: false,
       deloadReasons: [],
       deloadActive: false,
+      deloadState: 'none',
+      daysSinceLastMeaningfulWorkout: null,
+      recent7DayCompletedWorkouts: 0,
+      recent7DayWorkingSets: 0,
     });
   });
 
@@ -762,6 +794,7 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
     const user = await makeUser('fatigue-stalls@test.dev');
     await seedStalledLift(user.id, 'Bench');
     await seedStalledLift(user.id, 'Squat');
+    await seedContinuedActivity(user.id);
 
     const payload = await buildCoachPayload(user.id);
     expect(payload.fatigue.stalledExercises).toEqual(['Bench', 'Squat']);
@@ -789,6 +822,7 @@ describe('buildCoachPayload fatigue (issue #101)', () => {
 
   it('recommends a deload on chronically low readiness', async () => {
     const user = await makeUser('fatigue-readiness@test.dev');
+    await seedContinuedActivity(user.id);
     for (let i = 0; i < 3; i++) {
       await db.readinessCheckin.create({
         data: {

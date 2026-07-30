@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -173,6 +174,43 @@ class HistoryProgressNativeTest {
             compose.onNodeWithTag("progress-list").performScrollToNode(hasTestTag(tag))
             compose.onNodeWithTag(tag).assertIsDisplayed()
         }
+    }
+
+    @Test
+    fun completedRecoveryBreakExplainsReturnAndHidesStartDeload() {
+        compose.setContent {
+            GymCoachTheme {
+                ProgressScreen(
+                    snapshot = progressSnapshot().copy(
+                        deload = MobileDeloadStatusDto(
+                            recommended = false,
+                            state = "recovery-break-completed",
+                            stalledExerciseNames = listOf("Bench Press", "Squat"),
+                            averageReadiness = 4.0,
+                            latestSleepQuality = 4,
+                            daysSinceLastMeaningfulWorkout = 12.6,
+                            recent7DayCompletedWorkouts = 0,
+                            recent7DayWorkingSets = 0,
+                            actualWeeklyFrequency28Days = 1.25,
+                            plannedWeeklyFrequency = 3,
+                            workingSetRatio = 0.2,
+                            sessionFrequencyRatio = 0.2,
+                        ),
+                    ),
+                    unit = "KG",
+                    refreshing = false,
+                    onRefresh = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag("progress-list").performScrollToNode(
+            hasTestTag("progress-deload-card"),
+        )
+        compose.onNodeWithTag("progress-recovery-break-explanation").assertIsDisplayed()
+        compose.onAllNodesWithTag("progress-start-deload").assertCountEquals(0)
+        saveScreenshot("deload-recovery-break-completed")
     }
 
     private fun saveScreenshot(name: String) {
@@ -409,6 +447,7 @@ class HistoryProgressNativeTest {
         ),
         deload = MobileDeloadStatusDto(
             recommended = true,
+            state = "planned-deload",
             stalledExerciseNames = listOf("Bench Press", "Squat"),
         ),
     )

@@ -131,13 +131,21 @@ export interface ExerciseChartPoint {
   totalReps: number;
   estimated1RM: number;
   totalVolume: number;
+  // Optional exact equipment provenance for stall comparability. Undefined
+  // means the caller did not load provenance; null is never synthesized.
+  equipmentKey?: string;
 }
 
 // For an exercise, aggregates each session into a progression point.
 // Input: sets ordered by session, with sessionStartedAt joined.
 export function exerciseProgress(
   sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> &
-    MaybeCardio & { sessionId: string; sessionStartedAt: Date })[],
+    MaybeCardio & {
+      sessionId: string;
+      sessionStartedAt: Date;
+      gymEquipmentId?: string | null;
+      equipmentNameSnapshot?: string | null;
+    })[],
 ): ExerciseChartPoint[] {
   const bySession = new Map<string, { startedAt: Date; sets: typeof sets }>();
   for (const s of sets) {
@@ -158,6 +166,20 @@ export function exerciseProgress(
     );
     const maxReps = Math.max(...sessionSets.map((s) => s.reps));
     const totalReps = sessionSets.reduce((sum, s) => sum + s.reps, 0);
+    const hasEquipmentProvenance = sessionSets.some(
+      (set) => 'gymEquipmentId' in set || 'equipmentNameSnapshot' in set,
+    );
+    const equipmentKeys = hasEquipmentProvenance
+      ? new Set(
+          sessionSets.map((set) =>
+            set.gymEquipmentId != null
+              ? `equipment:${set.gymEquipmentId}`
+              : set.equipmentNameSnapshot != null
+                ? `snapshot:${set.equipmentNameSnapshot}`
+                : 'legacy-unlinked',
+          ),
+        )
+      : null;
     points.push({
       date: startedAt.toISOString().slice(0, 10),
       sessionStartedAt: startedAt,
@@ -167,6 +189,9 @@ export function exerciseProgress(
       totalReps,
       estimated1RM: +estimate1RM(maxWeight, topReps).toFixed(1),
       totalVolume: totalVolume(sessionSets),
+      ...(equipmentKeys
+        ? { equipmentKey: equipmentKeys.size === 1 ? [...equipmentKeys][0]! : 'mixed-equipment' }
+        : {}),
     });
   }
   return points.sort((a, b) => a.sessionStartedAt.getTime() - b.sessionStartedAt.getTime());
@@ -177,8 +202,8 @@ export function exerciseProgress(
 // ============================================================
 
 // How many of the most recent sessions to judge a stall over. A lift is
-// flagged when, across these sessions, the best estimated 1RM never improves
-// on the prior best (within tolerance). Defined once so it lives in one place.
+// flagged when, across these sessions, estimated 1RM never improves from the
+// current-window baseline (within tolerance). Defined once in one place.
 export const STALL_LOOKBACK_SESSIONS = 3;
 
 // A stall is only actionable when the whole lookback belongs to the current
@@ -192,13 +217,17 @@ export const STALL_WINDOW_DAYS = 42;
 // masking a genuine plateau.
 export const STALL_TOLERANCE = 0.005;
 
-export type StallPoint = Pick<ExerciseChartPoint, 'estimated1RM' | 'sessionStartedAt'>;
+export type StallPoint = Pick<
+  ExerciseChartPoint,
+  'estimated1RM' | 'sessionStartedAt' | 'equipmentKey'
+>;
 
 // Pure stall test over an exercise's per-session best-e1RM points (oldest ->
 // newest). Returns true when, over the last `lookback` sessions, no session
-// improves on the best e1RM seen before that window (and within the window).
-// All lookback sessions must also fall inside the recent calendar window;
-// sparse or stale observations are insufficient evidence of a current stall.
+// improves on the first/running best INSIDE that current window. An old
+// absolute PR is deliberately excluded: a lower but improving current block
+// is not an eternal stall. All lookback sessions must also fall inside the
+// recent calendar window; sparse or stale observations are insufficient.
 export function isStalled(
   points: readonly StallPoint[],
   asOf: Date,
@@ -225,16 +254,15 @@ export function isStalled(
     return false;
   }
 
-  // Best e1RM established strictly before the lookback window. With no prior
-  // history (window covers the whole series), the first window entry is the
-  // baseline the rest must beat.
-  let bestBefore = 0;
-  for (let i = 0; i < windowStart; i++) {
-    if (points[i]!.estimated1RM > bestBefore) bestBefore = points[i]!.estimated1RM;
-  }
+  const currentWindow = points.slice(windowStart);
+  if (currentWindow.some((point) => point.equipmentKey === 'mixed-equipment')) return false;
+  const comparableEquipment = new Set(
+    currentWindow.map((point) => point.equipmentKey).filter((key): key is string => key != null),
+  );
+  if (comparableEquipment.size > 1) return false;
 
-  let baseline = windowStart === 0 ? points[0]!.estimated1RM : bestBefore;
-  const startIdx = windowStart === 0 ? 1 : windowStart;
+  let baseline = points[windowStart]!.estimated1RM;
+  const startIdx = windowStart + 1;
 
   for (let i = startIdx; i < points.length; i++) {
     const value = points[i]!.estimated1RM;

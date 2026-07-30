@@ -27,6 +27,7 @@ import {
   isDeloadActive,
   recommendDeload,
 } from '@/lib/deload';
+import { loadDeloadActivity } from '@/lib/deload-history';
 import { exerciseRecords } from '@/lib/records';
 import { ProgressDashboard } from '@/components/progress/progress-dashboard';
 import { ConsistencyCard } from '@/components/progress/consistency-card';
@@ -42,11 +43,7 @@ interface SearchParams {
 
 const RECENT_WEEKS = 12;
 
-export default async function ProgressPage(
-  props: {
-    searchParams: Promise<SearchParams>;
-  }
-) {
+export default async function ProgressPage(props: { searchParams: Promise<SearchParams> }) {
   const t = await getTranslations('progress');
   const exerciseT = await getTranslations('exercises');
   const searchParams = await props.searchParams;
@@ -93,13 +90,10 @@ export default async function ProgressPage(
     where: { userId: auth.userId },
     select: { muscleGroup: true, mev: true, mrv: true },
   });
-  const volumeTargets: Record<string, { mev: number; mrv: number }> =
-    Object.fromEntries(
-      volumeTargetRows.map((t) => [t.muscleGroup, { mev: t.mev, mrv: t.mrv }]),
-    );
-  const usesBodyweightById = new Map(
-    exercisesWithSets.map((e) => [e.id, e.usesBodyweight]),
+  const volumeTargets: Record<string, { mev: number; mrv: number }> = Object.fromEntries(
+    volumeTargetRows.map((t) => [t.muscleGroup, { mev: t.mev, mrv: t.mrv }]),
   );
+  const usesBodyweightById = new Map(exercisesWithSets.map((e) => [e.id, e.usesBodyweight]));
 
   // Finished sessions over the window, for the consistency card.
   const finishedSessions = await db.session.findMany({
@@ -115,8 +109,7 @@ export default async function ProgressPage(
     { weeklyFrequency: user?.weeklyFrequency ?? null, windowWeeks: RECENT_WEEKS },
   );
 
-  const selectedExerciseId =
-    searchParams.exerciseId ?? exercisesWithSets[0]?.id;
+  const selectedExerciseId = searchParams.exerciseId ?? exercisesWithSets[0]?.id;
 
   // Max load + 1RM for the selected exercise, over all available history,
   // plus its target goal (issue #90) fetched in parallel.
@@ -135,6 +128,8 @@ export default async function ProgressPage(
             isWarmup: true,
             durationSec: true,
             sessionId: true,
+            gymEquipmentId: true,
+            equipmentNameSnapshot: true,
             session: { select: { startedAt: true } },
           },
         })
@@ -149,9 +144,7 @@ export default async function ProgressPage(
   ]);
 
   const selectedUsesBodyweight =
-    selectedExerciseId != null
-      ? (usesBodyweightById.get(selectedExerciseId) ?? false)
-      : false;
+    selectedExerciseId != null ? (usesBodyweightById.get(selectedExerciseId) ?? false) : false;
   const adjustedExerciseSets = applyBodyweight(
     exerciseSets.map((s) => ({
       weight: s.weight,
@@ -161,6 +154,8 @@ export default async function ProgressPage(
       sessionId: s.sessionId,
       sessionStartedAt: s.session.startedAt,
       usesBodyweight: selectedUsesBodyweight,
+      gymEquipmentId: s.gymEquipmentId,
+      equipmentNameSnapshot: s.equipmentNameSnapshot,
     })),
     bodyweight,
   );
@@ -234,17 +229,14 @@ export default async function ProgressPage(
   // current week has data.
   const currentWeekKey = isoWeekKey(new Date());
   const latestCompletedWeek =
-    [...weeklySetsPoints]
-      .reverse()
-      .find((w) => w.weekKey !== currentWeekKey) ??
+    [...weeklySetsPoints].reverse().find((w) => w.weekKey !== currentWeekKey) ??
     weeklySetsPoints[weeklySetsPoints.length - 1];
   // Frequency for the exact week the landmarks card displays, so volume and
   // frequency describe the same week per muscle group.
-  const frequencyForWeek =
-    latestCompletedWeek
-      ? weeklyFrequencyPoints.find((w) => w.weekKey === latestCompletedWeek.weekKey)
-          ?.byMuscleGroup ?? {}
-      : {};
+  const frequencyForWeek = latestCompletedWeek
+    ? (weeklyFrequencyPoints.find((w) => w.weekKey === latestCompletedWeek.weekKey)
+        ?.byMuscleGroup ?? {})
+    : {};
   const volumeLandmarks = latestCompletedWeek
     ? {
         weekKey: latestCompletedWeek.weekKey,
@@ -253,24 +245,22 @@ export default async function ProgressPage(
         mev: WEEKLY_SETS_MEV,
         mrv: WEEKLY_SETS_MRV,
         byMuscleGroup: Object.fromEntries(
-          Object.entries(latestCompletedWeek.byMuscleGroup).map(
-            ([group, sets]) => {
-              const band = resolveVolumeBand(group, volumeTargets);
-              return [
-                group,
-                {
-                  sets,
-                  // Distinct training days for this muscle in the same week
-                  // (issue #225). 0 when the muscle was not trained.
-                  frequency: frequencyForWeek[group] ?? 0,
-                  zone: classifyWeeklySets(sets, band.mev, band.mrv),
-                  mev: band.mev,
-                  mrv: band.mrv,
-                  custom: band.custom,
-                },
-              ];
-            },
-          ),
+          Object.entries(latestCompletedWeek.byMuscleGroup).map(([group, sets]) => {
+            const band = resolveVolumeBand(group, volumeTargets);
+            return [
+              group,
+              {
+                sets,
+                // Distinct training days for this muscle in the same week
+                // (issue #225). 0 when the muscle was not trained.
+                frequency: frequencyForWeek[group] ?? 0,
+                zone: classifyWeeklySets(sets, band.mev, band.mrv),
+                mev: band.mev,
+                mrv: band.mrv,
+                custom: band.custom,
+              },
+            ];
+          }),
         ),
       }
     : null;
@@ -293,6 +283,8 @@ export default async function ProgressPage(
           isWarmup: true,
           durationSec: true,
           sessionId: true,
+          gymEquipmentId: true,
+          equipmentNameSnapshot: true,
           session: { select: { startedAt: true } },
         },
       });
@@ -306,6 +298,8 @@ export default async function ProgressPage(
             sessionId: s.sessionId,
             sessionStartedAt: s.session.startedAt,
             usesBodyweight: exo.usesBodyweight,
+            gymEquipmentId: s.gymEquipmentId,
+            equipmentNameSnapshot: s.equipmentNameSnapshot,
           })),
           bodyweight,
         ),
@@ -316,9 +310,7 @@ export default async function ProgressPage(
       return {
         exerciseId: exo.id,
         exerciseName: exo.name,
-        muscleGroup: exerciseT(
-          `muscleGroups.${muscleGroupMessageKeys[exo.muscleGroup]}`,
-        ),
+        muscleGroup: exerciseT(`muscleGroups.${muscleGroupMessageKeys[exo.muscleGroup]}`),
         sessions: points.length,
         firstWeight: first.maxWeight,
         firstDate: first.date,
@@ -333,23 +325,20 @@ export default async function ProgressPage(
       };
     }),
   );
-  const recap = recapRows.filter(
-    (r): r is NonNullable<typeof r> => r !== null,
-  );
+  const recap = recapRows.filter((r): r is NonNullable<typeof r> => r !== null);
 
   // Program-level deload recommendation: aggregates the stalled flags above
   // with the most recent readiness check-ins. Display-only. Stale check-ins
   // are excluded so the trigger reflects the current block, not dead data.
   const readinessSince = new Date();
-  readinessSince.setUTCDate(
-    readinessSince.getUTCDate() - DELOAD_READINESS_MAX_AGE_DAYS,
-  );
+  readinessSince.setUTCDate(readinessSince.getUTCDate() - DELOAD_READINESS_MAX_AGE_DAYS);
   const recentCheckins = await db.readinessCheckin.findMany({
     where: { userId: auth.userId, createdAt: { gte: readinessSince } },
     orderBy: { createdAt: 'desc' },
     take: DELOAD_READINESS_LOOKBACK,
-    select: { readiness: true },
+    select: { readiness: true, sleepQuality: true, soreness: true },
   });
+  const deloadActivity = await loadDeloadActivity(auth.userId, now, user?.weeklyFrequency);
   // Bodyweight trend (issue #99): entries of the last 12 weeks, newest first.
   // Independent of training data, so the card renders even on the empty state.
   const bodyweightEntries = await db.bodyweightEntry.findMany({
@@ -429,10 +418,10 @@ export default async function ProgressPage(
   );
 
   const deload = recommendDeload({
-    stalledExerciseNames: recap
-      .filter((r) => r.stalled)
-      .map((r) => r.exerciseName),
+    stalledExerciseNames: recap.filter((r) => r.stalled).map((r) => r.exerciseName),
     recentReadiness: recentCheckins.map((c) => c.readiness),
+    latestRecovery: recentCheckins[0] ?? null,
+    activity: deloadActivity,
   });
 
   // Active planned deload week (issue #112): only a future deloadUntil counts;
@@ -488,8 +477,8 @@ export default async function ProgressPage(
           />
         ) : (
           <>
-            {(deload.recommended || deloadActive) && (
-              <DeloadBanner reasons={deload.reasons} deloadUntil={deloadUntilIso} />
+            {(deload.state !== 'none' || deloadActive) && (
+              <DeloadBanner recommendation={deload} deloadUntil={deloadUntilIso} />
             )}
             <ConsistencyCard
               weeks={consistency.weeks}
@@ -500,9 +489,7 @@ export default async function ProgressPage(
               exercises={exercisesWithSets.map((e) => ({
                 id: e.id,
                 name: e.name,
-                muscleGroup: exerciseT(
-                  `muscleGroups.${muscleGroupMessageKeys[e.muscleGroup]}`,
-                ),
+                muscleGroup: exerciseT(`muscleGroups.${muscleGroupMessageKeys[e.muscleGroup]}`),
               }))}
               selectedExerciseId={selectedExerciseId}
               exercisePoints={exercisePoints}
@@ -529,9 +516,7 @@ export default async function ProgressPage(
               selectedBestE1RM={selectedBestE1RM}
               selectedUsesBodyweight={selectedUsesBodyweight}
             />
-            {records.length > 0 && (
-              <RecordsCard records={records} unit={unit} />
-            )}
+            {records.length > 0 && <RecordsCard records={records} unit={unit} />}
           </>
         )}
       </div>

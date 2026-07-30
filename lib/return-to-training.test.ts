@@ -495,6 +495,38 @@ describe('return-to-training recommendations', () => {
     });
   });
 
+  it('treats continued related pressing as movement maintenance without transferring its load', () => {
+    const result = calculateReturnRecommendation({
+      programExercise,
+      history: history({
+        exerciseLastPerformedAt: daysAgo(60),
+        muscleLastPerformedAt: daysAgo(60),
+        recentMuscleSets: 0,
+        baselineMuscleSetsPer28Days: 12,
+        movementLastPerformedAt: daysAgo(5),
+        recentMovementSets: 12,
+        baselineMovementSetsPer28Days: 12,
+        exerciseSessions: historySessions([
+          { days: 60, weight: 30 },
+          { days: 70, weight: 30 },
+          { days: 80, weight: 30 },
+        ]),
+      }),
+      now,
+      loadConstraints: olympDumbbells,
+    });
+
+    expect(result).toMatchObject({
+      mode: 'muscle-reintro',
+      movementMaintained: true,
+      muscleMaintained: false,
+      targetSets: 2,
+      targetRIR: 3,
+      startFraction: 0.85,
+    });
+    expect(result.suggestedWeight).toBeLessThanOrEqual(30);
+  });
+
   it('does not convert another exercise into an exact load for a new movement', () => {
     const result = calculateReturnRecommendation({
       programExercise,

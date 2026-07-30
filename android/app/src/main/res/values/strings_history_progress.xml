@@ -52,6 +52,14 @@
     <string name="progress_deload_readiness_reason">Readiness averaged %1$.1f/5 across %2$d check-ins.</string>
     <string name="progress_deload_start">Start deload</string>
     <string name="progress_deload_end">End deload</string>
+    <string name="progress_deload_signal_title">Progress signal needs review</string>
+    <string name="progress_deload_signal_description">A stalled lift is an analysis signal, but recent workload does not support adding a new deload week.</string>
+    <string name="progress_deload_recovery_completed_title">Recovery break already completed</string>
+    <string name="progress_deload_recovery_completed_description">The last meaningful workout was about %1$.1f days ago; the last 7 days contain %2$d completed workouts and %3$d working sets. Another 7-day deload is not needed.</string>
+    <string name="progress_deload_recovery_metrics">Recovery check: readiness %1$.1f/5, sleep %2$d/5, maximum reported soreness %3$d/5.</string>
+    <string name="progress_deload_recovery_metrics_no_soreness">Recovery check: readiness %1$.1f/5, sleep %2$d/5, no soreness reported.</string>
+    <string name="progress_deload_return_next">Resume with the conservative return-to-training or equipment-calibration targets shown in the workout.</string>
+    <string name="progress_deload_continued_load">Recent completed load: %1$d workouts and %2$d working sets in 14 days.</string>
     <string name="progress_action_failed">Could not apply the change.</string>
     <string name="progress_loading_table">Percentages of estimated 1RM</string>
     <string name="progress_loading_table_description">Best estimated 1RM: %1$s</string>

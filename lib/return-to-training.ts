@@ -74,6 +74,9 @@ export interface ReturnTrainingHistory {
   muscleLastPerformedAt: Date | null;
   recentMuscleSets: number;
   baselineMuscleSetsPer28Days: number;
+  movementLastPerformedAt?: Date | null;
+  recentMovementSets?: number;
+  baselineMovementSetsPer28Days?: number;
   exerciseSessions: ReturnHistorySession[];
   generalExerciseSessions?: ReturnHistorySession[];
   unlinkedExerciseSessions?: ReturnHistorySession[];
@@ -87,9 +90,12 @@ export interface ReturnRecommendation {
   returnGapDays: number | null;
   muscleGapDays: number | null;
   muscleMaintained: boolean;
+  movementGapDays?: number | null;
+  movementMaintained?: boolean;
   recentMuscleSets: number;
   baselineMuscleSetsPer28Days: number;
   recentVolumeRatio: number | null;
+  recentMovementVolumeRatio?: number | null;
   targetSets: number;
   targetRIR: number;
   weightCeiling: number | null;
@@ -205,6 +211,7 @@ export function calculateReturnRecommendation({
   const exerciseGapDays = daysSince(generalExerciseLastPerformedAt, now);
   const returnGapDays = resolveReturnGapDays(exerciseGapDays, generalExerciseSessions, now);
   const muscleGapDays = daysSince(history.muscleLastPerformedAt, now);
+  const movementGapDays = daysSince(history.movementLastPerformedAt ?? null, now);
   const recentVolumeRatio = volumeRatio(
     history.recentMuscleSets,
     history.baselineMuscleSetsPer28Days,
@@ -215,6 +222,17 @@ export function calculateReturnRecommendation({
     history.recentMuscleSets > 0 &&
     (history.baselineMuscleSetsPer28Days <= 0 ||
       (recentVolumeRatio != null && recentVolumeRatio >= MAINTAINED_MUSCLE_VOLUME_RATIO));
+  const recentMovementVolumeRatio = volumeRatio(
+    history.recentMovementSets ?? 0,
+    history.baselineMovementSetsPer28Days ?? 0,
+  );
+  const movementMaintained =
+    movementGapDays != null &&
+    movementGapDays <= MAINTAINED_MUSCLE_RECENCY_DAYS &&
+    (history.recentMovementSets ?? 0) > 0 &&
+    ((history.baselineMovementSetsPer28Days ?? 0) <= 0 ||
+      (recentMovementVolumeRatio != null &&
+        recentMovementVolumeRatio >= MAINTAINED_MUSCLE_VOLUME_RATIO));
 
   const exactEquipmentEvidence = historicalCapacityEvidence({
     programExercise,
@@ -261,9 +279,12 @@ export function calculateReturnRecommendation({
       returnGapDays,
       muscleGapDays,
       muscleMaintained,
+      movementGapDays,
+      movementMaintained,
       recentMuscleSets: history.recentMuscleSets,
       baselineMuscleSetsPer28Days: round(history.baselineMuscleSetsPer28Days),
       recentVolumeRatio,
+      recentMovementVolumeRatio,
       targetSets: programExercise.targetSets,
       targetRIR: programExercise.targetRIR,
       weightCeiling: null,
@@ -276,7 +297,7 @@ export function calculateReturnRecommendation({
     };
   }
 
-  const broadReturn = mode !== 'normal' && (mode === 'muscle-reintro' || !muscleMaintained);
+  const broadReturn = mode !== 'normal' && !movementMaintained && !muscleMaintained;
   const calibrationSetTarget =
     calibrationKind === 'equipment'
       ? Math.max(1, EQUIPMENT_CALIBRATION_WORKING_SETS - exactEquipmentCalibrationSetCount)
@@ -308,9 +329,12 @@ export function calculateReturnRecommendation({
     returnGapDays,
     muscleGapDays,
     muscleMaintained,
+    movementGapDays,
+    movementMaintained,
     recentMuscleSets: history.recentMuscleSets,
     baselineMuscleSetsPer28Days: round(history.baselineMuscleSetsPer28Days),
     recentVolumeRatio,
+    recentMovementVolumeRatio,
     targetSets,
     targetRIR,
     weightCeiling: loadTargets.weightCeiling,

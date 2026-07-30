@@ -23,12 +23,13 @@ import {
   isDeloadActive,
   recommendDeload,
 } from '@/lib/deload';
+import { loadDeloadActivity } from '@/lib/deload-history';
 import { goalProgress, goalTargetE1RM } from '@/lib/goals';
 import { computeLoadingTable } from '@/lib/loading-table';
 import { exerciseRecords } from '@/lib/records';
 import { toDisplayWeight } from '@/lib/units';
 
-export const MOBILE_PROGRESS_SCHEMA_VERSION = 3;
+export const MOBILE_PROGRESS_SCHEMA_VERSION = 4;
 export const MOBILE_PROGRESS_RECENT_WEEKS = 12;
 export const MOBILE_PROGRESS_CONDITIONING_WEEKS = 8;
 
@@ -163,9 +164,21 @@ export interface MobileDeloadStatus {
   recommended: boolean;
   active: boolean;
   until: string | null;
+  state: 'none' | 'stall-signal' | 'planned-deload' | 'recovery-break-completed';
   stalledExerciseNames: string[];
   averageReadiness: number | null;
   readinessCheckins: number | null;
+  latestSleepQuality: number | null;
+  maxReportedSoreness: number | null;
+  daysSinceLastMeaningfulWorkout: number | null;
+  recent7DayCompletedWorkouts: number;
+  recent7DayWorkingSets: number;
+  recent14DayCompletedWorkouts: number;
+  recent14DayWorkingSets: number;
+  actualWeeklyFrequency28Days: number;
+  plannedWeeklyFrequency: number | null;
+  workingSetRatio: number | null;
+  sessionFrequencyRatio: number | null;
 }
 
 interface MobileProgressExerciseSource {
@@ -181,6 +194,8 @@ interface MobileProgressExerciseSource {
     completedAt?: Date;
     sessionId: string;
     session: { startedAt: Date };
+    gymEquipmentId?: string | null;
+    equipmentNameSnapshot?: string | null;
   }>;
 }
 
@@ -213,6 +228,8 @@ export function buildMobileExerciseSeries(
           sessionId: set.sessionId,
           sessionStartedAt: set.session.startedAt,
           usesBodyweight: exercise.usesBodyweight,
+          gymEquipmentId: set.gymEquipmentId,
+          equipmentNameSnapshot: set.equipmentNameSnapshot,
         })),
         bodyweight,
       ),
@@ -297,6 +314,7 @@ export async function buildMobileProgress(
     goals,
     recentCheckins,
     recordSetsRaw,
+    deloadActivity,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id: userId },
@@ -350,6 +368,8 @@ export async function buildMobileProgress(
             durationSec: true,
             completedAt: true,
             sessionId: true,
+            gymEquipmentId: true,
+            equipmentNameSnapshot: true,
             session: { select: { startedAt: true } },
           },
         },
@@ -416,7 +436,7 @@ export async function buildMobileProgress(
       },
       orderBy: { createdAt: 'desc' },
       take: DELOAD_READINESS_LOOKBACK,
-      select: { readiness: true },
+      select: { readiness: true, sleepQuality: true, soreness: true },
     }),
     db.set.findMany({
       where: {
@@ -434,6 +454,7 @@ export async function buildMobileProgress(
         session: { select: { startedAt: true } },
       },
     }),
+    loadDeloadActivity(userId, now, null),
   ]);
 
   if (!user) throw new Error('User not found.');
@@ -483,6 +504,24 @@ export async function buildMobileProgress(
     )[0]!;
     const first = recent.points[0];
     const last = recent.points.at(-1);
+    const recentStallPoints = exerciseProgress(
+      applyBodyweight(
+        source.sets
+          .filter((set) => (set.completedAt ?? set.session.startedAt).getTime() >= since.getTime())
+          .map((set) => ({
+            weight: set.weight,
+            reps: set.reps,
+            isWarmup: set.isWarmup,
+            durationSec: set.durationSec,
+            sessionId: set.sessionId,
+            sessionStartedAt: set.session.startedAt,
+            usesBodyweight: source.usesBodyweight,
+            gymEquipmentId: set.gymEquipmentId,
+            equipmentNameSnapshot: set.equipmentNameSnapshot,
+          })),
+        user.bodyweight,
+      ),
+    );
     const adjustedAll = applyBodyweight(
       source.sets.map((set) => ({
         weight: set.weight,
@@ -522,13 +561,7 @@ export async function buildMobileProgress(
               firstEstimated1RM: first.estimated1RM,
               lastEstimated1RM: last.estimated1RM,
               estimated1RMDelta: +(last.estimated1RM - first.estimated1RM).toFixed(1),
-              stalled: isStalled(
-                recent.points.map((point) => ({
-                  estimated1RM: point.estimated1RM,
-                  sessionStartedAt: new Date(point.sessionStartedAt),
-                })),
-                now,
-              ),
+              stalled: isStalled(recentStallPoints, now),
             }
           : series.recap,
     };
@@ -588,6 +621,8 @@ export async function buildMobileProgress(
   const deloadRecommendation = recommendDeload({
     stalledExerciseNames,
     recentReadiness: recentCheckins.map((checkin) => checkin.readiness),
+    latestRecovery: recentCheckins[0] ?? null,
+    activity: { ...deloadActivity, plannedWeeklyFrequency: user.weeklyFrequency },
   });
   const readinessReason = deloadRecommendation.reasons.find(
     (reason) => reason.kind === 'low-readiness',
@@ -635,11 +670,22 @@ export async function buildMobileProgress(
       recommended: deloadRecommendation.recommended,
       active: deloadActive,
       until: deloadActive ? user.deloadUntil!.toISOString() : null,
+      state: deloadRecommendation.state,
       stalledExerciseNames,
-      averageReadiness:
-        readinessReason?.kind === 'low-readiness' ? readinessReason.averageReadiness : null,
+      averageReadiness: deloadRecommendation.activity.averageReadiness,
       readinessCheckins:
         readinessReason?.kind === 'low-readiness' ? readinessReason.checkins : null,
+      latestSleepQuality: deloadRecommendation.activity.latestSleepQuality,
+      maxReportedSoreness: deloadRecommendation.activity.maxReportedSoreness,
+      daysSinceLastMeaningfulWorkout: deloadRecommendation.activity.daysSinceLastMeaningfulWorkout,
+      recent7DayCompletedWorkouts: deloadRecommendation.activity.recent7DayCompletedWorkouts,
+      recent7DayWorkingSets: deloadRecommendation.activity.recent7DayWorkingSets,
+      recent14DayCompletedWorkouts: deloadRecommendation.activity.recent14DayCompletedWorkouts,
+      recent14DayWorkingSets: deloadRecommendation.activity.recent14DayWorkingSets,
+      actualWeeklyFrequency28Days: deloadRecommendation.activity.actualWeeklyFrequency28Days,
+      plannedWeeklyFrequency: deloadRecommendation.activity.plannedWeeklyFrequency,
+      workingSetRatio: deloadRecommendation.activity.workingSetRatio,
+      sessionFrequencyRatio: deloadRecommendation.activity.sessionFrequencyRatio,
     },
   };
 }

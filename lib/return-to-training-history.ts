@@ -19,6 +19,7 @@ import {
   type ReturnRecommendation,
   type ReturnTrainingHistory,
 } from '@/lib/return-to-training';
+import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 type ProgramExerciseForReturn = Pick<
   ProgramExercise,
@@ -27,7 +28,7 @@ type ProgramExerciseForReturn = Pick<
   exercise: Pick<
     Exercise,
     'name' | 'category' | 'equipmentType' | 'usesBodyweight' | 'muscleGroup'
-  >;
+  > & { loadProfile?: unknown };
 };
 
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
@@ -107,6 +108,10 @@ interface ReturnHistoryData {
   latestByMuscle: Map<MuscleGroup, Date | null>;
   recentSetsByMuscle: Map<MuscleGroup, number>;
   baselineSetsByMuscle: Map<MuscleGroup, number>;
+  movementByExercise: Map<
+    string,
+    { lastPerformedAt: Date | null; recentSets: number; baselineSets: number }
+  >;
 }
 
 // Builds session-only return recommendations. Nothing is persisted to the
@@ -292,7 +297,7 @@ async function loadReturnHistoryData({
       },
       select: {
         completedAt: true,
-        exercise: { select: { muscleGroup: true } },
+        exercise: { select: { id: true, muscleGroup: true, loadProfile: true } },
       },
     }),
   ]);
@@ -307,11 +312,44 @@ async function loadReturnHistoryData({
     target.set(group, (target.get(group) ?? 0) + 1);
   }
 
+  const movementByExercise = new Map<
+    string,
+    { lastPerformedAt: Date | null; recentSets: number; baselineSets: number }
+  >();
+  for (const programExercise of programExercises) {
+    const loadedProfile = volumeRows.find((row) => row.exercise.id === programExercise.exerciseId)
+      ?.exercise.loadProfile;
+    const targetPatterns = movementPatterns(
+      programExercise.exercise.loadProfile ?? loadedProfile,
+      programExercise.exercise.muscleGroup,
+    );
+    let lastPerformedAt: Date | null = null;
+    let recentSets = 0;
+    let baselineSets = 0;
+    if (targetPatterns.size > 0) {
+      for (const row of volumeRows) {
+        const rowPatterns = movementPatterns(row.exercise.loadProfile, row.exercise.muscleGroup);
+        if (![...targetPatterns].some((pattern) => rowPatterns.has(pattern))) continue;
+        if (lastPerformedAt == null || row.completedAt > lastPerformedAt) {
+          lastPerformedAt = row.completedAt;
+        }
+        if (row.completedAt >= recentStart) recentSets += 1;
+        else baselineSets += 1;
+      }
+    }
+    movementByExercise.set(programExercise.exerciseId, {
+      lastPerformedAt,
+      recentSets,
+      baselineSets,
+    });
+  }
+
   return {
     exerciseRows: new Map<string, ExerciseHistoryRow[]>(exerciseEntries),
     latestByMuscle,
     recentSetsByMuscle,
     baselineSetsByMuscle,
+    movementByExercise,
   };
 }
 
@@ -323,6 +361,7 @@ function buildReturnHistory(
   gymEquipmentId: string | null,
 ): ReturnTrainingHistory {
   const baselineSets = data.baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
+  const movement = data.movementByExercise.get(pe.exerciseId);
   const comparableSessionIds = new Set(rows.map((row) => row.sessionId));
   const nonComparableSessionIds = new Set(
     allExerciseRows
@@ -336,6 +375,10 @@ function buildReturnHistory(
     recentMuscleSets: data.recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
     baselineMuscleSetsPer28Days:
       baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
+    movementLastPerformedAt: movement?.lastPerformedAt ?? null,
+    recentMovementSets: movement?.recentSets ?? 0,
+    baselineMovementSetsPer28Days:
+      (movement?.baselineSets ?? 0) * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
     exerciseSessions: groupHistoricalSessions(rows),
     generalExerciseSessions: groupHistoricalSessions(allExerciseRows),
     unlinkedExerciseSessions: groupHistoricalSessions(
@@ -344,6 +387,12 @@ function buildReturnHistory(
     hasConcreteEquipmentTarget: gymEquipmentId != null,
     nonComparableExerciseSessions: nonComparableSessionIds.size,
   };
+}
+
+function movementPatterns(loadProfile: unknown, legacyMuscleGroup: MuscleGroup): Set<string> {
+  const profile = normalizeExerciseLoadProfile(loadProfile, legacyMuscleGroup);
+  if (profile.movementPatterns.state !== 'KNOWN') return new Set();
+  return new Set(profile.movementPatterns.entries.map((entry) => entry.value));
 }
 
 function groupHistoricalSessions(rows: ExerciseHistoryRow[]): ReturnHistorySession[] {

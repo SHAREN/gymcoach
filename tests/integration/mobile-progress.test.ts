@@ -295,7 +295,7 @@ describe('GET /api/mobile/progress', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.schemaVersion).toBe(3);
+    expect(body.schemaVersion).toBe(4);
     expect(new Date(body.generatedAt).toISOString()).toBe(body.generatedAt);
     expect(body.exercises.map((exercise: { name: string }) => exercise.name)).toEqual([
       'Bench Press',
@@ -309,13 +309,14 @@ describe('GET /api/mobile/progress', () => {
     );
     expect(selectedOldResponse.status).toBe(200);
     const selectedOldBody = await selectedOldResponse.json();
+    expect(selectedOldBody.exercises.map((exercise: { name: string }) => exercise.name)).toEqual([
+      'Bench Press',
+      'Old Only Lift',
+      'Pull-up',
+    ]);
     expect(
-      selectedOldBody.exercises.map((exercise: { name: string }) => exercise.name),
-    ).toEqual(['Bench Press', 'Old Only Lift', 'Pull-up']);
-    expect(
-      selectedOldBody.exercises.find(
-        (exercise: { id: string }) => exercise.id === oldOnly.id,
-      ).points,
+      selectedOldBody.exercises.find((exercise: { id: string }) => exercise.id === oldOnly.id)
+        .points,
     ).toEqual([
       expect.objectContaining({
         sessionStartedAt: oldStartedAt.toISOString(),

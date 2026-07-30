@@ -75,8 +75,15 @@ internal fun ProgressDeloadCard(
     deload: MobileDeloadStatusDto,
     actions: ProgressDashboardActions,
 ) {
-    if (!deload.active && !deload.recommended) return
+    val resolvedState = if (deload.state == "none" && deload.recommended) {
+        "planned-deload"
+    } else {
+        deload.state
+    }
+    if (!deload.active && resolvedState == "none") return
     val active = deload.active
+    val recoveryCompleted = !active && resolvedState == "recovery-break-completed"
+    val analysisOnly = !active && resolvedState == "stall-signal"
     DashboardCard(modifier = Modifier.testTag("progress-deload-card")) {
         Row(modifier = Modifier.fillMaxWidth()) {
             Icon(
@@ -88,6 +95,8 @@ internal fun ProgressDeloadCard(
             Text(
                 stringResource(
                     if (active) R.string.progress_deload_active_title
+                    else if (recoveryCompleted) R.string.progress_deload_recovery_completed_title
+                    else if (analysisOnly) R.string.progress_deload_signal_title
                     else R.string.progress_deload_due_title,
                 ),
                 style = MaterialTheme.typography.titleMedium,
@@ -103,6 +112,41 @@ internal fun ProgressDeloadCard(
             )
             OutlinedButton(onClick = actions.onEndDeload, enabled = !actions.busy) {
                 Text(stringResource(R.string.progress_deload_end))
+            }
+        } else if (recoveryCompleted) {
+            Text(
+                stringResource(
+                    R.string.progress_deload_recovery_completed_description,
+                    deload.daysSinceLastMeaningfulWorkout ?: 0.0,
+                    deload.recent7DayCompletedWorkouts,
+                    deload.recent7DayWorkingSets,
+                ),
+                modifier = Modifier.testTag("progress-recovery-break-explanation"),
+            )
+            Text(
+                stringResource(R.string.progress_deload_return_next),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (deload.averageReadiness != null) {
+                Text(
+                    if (deload.maxReportedSoreness == null) {
+                        stringResource(
+                            R.string.progress_deload_recovery_metrics_no_soreness,
+                            deload.averageReadiness,
+                            deload.latestSleepQuality ?: 0,
+                        )
+                    } else {
+                        stringResource(
+                            R.string.progress_deload_recovery_metrics,
+                            deload.averageReadiness,
+                            deload.latestSleepQuality ?: 0,
+                            deload.maxReportedSoreness,
+                        )
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else {
             if (deload.stalledExerciseNames.isNotEmpty()) {
@@ -122,8 +166,29 @@ internal fun ProgressDeloadCard(
                     ),
                 )
             }
-            OutlinedButton(onClick = actions.onStartDeload, enabled = !actions.busy) {
-                Text(stringResource(R.string.progress_deload_start))
+            if (analysisOnly) {
+                Text(
+                    stringResource(R.string.progress_deload_signal_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    stringResource(
+                        R.string.progress_deload_continued_load,
+                        deload.recent14DayCompletedWorkouts,
+                        deload.recent14DayWorkingSets,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    onClick = actions.onStartDeload,
+                    enabled = !actions.busy,
+                    modifier = Modifier.testTag("progress-start-deload"),
+                ) {
+                    Text(stringResource(R.string.progress_deload_start))
+                }
             }
         }
     }

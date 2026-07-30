@@ -52,6 +52,14 @@
     <string name="progress_deload_readiness_reason">Средняя готовность %1$.1f/5 по %2$d отметкам.</string>
     <string name="progress_deload_start">Начать разгрузку</string>
     <string name="progress_deload_end">Завершить разгрузку</string>
+    <string name="progress_deload_signal_title">Сигнал прогресса требует проверки</string>
+    <string name="progress_deload_signal_description">Застой в упражнении — сигнал для анализа, но недавняя нагрузка не подтверждает необходимость новой недели разгрузки.</string>
+    <string name="progress_deload_recovery_completed_title">Восстановительный перерыв уже состоялся</string>
+    <string name="progress_deload_recovery_completed_description">Последняя содержательная тренировка была примерно %1$.1f дн. назад; за последние 7 дней — %2$d завершённых тренировок и %3$d рабочих подходов. Ещё одна 7-дневная разгрузка не нужна.</string>
+    <string name="progress_deload_recovery_metrics">Проверка восстановления: готовность %1$.1f/5, сон %2$d/5, максимальная отмеченная болезненность %3$d/5.</string>
+    <string name="progress_deload_recovery_metrics_no_soreness">Проверка восстановления: готовность %1$.1f/5, сон %2$d/5, болезненность не отмечена.</string>
+    <string name="progress_deload_return_next">Возвращайтесь с консервативными целями return-to-training или калибровки оборудования, показанными в тренировке.</string>
+    <string name="progress_deload_continued_load">Недавняя завершённая нагрузка: %1$d тренировок и %2$d рабочих подходов за 14 дней.</string>
     <string name="progress_action_failed">Не удалось применить изменение.</string>
     <string name="progress_loading_table">Проценты от расчётного 1ПМ</string>
     <string name="progress_loading_table_description">Лучший расчётный 1ПМ: %1$s</string>

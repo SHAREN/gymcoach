@@ -8,6 +8,7 @@ import {
   DELOAD_READINESS_LOOKBACK,
   type DeloadRecommendation,
 } from './deload';
+import { loadDeloadActivity } from './deload-history';
 import { getExerciseDisplayName } from '@/i18n/exercise-names';
 import { defaultLocale, isLocale, type Locale } from '@/i18n/config';
 import englishMessages from '@/messages/en';
@@ -149,7 +150,7 @@ export async function getHomeInsight(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { bodyweight: true },
+    select: { bodyweight: true, weeklyFrequency: true },
   });
   const bodyweight = user?.bodyweight ?? null;
 
@@ -169,6 +170,8 @@ export async function getHomeInsight(
       isWarmup: true,
       durationSec: true,
       sessionId: true,
+      gymEquipmentId: true,
+      equipmentNameSnapshot: true,
       session: { select: { startedAt: true } },
       exercise: { select: { name: true, usesBodyweight: true } },
     },
@@ -184,6 +187,8 @@ export async function getHomeInsight(
       sessionId: string;
       sessionStartedAt: Date;
       usesBodyweight: boolean;
+      gymEquipmentId: string | null;
+      equipmentNameSnapshot: string | null;
     }[]
   >();
   for (const s of recentSets) {
@@ -196,6 +201,8 @@ export async function getHomeInsight(
       sessionId: s.sessionId,
       sessionStartedAt: s.session.startedAt,
       usesBodyweight: s.exercise.usesBodyweight,
+      gymEquipmentId: s.gymEquipmentId,
+      equipmentNameSnapshot: s.equipmentNameSnapshot,
     });
     byExercise.set(s.exercise.name, list);
   }
@@ -215,12 +222,14 @@ export async function getHomeInsight(
     where: { userId, createdAt: { gte: readinessSince } },
     orderBy: { createdAt: 'desc' },
     take: DELOAD_READINESS_LOOKBACK,
-    select: { readiness: true },
+    select: { readiness: true, sleepQuality: true, soreness: true },
   });
 
   const deload = recommendDeload({
     stalledExerciseNames,
     recentReadiness: checkins.map((c) => c.readiness),
+    latestRecovery: checkins[0] ?? null,
+    activity: await loadDeloadActivity(userId, now, user?.weeklyFrequency),
   });
 
   // A fresh personal record: an all-time record (over full history) whose date

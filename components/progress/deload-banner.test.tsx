@@ -26,31 +26,23 @@ describe('DeloadBanner (recommendation state)', () => {
   it('lists the stalled lifts by name', () => {
     render(
       <DeloadBanner
-        reasons={[
-          { kind: 'stalled-lifts', exerciseNames: ['Bench press', 'Squat'] },
-        ]}
+        reasons={[{ kind: 'stalled-lifts', exerciseNames: ['Bench press', 'Squat'] }]}
         deloadUntil={null}
       />,
     );
     expect(screen.getByText('A deload week looks due')).toBeInTheDocument();
-    expect(
-      screen.getByText('2 lifts have stalled: Bench press, Squat.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('2 lifts have stalled: Bench press, Squat.')).toBeInTheDocument();
   });
 
   it('explains a chronically low readiness average', () => {
     render(
       <DeloadBanner
-        reasons={[
-          { kind: 'low-readiness', averageReadiness: 1.7, checkins: 5 },
-        ]}
+        reasons={[{ kind: 'low-readiness', averageReadiness: 1.7, checkins: 5 }]}
         deloadUntil={null}
       />,
     );
     expect(
-      screen.getByText(
-        'Your readiness has averaged 1.7/5 over your last 5 check-ins.',
-      ),
+      screen.getByText('Your readiness has averaged 1.7/5 over your last 5 check-ins.'),
     ).toBeInTheDocument();
   });
 
@@ -90,6 +82,41 @@ describe('DeloadBanner (recommendation state)', () => {
     );
     expect(refresh).toHaveBeenCalled();
   });
+
+  it('explains an already completed recovery break without a start button', () => {
+    render(
+      <DeloadBanner
+        recommendation={{
+          recommended: false,
+          reasons: [{ kind: 'stalled-lifts', exerciseNames: ['Bench press', 'Squat'] }],
+          state: 'recovery-break-completed',
+          activity: {
+            lastMeaningfulWorkoutAt: '2026-07-17T21:36:00.000Z',
+            daysSinceLastMeaningfulWorkout: 12.6,
+            recent7DayCompletedWorkouts: 0,
+            recent7DayWorkingSets: 0,
+            recent14DayCompletedWorkouts: 1,
+            recent14DayWorkingSets: 10,
+            baselineCompletedWorkoutsPer14Days: 2,
+            baselineWorkingSetsPer14Days: 20,
+            sessionFrequencyRatio: 0.5,
+            workingSetRatio: 0.5,
+            actualWeeklyFrequency28Days: 1.25,
+            plannedWeeklyFrequency: 3,
+            averageReadiness: 4,
+            latestSleepQuality: 4,
+            maxReportedSoreness: null,
+            loadAccounting: null,
+          },
+        }}
+        deloadUntil={null}
+      />,
+    );
+
+    expect(screen.getByText('Your recovery break has already happened')).toBeInTheDocument();
+    expect(screen.getByText(/Another 7-day deload is not needed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start a deload week' })).not.toBeInTheDocument();
+  });
 });
 
 describe('DeloadBanner (active state)', () => {
@@ -98,9 +125,7 @@ describe('DeloadBanner (active state)', () => {
     expect(screen.getByText('Deload week in progress')).toBeInTheDocument();
     expect(screen.getByText(/Until Jun 18/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'End deload now' })).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Start a deload week' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start a deload week' })).not.toBeInTheDocument();
   });
 
   it('takes precedence over the recommendation copy when both apply', () => {
@@ -115,9 +140,9 @@ describe('DeloadBanner (active state)', () => {
   });
 
   it('ends the deload via DELETE /api/deload and refreshes', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ deloadUntil: null }), { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ deloadUntil: null }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<DeloadBanner reasons={[]} deloadUntil="2026-06-18T12:00:00.000Z" />);

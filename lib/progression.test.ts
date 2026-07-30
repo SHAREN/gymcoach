@@ -366,6 +366,14 @@ describe('suggestNextWeight planned deload', () => {
     expect(both.reason).toBe('planned-deload');
   });
 
+  it('rounds the single reduction through the active equipment scale', () => {
+    const result = suggestNextWeight(makePe(compoundExo), progressingSets, null, true, {
+      equipmentType: 'OTHER',
+      weightOptions: [70, 72.5, 75, 80],
+    });
+    expect(result).toMatchObject({ reason: 'planned-deload', weight: 72.5 });
+  });
+
   it('wins over a readiness hold (the larger reduction applies)', () => {
     const poor: ReadinessSignal = { readiness: 2, soreness: null, ageHours: 1 };
     const holdOnly = suggestNextWeight(makePe(compoundExo), progressingSets, poor);

@@ -220,19 +220,43 @@ Current readiness heuristics:
 Implementations: `lib/stats.ts` and `lib/deload.ts`.
 
 A lift is currently considered stalled when its best estimated 1RM fails to
-improve by more than 0.5% across its last three sessions and all three sessions
-fall within 42 days. Sparse observations from older blocks MUST NOT be combined
-into a current plateau.
+improve by more than 0.5% across its last three comparable-equipment sessions
+and all three sessions fall within 42 days. The comparison starts from the
+first session in that current window; an older absolute PR is context, not the
+baseline that can turn every later block into an eternal stall. Sparse
+observations from older blocks and sessions from different equipment identities
+MUST NOT be combined into a current plateau.
 
-A deload is recommended when either:
+A stall or low-readiness trigger first opens a recovery analysis:
 
 - at least two lifts are stalled; or
 - at least three of the last five readiness check-ins, all selected from the
   recent 14-day window, average 2/5 or lower.
 
-The current planned deload lasts seven days and applies a single 10% load
-reduction. These thresholds are engineering heuristics. A recommendation is a
-recovery signal, not proof of overtraining or a medical diagnosis.
+Neither trigger alone proves that another deload week is needed. The decision
+also compares completed meaningful strength sessions and working sets over the
+last 7 and 14 days with the user's preceding 56-day baseline normalized to 14
+days. A started but unfinished empty session, warm-ups and cardio do not reset
+the meaningful-training gap.
+
+The classifier exposes three separate outcomes:
+
+- `stall-signal`: performance/recovery needs review, but continued high load is
+  not established;
+- `planned-deload`: the signal is accompanied by continued recent load or
+  chronically low readiness while training continues;
+- `recovery-break-completed`: a full zero-load deload-length week has already
+  occurred, 14-day set and session frequency are both below the existing 70%
+  maintained-load ratio, and current readiness is above the low-readiness
+  boundary. The UI does not offer another deload and routes the next workout to
+  the existing conservative return/calibration contract.
+
+The current planned deload lasts seven days and applies exactly one 10% load
+reduction before equipment rounding. Readiness and planned-deload reasons do
+not compound, and Android MUST apply the reduction rather than only prohibiting
+an increase. The 7/14/56-day windows and 70% comparison reuse existing product
+heuristics; they are not validated physiological thresholds. A recommendation
+is a recovery signal, not proof of overtraining or a medical diagnosis.
 
 ### 5.3 Return after a long break
 
@@ -333,6 +357,21 @@ switch to another `gymEquipmentId` starts that equipment-specific confirmation
 independently. This two-set confirmation rule is an engineering heuristic.
 General deload or recovery signals remain separate and MUST NOT erase either
 the exact-equipment or exact-exercise long-term strength anchor.
+
+Cross-exercise recovery accounting keeps three non-interchangeable levels:
+
+- exact exercise plus equipment owns load, e1RM, records, progression and
+  calibration; equipment identities are never numerically merged;
+- an explicitly reviewed movement pattern may show that the pattern remained
+  trained and reduce only variant-specific uncertainty;
+- direct muscles plus only explicitly known secondary muscles, fatigue tags
+  and joint-stress tags describe recent load. `UNKNOWN` secondary participation
+  receives no guessed contribution and lowers confidence.
+
+Barbell, Smith, dumbbell and machine horizontal presses may therefore maintain
+`HORIZONTAL_PUSH` exposure while their kilograms and e1RMs remain incomparable.
+Continued family exposure can justify a cautious variant-specific first set
+instead of novice calibration, but it cannot supply the absent variant's load.
 
 For every valid exact-equipment session, calculate one session capacity:
 
@@ -1156,3 +1195,15 @@ movement/equipment specificity, conservative RIR calibration, existing
 same-exercise legacy unlinked anchor to provisional equipment calibration and
 confirming equipment after two valid sets are explicitly engineering product
 heuristics.
+
+A fifteenth access attempt on 2026-07-31 for task `gymcoach-2b3` targeted the
+same `ИИ тренер` notebook (`92a3e4db-1980-486c-9fee-24e8607f1cd5`). The standard
+local client again returned `Authentication expired` while inspecting the
+notebook, so no new methodological percentage or calendar threshold was
+introduced. The change mechanically separates stall analysis, continued-load
+planned deload and an already completed recovery break using the existing
+seven-day deload duration, 14-day current evidence, preceding 56-day baseline,
+70% maintained-load ratio, and the established one-time 10% equipment-rounded
+reduction. Source-backed principles remain gradual individualized return,
+specificity and combined objective/subjective recovery monitoring; the exact
+classification rules remain documented engineering heuristics.

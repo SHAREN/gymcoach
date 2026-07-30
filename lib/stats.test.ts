@@ -573,6 +573,18 @@ describe('isStalled', () => {
     expect(isStalled(points([100, 98, 102]), asOf)).toBe(false);
   });
 
+  it('does not let an old absolute PR turn an improving current block into a stall', () => {
+    expect(isStalled(points([130, 100, 105, 110]), asOf)).toBe(false);
+  });
+
+  it('does not compare a current stall across different equipment identities', () => {
+    const comparable = points([100, 100, 100]).map((point, index) => ({
+      ...point,
+      equipmentKey: index === 2 ? 'equipment:smith' : 'equipment:barbell',
+    }));
+    expect(isStalled(comparable, asOf)).toBe(false);
+  });
+
   it('does not flag with fewer than the lookback number of sessions', () => {
     expect(isStalled(points([100, 100]), asOf)).toBe(false);
     expect(isStalled(points([100]), asOf)).toBe(false);

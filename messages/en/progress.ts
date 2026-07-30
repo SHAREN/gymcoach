@@ -126,6 +126,20 @@ export const progress = {
       '{count, plural, one {# lift has stalled: {names}.} other {# lifts have stalled: {names}.}}',
     readinessReason:
       'Your readiness has averaged {average}/5 over your last {checkins, plural, one {# check-in} other {# check-ins}}.',
+    continuedLoad:
+      'Training was still active over the last 14 days: {workouts, plural, one {# completed workout} other {# completed workouts}} and {sets, plural, one {# working set} other {# working sets}}.',
+    signalTitle: 'A progress signal needs review',
+    signalDescription:
+      'A stalled lift is an analysis signal, but the recent workload does not support adding a new deload week.',
+    recoveryCompletedTitle: 'Your recovery break has already happened',
+    recoveryCompletedDescription:
+      'The last meaningful workout was about {days} days ago, with {workouts} completed workouts and {sets} working sets in the last 7 days. Another 7-day deload is not needed.',
+    recoveryMetrics:
+      'Recovery check: readiness {readiness}/5, sleep {sleep}/5, maximum reported soreness {soreness}/5.',
+    recoveryMetricsNoSoreness:
+      'Recovery check: readiness {readiness}/5, sleep {sleep}/5, no soreness reported.',
+    returnNext:
+      'Resume with the conservative return-to-training or equipment-calibration targets shown in the workout.',
   },
   records: {
     title: 'Records',

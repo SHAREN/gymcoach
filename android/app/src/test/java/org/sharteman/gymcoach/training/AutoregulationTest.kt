@@ -156,6 +156,41 @@ class AutoregulationTest {
     }
 
     @Test
+    fun plannedDeloadAppliesOneRoundedTenPercentReduction() {
+        val recommendation = plannedDeloadWeight(
+            referenceWeight = 80.0,
+            constraints = LoadConstraints(
+                equipmentType = "DUMBBELL",
+                dumbbellWeights = listOf(70.0, 72.5, 75.0, 80.0),
+            ),
+        )
+
+        assertEquals(72.5, recommendation, 0.001)
+    }
+
+    @Test
+    fun plannedDeloadDoesNotCompoundWithOrdinaryFatigueAdjustment() {
+        val rested = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = returnRecommendation("normal", 3, 2, null),
+            completedSets = listOf(set(weight = 80.0, reps = 10, rir = 0)),
+            recoverySec = 120,
+            plannedDeloadCeiling = 72.0,
+        )
+        val fatigued = recommendNextSetFromSharedContract(
+            programExercise = parityProgramExercise(),
+            returnRecommendation = returnRecommendation("normal", 3, 2, null),
+            completedSets = listOf(set(weight = 80.0, reps = 10, rir = 0)),
+            recoverySec = 30,
+            allowLoadIncrease = false,
+            plannedDeloadCeiling = 72.0,
+        )
+
+        assertEquals(72.0, requireNotNull(rested).weight, 0.001)
+        assertEquals(rested.weight, requireNotNull(fatigued).weight, 0.001)
+    }
+
+    @Test
     fun barbellOptionsContainConstructibleSixtyFiveKg() {
         val weights = constructibleBarbellWeights(
             barWeights = listOf(20.0),

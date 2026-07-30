@@ -196,7 +196,11 @@ fun ProgressScreen(
                 progress.consistency?.let { consistency ->
                     item { ConsistencyProgressCard(consistency) }
                 }
-                if (progress.deload.active || progress.deload.recommended) {
+                if (
+                    progress.deload.active ||
+                    progress.deload.recommended ||
+                    progress.deload.state != "none"
+                ) {
                     item { ProgressDeloadCard(progress.deload, dashboardActions) }
                 }
             }
