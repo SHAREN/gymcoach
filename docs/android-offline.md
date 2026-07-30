@@ -186,6 +186,17 @@ load ceilings and plate/load calculations.
 Missing RIR lowers recommendation confidence. No offline calculation invokes an
 LLM or invents a replacement for missing data.
 
+During an active workout, a return or equipment-calibration recommendation can
+seed the initial regular-set count. Once the user explicitly changes that count
+from either the set-table `#` control or Exercise parameters, Android stores a
+session-scoped override in Room and updates the existing `ProgramExercise`
+through the idempotent offline sync operation. The session override remains
+authoritative across navigation, bootstrap refresh, process restart and
+equipment changes for planned rows, progress, completion, summary and
+auto-advance. It changes only set count: return/calibration weight ceilings,
+target RIR and equipment confidence remain in force. A count cannot be reduced
+below already completed regular and drop-set rows.
+
 ## Build and verification
 
 Required local toolchain:

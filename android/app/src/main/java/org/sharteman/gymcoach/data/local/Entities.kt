@@ -111,6 +111,26 @@ data class ActiveWorkoutRuntimeEntity(
 )
 
 @Entity(
+    tableName = "active_target_set_overrides",
+    primaryKeys = ["sessionId", "programExerciseId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = LocalSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("programExerciseId"), Index("updatedAtEpochMs")],
+)
+data class ActiveTargetSetOverrideEntity(
+    val sessionId: String,
+    val programExerciseId: String,
+    val targetSets: Int,
+    val updatedAtEpochMs: Long,
+)
+
+@Entity(
     tableName = "watch_processed_events",
     indices = [Index("sessionId"), Index("processedAtEpochMs")],
 )

@@ -8,10 +8,15 @@ internal fun completedWorkoutExerciseIds(
     exercises: List<ProgramExerciseDto>,
     sets: List<LocalSetEntity>,
     returnRecommendations: Map<String, ReturnRecommendationDto>,
+    manualTargetSets: Map<String, Int> = emptyMap(),
 ): Set<String> {
     val completedByExerciseId = completedRegularSetCounts(sets)
     return exercises.mapNotNullTo(mutableSetOf()) { exercise ->
-        val targetSets = returnRecommendations[exercise.id]?.targetSets ?: exercise.targetSets
+        val targetSets = effectiveWorkoutTargetSets(
+            exercise,
+            returnRecommendations[exercise.id],
+            manualTargetSets[exercise.id],
+        )
         exercise.exerciseId.takeIf {
             (completedByExerciseId[exercise.exerciseId] ?: 0) >= targetSets
         }
@@ -24,6 +29,7 @@ internal fun nextIncompleteWorkoutExerciseIndex(
     returnRecommendations: Map<String, ReturnRecommendationDto>,
     currentIndex: Int,
     submittedSet: LocalSetEntity,
+    manualTargetSets: Map<String, Int> = emptyMap(),
 ): Int? {
     val current = exercises.getOrNull(currentIndex) ?: return null
     if (submittedSet.deleted || submittedSet.isWarmup || submittedSet.isDropSet) return null
@@ -31,7 +37,11 @@ internal fun nextIncompleteWorkoutExerciseIndex(
     val completedByExerciseId = completedRegularSetCounts(sets + submittedSet)
     fun remaining(index: Int): Int {
         val exercise = exercises[index]
-        val targetSets = returnRecommendations[exercise.id]?.targetSets ?: exercise.targetSets
+        val targetSets = effectiveWorkoutTargetSets(
+            exercise,
+            returnRecommendations[exercise.id],
+            manualTargetSets[exercise.id],
+        )
         return (targetSets - (completedByExerciseId[exercise.exerciseId] ?: 0)).coerceAtLeast(0)
     }
     fun firstIncomplete(indices: IntProgression): Int? =
@@ -67,3 +77,23 @@ private fun completedRegularSetCounts(
     .distinctBy { it.id }
     .groupingBy { it.exerciseId }
     .eachCount()
+
+internal fun effectiveWorkoutTargetSets(
+    exercise: ProgramExerciseDto,
+    recommendation: ReturnRecommendationDto?,
+    manualTargetSets: Int?,
+): Int = manualTargetSets ?: recommendation?.targetSets ?: exercise.targetSets
+
+internal fun minimumManualTargetSets(
+    exercise: ProgramExerciseDto,
+    sets: List<LocalSetEntity>,
+): Int {
+    val completed = sets.filter { set ->
+        set.exerciseId == exercise.exerciseId && !set.deleted && !set.isWarmup
+    }
+    return maxOf(
+        1,
+        completed.count { !it.isDropSet },
+        completed.size - exercise.targetDropSets,
+    )
+}

@@ -167,6 +167,54 @@ class WorkoutExerciseAdvanceTest {
     }
 
     @Test
+    fun manualOverrideMakesAutoAdvanceWaitPastTheReturnTarget() {
+        val exercises = listOf(exercise("a", null, targetSets = 4), exercise("b", null))
+        val recommendations = normalRecommendations(exercises).toMutableMap()
+        recommendations[exercises[0].id] = ReturnRecommendationDto(
+            mode = "exercise-reintro",
+            targetSets = 2,
+            targetRIR = 3,
+        )
+        val overrides = mapOf(exercises[0].id to 4)
+        val firstThree = listOf(
+            set("a", "a-1"),
+            set("a", "a-2"),
+            set("a", "a-3"),
+        )
+
+        assertNull(
+            nextIncompleteWorkoutExerciseIndex(
+                exercises = exercises,
+                sets = firstThree.take(2),
+                returnRecommendations = recommendations,
+                currentIndex = 0,
+                submittedSet = firstThree.last(),
+                manualTargetSets = overrides,
+            ),
+        )
+        assertEquals(
+            1,
+            nextIncompleteWorkoutExerciseIndex(
+                exercises = exercises,
+                sets = firstThree,
+                returnRecommendations = recommendations,
+                currentIndex = 0,
+                submittedSet = set("a", "a-4"),
+                manualTargetSets = overrides,
+            ),
+        )
+        assertEquals(
+            emptySet<String>(),
+            completedWorkoutExerciseIds(
+                exercises,
+                firstThree,
+                recommendations,
+                overrides,
+            ),
+        )
+    }
+
+    @Test
     fun completionProjectionIgnoresWarmupsDropsDeletedRowsAndDuplicates() {
         val exercises = listOf(exercise("a", null, targetSets = 2))
         val first = set("a", "a-1")

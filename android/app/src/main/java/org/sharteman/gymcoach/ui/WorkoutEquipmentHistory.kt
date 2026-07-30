@@ -303,9 +303,14 @@ internal fun workoutExerciseSetProgress(
     exercises: List<ProgramExerciseDto>,
     sets: List<LocalSetEntity>,
     returnRecommendations: Map<String, ReturnRecommendationDto>,
+    manualTargetSets: Map<String, Int> = emptyMap(),
 ): List<WorkoutExerciseSetProgress> = exercises.map { exercise ->
     val recommendation = returnRecommendations[exercise.id]
-    val plannedRows = (recommendation?.targetSets ?: exercise.targetSets) +
+    val plannedRows = effectiveWorkoutTargetSets(
+        exercise,
+        recommendation,
+        manualTargetSets[exercise.id],
+    ) +
         if (recommendation?.calibrationRequired == true) {
             0
         } else {

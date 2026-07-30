@@ -85,6 +85,24 @@ interface GymCoachDao {
     @Query("DELETE FROM active_workout_runtime WHERE sessionId = :sessionId")
     suspend fun deleteActiveWorkoutRuntime(sessionId: String)
 
+    @Query("SELECT * FROM active_target_set_overrides WHERE sessionId = :sessionId")
+    fun observeActiveTargetSetOverrides(sessionId: String): Flow<List<ActiveTargetSetOverrideEntity>>
+
+    @Query(
+        "SELECT * FROM active_target_set_overrides " +
+            "WHERE sessionId = :sessionId AND programExerciseId = :programExerciseId",
+    )
+    suspend fun getActiveTargetSetOverride(
+        sessionId: String,
+        programExerciseId: String,
+    ): ActiveTargetSetOverrideEntity?
+
+    @Upsert
+    suspend fun saveActiveTargetSetOverride(entity: ActiveTargetSetOverrideEntity)
+
+    @Query("DELETE FROM active_target_set_overrides WHERE sessionId = :sessionId")
+    suspend fun deleteActiveTargetSetOverrides(sessionId: String)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long
 
@@ -486,6 +504,7 @@ interface GymCoachDao {
         saveSession(session)
         enqueue(operation)
         deleteActiveWorkoutRuntime(session.id)
+        deleteActiveTargetSetOverrides(session.id)
         watchEvent?.let { insertWatchOutboxEvent(it) }
         deleteWatchResyncMarker(session.id, Long.MAX_VALUE)
         bootstrap?.let { saveBootstrap(it) }
@@ -533,6 +552,17 @@ interface GymCoachDao {
     ) {
         saveBootstrap(bootstrap)
         enqueue(operation)
+    }
+
+    @Transaction
+    suspend fun saveActiveTargetSetOverrideAndProgram(
+        override: ActiveTargetSetOverrideEntity,
+        bootstrap: BootstrapCacheEntity?,
+        operation: SyncOutboxEntity?,
+    ) {
+        saveActiveTargetSetOverride(override)
+        bootstrap?.let { saveBootstrap(it) }
+        operation?.let { enqueue(it) }
     }
 
     @Transaction
@@ -642,6 +672,7 @@ interface GymCoachDao {
         saveSession(session)
         enqueue(operation)
         deleteActiveWorkoutRuntime(session.id)
+        deleteActiveTargetSetOverrides(session.id)
         deleteWatchResyncMarker(session.id, Long.MAX_VALUE)
         return true
     }

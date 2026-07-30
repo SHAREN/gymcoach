@@ -327,6 +327,38 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration9To10AddsDurableActiveTargetSetOverrides() {
+        helper.createDatabase(TEST_DB_V10, 9).apply {
+            execSQL(
+                "INSERT INTO local_sessions " +
+                    "(id, workoutId, gymId, startedAt, finishedAt, notes, sessionRpe) VALUES " +
+                    "('session_v10', 'workout_v10', NULL, '2026-07-30T10:00:00Z', NULL, NULL, NULL)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V10,
+            10,
+            true,
+            GymCoachDatabase.MIGRATION_9_10,
+        ).use { database ->
+            database.execSQL(
+                "INSERT INTO active_target_set_overrides " +
+                    "(sessionId, programExerciseId, targetSets, updatedAtEpochMs) " +
+                    "VALUES ('session_v10', 'program_exercise_v10', 4, 1000)",
+            )
+            database.query(
+                "SELECT targetSets FROM active_target_set_overrides " +
+                    "WHERE sessionId = 'session_v10' AND programExerciseId = 'program_exercise_v10'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(4, cursor.getInt(0))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
@@ -334,5 +366,6 @@ class GymCoachDatabaseMigrationTest {
         const val TEST_DB_V7 = "gymcoach-migration-v7-test"
         const val TEST_DB_V8 = "gymcoach-migration-v8-test"
         const val TEST_DB_V9 = "gymcoach-migration-v9-test"
+        const val TEST_DB_V10 = "gymcoach-migration-v10-test"
     }
 }

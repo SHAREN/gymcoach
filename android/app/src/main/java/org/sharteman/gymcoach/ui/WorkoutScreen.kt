@@ -166,6 +166,8 @@ fun WorkoutScreen(
     val session by repository.observeSession(sessionId).collectAsState(initial = null)
     val allSets by repository.observeSets(sessionId).collectAsState(initial = emptyList())
     val activeRuntime by repository.observeActiveWorkoutRuntime(sessionId).collectAsState(initial = null)
+    val targetSetOverrides by repository.observeActiveTargetSetOverrides(sessionId)
+        .collectAsState(initial = emptyList())
     val progressSnapshot by repository.progress.collectAsState(initial = null)
     val workout = remember(bootstrap, session?.workoutId) {
         bootstrap?.activeProgram?.workouts?.firstOrNull { it.id == session?.workoutId }
@@ -246,6 +248,9 @@ fun WorkoutScreen(
         if (runtimeIndex >= 0 && runtimeIndex != selectedIndex) selectExercise(runtimeIndex, persist = false)
     }
     val current = exercises.getOrNull(selectedIndex) ?: return
+    val manualTargetSets = targetSetOverrides.associate { override ->
+        override.programExerciseId to override.targetSets
+    }
     val legacyReturnRecommendations =
         bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
     val equipmentReturnRecommendations =
@@ -296,7 +301,11 @@ fun WorkoutScreen(
         gymEquipmentId = currentEquipmentId,
     )
     val returnRecommendation = effectiveReturnRecommendations[current.id]
-    val target = resolveSharedNextSetTarget(current, returnRecommendation) ?: current
+    val target = resolveSharedNextSetTarget(
+        current,
+        returnRecommendation,
+        manualTargetSets[current.id],
+    ) ?: current.copy(targetSets = manualTargetSets[current.id] ?: current.targetSets)
     val currentSets = allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
     val selectedEquipmentDto = gym?.equipment?.firstOrNull { it.id == selectedProfile?.equipmentId }
     val comparableSets = selectedProfile?.let { profile ->
@@ -315,6 +324,7 @@ fun WorkoutScreen(
         exercises = exercises,
         sets = allSets,
         returnRecommendations = effectiveReturnRecommendations,
+        manualTargetSets = manualTargetSets,
     )
     val currentSetProgress = exerciseSetProgress.first { it.programExerciseId == current.id }
     val plannedRows = currentSetProgress.plannedRows
@@ -325,6 +335,7 @@ fun WorkoutScreen(
         exercises = exercises,
         sets = allSets,
         returnRecommendations = effectiveReturnRecommendations,
+        manualTargetSets = manualTargetSets,
     )
     val unit = bootstrap?.profile?.unit ?: "KG"
     val lastWorking = comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
@@ -605,7 +616,18 @@ fun WorkoutScreen(
                         }
                     },
                     onTargetSetsChange = { targetSets ->
-                        scope.launch { repository.updateTargetSets(current.id, targetSets) }
+                        scope.launch {
+                            runCatching {
+                                repository.updateActiveTargetSets(
+                                    sessionId = sessionId,
+                                    programExerciseId = current.id,
+                                    targetSets = targetSets,
+                                    effectiveTargetDropSets = target.targetDropSets,
+                                )
+                            }.onFailure {
+                                snackbar.showSnackbar(exerciseChangeError)
+                            }
+                        }
                     },
                     onConfirm = confirm@{
                         val displayWeight = weightText.replace(',', '.').toDoubleOrNull()
@@ -660,6 +682,7 @@ fun WorkoutScreen(
                             returnRecommendations = effectiveReturnRecommendations,
                             currentIndex = selectedIndex,
                             submittedSet = addedSet,
+                            manualTargetSets = manualTargetSets,
                         )
                         if (next != null) selectExercise(next, preserveRest = true)
                         true
@@ -714,6 +737,8 @@ fun WorkoutScreen(
     if (exerciseMenuDialog) {
         ActiveExerciseMenuDialog(
             exercise = current,
+            effectiveTargetSets = target.targetSets,
+            minimumTargetSets = minimumManualTargetSets(target, currentSets),
             exercises = exercises,
             equipmentName = selectedProfile?.equipmentName,
             busy = exerciseMutationBusy,
@@ -722,6 +747,26 @@ fun WorkoutScreen(
                     exerciseMutationBusy = true
                     try {
                         repository.updateProgramExercisePrescription(sessionId, updated)
+                        exerciseMenuDialog = false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        snackbar.showSnackbar(exerciseChangeError)
+                    } finally {
+                        exerciseMutationBusy = false
+                    }
+                }
+            },
+            onTargetSetsChange = { targetSets ->
+                scope.launch {
+                    exerciseMutationBusy = true
+                    try {
+                        repository.updateActiveTargetSets(
+                            sessionId = sessionId,
+                            programExerciseId = current.id,
+                            targetSets = targetSets,
+                            effectiveTargetDropSets = target.targetDropSets,
+                        )
                         exerciseMenuDialog = false
                     } catch (error: CancellationException) {
                         throw error
@@ -3442,11 +3487,19 @@ internal fun WorkoutScreenPreview(
     if (previewExerciseMenuDialog) {
         ActiveExerciseMenuDialog(
             exercise = previewTarget,
+            effectiveTargetSets = previewTarget.targetSets,
+            minimumTargetSets = 1,
             exercises = exercises,
             equipmentName = firstEquipmentName,
             busy = false,
             onUpdate = { updated ->
                 exercises = exercises.map { if (it.id == updated.id) updated else it }
+                previewExerciseMenuDialog = false
+            },
+            onTargetSetsChange = { targetSets ->
+                exercises = exercises.map {
+                    if (it.id == previewTarget.id) it.copy(targetSets = targetSets) else it
+                }
                 previewExerciseMenuDialog = false
             },
             onSuperset = { neighborId ->

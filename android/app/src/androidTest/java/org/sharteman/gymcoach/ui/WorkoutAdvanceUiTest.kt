@@ -1,13 +1,22 @@
 package org.sharteman.gymcoach.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import kotlinx.coroutines.flow.first
+import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -16,6 +25,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
+import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
 import org.sharteman.gymcoach.data.local.GymCoachDatabase
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
 import org.sharteman.gymcoach.data.local.LocalSetEntity
@@ -39,17 +49,20 @@ class WorkoutAdvanceUiTest {
 
     private lateinit var database: GymCoachDatabase
     private lateinit var repository: GymCoachRepository
+    private lateinit var api: ApiClient
+    private lateinit var context: Context
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
+        context = ApplicationProvider.getApplicationContext()
         database = Room.inMemoryDatabaseBuilder(context, GymCoachDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        api = ApiClient()
         repository = GymCoachRepository(
             dao = database.dao(),
             accountStore = testAccountStore(),
-            api = ApiClient(),
+            api = api,
             scheduleSyncNow = {},
             schedulePeriodicSync = {},
         )
@@ -119,15 +132,159 @@ class WorkoutAdvanceUiTest {
         assertNotNull(runtime?.restEndsAtEpochMs)
     }
 
-    private fun bootstrap(workout: WorkoutDto): BootstrapResponse {
-        val recommendations = workout.exercises.associate { exercise ->
-            exercise.id to ReturnRecommendationDto(
-                mode = "normal",
-                targetSets = exercise.targetSets,
-                targetRIR = exercise.targetRIR,
+    @Test
+    fun manualSetCountFromTableAndMenuOverridesReturnRecommendationImmediately() {
+        val workout = setCountWorkout()
+        val bootstrap = bootstrap(workout, recommendedTargetSets = 2)
+        runBlocking {
+            database.dao().saveBootstrap(
+                BootstrapCacheEntity(
+                    payloadJson = api.json.encodeToString(bootstrap),
+                    updatedAtEpochMs = 1_000,
+                ),
+            )
+            database.dao().saveSession(
+                LocalSessionEntity(
+                    id = SESSION_ID,
+                    workoutId = workout.id,
+                    gymId = null,
+                    startedAt = "2026-07-30T10:00:00Z",
+                ),
+            )
+            database.dao().saveActiveWorkoutRuntime(
+                ActiveWorkoutRuntimeEntity(
+                    sessionId = SESSION_ID,
+                    workoutId = workout.id,
+                    activeExerciseId = "a",
+                    updatedAtEpochMs = 1_000,
+                ),
             )
         }
-        val second = workout.exercises[1]
+
+        composeRule.setContent {
+            WorkoutScreen(
+                repository = repository,
+                sessionId = SESSION_ID,
+                bootstrap = bootstrap,
+                online = false,
+                ownerUserId = "user",
+                onUpdateExercise = { exercise, _: ExerciseInput -> exercise },
+                onAskCoach = {},
+                onOpenProgress = {},
+                onOpenHistory = { _, _ -> },
+                onExit = {},
+            )
+        }
+
+        composeRule.onNodeWithText("0 / 2").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-count-button").performClick()
+        repeat(2) {
+            composeRule.onNodeWithContentDescription(
+                context.getString(org.sharteman.gymcoach.R.string.increase),
+            ).performClick()
+            composeRule.waitForIdle()
+        }
+        composeRule.onNodeWithText("4").assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(org.sharteman.gymcoach.R.string.save),
+        ).performClick()
+        composeRule.waitUntil(5_000) {
+            runBlocking {
+                database.dao().getActiveTargetSetOverride(SESSION_ID, "program-a") != null
+            }
+        }
+        assertEquals(
+            4,
+            runBlocking {
+                database.dao().getActiveTargetSetOverride(SESSION_ID, "program-a")?.targetSets
+            },
+        )
+        composeRule.onNodeWithText("0 / 4").assertIsDisplayed()
+        saveScreenshot("manual-target-sets-table-4.png")
+
+        composeRule.onNodeWithTag("active-exercise-actions").performClick()
+        composeRule.onNodeWithTag("exercise-menu-target-sets").performClick()
+        composeRule.waitForIdle()
+        saveScreenshot("manual-target-sets-menu.png")
+        composeRule.onNodeWithTag("exercise-target-sets-5").performClick()
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithText("0 / 5").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(
+            5,
+            runBlocking {
+                database.dao().getActiveTargetSetOverride(SESSION_ID, "program-a")?.targetSets
+            },
+        )
+        saveScreenshot("manual-target-sets-menu-5.png")
+    }
+
+    @Test
+    fun activeTargetSetRepositoryPersistsOverrideInRoom() = runBlocking {
+        val workout = setCountWorkout()
+        val bootstrap = bootstrap(workout, recommendedTargetSets = 2)
+        database.dao().saveBootstrap(
+            BootstrapCacheEntity(
+                payloadJson = api.json.encodeToString(bootstrap),
+                updatedAtEpochMs = 1_000,
+            ),
+        )
+        database.dao().saveSession(
+            LocalSessionEntity(
+                id = SESSION_ID,
+                workoutId = workout.id,
+                gymId = null,
+                startedAt = "2026-07-30T10:00:00Z",
+            ),
+        )
+        database.dao().saveActiveWorkoutRuntime(
+            ActiveWorkoutRuntimeEntity(
+                sessionId = SESSION_ID,
+                workoutId = workout.id,
+                activeExerciseId = "a",
+                updatedAtEpochMs = 1_000,
+            ),
+        )
+
+        repository.updateActiveTargetSets(
+            SESSION_ID,
+            "program-a",
+            4,
+            effectiveTargetDropSets = 0,
+        )
+
+        assertEquals(
+            4,
+            database.dao().getActiveTargetSetOverride(SESSION_ID, "program-a")?.targetSets,
+        )
+        val restartedRepository = GymCoachRepository(
+            dao = database.dao(),
+            accountStore = testAccountStore(),
+            api = api,
+            scheduleSyncNow = {},
+            schedulePeriodicSync = {},
+        )
+        assertEquals(
+            4,
+            restartedRepository.observeActiveTargetSetOverrides(SESSION_ID)
+                .first()
+                .single()
+                .targetSets,
+        )
+    }
+
+    private fun bootstrap(
+        workout: WorkoutDto,
+        recommendedTargetSets: Int? = null,
+    ): BootstrapResponse {
+        val recommendations = workout.exercises.associate { exercise ->
+            exercise.id to ReturnRecommendationDto(
+                mode = if (recommendedTargetSets == null) "normal" else "exercise-reintro",
+                targetSets = recommendedTargetSets ?: exercise.targetSets,
+                targetRIR = if (recommendedTargetSets == null) exercise.targetRIR else 3,
+            )
+        }
+        val previous = workout.exercises.getOrNull(1) ?: workout.exercises.first()
         return BootstrapResponse(
             schemaVersion = 7,
             calculationVersion = "ui-test",
@@ -140,8 +297,8 @@ class WorkoutAdvanceUiTest {
                 workouts = listOf(workout),
             ),
             lastPerformances = mapOf(
-                second.exerciseId to LastPerformanceDto(
-                    exerciseId = second.exerciseId,
+                previous.exerciseId to LastPerformanceDto(
+                    exerciseId = previous.exerciseId,
                     sessionId = "previous-session",
                     sessionStartedAt = "2026-07-20T10:00:00Z",
                     sets = listOf(PerformanceSetDto(weight = 10.0, reps = 10, rir = 2)),
@@ -162,6 +319,19 @@ class WorkoutAdvanceUiTest {
             programExercise("a", 0, 1),
             programExercise("b", 1, 1),
             programExercise("c", 2, null),
+        ),
+    )
+
+    private fun setCountWorkout(): WorkoutDto = WorkoutDto(
+        id = "workout-set-count",
+        programId = "program",
+        name = "Set count workout",
+        order = 0,
+        exercises = listOf(
+            programExercise("a", 0, null).copy(
+                workoutId = "workout-set-count",
+                targetSets = 4,
+            ),
         ),
     )
 
@@ -198,6 +368,27 @@ class WorkoutAdvanceUiTest {
         rir = 2,
         completedAt = "2026-07-27T10:00:00Z",
     )
+
+    private fun saveScreenshot(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(
+                MediaStore.Images.Media.RELATIVE_PATH,
+                "${Environment.DIRECTORY_PICTURES}/GymCoachTests",
+            )
+        }
+        val uri = requireNotNull(
+            targetContext.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values),
+        )
+        targetContext.contentResolver.openOutputStream(uri).use { output ->
+            requireNotNull(output)
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                .compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
+    }
 
     private fun testAccountStore() = object : AccountStore {
         override val deviceId = "emulator-ui-test"

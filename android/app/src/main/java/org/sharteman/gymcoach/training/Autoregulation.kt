@@ -65,9 +65,10 @@ data class SetRecommendation(
 fun resolveSharedNextSetTarget(
     programExercise: ProgramExerciseDto,
     returnRecommendation: ReturnRecommendationDto?,
+    manualTargetSets: Int? = null,
 ): ProgramExerciseDto? = returnRecommendation?.let { recommendation ->
     programExercise.copy(
-        targetSets = recommendation.targetSets,
+        targetSets = manualTargetSets ?: recommendation.targetSets,
         targetDropSets = if (recommendation.calibrationRequired) {
             0
         } else {

@@ -18,6 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
+import org.sharteman.gymcoach.data.local.ActiveTargetSetOverrideEntity
 import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
@@ -644,6 +645,10 @@ class GymCoachRepository(
     fun observeActiveWorkoutRuntime(sessionId: String): Flow<ActiveWorkoutRuntimeEntity?> =
         dao.observeActiveWorkoutRuntime(sessionId)
 
+    fun observeActiveTargetSetOverrides(
+        sessionId: String,
+    ): Flow<List<ActiveTargetSetOverrideEntity>> = dao.observeActiveTargetSetOverrides(sessionId)
+
     suspend fun cachedBootstrapSnapshot(): BootstrapResponse? = dao.getBootstrap()?.let { cached ->
         runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }.getOrNull()
     }
@@ -940,6 +945,105 @@ class GymCoachRepository(
             outbox(operation),
         )
         scheduleSyncNow()
+    }
+
+    suspend fun updateActiveTargetSets(
+        sessionId: String,
+        programExerciseId: String,
+        targetSets: Int,
+        effectiveTargetDropSets: Int,
+    ) {
+        require(targetSets in 1..20) { "Target sets must be between 1 and 20." }
+        require(effectiveTargetDropSets in 0..10) { "Target drop sets must be between 0 and 10." }
+        var queuedSync = false
+        syncMutex.withLock {
+            watchCommandMutex.withLock {
+                bootstrapCacheMutex.withLock targetSetsLock@{
+                    val cached = requireNotNull(dao.getBootstrap()) {
+                        "No cached program is available."
+                    }
+                    val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                    val exercise = requireNotNull(findProgramExercise(bootstrap, programExerciseId)) {
+                        "Program exercise was not found in the cached program."
+                    }
+                    require(
+                        effectiveTargetDropSets == 0 ||
+                            effectiveTargetDropSets == exercise.targetDropSets,
+                    ) { "Effective drop sets do not match the current exercise target." }
+                    val session = requireNotNull(dao.getSession(sessionId)) {
+                        "Workout session was not found."
+                    }
+                    check(session.finishedAt == null && session.workoutId == exercise.workoutId) {
+                        "Workout is no longer active."
+                    }
+                    requireNotNull(dao.getActiveWorkoutRuntime(sessionId)) {
+                        "Active workout state was not found."
+                    }
+                    val completed = dao.getAllSets(sessionId)
+                        .filter { set ->
+                            set.exerciseId == exercise.exerciseId &&
+                                !set.deleted &&
+                                !set.isWarmup
+                        }
+                    val completedRegular = completed.count { !it.isDropSet }
+                    val minimumTargetSets = maxOf(
+                        1,
+                        completedRegular,
+                        completed.size - effectiveTargetDropSets,
+                    )
+                    require(targetSets >= minimumTargetSets) {
+                        "Target sets cannot be lower than completed working and drop sets."
+                    }
+
+                    val existingOverride = dao.getActiveTargetSetOverride(
+                        sessionId,
+                        programExerciseId,
+                    )
+                    val programChanged = exercise.targetSets != targetSets
+                    if (existingOverride?.targetSets == targetSets && !programChanged) {
+                        return@targetSetsLock
+                    }
+                    val changedAt = System.currentTimeMillis()
+                    val override = ActiveTargetSetOverrideEntity(
+                        sessionId = sessionId,
+                        programExerciseId = programExerciseId,
+                        targetSets = targetSets,
+                        updatedAtEpochMs = changedAt,
+                    )
+                    val updatedCache = if (programChanged) {
+                        cached.copy(
+                            payloadJson = api.json.encodeToString(
+                                updateProgramExerciseTargetSets(
+                                    bootstrap,
+                                    programExerciseId,
+                                    targetSets,
+                                ),
+                            ),
+                            updatedAtEpochMs = changedAt,
+                        )
+                    } else {
+                        null
+                    }
+                    val operation = if (programChanged) {
+                        UpdateTargetSetsOperation(
+                            operationId = operationId(),
+                            programExerciseId = programExerciseId,
+                            targetSets = targetSets,
+                            previousTargetSets = exercise.targetSets,
+                        ).let(::outbox)
+                    } else {
+                        null
+                    }
+                    dao.saveActiveTargetSetOverrideAndProgram(
+                        override = override,
+                        bootstrap = updatedCache,
+                        operation = operation,
+                    )
+                    queuedSync = operation != null
+                }
+            }
+        }
+        if (queuedSync) scheduleSyncSafely()
     }
 
     suspend fun updatePreferredEquipment(

@@ -22,6 +22,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.BootstrapCacheEntity
+import org.sharteman.gymcoach.data.local.ActiveTargetSetOverrideEntity
 import org.sharteman.gymcoach.data.local.ActiveWorkoutRuntimeEntity
 import org.sharteman.gymcoach.data.local.GymCoachDao
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
@@ -1497,6 +1498,61 @@ class GymCoachRepositorySyncTest {
         assertEquals(1, fixture.dao.queuedOperations().size)
         assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
         assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+    }
+
+    @Test
+    fun activeTargetSetOverridePersistsAcrossBootstrapRefreshAndRejectsCompletedSetReduction() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 2)
+
+        val rejected = runCatching {
+            fixture.repository.updateActiveTargetSets(
+                sessionId = sessionId,
+                programExerciseId = "program_exercise_1",
+                targetSets = 1,
+                effectiveTargetDropSets = 0,
+            )
+        }
+        fixture.repository.updateActiveTargetSets(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            targetSets = 4,
+            effectiveTargetDropSets = 0,
+        )
+        fixture.repository.refreshBootstrap()
+
+        assertTrue(rejected.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(4, fixture.dao.cachedTargetSets())
+        assertEquals(
+            4,
+            fixture.repository.observeActiveTargetSetOverrides(sessionId)
+                .first()
+                .single()
+                .targetSets,
+        )
+        assertEquals(1, fixture.dao.queuedOperations().size)
+    }
+
+    @Test
+    fun choosingTheExistingProgramCountStillCreatesADurableSessionOverrideWithoutSyncNoise() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession()
+
+        fixture.repository.updateActiveTargetSets(
+            sessionId = sessionId,
+            programExerciseId = "program_exercise_1",
+            targetSets = 3,
+            effectiveTargetDropSets = 0,
+        )
+
+        assertEquals(
+            3,
+            fixture.repository.observeActiveTargetSetOverrides(sessionId)
+                .first()
+                .single()
+                .targetSets,
+        )
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -3662,6 +3718,10 @@ class GymCoachRepositorySyncTest {
         private val sessions = linkedMapOf<String, LocalSessionEntity>()
         private val sets = linkedMapOf<String, LocalSetEntity>()
         private val activeRuntimes = linkedMapOf<String, ActiveWorkoutRuntimeEntity>()
+        private val activeTargetSetOverrides =
+            linkedMapOf<Pair<String, String>, ActiveTargetSetOverrideEntity>()
+        private val activeTargetSetOverrideFlows =
+            linkedMapOf<String, MutableStateFlow<List<ActiveTargetSetOverrideEntity>>>()
         private val processedWatchEvents = linkedMapOf<String, WatchProcessedEventEntity>()
         private val watchInbox = linkedMapOf<String, WatchInboxEventEntity>()
         private val watchOutbox = linkedMapOf<String, WatchOutboxEventEntity>()
@@ -3705,6 +3765,8 @@ class GymCoachRepositorySyncTest {
             sessions.remove(sessionId)
             sets.entries.removeIf { it.value.sessionId == sessionId }
             activeRuntimes.remove(sessionId)
+            activeTargetSetOverrides.entries.removeIf { it.value.sessionId == sessionId }
+            publishActiveTargetSetOverrides(sessionId)
             publishSessions()
         }
         override fun observeSets(sessionId: String): Flow<List<LocalSetEntity>> = MutableStateFlow(
@@ -3733,6 +3795,23 @@ class GymCoachRepositorySyncTest {
         }
         override suspend fun deleteActiveWorkoutRuntime(sessionId: String) {
             activeRuntimes.remove(sessionId)
+        }
+        override fun observeActiveTargetSetOverrides(
+            sessionId: String,
+        ): Flow<List<ActiveTargetSetOverrideEntity>> = activeTargetSetOverrideFlows.getOrPut(sessionId) {
+            MutableStateFlow(activeTargetSetOverridesFor(sessionId))
+        }
+        override suspend fun getActiveTargetSetOverride(
+            sessionId: String,
+            programExerciseId: String,
+        ) = activeTargetSetOverrides[sessionId to programExerciseId]
+        override suspend fun saveActiveTargetSetOverride(entity: ActiveTargetSetOverrideEntity) {
+            activeTargetSetOverrides[entity.sessionId to entity.programExerciseId] = entity
+            publishActiveTargetSetOverrides(entity.sessionId)
+        }
+        override suspend fun deleteActiveTargetSetOverrides(sessionId: String) {
+            activeTargetSetOverrides.entries.removeIf { it.value.sessionId == sessionId }
+            publishActiveTargetSetOverrides(sessionId)
         }
         override suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long =
             if (processedWatchEvents.putIfAbsent(entity.eventId, entity) == null) processedWatchEvents.size.toLong() else -1L
@@ -3970,6 +4049,10 @@ class GymCoachRepositorySyncTest {
             sessions.clear()
             sets.clear()
             activeRuntimes.clear()
+            activeTargetSetOverrides.clear()
+            activeTargetSetOverrideFlows.forEach { (sessionId, flow) ->
+                flow.value = activeTargetSetOverridesFor(sessionId)
+            }
             publishSessions()
         }
         override suspend fun clearOutbox() {
@@ -3989,6 +4072,16 @@ class GymCoachRepositorySyncTest {
         override suspend fun clearWatchConflicts() { watchConflicts.clear() }
         override suspend fun clearWatchFileTransfers() { watchFiles.clear() }
         override suspend fun clearWatchPeers() { watchPeers.clear() }
+
+        private fun activeTargetSetOverridesFor(
+            sessionId: String,
+        ): List<ActiveTargetSetOverrideEntity> = activeTargetSetOverrides.values
+            .filter { it.sessionId == sessionId }
+            .sortedBy { it.programExerciseId }
+
+        private fun publishActiveTargetSetOverrides(sessionId: String) {
+            activeTargetSetOverrideFlows[sessionId]?.value = activeTargetSetOverridesFor(sessionId)
+        }
 
         suspend fun cachedTargetSets(): Int? = getBootstrap()?.let { cached ->
             val decoded = TestApi.jsonConfig.decodeFromString<BootstrapResponse>(cached.payloadJson)

@@ -14,6 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalSessionEntity::class,
         LocalSetEntity::class,
         ActiveWorkoutRuntimeEntity::class,
+        ActiveTargetSetOverrideEntity::class,
         WatchProcessedEventEntity::class,
         WatchInboxEventEntity::class,
         WatchOutboxEventEntity::class,
@@ -29,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -53,6 +54,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_6_7,
                 MIGRATION_7_8,
                 MIGRATION_8_9,
+                MIGRATION_9_10,
             )
                 .build()
                 .also { instance = it }
@@ -448,6 +450,29 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE local_sets ADD COLUMN selectedLoadMultiplierSnapshot REAL")
                 db.execSQL("ALTER TABLE local_sets ADD COLUMN nominalResistanceKg REAL")
                 db.execSQL("ALTER TABLE local_sets ADD COLUMN equipmentLoadSnapshotJson TEXT")
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS active_target_set_overrides (" +
+                        "sessionId TEXT NOT NULL, " +
+                        "programExerciseId TEXT NOT NULL, " +
+                        "targetSets INTEGER NOT NULL, " +
+                        "updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(sessionId, programExerciseId), " +
+                        "FOREIGN KEY(sessionId) REFERENCES local_sessions(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_active_target_set_overrides_programExerciseId " +
+                        "ON active_target_set_overrides(programExerciseId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_active_target_set_overrides_updatedAtEpochMs " +
+                        "ON active_target_set_overrides(updatedAtEpochMs)",
+                )
             }
         }
     }

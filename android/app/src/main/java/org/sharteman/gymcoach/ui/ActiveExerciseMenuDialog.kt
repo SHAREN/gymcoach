@@ -64,9 +64,12 @@ private enum class ExerciseMenuView { MAIN, SETS, REPS, DROP_SETS, SUPERSET, NOT
 @Composable
 internal fun ActiveExerciseMenuDialog(
     exercise: ProgramExerciseDto,
+    effectiveTargetSets: Int,
+    minimumTargetSets: Int,
     exercises: List<ProgramExerciseDto>,
     busy: Boolean,
     onUpdate: (ProgramExerciseDto) -> Unit,
+    onTargetSetsChange: (Int) -> Unit,
     onSuperset: (String?) -> Unit,
     onReplace: () -> Unit,
     onRemove: () -> Unit,
@@ -108,6 +111,7 @@ internal fun ActiveExerciseMenuDialog(
         when (view) {
             ExerciseMenuView.MAIN -> ExerciseMenuMain(
                 exercise = exercise,
+                effectiveTargetSets = effectiveTargetSets,
                 busy = busy,
                 onOpen = { view = it },
                 onReplace = onReplace,
@@ -115,11 +119,11 @@ internal fun ActiveExerciseMenuDialog(
             )
 
             ExerciseMenuView.SETS -> ValueList(
-                values = (1..20).toList(),
-                selected = exercise.targetSets,
+                values = (minimumTargetSets.coerceIn(1, 20)..20).toList(),
+                selected = effectiveTargetSets,
                 tagPrefix = "exercise-target-sets",
                 busy = busy,
-            ) { onUpdate(exercise.copy(targetSets = it)) }
+            ) { onTargetSetsChange(it) }
 
             ExerciseMenuView.DROP_SETS -> ValueList(
                 values = (0..10).toList(),
@@ -328,6 +332,7 @@ private fun ExerciseSheetHeader(
 @Composable
 private fun ExerciseMenuMain(
     exercise: ProgramExerciseDto,
+    effectiveTargetSets: Int,
     busy: Boolean,
     onOpen: (ExerciseMenuView) -> Unit,
     onReplace: () -> Unit,
@@ -347,7 +352,7 @@ private fun ExerciseMenuMain(
         )
         ExerciseSheetRow(
             label = stringResource(R.string.exercise_target_sets),
-            value = exercise.targetSets.toString(),
+            value = effectiveTargetSets.toString(),
             tag = "exercise-menu-target-sets",
             busy = busy,
             onClick = { onOpen(ExerciseMenuView.SETS) },

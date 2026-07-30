@@ -420,6 +420,69 @@ class WorkoutEquipmentHistoryTest {
     }
 
     @Test
+    fun `manual set count remains authoritative when equipment recommendation changes`() {
+        val exercise = ProgramExerciseDto(
+            id = "program-exercise-1",
+            workoutId = "workout-1",
+            exerciseId = "pressdown",
+            order = 0,
+            targetSets = 4,
+            targetRepsMin = 8,
+            targetRepsMax = 12,
+            targetRIR = 2,
+            restSec = 90,
+            exercise = ExerciseDto(
+                id = "pressdown",
+                name = "Cable pressdown",
+                muscleGroup = "TRICEPS",
+                category = "ISOLATION",
+                equipmentType = "CABLE",
+            ),
+        )
+        val recordedSets = listOf(
+            LocalSetEntity(
+                id = "set-1",
+                sessionId = "session-1",
+                exerciseId = exercise.exerciseId,
+                gymEquipmentId = "cable-a",
+                setNumber = 1,
+                weight = 30.0,
+                reps = 10,
+                rir = 3,
+                completedAt = "2026-07-30T10:00:00.000Z",
+            ),
+        )
+        val override = mapOf(exercise.id to 4)
+        val cableARecommendation = equipmentRecommendation(
+            "cable-a",
+            targetSets = 2,
+            mode = "exercise-reintro",
+        ).recommendation
+        val cableBRecommendation = equipmentRecommendation(
+            "cable-b",
+            targetSets = 1,
+            mode = "equipment-calibration",
+        ).recommendation
+
+        val progressA = workoutExerciseSetProgress(
+            exercises = listOf(exercise),
+            sets = recordedSets,
+            returnRecommendations = mapOf(exercise.id to cableARecommendation),
+            manualTargetSets = override,
+        )
+        val progressB = workoutExerciseSetProgress(
+            exercises = listOf(exercise),
+            sets = recordedSets,
+            returnRecommendations = mapOf(exercise.id to cableBRecommendation),
+            manualTargetSets = override,
+        )
+
+        assertEquals(4, progressA.single().plannedRows)
+        assertEquals(4, progressB.single().plannedRows)
+        assertEquals(1, progressB.single().completedRows)
+    }
+
+    @Test
     fun `does not use active gym null-equipment history in an open session at another gym`() {
         val performances = listOf(
             nullEquipmentPerformance("gym-a", "session-a", maxWeight = 30.0),
