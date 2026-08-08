@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Copy
 
 plugins {
     id("com.android.application")
@@ -6,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.kotlin.kapt")
+    id("androidx.baselineprofile")
 }
 
 fun String.asBuildConfigString(): String =
@@ -28,6 +30,20 @@ val sourceCommit = providers.environmentVariable("GYMCOACH_COMMIT_SHA").orElse(
         commandLine("git", "rev-parse", "--short=12", "HEAD")
     }.standardOutput.asText.map { output -> output.trim().ifBlank { "unknown" } },
 )
+val releaseStoreFile = providers.gradleProperty("gymcoach.release.storeFile")
+    .orElse(providers.environmentVariable("GYMCOACH_RELEASE_STORE_FILE"))
+val releaseStorePassword = providers.gradleProperty("gymcoach.release.storePassword")
+    .orElse(providers.environmentVariable("GYMCOACH_RELEASE_STORE_PASSWORD"))
+val releaseKeyAlias = providers.gradleProperty("gymcoach.release.keyAlias")
+    .orElse(providers.environmentVariable("GYMCOACH_RELEASE_KEY_ALIAS"))
+val releaseKeyPassword = providers.gradleProperty("gymcoach.release.keyPassword")
+    .orElse(providers.environmentVariable("GYMCOACH_RELEASE_KEY_PASSWORD"))
+val releaseSigningAvailable = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { provider -> provider.orNull?.isNotBlank() == true }
 
 android {
     namespace = "org.sharteman.gymcoach"
@@ -37,8 +53,8 @@ android {
         applicationId = "org.sharteman.gymcoach"
         minSdk = 26
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.4.48"
+        versionCode = 59
+        versionName = "0.4.49"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -52,12 +68,28 @@ android {
         manifestPlaceholders["huaweiWearEngineAppId"] = huaweiWearEngineAppId.get()
     }
 
+    signingConfigs {
+        if (releaseSigningAvailable) {
+            create("release") {
+                storeFile = file(releaseStoreFile.get())
+                storePassword = releaseStorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("String", "WATCH_TRANSPORT_MODE", watchTransportMode.get().asBuildConfigString())
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             buildConfigField("String", "WATCH_TRANSPORT_MODE", "huawei".asBuildConfigString())
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -68,6 +100,17 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".benchmark"
             versionNameSuffix = "-benchmark"
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += listOf("release")
+            buildConfigField("String", "WATCH_TRANSPORT_MODE", "simulator".asBuildConfigString())
+        }
+        create("performance") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            versionNameSuffix = "-performance"
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = false
             matchingFallbacks += listOf("release")
@@ -87,6 +130,8 @@ android {
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     sourceSets.getByName("benchmark").java.srcDir("src/release/java")
+    sourceSets.getByName("performance").java.srcDir("src/release/java")
+    sourceSets.getByName("performance").manifest.srcFile("src/benchmark/AndroidManifest.xml")
     sourceSets.getByName("test").resources.srcDir(
         rootProject.projectDir.parentFile.resolve("shared-contracts/examples"),
     )
@@ -112,6 +157,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.navigation:navigation-compose:2.9.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -138,6 +184,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    baselineProfile(project(":baselineprofile"))
 }
 
 val generateAndroidExerciseNames = tasks.register<Exec>("generateAndroidExerciseNames") {
@@ -154,11 +201,20 @@ tasks.named("preBuild").configure {
     dependsOn(generateAndroidExerciseNames)
 }
 
-val debugApk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")
-val publishDebugApk = tasks.register<Exec>("publishDebugApk") {
+val releaseApk = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
+val retainReleaseMapping = tasks.register<Copy>("retainReleaseMapping") {
     group = "distribution"
-    description = "Publishes the latest debug APK for the GymCoach web download endpoint."
-    dependsOn("packageDebug")
+    description = "Retains the R8 mapping next to the published Android distribution metadata."
+    dependsOn("minifyReleaseWithR8")
+    from(layout.buildDirectory.file("outputs/mapping/release/mapping.txt"))
+    into(repositoryRoot.resolve("data/android-release"))
+    rename { "mapping-${android.defaultConfig.versionName}-${sourceCommit.get()}.txt" }
+}
+
+val publishReleaseApk = tasks.register<Exec>("publishReleaseApk") {
+    group = "distribution"
+    description = "Publishes the signed optimized release APK for the GymCoach download endpoint."
+    dependsOn("assembleRelease", retainReleaseMapping)
     workingDir(repositoryRoot)
     environment(
         "ANDROID_RELEASE_DIR",
@@ -167,10 +223,23 @@ val publishDebugApk = tasks.register<Exec>("publishDebugApk") {
     commandLine(
         "node",
         repositoryRoot.resolve("scripts/publish-android-apk.mjs").absolutePath,
-        debugApk.get().asFile.absolutePath,
+        releaseApk.get().asFile.absolutePath,
     )
 }
 
-tasks.matching { it.name == "assembleDebug" }.configureEach {
-    dependsOn(publishDebugApk)
+gradle.taskGraph.whenReady {
+    val releaseArtifactRequested = allTasks.any { task ->
+        task.project == project && task.name in setOf(
+            "packageRelease",
+            "assembleRelease",
+            "bundleRelease",
+            "publishReleaseApk",
+        )
+    }
+    if (releaseArtifactRequested && !releaseSigningAvailable) {
+        throw GradleException(
+            "Release signing is not configured. Provide gymcoach.release.* Gradle properties " +
+                "or the matching GYMCOACH_RELEASE_* environment variables.",
+        )
+    }
 }

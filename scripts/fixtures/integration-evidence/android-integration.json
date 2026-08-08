@@ -10,7 +10,7 @@
     "requiredTaskIds": ["gymcoach-android"],
     "combinedGate": {
       "head": "{{INTEGRATION_HEAD}}",
-      "command": "bash scripts/verify.sh && gradlew testDebugUnitTest lintDebug assembleDebug",
+      "command": "bash scripts/verify.sh && gradlew testDebugUnitTest lintDebug assembleDebug publishReleaseApk",
       "exitCode": 0
     },
     "review": {
@@ -29,7 +29,7 @@
         "commit": "{{TASK_COMMIT}}",
         "gate": {
           "head": "{{TASK_COMMIT}}",
-          "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+          "command": "gradlew testDebugUnitTest lintDebug assembleDebug publishReleaseApk",
           "exitCode": 0
         }
       },
@@ -43,11 +43,11 @@
     "sourceHead": "{{INTEGRATION_HEAD}}",
     "assembleGate": {
       "head": "{{INTEGRATION_HEAD}}",
-      "command": "gradlew testDebugUnitTest lintDebug assembleDebug",
+      "command": "gradlew testDebugUnitTest lintDebug assembleDebug publishReleaseApk",
       "exitCode": 0
     },
-    "outputMetadataPath": "android/app/build/outputs/apk/debug/output-metadata.json",
-    "debugApkPath": "android/app/build/outputs/apk/debug/app-debug.apk",
+    "outputMetadataPath": "android/app/build/outputs/apk/release/output-metadata.json",
+    "releaseApkPath": "android/app/build/outputs/apk/release/app-release.apk",
     "immutableApkPath": "data/android-release/{{APK_FILE}}",
     "latestJsonPath": "data/android-release/latest.json",
     "apksignerPath": "{{APKSIGNER_PATH}}",

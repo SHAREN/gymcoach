@@ -11,7 +11,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,6 +20,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.flowWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -30,6 +32,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
 import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
@@ -59,6 +63,12 @@ private const val WEB_ROUTE = "web"
 private const val SETTINGS_ROUTE = "settings"
 private const val COACHING_PROFILE_ROUTE = "coaching-profile"
 private const val WATCH_DIAGNOSTICS_ROUTE = "watch-diagnostics"
+
+@Composable
+private fun repositoryBootstrap(repository: GymCoachRepository): BootstrapResponse? {
+    val bootstrap by repository.bootstrap.collectAsStateWithLifecycle(initialValue = null)
+    return bootstrap
+}
 
 @Composable
 private fun HomeRoute(
@@ -102,13 +112,13 @@ private fun HomeRoute(
             online = online,
         ),
     )
-    val openSessions by repository.openSessions.collectAsState(initial = emptyList())
-    val pendingCount by repository.pendingCount.collectAsState(initial = 0)
-    val syncIssue by repository.syncIssue.collectAsState(initial = null)
+    val openSessions by repository.openSessions.collectAsStateWithLifecycle(initialValue = emptyList())
+    val pendingCount by repository.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
+    val syncIssue by repository.syncIssue.collectAsStateWithLifecycle(initialValue = null)
     val offlinePendingFlow = remember(repository) { OfflineRuntime.pendingCount() }
     val offlineIssuesFlow = remember(repository) { OfflineRuntime.issues() }
-    val offlinePendingCount by offlinePendingFlow.collectAsState(initial = 0)
-    val offlineIssues by offlineIssuesFlow.collectAsState(initial = emptyList())
+    val offlinePendingCount by offlinePendingFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val offlineIssues by offlineIssuesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val offlineIssue = offlineIssues.firstOrNull()
     val displayedSyncIssue = syncIssue ?: offlineIssue?.let {
         val userError = classifyAppError(
@@ -254,14 +264,14 @@ fun GymCoachApp(
 
     val navController = rememberNavController()
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val accountStore = remember(context, loggedIn) { SecureAccountStore(context.applicationContext) }
     val accessToken = remember(accountStore, loggedIn) { accountStore.getAccessToken() }
     val exerciseCatalogRepository = remember(repository.serverUrl, accessToken) {
         accessToken?.let { token -> ProgramsCatalogRepository.remote(repository.serverUrl, token) }
     }
-    val bootstrap by repository.bootstrap.collectAsState(initial = null)
     val pendingProgramDecisions by repository.observePendingWorkoutStructureDrafts()
-        .collectAsState(initial = emptyList())
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -352,11 +362,12 @@ fun GymCoachApp(
         }
     }
 
-    LaunchedEffect(exerciseCatalogRepository, bootstrap) {
+    LaunchedEffect(exerciseCatalogRepository, lifecycle) {
         val catalogRepository = exerciseCatalogRepository ?: return@LaunchedEffect
-        val snapshot = bootstrap ?: return@LaunchedEffect
-        catalogRepository.seedExerciseCatalog(snapshot.catalog)
-        snapshot.activeProgram?.let { catalogRepository.seedActiveProgram(it) }
+        repository.bootstrap.flowWithLifecycle(lifecycle).filterNotNull().collectLatest { snapshot ->
+            catalogRepository.seedExerciseCatalog(snapshot.catalog)
+            snapshot.activeProgram?.let { catalogRepository.seedActiveProgram(it) }
+        }
     }
 
     val openProgress: (String?) -> Unit = { exerciseId ->
@@ -394,6 +405,7 @@ fun GymCoachApp(
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = HOME_ROUTE) {
             composable(HOME_ROUTE) {
+                val bootstrap = repositoryBootstrap(repository)
                 HomeRoute(
                     repository = repository,
                     bootstrap = bootstrap,
@@ -462,6 +474,7 @@ fun GymCoachApp(
                 )
             }
             composable("programs") {
+                val bootstrap = repositoryBootstrap(repository)
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
@@ -481,6 +494,7 @@ fun GymCoachApp(
                 route = "programs/{programId}",
                 arguments = listOf(navArgument("programId") { type = NavType.StringType }),
             ) { entry ->
+                val bootstrap = repositoryBootstrap(repository)
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
@@ -504,6 +518,7 @@ fun GymCoachApp(
                     navArgument("workoutId") { type = NavType.StringType },
                 ),
             ) { entry ->
+                val bootstrap = repositoryBootstrap(repository)
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
@@ -522,10 +537,11 @@ fun GymCoachApp(
                 }
             }
             composable("exercises") {
+                val bootstrap = repositoryBootstrap(repository)
                 if (accessToken == null) {
                     LaunchedEffect(Unit) { loggedIn = false }
                 } else {
-                    val progress by repository.progress.collectAsState(initial = null)
+                    val progress by repository.progress.collectAsStateWithLifecycle(initialValue = null)
                     LaunchedEffect(online) {
                         if (online) {
                             runCatching { repository.refreshBootstrap() }
@@ -578,6 +594,7 @@ fun GymCoachApp(
                     },
                 ),
             ) { entry ->
+                val bootstrap = repositoryBootstrap(repository)
                 HistoryScreen(
                     onBack = { navController.popBackStack() },
                     initialSessionId = entry.arguments?.getString("sessionId"),
@@ -601,7 +618,8 @@ fun GymCoachApp(
                     },
                 ),
             ) { entry ->
-                val progress by repository.progress.collectAsState(initial = null)
+                val bootstrap = repositoryBootstrap(repository)
+                val progress by repository.progress.collectAsStateWithLifecycle(initialValue = null)
                 ProgressScreen(
                     snapshot = progress,
                     unit = bootstrap?.profile?.unit ?: "KG",
@@ -656,6 +674,7 @@ fun GymCoachApp(
                 arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
             ) { entry ->
                 val sessionId = entry.arguments?.getString("sessionId").orEmpty()
+                val bootstrap = repositoryBootstrap(repository)
                 WorkoutScreen(
                     repository = repository,
                     sessionId = sessionId,
@@ -702,6 +721,7 @@ fun GymCoachApp(
                 }
             }
             composable(COACHING_PROFILE_ROUTE) {
+                val bootstrap = repositoryBootstrap(repository)
                 CoachingProfileScreen(
                     initialProfile = bootstrap?.profile?.coachingProfile,
                     onBack = { navController.popBackStack() },

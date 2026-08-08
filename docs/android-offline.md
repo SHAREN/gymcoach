@@ -235,20 +235,29 @@ From `android/`:
 ```
 
 The debug APK is produced at
-`android/app/build/outputs/apk/debug/app-debug.apk`.
+`android/app/build/outputs/apk/debug/app-debug.apk`. It is never published as a
+user distribution.
 
 ## Self-hosted APK publishing
 
-Every successful debug APK build automatically publishes the latest APK and
-its validated metadata. From `android/`, this is sufficient:
+Publishing requires the optimized release variant and the existing secure
+signing key. Supply `gymcoach.release.storeFile`,
+`gymcoach.release.storePassword`, `gymcoach.release.keyAlias` and
+`gymcoach.release.keyPassword` through user Gradle properties, or the matching
+`GYMCOACH_RELEASE_*` environment variables. Then run from `android/`:
 
 ```powershell
-.\gradlew.bat assembleDebug
+.\gradlew.bat publishReleaseApk
 ```
 
-The `assembleDebug` task depends on `publishDebugApk`, which only runs after a
-successful `packageDebug` and then invokes the repository publisher. To
-republish an already-built APK manually from the repository root, use:
+The task fails closed when release signing is absent. It enables R8 and resource
+shrinking, packages the generated Baseline Profile, retains the R8 mapping and
+invokes the repository publisher only after a successful signed release build.
+The mapping remains in `android/app/build/outputs/mapping/release/mapping.txt`
+and `retainReleaseMapping` copies a commit-qualified copy next to distribution
+metadata. Performance measurement and Baseline Profile regeneration are
+documented in `docs/android-performance.md`.
+To republish an already-built APK manually from the repository root, use:
 
 ```powershell
 npm run android:publish-apk

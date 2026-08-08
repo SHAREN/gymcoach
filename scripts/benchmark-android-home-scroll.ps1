@@ -7,6 +7,11 @@ param(
 
     [string]$OutputDirectory = 'android/app/build/reports/ui-evidence/gymcoach-1kv',
 
+    [ValidateSet('home', 'workout', 'settings', 'catalog', 'history', 'programs')]
+    [string]$Scenario = 'home',
+
+    [switch]$SkipInstall,
+
     [switch]$NoPulse
 )
 
@@ -29,13 +34,15 @@ $outputRoot = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
 } else {
     Join-Path $repoRoot $OutputDirectory
 }
-$apkPath = Join-Path $repoRoot 'android/app/build/outputs/apk/benchmark/app-benchmark.apk'
+$apkPath = Join-Path $repoRoot 'android/app/build/outputs/apk/performance/app-performance.apk'
 $packageName = 'org.sharteman.gymcoach.benchmark'
-$componentName = "$packageName/org.sharteman.gymcoach.ui.HomeBenchmarkActivity"
-$remoteData = "/data/local/tmp/gymcoach-home-$Label.data"
-$remoteReport = "/data/local/tmp/gymcoach-home-$Label-simpleperf.txt"
-$remoteScreenshot = "/sdcard/gymcoach-home-$Label.png"
-$statusPath = Join-Path $outputRoot "home-scroll-$Label.status.json"
+$activityName = if ($Scenario -eq 'home') { 'HomeBenchmarkActivity' } else { 'AppPerformanceBenchmarkActivity' }
+$componentName = "$packageName/org.sharteman.gymcoach.ui.$activityName"
+$artifactStem = "$Scenario-scroll-$Label"
+$remoteData = "/data/local/tmp/gymcoach-$Scenario-$Label.data"
+$remoteReport = "/data/local/tmp/gymcoach-$Scenario-$Label-simpleperf.txt"
+$remoteScreenshot = "/sdcard/gymcoach-$Scenario-$Label.png"
+$statusPath = Join-Path $outputRoot "$artifactStem.status.json"
 $profiler = $null
 $success = $false
 $failure = $null
@@ -80,10 +87,14 @@ try {
         }
     }
 
-    Invoke-Adb -Arguments @('install', '-r', $apkPath) | Out-Null
+    if (-not $SkipInstall) {
+        Invoke-Adb -Arguments @('install', '-r', $apkPath) | Out-Null
+    }
     Invoke-Adb -Arguments @('shell', 'am', 'force-stop', $packageName) | Out-Null
     $pulseValue = if ($NoPulse) { 'false' } else { 'true' }
-    Invoke-Adb -Arguments @('shell', 'am', 'start', '-W', '-n', $componentName, '--ez', 'pulse', $pulseValue) | Out-Null
+    $startArguments = @('shell', 'am', 'start', '-W', '-n', $componentName, '--ez', 'pulse', $pulseValue)
+    if ($Scenario -ne 'home') { $startArguments += @('--es', 'scenario', $Scenario) }
+    Invoke-Adb -Arguments $startArguments | Out-Null
     Start-Sleep -Seconds 2
 
     foreach ($iteration in 1..2) {
@@ -93,10 +104,12 @@ try {
         Invoke-Adb -Arguments @('shell', 'input', 'swipe', '720', '650', '720', '2550', '220') | Out-Null
     }
 
-    Invoke-Adb -Arguments @(
+    $resetArguments = @(
         'shell', 'am', 'start', '-W', '-n', $componentName,
         '--activity-single-top', '--ez', 'reset', 'true'
-    ) | Out-Null
+    )
+    if ($Scenario -ne 'home') { $resetArguments += @('--es', 'scenario', $Scenario) }
+    Invoke-Adb -Arguments $resetArguments | Out-Null
     Start-Sleep -Milliseconds 500
     Invoke-Adb -Arguments @('logcat', '-c') | Out-Null
     Invoke-Adb -Arguments @('shell', 'dumpsys', 'gfxinfo', $packageName, 'reset') | Out-Null
@@ -107,8 +120,8 @@ try {
     }
 
     $adbPath = (Get-Command adb -ErrorAction Stop).Source
-    $profilerOutLog = Join-Path $outputRoot "home-scroll-$Label-simpleperf-process.out.log"
-    $profilerErrorLog = Join-Path $outputRoot "home-scroll-$Label-simpleperf-process.err.log"
+    $profilerOutLog = Join-Path $outputRoot "$artifactStem-simpleperf-process.out.log"
+    $profilerErrorLog = Join-Path $outputRoot "$artifactStem-simpleperf-process.err.log"
     $profilerArguments = @(
         '-s', $Serial, 'shell', 'simpleperf', 'record', '-p', $targetPid,
         '-e', 'cpu-clock:u', '-g', '--duration', '12', '-o', $remoteData
@@ -131,18 +144,21 @@ try {
     }
 
     $gfxText = (Invoke-Adb -Arguments @('shell', 'dumpsys', 'gfxinfo', $packageName)) -join "`n"
-    $gfxPath = Join-Path $outputRoot "home-scroll-$Label-gfxinfo.txt"
+    $gfxPath = Join-Path $outputRoot "$artifactStem-gfxinfo.txt"
     Set-Content -LiteralPath $gfxPath -Value $gfxText
 
-    Invoke-Adb -Arguments @(
+    $dumpArguments = @(
         'shell', 'am', 'start', '-W', '-n', $componentName,
         '--activity-single-top', '--ez', 'dump', 'true'
-    ) | Out-Null
+    )
+    if ($Scenario -ne 'home') { $dumpArguments += @('--es', 'scenario', $Scenario) }
+    Invoke-Adb -Arguments $dumpArguments | Out-Null
     Start-Sleep -Milliseconds 300
+    $benchmarkLogTag = if ($Scenario -eq 'home') { 'GymCoachHomeBenchmark' } else { 'GymCoachAppBenchmark' }
     $counterText = (Invoke-Adb -Arguments @(
-        'shell', 'logcat', '-d', '-s', 'GymCoachHomeBenchmark:I', '*:S'
+        'shell', 'logcat', '-d', '-s', "${benchmarkLogTag}:I", '*:S'
     )) -join "`n"
-    $counterPath = Join-Path $outputRoot "home-scroll-$Label-counters.txt"
+    $counterPath = Join-Path $outputRoot "$artifactStem-counters.txt"
     Set-Content -LiteralPath $counterPath -Value $counterText
 
     Invoke-Adb -Arguments @(
@@ -151,33 +167,40 @@ try {
         '--percent-limit', '0.25', '-o', $remoteReport
     ) | Out-Null
     Invoke-Adb -Arguments @(
-        'pull', $remoteData, (Join-Path $outputRoot "home-scroll-$Label-simpleperf.data")
+        'pull', $remoteData, (Join-Path $outputRoot "$artifactStem-simpleperf.data")
     ) | Out-Null
     Invoke-Adb -Arguments @(
-        'pull', $remoteReport, (Join-Path $outputRoot "home-scroll-$Label-simpleperf.txt")
+        'pull', $remoteReport, (Join-Path $outputRoot "$artifactStem-simpleperf.txt")
     ) | Out-Null
 
     Invoke-Adb -Arguments @('shell', 'screencap', '-p', $remoteScreenshot) | Out-Null
     Invoke-Adb -Arguments @(
-        'pull', $remoteScreenshot, (Join-Path $outputRoot "home-scroll-$Label.png")
+        'pull', $remoteScreenshot, (Join-Path $outputRoot "$artifactStem.png")
     ) | Out-Null
 
     $histogramLine = ($gfxText -split "`n" | Where-Object { $_ -like 'HISTOGRAM:*' } | Select-Object -First 1)
     $slowFrames = 0
+    $framesOverEightMs = 0
     $frozenFrames = 0
     foreach ($bin in [regex]::Matches($histogramLine, '(\d+)ms=(\d+)')) {
         $durationMs = [int]$bin.Groups[1].Value
         $count = [int]$bin.Groups[2].Value
         if ($durationMs -gt 16) { $slowFrames += $count }
+        if ($durationMs -gt 8) { $framesOverEightMs += $count }
         if ($durationMs -ge 700) { $frozenFrames += $count }
     }
     $counterMatch = [regex]::Match(
         $counterText,
-        'parentCompositions=(\d+) benchmarkWorkoutItems=(\d+) destinationRows=(\d+) maxDestinationCardsPerRow=(\d+)'
+        'parentCompositions=(\d+) screenCompositions=(\d+) benchmarkWorkoutItems=(\d+) destinationRows=(\d+) maxDestinationCardsPerRow=(\d+)'
+    )
+    $genericCounterMatch = [regex]::Match(
+        $counterText,
+        'scenario=(\w+) parentCompositions=(\d+) screenCompositions=(\d+)'
     )
 
     $metrics = [ordered]@{
         label = $Label
+        scenario = $Scenario
         serial = $Serial
         profileable = $true
         pulseEnabled = -not $NoPulse
@@ -193,13 +216,23 @@ try {
         p95Ms = Get-MetricInt $gfxText '^95th percentile:\s+(\d+)ms'
         p99Ms = Get-MetricInt $gfxText '^99th percentile:\s+(\d+)ms'
         slowFramesOver16Ms = $slowFrames
+        framesOver8Ms120HzBudgetProxy = $framesOverEightMs
         frozenFramesAtLeast700Ms = $frozenFrames
-        parentCompositions = if ($counterMatch.Success) { [int]$counterMatch.Groups[1].Value } else { $null }
-        benchmarkWorkoutItems = if ($counterMatch.Success) { [int]$counterMatch.Groups[2].Value } else { $null }
-        destinationRows = if ($counterMatch.Success) { [int]$counterMatch.Groups[3].Value } else { $null }
-        maxDestinationCardsPerRow = if ($counterMatch.Success) { [int]$counterMatch.Groups[4].Value } else { $null }
+        parentCompositions = if ($counterMatch.Success) {
+            [int]$counterMatch.Groups[1].Value
+        } elseif ($genericCounterMatch.Success) {
+            [int]$genericCounterMatch.Groups[2].Value
+        } else { $null }
+        screenCompositions = if ($counterMatch.Success) {
+            [int]$counterMatch.Groups[2].Value
+        } elseif ($genericCounterMatch.Success) {
+            [int]$genericCounterMatch.Groups[3].Value
+        } else { $null }
+        benchmarkWorkoutItems = if ($counterMatch.Success) { [int]$counterMatch.Groups[3].Value } else { $null }
+        destinationRows = if ($counterMatch.Success) { [int]$counterMatch.Groups[4].Value } else { $null }
+        maxDestinationCardsPerRow = if ($counterMatch.Success) { [int]$counterMatch.Groups[5].Value } else { $null }
     }
-    $metricsPath = Join-Path $outputRoot "home-scroll-$Label-metrics.json"
+    $metricsPath = Join-Path $outputRoot "$artifactStem-metrics.json"
     Set-Content -LiteralPath $metricsPath -Value ($metrics | ConvertTo-Json -Depth 4)
 
     $success = $true

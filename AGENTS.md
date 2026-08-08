@@ -415,13 +415,15 @@ cd android
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 ```
 
-assembleDebug automatically runs publishDebugApk, creating an immutable
-hash-qualified APK in data/android-release and atomically replacing latest.json.
-For product closure, repeat this gate from the final integration head and use
-the integration guard to prove that versionName, versionCode, size, SHA-256,
-signing certificate, app-debug.apk, immutable APK, and latest.json agree. An APK
-built in an isolated task Worktree is insufficient. Do not leave the web
-download pointing at a stale Android build.
+`assembleDebug` is a regression build only and never publishes an APK. For
+product closure, configure the existing secure release signing authority and
+run `publishReleaseApk` from the final integration head. It builds the minified,
+resource-shrunk release APK, retains the R8 mapping, creates an immutable
+hash-qualified APK in `data/android-release`, and atomically replaces
+`latest.json`. The integration guard proves that versionName, versionCode,
+size, SHA-256, signing certificate, app-release.apk, immutable APK, and
+latest.json agree. An APK built in an isolated task Worktree is insufficient.
+Do not leave the web download pointing at a stale Android build.
 
 The integration manifest identifies the real Android SDK `aapt`/`aapt2` and
 `apksigner` executables. The guard executes them directly against both APKs,

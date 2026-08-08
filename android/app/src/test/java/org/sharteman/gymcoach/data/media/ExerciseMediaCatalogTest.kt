@@ -3,12 +3,37 @@ package org.sharteman.gymcoach.data.media
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import java.io.File
 
 class ExerciseMediaCatalogTest {
+    @After
+    fun clearProcessCache() {
+        ExerciseMediaCatalog.clearCacheForTest()
+    }
+
+    @Test
+    fun `process cache parses the catalog once`() {
+        var loads = 0
+        val first = ExerciseMediaCatalog.loadOnceForTest {
+            loads += 1
+            catalog("first", listOf("Bench Press"))
+        }
+        val second = ExerciseMediaCatalog.loadOnceForTest {
+            loads += 1
+            catalog("second", listOf("Squat"))
+        }
+
+        assertSame(first, second)
+        assertEquals(1, loads)
+        assertNotNull(second.resolve("Bench Press"))
+        assertNull(second.resolve("Squat"))
+    }
+
     @Test
     fun resolvesNamesAfterWebCompatibleNormalization() {
         val catalog = catalog(

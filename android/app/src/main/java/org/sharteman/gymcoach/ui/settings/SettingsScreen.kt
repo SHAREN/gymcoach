@@ -56,7 +56,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +70,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
@@ -138,8 +138,8 @@ fun SettingsScreen(
     val offlineQueueFlow = remember {
         runCatching { OfflineRuntime.pendingCount() }.getOrElse { flowOf(0) }
     }
-    val syncQueueCount by syncQueueFlow.collectAsState(initial = 0)
-    val offlineQueueCount by offlineQueueFlow.collectAsState(initial = 0)
+    val syncQueueCount by syncQueueFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val offlineQueueCount by offlineQueueFlow.collectAsStateWithLifecycle(initialValue = 0)
     val databaseSchemaVersion = remember(context) {
         runCatching {
             GymCoachDatabase.get(context.applicationContext).openHelper.readableDatabase.version
@@ -1331,7 +1331,11 @@ private fun GymSection(
                     leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
                 )
             }
-            items(gyms, key = { it.id }) { gym ->
+            items(
+                items = gyms,
+                key = { it.id },
+                contentType = { "gym" },
+            ) { gym ->
                 FilterChip(
                     selected = draft.id == gym.id,
                     onClick = { onSelectGym(gym.id) },

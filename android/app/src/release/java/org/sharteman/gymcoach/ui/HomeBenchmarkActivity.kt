@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -38,10 +39,14 @@ class HomeBenchmarkActivity : ComponentActivity() {
                     pulse += 1
                 }
             }
-            val pulseSnapshot = pulse
-            SideEffect { counters.parentCompositions.incrementAndGet() }
-            if (pulseSnapshot >= 0) {
-                GymCoachTheme {
+            GymCoachTheme {
+                BenchmarkPulse(
+                    value = { pulse },
+                    onComposition = { counters.parentCompositions.incrementAndGet() },
+                )
+                BenchmarkScenarioCounter(
+                    onComposition = { counters.screenCompositions.incrementAndGet() },
+                ) {
                     HomeScreen(
                         email = "benchmark@example.com",
                         bootstrap = snapshot,
@@ -93,17 +98,37 @@ class HomeBenchmarkActivity : ComponentActivity() {
     }
 }
 
+@Composable
+internal fun BenchmarkPulse(value: () -> Int, onComposition: () -> Unit) {
+    val snapshot = value()
+    SideEffect(onComposition)
+    if (snapshot == Int.MIN_VALUE) error("Unreachable benchmark pulse value")
+}
+
+@Composable
+internal fun BenchmarkScenarioCounter(
+    onComposition: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    SideEffect(onComposition)
+    content()
+}
+
 private class HomeBenchmarkCounters {
     val parentCompositions = AtomicInteger()
+    val screenCompositions = AtomicInteger()
 
     fun reset() {
         parentCompositions.set(0)
+        screenCompositions.set(0)
     }
 
     fun asLogLine(): String = buildString {
         val destinationRows = homeDestinationRows(List(BENCHMARK_DESTINATION_COUNT) { it })
         append("parentCompositions=")
         append(parentCompositions.get())
+        append(" screenCompositions=")
+        append(screenCompositions.get())
         append(" benchmarkWorkoutItems=")
         append(BENCHMARK_WORKOUT_COUNT)
         append(" destinationRows=")

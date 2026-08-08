@@ -22,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.watch.domain.WatchProtocol
 import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
@@ -38,7 +38,7 @@ import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchStatusScreen(onBack: () -> Unit, dataSource: WatchStatusDataSource) {
-    val state by dataSource.state.collectAsState()
+    val state by dataSource.state.collectAsStateWithLifecycle()
     var showTechnicalError by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {

@@ -39,6 +39,8 @@ class ExerciseMediaCatalog private constructor(
 
     companion object {
         private val parser = Json { ignoreUnknownKeys = true }
+        @Volatile
+        private var cachedCatalog: ExerciseMediaCatalog? = null
 
         fun fromJson(payload: String): ExerciseMediaCatalog {
             val document = parser.decodeFromString<ExerciseMediaDocument>(payload)
@@ -67,10 +69,26 @@ class ExerciseMediaCatalog private constructor(
         }
 
         fun load(context: Context): ExerciseMediaCatalog {
-            val payload = context.applicationContext.assets.open(CATALOG_ASSET_NAME)
-                .bufferedReader(Charsets.UTF_8)
-                .use { it.readText() }
-            return fromJson(payload)
+            cachedCatalog?.let { return it }
+            return synchronized(this) {
+                cachedCatalog ?: run {
+                    val payload = context.applicationContext.assets.open(CATALOG_ASSET_NAME)
+                        .bufferedReader(Charsets.UTF_8)
+                        .use { it.readText() }
+                    fromJson(payload).also { cachedCatalog = it }
+                }
+            }
+        }
+
+        internal fun loadOnceForTest(loader: () -> ExerciseMediaCatalog): ExerciseMediaCatalog {
+            cachedCatalog?.let { return it }
+            return synchronized(this) {
+                cachedCatalog ?: loader().also { cachedCatalog = it }
+            }
+        }
+
+        internal fun clearCacheForTest() {
+            synchronized(this) { cachedCatalog = null }
         }
 
         private val DATASET_ID_PATTERN = Regex("[A-Za-z0-9_-]+")

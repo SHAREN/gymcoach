@@ -184,7 +184,11 @@ fun ExerciseCatalogScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            else items(filtered, key = { it.id }) { exercise ->
+            else items(
+                items = filtered,
+                key = { it.id },
+                contentType = { "exercise" },
+            ) { exercise ->
                 ExerciseCatalogCard(
                     exercise = exercise,
                     serverUrl = serverUrl,

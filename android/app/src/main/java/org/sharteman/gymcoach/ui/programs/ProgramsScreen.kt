@@ -208,7 +208,11 @@ fun ProgramsScreen(
                     }
                 }
             } else {
-                items(programs, key = { it.id }) { program ->
+                items(
+                    items = programs,
+                    key = { it.id },
+                    contentType = { "program" },
+                ) { program ->
                     ProgramCard(
                         program = program,
                         onOpen = { selectedProgramId = program.id },
@@ -438,7 +442,11 @@ private fun ProgramDetailScreen(
                         }
                     }
                 }
-                items(current.workouts, key = { it.id }) { workout ->
+                items(
+                    items = current.workouts,
+                    key = { it.id },
+                    contentType = { "workout" },
+                ) { workout ->
                     WorkoutCard(
                         workout = workout,
                         onEdit = { editingWorkout = workout },

@@ -569,9 +569,11 @@ If the root is coordination-only, record `role:integration-coordinator` before
 integration. It must remain stage-less and `in_progress`; open INBOX/READY and
 blocked roots cannot close through coordinator handling.
 
-Run all combined gates. For Android work, build and publish a fresh APK from the
-integration head. Verify versionName, versionCode, file size, SHA-256, signing
-certificate, app-debug.apk, immutable hash-qualified APK, and latest.json.
+Run all combined gates. For Android work, build the debug regression artifact,
+then build and publish a fresh optimized signed release APK from the integration
+head with `publishReleaseApk`. Verify versionName, versionCode, file size,
+SHA-256, signing certificate, app-release.apk, immutable hash-qualified APK,
+R8 mapping, packaged Baseline Profile, and latest.json.
 The manifest supplies the real SDK `aapt`/`aapt2` and `apksigner` executable
 paths plus an assemble gate bound to the integration head. The guard directly
 runs `aapt dump badging` and `apksigner verify --print-certs` on both

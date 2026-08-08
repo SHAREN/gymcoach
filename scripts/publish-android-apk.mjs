@@ -5,19 +5,20 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outputMetadataPath = path.join(
+const defaultApkDirectory = path.join(root, 'android/app/build/outputs/apk/release');
+const sourceApk = path.resolve(
   root,
-  'android/app/build/outputs/apk/debug/output-metadata.json',
+  process.argv[2] ?? path.join(defaultApkDirectory, 'app-release.apk'),
+);
+const outputMetadataPath = path.resolve(
+  root,
+  process.env.ANDROID_OUTPUT_METADATA_PATH ?? path.join(path.dirname(sourceApk), 'output-metadata.json'),
 );
 const outputMetadata = JSON.parse(await readFile(outputMetadataPath, 'utf8'));
 const output = outputMetadata.elements?.[0];
 if (!output || !Number.isInteger(output.versionCode) || typeof output.versionName !== 'string') {
-  throw new Error('Android output-metadata.json does not contain a valid debug APK version.');
+  throw new Error('Android output-metadata.json does not contain a valid release APK version.');
 }
-const sourceApk = path.resolve(
-  root,
-  process.argv[2] ?? path.join(path.dirname(outputMetadataPath), output.outputFile),
-);
 const outputDirectory = path.resolve(
   root,
   process.env.ANDROID_RELEASE_DIR ?? 'data/android-release',

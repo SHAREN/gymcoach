@@ -137,10 +137,10 @@ class GymCoachRepository(
     }
     private val endpointResolver = ServerEndpointResolver(accountStore)
     val bootstrap: Flow<BootstrapResponse?> = dao.observeBootstrap().map { cached ->
-        cached?.let { runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull() }
+        cached?.let { decodeBootstrapPayload(it.payloadJson) }
     }
     val progress: Flow<MobileProgressSnapshot?> = dao.observeProgress().map { cached ->
-        cached?.let { runCatching { api.json.decodeFromString<MobileProgressSnapshot>(it.payloadJson) }.getOrNull() }
+        cached?.let { decodeProgressPayload(it.payloadJson) }
     }
     val openSessions: Flow<List<LocalSessionEntity>> = dao.observeOpenSessions()
     val pendingCount: Flow<Int> = dao.observePendingCount()
@@ -358,9 +358,7 @@ class GymCoachRepository(
         }
         if (operation is UpdateTargetSetsOperation) {
             val cached = dao.getBootstrap()
-            val decoded = cached?.let {
-                runCatching { api.json.decodeFromString<BootstrapResponse>(it.payloadJson) }.getOrNull()
-            }
+            val decoded = cached?.let { decodeBootstrapPayload(it.payloadJson) }
             if (cached != null && decoded != null) {
                 var reverted = updateProgramExerciseTargetSets(
                     decoded,
@@ -383,7 +381,7 @@ class GymCoachRepository(
                     }
                 dao.saveBootstrapAndRemoveOperations(
                     cached.copy(
-                        payloadJson = api.json.encodeToString(reverted),
+                        payloadJson = encodeBootstrapPayload(reverted),
                         updatedAtEpochMs = System.currentTimeMillis(),
                     ),
                     listOf(blocked.operationId),
@@ -465,15 +463,13 @@ class GymCoachRepository(
     suspend fun mergeCoachingProfileIntoBootstrap(profile: CoachingProfileDto) {
         bootstrapCacheMutex.withLock {
             val cachedEntity = dao.getBootstrap() ?: return@withLock
-            val cached = runCatching {
-                api.json.decodeFromString<BootstrapResponse>(cachedEntity.payloadJson)
-            }.getOrNull() ?: return@withLock
+            val cached = decodeBootstrapPayload(cachedEntity.payloadJson) ?: return@withLock
             val merged = mergeCoachingProfilesByTimestamp(cached.profile.coachingProfile, profile)
                 ?: return@withLock
             if (merged == cached.profile.coachingProfile) return@withLock
             dao.saveBootstrap(
                 cachedEntity.copy(
-                    payloadJson = api.json.encodeToString(
+                    payloadJson = encodeBootstrapPayload(
                         cached.copy(profile = cached.profile.copy(coachingProfile = merged)),
                     ),
                     updatedAtEpochMs = System.currentTimeMillis(),
@@ -485,14 +481,12 @@ class GymCoachRepository(
     suspend fun cacheExerciseMetadata(exercise: ExerciseDto) {
         bootstrapCacheMutex.withLock {
             val cachedEntity = dao.getBootstrap() ?: return@withLock
-            val cached = runCatching {
-                api.json.decodeFromString<BootstrapResponse>(cachedEntity.payloadJson)
-            }.getOrNull() ?: return@withLock
+            val cached = decodeBootstrapPayload(cachedEntity.payloadJson) ?: return@withLock
             val updated = mergeExerciseMetadataIntoBootstrap(cached, exercise)
             if (updated == cached) return@withLock
             dao.saveBootstrap(
                 cachedEntity.copy(
-                    payloadJson = api.json.encodeToString(updated),
+                    payloadJson = encodeBootstrapPayload(updated),
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
@@ -505,7 +499,7 @@ class GymCoachRepository(
             val response = endpointResolver.execute { baseUrl -> api.progress(baseUrl, token, exerciseId) }
             dao.saveProgress(
                 ProgressCacheEntity(
-                    payloadJson = api.json.encodeToString(response),
+                    payloadJson = encodeProgressPayload(response),
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
@@ -536,8 +530,7 @@ class GymCoachRepository(
     ): BootstrapResponse =
         bootstrapCacheMutex.withLock {
             val cachedProfile = dao.getBootstrap()?.let { cached ->
-                runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
-                    .getOrNull()
+                decodeBootstrapPayload(cached.payloadJson)
                     ?.profile
                     ?.coachingProfile
             }
@@ -614,7 +607,7 @@ class GymCoachRepository(
             }
             dao.saveBootstrap(
                 BootstrapCacheEntity(
-                    payloadJson = api.json.encodeToString(protectedExerciseMetadata),
+                    payloadJson = encodeBootstrapPayload(protectedExerciseMetadata),
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
@@ -622,6 +615,22 @@ class GymCoachRepository(
             consumeExerciseEditReceipts(exerciseProtection)
             protectedExerciseMetadata
         }
+
+    private suspend fun decodeBootstrapPayload(payload: String): BootstrapResponse? =
+        runCachePayloadCodec {
+            runCatching { api.json.decodeFromString<BootstrapResponse>(payload) }.getOrNull()
+        }
+
+    private suspend fun decodeProgressPayload(payload: String): MobileProgressSnapshot? =
+        runCachePayloadCodec {
+            runCatching { api.json.decodeFromString<MobileProgressSnapshot>(payload) }.getOrNull()
+        }
+
+    private suspend fun encodeBootstrapPayload(value: BootstrapResponse): String =
+        runCachePayloadCodec { api.json.encodeToString(value) }
+
+    private suspend fun encodeProgressPayload(value: MobileProgressSnapshot): String =
+        runCachePayloadCodec { api.json.encodeToString(value) }
 
     private suspend fun captureExerciseEditProtection(): Map<String, ExerciseInput> =
         OfflineSyncLock.mutex.withLock {
@@ -839,7 +848,9 @@ class GymCoachRepository(
                 }
                 check(session.finishedAt != null) { "Workout is still active." }
                 val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
-                val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+                val bootstrap = requireNotNull(decodeBootstrapPayload(cached.payloadJson)) {
+                    "Cached bootstrap is invalid."
+                }
                 val workout = requireNotNull(findWorkout(bootstrap, draft.current.workoutId)) {
                     "The program workout is no longer available."
                 }
@@ -886,7 +897,7 @@ class GymCoachRepository(
                 )
                 dao.saveBootstrapOperationAndWorkoutStructureDraft(
                     bootstrap = cached.copy(
-                        payloadJson = api.json.encodeToString(updatedBootstrap),
+                        payloadJson = encodeBootstrapPayload(updatedBootstrap),
                         updatedAtEpochMs = changedAt,
                     ),
                     operation = outbox(operation),
@@ -902,7 +913,7 @@ class GymCoachRepository(
     }
 
     suspend fun cachedBootstrapSnapshot(): BootstrapResponse? = dao.getBootstrap()?.let { cached ->
-        runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }.getOrNull()
+        decodeBootstrapPayload(cached.payloadJson)
     }
 
     suspend fun localSession(sessionId: String): LocalSessionEntity? = dao.getSession(sessionId)
@@ -1179,7 +1190,9 @@ class GymCoachRepository(
     suspend fun updateTargetSets(programExerciseId: String, targetSets: Int) {
         require(targetSets in 1..20) { "Target sets must be between 1 and 20." }
         val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
-        val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+        val bootstrap = requireNotNull(decodeBootstrapPayload(cached.payloadJson)) {
+            "Cached bootstrap is invalid."
+        }
         val previousTargetSets = requireNotNull(
             findProgramExerciseTargetSets(bootstrap, programExerciseId),
         ) { "Program exercise was not found in the cached program." }
@@ -1193,7 +1206,7 @@ class GymCoachRepository(
         )
         dao.saveBootstrapAndOperation(
             cached.copy(
-                payloadJson = api.json.encodeToString(updated),
+                payloadJson = encodeBootstrapPayload(updated),
                 updatedAtEpochMs = System.currentTimeMillis(),
             ),
             outbox(operation),
@@ -1287,7 +1300,9 @@ class GymCoachRepository(
     ) {
         val changed = bootstrapCacheMutex.withLock {
             val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
-            val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+            val bootstrap = requireNotNull(decodeBootstrapPayload(cached.payloadJson)) {
+                "Cached bootstrap is invalid."
+            }
             val gym = requireNotNull(bootstrap.gyms.firstOrNull { it.id == gymId }) {
                 "Gym was not found in the cached program."
             }
@@ -1329,7 +1344,7 @@ class GymCoachRepository(
             val changedAt = System.currentTimeMillis()
             dao.saveBootstrapAndReplaceOperations(
                 bootstrap = cached.copy(
-                    payloadJson = api.json.encodeToString(updated),
+                    payloadJson = encodeBootstrapPayload(updated),
                     updatedAtEpochMs = changedAt,
                 ),
                 operationIdsToRemove = priorOperations,
@@ -1882,8 +1897,7 @@ class GymCoachRepository(
                 val finishedDraft = dao.getWorkoutStructureDraft(sessionId)
                     ?.let(::finishWorkoutStructureDraft)
                 val bootstrap = dao.getBootstrap()?.let { cached ->
-                    runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
-                        .getOrNull()
+                    decodeBootstrapPayload(cached.payloadJson)
                         ?.let { current ->
                             mergeLocalExerciseHistory(
                                 bootstrap = current,
@@ -1892,7 +1906,7 @@ class GymCoachRepository(
                         }
                         ?.let { merged ->
                             cached.copy(
-                                payloadJson = api.json.encodeToString(merged),
+                                payloadJson = encodeBootstrapPayload(merged),
                                 updatedAtEpochMs = System.currentTimeMillis(),
                             )
                         }
@@ -2055,8 +2069,7 @@ class GymCoachRepository(
 
     private suspend fun cachedBootstrapWithoutHistorySession(sessionId: String): BootstrapCacheEntity? =
         dao.getBootstrap()?.let { cached ->
-            runCatching { api.json.decodeFromString<BootstrapResponse>(cached.payloadJson) }
-                .getOrNull()
+            decodeBootstrapPayload(cached.payloadJson)
                 ?.let { current ->
                     mergeLocalExerciseHistory(
                         bootstrap = current,
@@ -2066,7 +2079,7 @@ class GymCoachRepository(
                 }
                 ?.let { merged ->
                     cached.copy(
-                        payloadJson = api.json.encodeToString(merged),
+                        payloadJson = encodeBootstrapPayload(merged),
                         updatedAtEpochMs = System.currentTimeMillis(),
                     )
                 }
@@ -2165,7 +2178,7 @@ class GymCoachRepository(
         bootstrapCacheMutex.withLock bootstrapLock@{
             val cached = dao.getBootstrap()
             val bootstrap = cached?.let { entity ->
-                runCatching { api.json.decodeFromString<BootstrapResponse>(entity.payloadJson) }.getOrNull()
+                decodeBootstrapPayload(entity.payloadJson)
             }
             if (cached == null || bootstrap == null) {
                 dao.markOperationBlocked(operationId, error)
@@ -2203,7 +2216,7 @@ class GymCoachRepository(
                 operationId = operationId,
                 error = error,
                 bootstrap = cached.copy(
-                    payloadJson = api.json.encodeToString(restoredBootstrap),
+                    payloadJson = encodeBootstrapPayload(restoredBootstrap),
                     updatedAtEpochMs = changedAt,
                 ),
                 runtime = restoredRuntime,
@@ -2287,7 +2300,7 @@ class GymCoachRepository(
                     payloadJson = rewritten.payloadJson,
                     requestedAtEpochMs = changedAt,
                     bootstrap = cached.copy(
-                        payloadJson = api.json.encodeToString(restoredBootstrap),
+                        payloadJson = encodeBootstrapPayload(restoredBootstrap),
                         updatedAtEpochMs = changedAt,
                     ),
                     runtime = restoredRuntime,
@@ -2360,7 +2373,7 @@ class GymCoachRepository(
             }
         dao.reconcileExerciseReplacement(
             bootstrap = cached.copy(
-                payloadJson = api.json.encodeToString(authoritative),
+                payloadJson = encodeBootstrapPayload(authoritative),
                 updatedAtEpochMs = changedAt,
             ),
             operationIdToRemove = operationIdToRemove,
@@ -2389,7 +2402,7 @@ class GymCoachRepository(
         bootstrapCacheMutex.withLock bootstrapLock@{
             val cached = dao.getBootstrap()
             val bootstrap = cached?.let { entity ->
-                runCatching { api.json.decodeFromString<BootstrapResponse>(entity.payloadJson) }.getOrNull()
+                decodeBootstrapPayload(entity.payloadJson)
             }
             if (cached == null || bootstrap == null) {
                 dao.markOperationBlocked(operationId, error)
@@ -2422,7 +2435,7 @@ class GymCoachRepository(
                 operationId = operationId,
                 error = error,
                 bootstrap = cached.copy(
-                    payloadJson = api.json.encodeToString(restoredBootstrap),
+                    payloadJson = encodeBootstrapPayload(restoredBootstrap),
                     updatedAtEpochMs = changedAt,
                 ),
                 runtime = restoredRuntime,
@@ -2447,7 +2460,9 @@ class GymCoachRepository(
     ): PreparedWatchCommand? = watchCommandMutex.withLock {
         bootstrapCacheMutex.withLock bootstrapLock@{
             val cached = requireNotNull(dao.getBootstrap()) { "No cached program is available." }
-            val bootstrap = api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
+            val bootstrap = requireNotNull(decodeBootstrapPayload(cached.payloadJson)) {
+                "Cached bootstrap is invalid."
+            }
             val changedAt = System.currentTimeMillis()
             val currentRuntime = dao.getActiveWorkoutRuntime(operation.sessionId)
             val authoritativeTarget = findProgramExercise(bootstrap, operation.programExerciseId)
@@ -2561,7 +2576,7 @@ class GymCoachRepository(
                 payloadJson = rewrittenOutbox.payloadJson,
                 requestedAtEpochMs = changedAt,
                 bootstrap = cached.copy(
-                    payloadJson = api.json.encodeToString(restoredBootstrap),
+                    payloadJson = encodeBootstrapPayload(restoredBootstrap),
                     updatedAtEpochMs = changedAt,
                 ),
                 runtime = restoredRuntime,
@@ -3214,9 +3229,8 @@ class GymCoachRepository(
             ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
         val cached = dao.getBootstrap()
             ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
-        val bootstrap = runCatching {
-            api.json.decodeFromString<BootstrapResponse>(cached.payloadJson)
-        }.getOrNull() ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
+        val bootstrap = decodeBootstrapPayload(cached.payloadJson)
+            ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")
         val workout = bootstrap.activeProgram?.workouts?.firstOrNull { it.id == session.workoutId }
             ?: bootstrap.openSessions.firstOrNull { it.id == session.id }?.workout
             ?: return WatchSetEquipmentResolution.Rejected("EQUIPMENT_SELECTION_REQUIRED")

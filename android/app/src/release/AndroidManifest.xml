@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
-        <profileable android:shell="true" />
         <activity
             android:name="org.sharteman.gymcoach.ui.HomeBenchmarkActivity"
-            android:exported="true"
-            android:launchMode="singleTop" />
+            android:enabled="false"
+            android:exported="true" />
         <activity
             android:name="org.sharteman.gymcoach.ui.AppPerformanceBenchmarkActivity"
-            android:exported="true"
-            android:launchMode="singleTop" />
+            android:enabled="false"
+            android:exported="true" />
     </application>
 </manifest>

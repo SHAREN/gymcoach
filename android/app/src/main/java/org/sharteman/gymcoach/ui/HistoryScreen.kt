@@ -528,7 +528,11 @@ private fun HistoryCalendarContent(
         } else if (selectedSessions.isEmpty()) {
             item { StatusCard(stringResource(R.string.history_no_sessions_day)) }
         } else {
-            items(selectedSessions, key = { it.id }) { session ->
+            items(
+                items = selectedSessions,
+                key = { it.id },
+                contentType = { "history-session" },
+            ) { session ->
                 HistorySessionCard(session, snapshot?.unit ?: "KG", onOpenSession)
             }
         }
@@ -629,7 +633,11 @@ private fun HistorySessionDetail(
                 }
             }
         }
-        items(session.exercises, key = { it.id }) { exercise ->
+        items(
+            items = session.exercises,
+            key = { it.id },
+            contentType = { "history-exercise" },
+        ) { exercise ->
             HistoryExerciseCard(
                 session = session,
                 exercise = exercise,

@@ -63,13 +63,10 @@ docs/media/raw/
 # Locally published Android release artifacts
 /data/android-release/*.apk
 /data/android-release/latest.json
+/data/android-release/mapping-*.txt
 
 # Prisma 7 generated client (run `prisma generate`)
 /prisma/generated/
-
-# Locally published Android release artifacts
-/data/android-release/*.apk
-/data/android-release/latest.json
 
 # Kotlin compiler runtime state
 /android/.kotlin/

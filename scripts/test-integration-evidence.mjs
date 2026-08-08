@@ -403,21 +403,21 @@ async function testAndroidArtifactEvidence() {
     const apk = createMinimalApk();
     const sha256 = createHash('sha256').update(apk).digest('hex');
     const apkFile = `gymcoach-42-${sha256.slice(0, 12)}.apk`;
-    await mkdir(path.join(state.repo, 'android/app/build/outputs/apk/debug'), { recursive: true });
+    await mkdir(path.join(state.repo, 'android/app/build/outputs/apk/release'), { recursive: true });
     await mkdir(path.join(state.repo, 'data/android-release'), { recursive: true });
     const androidSdkRoot = path.join(state.repo, 'test-sdk');
     const buildTools = path.join(androidSdkRoot, 'build-tools', '35.0.0');
     await mkdir(buildTools, { recursive: true });
     await writeFile(
-      path.join(state.repo, 'android/app/build/outputs/apk/debug/app-debug.apk'),
+      path.join(state.repo, 'android/app/build/outputs/apk/release/app-release.apk'),
       apk,
     );
     await cp(
-      path.join(state.repo, 'android/app/build/outputs/apk/debug/app-debug.apk'),
+      path.join(state.repo, 'android/app/build/outputs/apk/release/app-release.apk'),
       path.join(state.repo, 'data/android-release', apkFile),
     );
     await writeFile(
-      path.join(state.repo, 'android/app/build/outputs/apk/debug/output-metadata.json'),
+      path.join(state.repo, 'android/app/build/outputs/apk/release/output-metadata.json'),
       `${JSON.stringify({ elements: [{ versionCode: 42, versionName: '1.2.3' }] }, null, 2)}\n`,
     );
     await writeFile(
@@ -498,8 +498,8 @@ async function testAndroidArtifactEvidence() {
       /must resolve under the configured Android SDK build-tools directory/,
     );
 
-    const debugPath = path.join(state.repo, 'android/app/build/outputs/apk/debug/app-debug.apk');
-    await writeFile(debugPath, Buffer.from('arbitrary bytes'));
+    const releasePath = path.join(state.repo, 'android/app/build/outputs/apk/release/app-release.apk');
+    await writeFile(releasePath, Buffer.from('arbitrary bytes'));
     await assert.rejects(
       () =>
         validateIntegrationEvidence(manifest, {
@@ -510,7 +510,7 @@ async function testAndroidArtifactEvidence() {
         }),
       /not a structurally valid ZIP\/APK/,
     );
-    await writeFile(debugPath, apk);
+    await writeFile(releasePath, apk);
 
     const latestPath = path.join(state.repo, 'data/android-release/latest.json');
     const latest = JSON.parse(await readFile(latestPath, 'utf8'));

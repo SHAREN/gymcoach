@@ -65,7 +65,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -82,6 +81,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -163,14 +163,15 @@ fun WorkoutScreen(
     val workoutPreferences = remember(context) {
         context.applicationContext.getSharedPreferences(WORKOUT_UI_PREFERENCES, Context.MODE_PRIVATE)
     }
-    val session by repository.observeSession(sessionId).collectAsState(initial = null)
-    val allSets by repository.observeSets(sessionId).collectAsState(initial = emptyList())
-    val activeRuntime by repository.observeActiveWorkoutRuntime(sessionId).collectAsState(initial = null)
+    val session by repository.observeSession(sessionId).collectAsStateWithLifecycle(initialValue = null)
+    val allSets by repository.observeSets(sessionId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val activeRuntime by repository.observeActiveWorkoutRuntime(sessionId)
+        .collectAsStateWithLifecycle(initialValue = null)
     val targetSetOverrides by repository.observeActiveTargetSetOverrides(sessionId)
-        .collectAsState(initial = emptyList())
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val structureDraft by repository.observeWorkoutStructureDraft(sessionId)
-        .collectAsState(initial = null)
-    val progressSnapshot by repository.progress.collectAsState(initial = null)
+        .collectAsStateWithLifecycle(initialValue = null)
+    val progressSnapshot by repository.progress.collectAsStateWithLifecycle(initialValue = null)
     val baselineWorkout = remember(bootstrap, session?.workoutId) {
         bootstrap?.activeProgram?.workouts?.firstOrNull { it.id == session?.workoutId }
             ?: bootstrap?.openSessions?.firstOrNull { it.id == sessionId }?.workout
@@ -188,7 +189,6 @@ fun WorkoutScreen(
     val scope = rememberCoroutineScope()
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     var restEndsAt by rememberSaveable { mutableLongStateOf(0L) }
-    var restRemaining by remember { mutableIntStateOf(0) }
     var showSummary by rememberSaveable { mutableStateOf(false) }
     var controlsDialog by remember { mutableStateOf(false) }
     var exerciseMenuDialog by rememberSaveable { mutableStateOf(false) }
@@ -260,48 +260,68 @@ fun WorkoutScreen(
         if (runtimeIndex >= 0 && runtimeIndex != selectedIndex) selectExercise(runtimeIndex, persist = false)
     }
     val current = exercises.getOrNull(selectedIndex) ?: return
-    val manualTargetSets = targetSetOverrides.associate { override ->
-        override.programExerciseId to override.targetSets
+    val manualTargetSets = remember(targetSetOverrides) {
+        targetSetOverrides.associate { override ->
+            override.programExerciseId to override.targetSets
+        }
     }
-    val legacyReturnRecommendations =
+    val legacyReturnRecommendations = remember(bootstrap, workout.id) {
         bootstrap?.returnRecommendationsByWorkout?.get(workout.id).orEmpty()
-    val equipmentReturnRecommendations =
+    }
+    val equipmentReturnRecommendations = remember(bootstrap, workout.id) {
         bootstrap?.returnRecommendationsByEquipmentByWorkout?.get(workout.id).orEmpty()
-    val gym = bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
+    }
+    val gym = remember(bootstrap, session?.gymId) {
+        bootstrap?.gyms?.firstOrNull { it.id == session?.gymId }
+    }
     var selectedEquipmentByExercise by rememberSaveable {
         mutableStateOf(emptyMap<String, String>())
     }
-    val equipmentSelectionKeys = exercises.mapTo(mutableSetOf(), ::workoutEquipmentSelectionKey)
+    val equipmentSelectionKeys = remember(exercises) {
+        exercises.mapTo(mutableSetOf(), ::workoutEquipmentSelectionKey)
+    }
     LaunchedEffect(equipmentSelectionKeys) {
         selectedEquipmentByExercise = retainWorkoutEquipmentSelections(
             selectedEquipmentByExercise,
             exercises,
         )
     }
-    val equipmentIdsByExercise = exercises.associate { exercise ->
-        exercise.id to resolveWorkoutEquipmentId(
-            exercise = exercise,
-            gym = gym,
-            sets = allSets,
-            selectedEquipmentId = selectedEquipmentByExercise[workoutEquipmentSelectionKey(exercise)],
-        )
+    val equipmentIdsByExercise = remember(exercises, gym, allSets, selectedEquipmentByExercise) {
+        exercises.associate { exercise ->
+            exercise.id to resolveWorkoutEquipmentId(
+                exercise = exercise,
+                gym = gym,
+                sets = allSets,
+                selectedEquipmentId = selectedEquipmentByExercise[workoutEquipmentSelectionKey(exercise)],
+            )
+        }
     }
-    val effectiveReturnRecommendations = exercises.mapNotNull { exercise ->
-        val recommendation = selectReturnRecommendationForEquipment(
-            recommendations = equipmentReturnRecommendations[exercise.id],
-            fallback = legacyReturnRecommendations[exercise.id],
-            fallbackPerformance = bootstrap?.lastPerformances?.get(exercise.exerciseId),
-            fallbackGymId = bootstrap?.profile?.activeGymId,
-            gymId = session?.gymId,
-            gymEquipmentId = equipmentIdsByExercise[exercise.id],
-        )
-        resolveEquipmentCalibrationProgress(
-            exercise = exercise,
-            recommendation = recommendation,
-            sets = allSets,
-            gymEquipmentId = equipmentIdsByExercise[exercise.id],
-        )?.let { exercise.id to it }
-    }.toMap()
+    val effectiveReturnRecommendations = remember(
+        exercises,
+        equipmentReturnRecommendations,
+        legacyReturnRecommendations,
+        bootstrap,
+        session?.gymId,
+        equipmentIdsByExercise,
+        allSets,
+    ) {
+        exercises.mapNotNull { exercise ->
+            val recommendation = selectReturnRecommendationForEquipment(
+                recommendations = equipmentReturnRecommendations[exercise.id],
+                fallback = legacyReturnRecommendations[exercise.id],
+                fallbackPerformance = bootstrap?.lastPerformances?.get(exercise.exerciseId),
+                fallbackGymId = bootstrap?.profile?.activeGymId,
+                gymId = session?.gymId,
+                gymEquipmentId = equipmentIdsByExercise[exercise.id],
+            )
+            resolveEquipmentCalibrationProgress(
+                exercise = exercise,
+                recommendation = recommendation,
+                sets = allSets,
+                gymEquipmentId = equipmentIdsByExercise[exercise.id],
+            )?.let { exercise.id to it }
+        }.toMap()
+    }
     val currentEquipmentId = equipmentIdsByExercise[current.id]
     val inventory = resolveExerciseInventory(current, gym, currentEquipmentId)
     val selectedProfile = selectedEquipment(inventory)
@@ -318,45 +338,77 @@ fun WorkoutScreen(
         returnRecommendation,
         manualTargetSets[current.id],
     ) ?: current.copy(targetSets = manualTargetSets[current.id] ?: current.targetSets)
-    val currentSets = allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
+    val currentSets = remember(allSets, current.exerciseId) {
+        allSets.filter { it.exerciseId == current.exerciseId && !it.deleted }
+    }
     val selectedEquipmentDto = gym?.equipment?.firstOrNull { it.id == selectedProfile?.equipmentId }
-    val comparableSets = selectedProfile?.let { profile ->
-        currentSets.filter { it.gymEquipmentId == profile.equipmentId }
-    } ?: currentSets
-    val previousPerformanceSelection = selectPreviousExercisePerformance(
-        exerciseId = current.exerciseId,
-        historyByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty(),
-        fallback = legacyLastPerformance,
-        currentSessionId = sessionId,
-        gymId = session?.gymId,
-        gymEquipmentId = currentEquipmentId,
-    )
+    val comparableSets = remember(currentSets, selectedProfile?.equipmentId) {
+        selectedProfile?.let { profile ->
+            currentSets.filter { it.gymEquipmentId == profile.equipmentId }
+        } ?: currentSets
+    }
+    val previousPerformanceSelection = remember(
+        current.exerciseId,
+        bootstrap?.exerciseHistoryByExerciseId,
+        legacyLastPerformance,
+        sessionId,
+        session?.gymId,
+        currentEquipmentId,
+    ) {
+        selectPreviousExercisePerformance(
+            exerciseId = current.exerciseId,
+            historyByExerciseId = bootstrap?.exerciseHistoryByExerciseId.orEmpty(),
+            fallback = legacyLastPerformance,
+            currentSessionId = sessionId,
+            gymId = session?.gymId,
+            gymEquipmentId = currentEquipmentId,
+        )
+    }
     val previousPerformance = previousPerformanceSelection?.performance
-    val exerciseSetProgress = workoutExerciseSetProgress(
-        exercises = exercises,
-        sets = allSets,
-        returnRecommendations = effectiveReturnRecommendations,
-        manualTargetSets = manualTargetSets,
-    )
+    val exerciseSetProgress = remember(
+        exercises,
+        allSets,
+        effectiveReturnRecommendations,
+        manualTargetSets,
+    ) {
+        workoutExerciseSetProgress(
+            exercises = exercises,
+            sets = allSets,
+            returnRecommendations = effectiveReturnRecommendations,
+            manualTargetSets = manualTargetSets,
+        )
+    }
     val currentSetProgress = exerciseSetProgress.first { it.programExerciseId == current.id }
     val plannedRows = currentSetProgress.plannedRows
     val completedWorkingRows = currentSetProgress.completedRows
     val totalPlannedRows = exerciseSetProgress.sumOf { it.plannedRows }
     val totalCompletedRows = exerciseSetProgress.sumOf { it.completedRows }
-    val completedExerciseIds = completedWorkoutExerciseIds(
-        exercises = exercises,
-        sets = allSets,
-        returnRecommendations = effectiveReturnRecommendations,
-        manualTargetSets = manualTargetSets,
-    )
+    val completedExerciseIds = remember(
+        exercises,
+        allSets,
+        effectiveReturnRecommendations,
+        manualTargetSets,
+    ) {
+        completedWorkoutExerciseIds(
+            exercises = exercises,
+            sets = allSets,
+            returnRecommendations = effectiveReturnRecommendations,
+            manualTargetSets = manualTargetSets,
+        )
+    }
     val unit = bootstrap?.profile?.unit ?: "KG"
-    val lastWorking = comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
+    val lastWorking = remember(comparableSets) {
+        comparableSets.lastOrNull { !it.isWarmup && !it.isDropSet }
+    }
     val recoverySec = lastWorking?.let {
         Duration.between(Instant.parse(it.completedAt), Instant.now()).seconds.coerceIn(0, 86_400).toInt()
     }
-    val intervening = lastWorking?.let { last ->
-        allSets.filter { it.exerciseId != current.exerciseId && it.completedAt > last.completedAt }
-            .maxByOrNull { it.completedAt }
+    val intervening = remember(lastWorking, allSets, current.exerciseId) {
+        lastWorking?.let { last ->
+            allSets.asSequence()
+                .filter { it.exerciseId != current.exerciseId && it.completedAt > last.completedAt }
+                .maxByOrNull { it.completedAt }
+        }
     }
     val interveningExercise = intervening?.let { set ->
         exercises.firstOrNull { it.exerciseId == set.exerciseId }
@@ -375,16 +427,28 @@ fun WorkoutScreen(
     } else {
         null
     }
-    val recommendation = recommendNextSetFromSharedContract(
-        programExercise = current,
-        returnRecommendation = returnRecommendation,
-        completedSets = comparableSets,
-        recoverySec = recoverySec,
-        sameMuscleSuperset = sameMuscleSuperset,
-        allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
-        plannedDeloadCeiling = plannedDeloadCeiling,
-        constraints = loadConstraints,
-    )
+    val recommendation = remember(
+        current,
+        returnRecommendation,
+        comparableSets,
+        recoverySec,
+        sameMuscleSuperset,
+        bootstrap?.profile?.deloadActive,
+        readinessBlocksIncrease,
+        plannedDeloadCeiling,
+        loadConstraints,
+    ) {
+        recommendNextSetFromSharedContract(
+            programExercise = current,
+            returnRecommendation = returnRecommendation,
+            completedSets = comparableSets,
+            recoverySec = recoverySec,
+            sameMuscleSuperset = sameMuscleSuperset,
+            allowLoadIncrease = bootstrap?.profile?.deloadActive != true && !readinessBlocksIncrease,
+            plannedDeloadCeiling = plannedDeloadCeiling,
+            constraints = loadConstraints,
+        )
+    }
 
     if (showSummary) {
         WorkoutSummaryScreen(
@@ -509,19 +573,6 @@ fun WorkoutScreen(
         if (persistedRestEnd != restEndsAt) restEndsAt = persistedRestEnd
     }
 
-    LaunchedEffect(restEndsAt) {
-        val activeEnd = restEndsAt
-        while (restEndsAt > System.currentTimeMillis()) {
-            restRemaining = max(0, ((restEndsAt - System.currentTimeMillis() + 999) / 1000).toInt())
-            delay(250)
-        }
-        restRemaining = 0
-        if (activeEnd > 0 && activeEnd <= System.currentTimeMillis()) {
-            restEndsAt = 0
-            repository.finishRest(sessionId, activeEnd)
-        }
-    }
-
     Scaffold(
         topBar = {
             WorkoutHeader(
@@ -530,7 +581,7 @@ fun WorkoutScreen(
                 selectedIndex = selectedIndex,
                 completedExerciseIds = completedExerciseIds,
                 serverUrl = repository.serverUrl,
-                selectionEnabled = restRemaining == 0,
+                selectionEnabled = restEndsAt == 0L,
                 progress = if (totalPlannedRows == 0) {
                     0f
                 } else {
@@ -712,13 +763,17 @@ fun WorkoutScreen(
                     },
                 )
             }
-            if (restRemaining > 0) {
+            if (restEndsAt > 0L) {
                 item {
-                    RestTimerCard(
-                        remainingSec = restRemaining,
+                    RestTimerSection(
+                        restEndsAtEpochMs = restEndsAt,
                         totalSec = target.restSec,
                         recommendation = recommendation,
                         unit = unit,
+                        onFinished = { completedEnd ->
+                            if (restEndsAt == completedEnd) restEndsAt = 0L
+                            scope.launch { repository.finishRest(sessionId, completedEnd) }
+                        },
                         onAdd30 = {
                             val updatedEnd = restEndsAt + 30_000
                             restEndsAt = updatedEnd
@@ -745,7 +800,7 @@ fun WorkoutScreen(
                 SessionActions(
                     canGoPrevious = selectedIndex > 0,
                     canGoNext = selectedIndex < exercises.lastIndex,
-                    navigationEnabled = restRemaining == 0,
+                    navigationEnabled = restEndsAt == 0L,
                     online = online,
                     onPrevious = { selectExercise(selectedIndex - 1) },
                     onNext = { selectExercise(selectedIndex + 1) },
@@ -816,7 +871,7 @@ fun WorkoutScreen(
                 }
             },
             onReplace = {
-                if (restRemaining > 0) {
+                if (restEndsAt > 0L) {
                     scope.launch { snackbar.showSnackbar(exerciseReplaceWaitForRest) }
                 } else {
                     exerciseMenuDialog = false
@@ -2680,6 +2735,43 @@ private fun SetPickerField(
         }
     }
 }
+
+@Composable
+internal fun RestTimerSection(
+    restEndsAtEpochMs: Long,
+    totalSec: Int,
+    recommendation: SetRecommendation?,
+    unit: String,
+    onFinished: (Long) -> Unit,
+    onAdd30: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    var remainingSec by remember(restEndsAtEpochMs) {
+        mutableIntStateOf(restSecondsRemaining(restEndsAtEpochMs, System.currentTimeMillis()))
+    }
+    LaunchedEffect(restEndsAtEpochMs) {
+        while (restEndsAtEpochMs > System.currentTimeMillis()) {
+            val next = restSecondsRemaining(restEndsAtEpochMs, System.currentTimeMillis())
+            if (remainingSec != next) remainingSec = next
+            delay(250)
+        }
+        remainingSec = 0
+        if (restEndsAtEpochMs > 0L) onFinished(restEndsAtEpochMs)
+    }
+    if (remainingSec > 0) {
+        RestTimerCard(
+            remainingSec = remainingSec,
+            totalSec = totalSec,
+            recommendation = recommendation,
+            unit = unit,
+            onAdd30 = onAdd30,
+            onSkip = onSkip,
+        )
+    }
+}
+
+internal fun restSecondsRemaining(restEndsAtEpochMs: Long, nowEpochMs: Long): Int =
+    max(0, ((restEndsAtEpochMs - nowEpochMs + 999L) / 1_000L).toInt())
 
 @Composable
 internal fun RestTimerCard(

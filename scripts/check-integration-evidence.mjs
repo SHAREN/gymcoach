@@ -879,8 +879,8 @@ async function validateAndroid(
     reject('android.sourceHead must match the integration head');
   }
   validateGate(android.assembleGate, integrationHead, 'android.assembleGate');
-  if (!android.assembleGate.command.includes('assembleDebug')) {
-    reject('android.assembleGate.command must include assembleDebug');
+  if (!android.assembleGate.command.includes('publishReleaseApk')) {
+    reject('android.assembleGate.command must include publishReleaseApk');
   }
 
   const outputMetadataPath = resolveInsideRepo(
@@ -888,7 +888,7 @@ async function validateAndroid(
     android.outputMetadataPath,
     'android.outputMetadataPath',
   );
-  const debugApkPath = resolveInsideRepo(repo, android.debugApkPath, 'android.debugApkPath');
+  const releaseApkPath = resolveInsideRepo(repo, android.releaseApkPath, 'android.releaseApkPath');
   const immutableApkPath = resolveInsideRepo(
     repo,
     android.immutableApkPath,
@@ -922,10 +922,10 @@ async function validateAndroid(
     reject('Android output metadata lacks versionName/versionCode');
   }
   const latest = await readJson(latestJsonPath, 'Android latest.json');
-  const debugApk = await validateApkStructure(debugApkPath, 'app-debug.apk');
+  const releaseApk = await validateApkStructure(releaseApkPath, 'app-release.apk');
   const immutableApk = await validateApkStructure(immutableApkPath, 'immutable APK');
-  if (debugApk.sha256 !== immutableApk.sha256 || debugApk.sizeBytes !== immutableApk.sizeBytes) {
-    reject('app-debug.apk and immutable published APK do not match');
+  if (releaseApk.sha256 !== immutableApk.sha256 || releaseApk.sizeBytes !== immutableApk.sizeBytes) {
+    reject('app-release.apk and immutable published APK do not match');
   }
   if (
     latest.versionName !== output.versionName ||
@@ -938,7 +938,7 @@ async function validateAndroid(
   }
   const immutableName = path.basename(immutableApkPath);
   if (
-    immutableName === 'app-debug.apk' ||
+    immutableName === 'app-release.apk' ||
     !immutableName.includes(String(output.versionCode)) ||
     !immutableName.includes(immutableApk.sha256.slice(0, 12))
   ) {
@@ -952,9 +952,9 @@ async function validateAndroid(
     toolRunner(aapt.path, ['version'], 'aapt version').trim(),
     'aapt version output',
   );
-  const debugCertificate = readCertificateDigest(
-    toolRunner(apksigner.path, ['verify', '--print-certs', debugApkPath], 'debug APK apksigner'),
-    'debug APK apksigner output',
+  const releaseCertificate = readCertificateDigest(
+    toolRunner(apksigner.path, ['verify', '--print-certs', releaseApkPath], 'release APK apksigner'),
+    'release APK apksigner output',
   );
   const immutableCertificate = readCertificateDigest(
     toolRunner(
@@ -964,31 +964,31 @@ async function validateAndroid(
     ),
     'immutable APK apksigner output',
   );
-  if (debugCertificate !== immutableCertificate) {
-    reject('debug and immutable APK signing certificates do not match');
+  if (releaseCertificate !== immutableCertificate) {
+    reject('release and immutable APK signing certificates do not match');
   }
-  const debugManifest = parseAaptBadging(
-    toolRunner(aapt.path, ['dump', 'badging', debugApkPath], 'debug APK aapt'),
-    'debug APK aapt output',
+  const releaseManifest = parseAaptBadging(
+    toolRunner(aapt.path, ['dump', 'badging', releaseApkPath], 'release APK aapt'),
+    'release APK aapt output',
   );
   const immutableManifest = parseAaptBadging(
     toolRunner(aapt.path, ['dump', 'badging', immutableApkPath], 'immutable APK aapt'),
     'immutable APK aapt output',
   );
   if (
-    debugManifest.packageName !== GYMCOACH_ANDROID_PACKAGE ||
+    releaseManifest.packageName !== GYMCOACH_ANDROID_PACKAGE ||
     immutableManifest.packageName !== GYMCOACH_ANDROID_PACKAGE ||
-    JSON.stringify(debugManifest) !== JSON.stringify(immutableManifest)
+    JSON.stringify(releaseManifest) !== JSON.stringify(immutableManifest)
   ) {
     reject('aapt package/version evidence does not match the GymCoach APK pair');
   }
   if (
-    debugManifest.versionName !== output.versionName ||
-    debugManifest.versionCode !== output.versionCode
+    releaseManifest.versionName !== output.versionName ||
+    releaseManifest.versionCode !== output.versionCode
   ) {
     reject('APK manifest version does not match output metadata');
   }
-  await stat(debugApkPath);
+  await stat(releaseApkPath);
   await stat(immutableApkPath);
   return {
     versionName: output.versionName,

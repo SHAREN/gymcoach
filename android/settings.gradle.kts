@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "GymCoachAndroid"
 include(":app")
+include(":baselineprofile")
