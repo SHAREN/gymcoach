@@ -240,6 +240,97 @@ class WorkoutExerciseAdvanceTest {
         )
     }
 
+    @Test
+    fun exceededTargetRemainsCompleteWithoutChangingThePlan() {
+        val exercise = exercise("a", null, targetSets = 2)
+        val sets = listOf(
+            set("a", "warmup", isWarmup = true),
+            set("a", "working-1"),
+            set("a", "working-2"),
+            set("a", "extra"),
+            set("a", "deleted", deleted = true),
+        )
+
+        val completion = workoutExerciseCompletion(
+            exercise = exercise,
+            sets = sets,
+            recommendation = normalRecommendations(listOf(exercise))[exercise.id],
+            manualTargetSets = null,
+        )
+
+        assertEquals(3, completion.completedRows)
+        assertEquals(2, completion.plannedRows)
+        assertEquals(0, completion.remainingRows)
+        assertEquals(true, completion.isComplete)
+    }
+
+    @Test
+    fun plannedDropSetKeepsCompletionAndAutoAdvanceOnTheSameContract() {
+        val exercises = listOf(
+            exercise("a", null, targetSets = 1, targetDropSets = 1),
+            exercise("b", null),
+        )
+        val recommendations = normalRecommendations(exercises)
+        val working = set("a", "a-working")
+
+        assertNull(
+            nextIncompleteWorkoutExerciseIndex(
+                exercises = exercises,
+                sets = emptyList(),
+                returnRecommendations = recommendations,
+                currentIndex = 0,
+                submittedSet = working,
+            ),
+        )
+        assertEquals(
+            emptySet<String>(),
+            completedWorkoutExerciseIds(exercises, listOf(working), recommendations),
+        )
+
+        val drop = set("a", "a-drop", isDropSet = true)
+        assertEquals(
+            1,
+            nextIncompleteWorkoutExerciseIndex(
+                exercises = exercises,
+                sets = listOf(working),
+                returnRecommendations = recommendations,
+                currentIndex = 0,
+                submittedSet = drop,
+            ),
+        )
+        assertEquals(
+            setOf("a"),
+            completedWorkoutExerciseIds(exercises, listOf(working, drop), recommendations),
+        )
+    }
+
+    @Test
+    fun calibrationSuppressesProgramDropSetsInCompletion() {
+        val exercises = listOf(
+            exercise("a", null, targetSets = 2, targetDropSets = 1),
+            exercise("b", null),
+        )
+        val recommendations = normalRecommendations(exercises).toMutableMap().apply {
+            this[exercises.first().id] = ReturnRecommendationDto(
+                mode = "equipment-calibration",
+                targetSets = 1,
+                targetRIR = 3,
+                calibrationRequired = true,
+            )
+        }
+
+        assertEquals(
+            1,
+            nextIncompleteWorkoutExerciseIndex(
+                exercises = exercises,
+                sets = emptyList(),
+                returnRecommendations = recommendations,
+                currentIndex = 0,
+                submittedSet = set("a", "a-1"),
+            ),
+        )
+    }
+
     private fun normalRecommendations(
         exercises: List<ProgramExerciseDto>,
     ): Map<String, ReturnRecommendationDto> = exercises.associate { exercise ->
@@ -254,12 +345,14 @@ class WorkoutExerciseAdvanceTest {
         id: String,
         group: Int?,
         targetSets: Int = 1,
+        targetDropSets: Int = 0,
     ) = ProgramExerciseDto(
         id = "program-$id",
         workoutId = "workout",
         exerciseId = id,
         order = id.first().code,
         targetSets = targetSets,
+        targetDropSets = targetDropSets,
         targetRepsMin = 8,
         targetRepsMax = 12,
         targetRIR = 2,

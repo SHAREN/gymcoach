@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.runBlocking
@@ -130,6 +131,103 @@ class WorkoutAdvanceUiTest {
         assertEquals(listOf("a", "b"), exerciseIds)
         assertEquals("c", runtime?.activeExerciseId)
         assertNotNull(runtime?.restEndsAtEpochMs)
+    }
+
+    @Test
+    fun completedTargetRequiresExplicitExtraSetAndKeepsProgramTargetAfterRestart() {
+        val workout = singleExerciseWorkout()
+        val bootstrap = bootstrap(workout)
+        runBlocking {
+            database.dao().saveBootstrap(
+                BootstrapCacheEntity(
+                    payloadJson = api.json.encodeToString(bootstrap),
+                    updatedAtEpochMs = 1_000,
+                ),
+            )
+            database.dao().saveSession(
+                LocalSessionEntity(
+                    id = SESSION_ID,
+                    workoutId = workout.id,
+                    gymId = null,
+                    startedAt = "2026-08-08T10:00:00Z",
+                ),
+            )
+            database.dao().saveSet(completedSet("a", "set-a"))
+            database.dao().saveActiveWorkoutRuntime(
+                ActiveWorkoutRuntimeEntity(
+                    sessionId = SESSION_ID,
+                    workoutId = workout.id,
+                    activeExerciseId = "a",
+                    updatedAtEpochMs = 1_000,
+                ),
+            )
+        }
+        val activeRepository = mutableStateOf(repository)
+
+        composeRule.setContent {
+            WorkoutScreen(
+                repository = activeRepository.value,
+                sessionId = SESSION_ID,
+                bootstrap = bootstrap,
+                online = false,
+                ownerUserId = "user",
+                onUpdateExercise = { exercise, _: ExerciseInput -> exercise },
+                onAskCoach = {},
+                onOpenProgress = {},
+                onOpenHistory = { _, _ -> },
+                onExit = {},
+            )
+        }
+
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithText("1 / 1").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("active-set-confirm").assertDoesNotExist()
+        composeRule.onNodeWithTag("set-target-complete").assertIsDisplayed()
+        composeRule.onNodeWithTag("add-extra-set").assertIsDisplayed()
+        saveScreenshot("target-complete-no-implicit-set.png")
+
+        composeRule.onNodeWithTag("add-extra-set").performClick()
+        composeRule.onNodeWithTag("active-set-confirm").assertIsDisplayed()
+        composeRule.onNodeWithTag("add-extra-set").assertDoesNotExist()
+        saveScreenshot("target-complete-explicit-extra-set.png")
+        composeRule.onNodeWithTag("active-set-confirm").performClick()
+        composeRule.waitUntil(5_000) {
+            runBlocking {
+                database.dao().getAllSets(SESSION_ID).count { !it.deleted } == 2
+            }
+        }
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithText("2 / 1").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("active-set-confirm").assertDoesNotExist()
+        composeRule.onNodeWithTag("add-extra-set").assertIsDisplayed()
+        assertEquals(
+            listOf("UPSERT_SET"),
+            runBlocking { database.dao().queuedOperations().map { it.type } },
+        )
+        assertEquals(1, workout.exercises.single().targetSets)
+        assertEquals(
+            null,
+            runBlocking {
+                database.dao().getActiveTargetSetOverride(SESSION_ID, "program-a")
+            },
+        )
+
+        val restartedRepository = GymCoachRepository(
+            dao = database.dao(),
+            accountStore = testAccountStore(),
+            api = api,
+            scheduleSyncNow = {},
+            schedulePeriodicSync = {},
+        )
+        composeRule.runOnIdle { activeRepository.value = restartedRepository }
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithText("2 / 1").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("active-set-confirm").assertDoesNotExist()
+        composeRule.onNodeWithTag("add-extra-set").assertIsDisplayed()
+        saveScreenshot("target-complete-extra-persists.png")
     }
 
     @Test
@@ -332,6 +430,16 @@ class WorkoutAdvanceUiTest {
                 workoutId = "workout-set-count",
                 targetSets = 4,
             ),
+        ),
+    )
+
+    private fun singleExerciseWorkout(): WorkoutDto = WorkoutDto(
+        id = "workout-single",
+        programId = "program",
+        name = "Single exercise workout",
+        order = 0,
+        exercises = listOf(
+            programExercise("a", 0, null).copy(workoutId = "workout-single"),
         ),
     )
 

@@ -1587,6 +1587,7 @@ internal fun StrengthSetEditor(
     var deletingSetId by remember(target.id) { mutableStateOf<String?>(null) }
     var submittingSet by remember(target.id) { mutableStateOf(false) }
     var appliedRecommendationKey by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
+    var extraSetRequested by rememberSaveable(target.id) { mutableStateOf(false) }
     val displaySets = displayedWorkoutSets(sets)
     fun mutationInProgress() = updatingSetId != null || deletingSetId != null || submittingSet
     val mutationBusy = mutationInProgress()
@@ -1599,8 +1600,19 @@ internal fun StrengthSetEditor(
     } ?: loadConstraints
     val completedPlannedRows = displaySets.count { !it.set.isWarmup }
     val plannedRows = target.targetSets + target.targetDropSets
+    val hasPlannedSetRemaining = !workoutExerciseCompletion(
+        exercise = target,
+        sets = sets,
+        recommendation = null,
+        manualTargetSets = target.targetSets,
+    ).isComplete
+    val showActiveSetRow = mode == StrengthSetEditorMode.FINISHED_EDIT ||
+        hasPlannedSetRemaining ||
+        extraSetRequested ||
+        isWarmup ||
+        isDropSet
     val activeNumber = displaySets.count { it.workingNumber != null } + 1
-    val upcomingSets = if (mode == StrengthSetEditorMode.ACTIVE) {
+    val upcomingSets = if (mode == StrengthSetEditorMode.ACTIVE && showActiveSetRow) {
         upcomingWorkoutSets(
             displayedSets = displaySets,
             targetWorkingSets = target.targetSets,
@@ -1630,7 +1642,7 @@ internal fun StrengthSetEditor(
     val currentRecommendationKey = recommendationKey(recommendation)
     val applyRecommendationDescription = stringResource(R.string.apply_set_recommendation)
     val recommendationActionVisible = mode == StrengthSetEditorMode.ACTIVE &&
-        recommendation != null && !isWarmup && !isDropSet
+        showActiveSetRow && recommendation != null && !isWarmup && !isDropSet
     val canApplyRecommendation = !mutationBusy && submissionEnabled && recommendationActionVisible && recommendationCanApply(
         appliedKey = appliedRecommendationKey,
         currentKey = currentRecommendationKey,
@@ -1719,7 +1731,7 @@ internal fun StrengthSetEditor(
         submittingSet = true
         scope.launch {
             try {
-                onConfirm()
+                if (onConfirm()) extraSetRequested = false
             } finally {
                 submittingSet = false
             }
@@ -1815,8 +1827,9 @@ internal fun StrengthSetEditor(
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f)) {
+        if (showActiveSetRow) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f)) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1908,6 +1921,33 @@ internal fun StrengthSetEditor(
                         Icons.Outlined.Check,
                         contentDescription = stringResource(R.string.confirm_set),
                     )
+                }
+            }
+            }
+        } else if (mode == StrengthSetEditorMode.ACTIVE) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .testTag("set-target-complete"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    stringResource(R.string.set_target_complete),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(
+                    onClick = { extraSetRequested = true },
+                    enabled = !mutationBusy && submissionEnabled,
+                    modifier = Modifier.testTag("add-extra-set"),
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.add_extra_set))
                 }
             }
         }

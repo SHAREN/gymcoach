@@ -4,21 +4,62 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.ReturnRecommendationDto
 
+internal data class WorkoutExerciseCompletion(
+    val completedWorkingSets: Int,
+    val completedDropSets: Int,
+    val targetWorkingSets: Int,
+    val targetDropSets: Int,
+) {
+    val completedRows: Int get() = completedWorkingSets + completedDropSets
+    val plannedRows: Int get() = targetWorkingSets + targetDropSets
+    val remainingRows: Int get() =
+        (targetWorkingSets - completedWorkingSets).coerceAtLeast(0) +
+            (targetDropSets - completedDropSets).coerceAtLeast(0)
+    val isComplete: Boolean get() = remainingRows == 0
+}
+
+internal fun workoutExerciseCompletion(
+    exercise: ProgramExerciseDto,
+    sets: List<LocalSetEntity>,
+    recommendation: ReturnRecommendationDto?,
+    manualTargetSets: Int?,
+): WorkoutExerciseCompletion {
+    val exerciseSets = sets.asSequence()
+        .filter { set ->
+            set.exerciseId == exercise.exerciseId && !set.deleted && !set.isWarmup
+        }
+        .distinctBy { it.id }
+        .toList()
+    return WorkoutExerciseCompletion(
+        completedWorkingSets = exerciseSets.count { !it.isDropSet },
+        completedDropSets = exerciseSets.count { it.isDropSet },
+        targetWorkingSets = effectiveWorkoutTargetSets(
+            exercise,
+            recommendation,
+            manualTargetSets,
+        ),
+        targetDropSets = if (recommendation?.calibrationRequired == true) {
+            0
+        } else {
+            exercise.targetDropSets
+        },
+    )
+}
+
 internal fun completedWorkoutExerciseIds(
     exercises: List<ProgramExerciseDto>,
     sets: List<LocalSetEntity>,
     returnRecommendations: Map<String, ReturnRecommendationDto>,
     manualTargetSets: Map<String, Int> = emptyMap(),
 ): Set<String> {
-    val completedByExerciseId = completedRegularSetCounts(sets)
     return exercises.mapNotNullTo(mutableSetOf()) { exercise ->
-        val targetSets = effectiveWorkoutTargetSets(
-            exercise,
-            returnRecommendations[exercise.id],
-            manualTargetSets[exercise.id],
-        )
         exercise.exerciseId.takeIf {
-            (completedByExerciseId[exercise.exerciseId] ?: 0) >= targetSets
+            workoutExerciseCompletion(
+                exercise = exercise,
+                sets = sets,
+                recommendation = returnRecommendations[exercise.id],
+                manualTargetSets = manualTargetSets[exercise.id],
+            ).isComplete
         }
     }
 }
@@ -32,17 +73,17 @@ internal fun nextIncompleteWorkoutExerciseIndex(
     manualTargetSets: Map<String, Int> = emptyMap(),
 ): Int? {
     val current = exercises.getOrNull(currentIndex) ?: return null
-    if (submittedSet.deleted || submittedSet.isWarmup || submittedSet.isDropSet) return null
+    if (submittedSet.deleted || submittedSet.isWarmup) return null
 
-    val completedByExerciseId = completedRegularSetCounts(sets + submittedSet)
+    val completedSets = sets + submittedSet
     fun remaining(index: Int): Int {
         val exercise = exercises[index]
-        val targetSets = effectiveWorkoutTargetSets(
-            exercise,
-            returnRecommendations[exercise.id],
-            manualTargetSets[exercise.id],
-        )
-        return (targetSets - (completedByExerciseId[exercise.exerciseId] ?: 0)).coerceAtLeast(0)
+        return workoutExerciseCompletion(
+            exercise = exercise,
+            sets = completedSets,
+            recommendation = returnRecommendations[exercise.id],
+            manualTargetSets = manualTargetSets[exercise.id],
+        ).remainingRows
     }
     fun firstIncomplete(indices: IntProgression): Int? =
         indices.firstOrNull { index -> remaining(index) > 0 }
@@ -68,15 +109,6 @@ internal fun nextIncompleteWorkoutExerciseIndex(
     return firstIncomplete((groupEnd + 1)..exercises.lastIndex)
         ?: firstIncomplete(0 until groupStart)
 }
-
-private fun completedRegularSetCounts(
-    sets: List<LocalSetEntity>,
-): Map<String, Int> = sets
-    .asSequence()
-    .filter { !it.deleted && !it.isWarmup && !it.isDropSet }
-    .distinctBy { it.id }
-    .groupingBy { it.exerciseId }
-    .eachCount()
 
 internal fun effectiveWorkoutTargetSets(
     exercise: ProgramExerciseDto,

@@ -107,6 +107,8 @@
     <string name="low_confidence_short">Низкая точность</string>
     <string name="set_row">Подход %1$d</string>
     <string name="set_options">Параметры подхода</string>
+    <string name="set_target_complete">Плановые подходы выполнены. Дополнительные подходы не меняют цель программы.</string>
+    <string name="add_extra_set">Добавить дополнительный подход</string>
     <string name="choose_set_metric">Выберите расчётные столбцы</string>
     <string name="set_metric_one_rm">Расчётный 1ПМ</string>
     <string name="set_metric_ten_rm">Расчётный 10ПМ</string>

@@ -305,23 +305,16 @@ internal fun workoutExerciseSetProgress(
     returnRecommendations: Map<String, ReturnRecommendationDto>,
     manualTargetSets: Map<String, Int> = emptyMap(),
 ): List<WorkoutExerciseSetProgress> = exercises.map { exercise ->
-    val recommendation = returnRecommendations[exercise.id]
-    val plannedRows = effectiveWorkoutTargetSets(
-        exercise,
-        recommendation,
-        manualTargetSets[exercise.id],
-    ) +
-        if (recommendation?.calibrationRequired == true) {
-            0
-        } else {
-            exercise.targetDropSets
-        }
+    val completion = workoutExerciseCompletion(
+        exercise = exercise,
+        sets = sets,
+        recommendation = returnRecommendations[exercise.id],
+        manualTargetSets = manualTargetSets[exercise.id],
+    )
     WorkoutExerciseSetProgress(
         programExerciseId = exercise.id,
         exerciseId = exercise.exerciseId,
-        completedRows = sets.count { set ->
-            set.exerciseId == exercise.exerciseId && !set.deleted && !set.isWarmup
-        },
-        plannedRows = plannedRows,
+        completedRows = completion.completedRows,
+        plannedRows = completion.plannedRows,
     )
 }
