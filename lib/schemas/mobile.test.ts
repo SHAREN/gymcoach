@@ -121,6 +121,37 @@ describe('mobileSyncOperationSchema', () => {
     });
 
     expect(parsed.type).toBe('MUTATE_WORKOUT_EXERCISES');
+    if (parsed.type === 'MUTATE_WORKOUT_EXERCISES') {
+      expect(parsed.programDecision).toBeUndefined();
+    }
+  });
+
+  it('accepts an explicit finished-workout program decision marker', () => {
+    const exercise = {
+      id: 'program_exercise_decision_01',
+      exerciseId: 'exercise_decision_01',
+      order: 0,
+      targetSets: 4,
+      targetDropSets: 0,
+      targetRepsMin: 8,
+      targetRepsMax: 12,
+      targetRIR: 2,
+      restSec: 90,
+      autoregulationMode: 'PRESERVE_RIR',
+    };
+    const parsed = mobileSyncOperationSchema.parse({
+      operationId: 'mutate_workout_decision_01',
+      type: 'MUTATE_WORKOUT_EXERCISES',
+      sessionId: 'session_decision_01',
+      workoutId: 'workout_decision_01',
+      previousExercises: [exercise],
+      exercises: [{ ...exercise, targetSets: 5 }],
+      previousActiveExerciseId: exercise.exerciseId,
+      nextActiveExerciseId: exercise.exerciseId,
+      programDecision: true,
+    });
+
+    expect(parsed.type === 'MUTATE_WORKOUT_EXERCISES' && parsed.programDecision).toBe(true);
   });
 
   it('rejects duplicate exercises, invalid repetition ranges and missing active members', () => {

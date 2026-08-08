@@ -131,6 +131,27 @@ data class ActiveTargetSetOverrideEntity(
 )
 
 @Entity(
+    tableName = "workout_structure_drafts",
+    foreignKeys = [
+        ForeignKey(
+            entity = LocalSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("workoutId"), Index("status"), Index("updatedAtEpochMs")],
+)
+data class WorkoutStructureDraftEntity(
+    @PrimaryKey val sessionId: String,
+    val workoutId: String,
+    val baselineJson: String,
+    val currentJson: String,
+    val status: String = "ACTIVE",
+    val updatedAtEpochMs: Long,
+)
+
+@Entity(
     tableName = "watch_processed_events",
     indices = [Index("sessionId"), Index("processedAtEpochMs")],
 )

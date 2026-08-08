@@ -372,7 +372,7 @@ async function applyOperationInTransaction(
           id: operation.sessionId,
           userId,
           workoutId: operation.workoutId,
-          finishedAt: null,
+          finishedAt: operation.programDecision === true ? { not: null } : null,
         },
         select: { id: true },
       });

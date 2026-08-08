@@ -130,6 +130,8 @@ fun HomeScreen(
     onEditWorkout: ((programId: String, workoutId: String) -> Unit)? = null,
     onOpenProgram: ((programId: String) -> Unit)? = null,
     serverUrl: String? = null,
+    pendingProgramDecision: Boolean = false,
+    onOpenProgramDecision: () -> Unit = {},
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
     var showSyncTechnicalDetails by remember { mutableStateOf(false) }
@@ -325,6 +327,29 @@ fun HomeScreen(
                         onTechnicalDetails = { showSyncTechnicalDetails = true },
                         onDownloadReport = onDownloadSyncErrorReport,
                     )
+                }
+            }
+            if (pendingProgramDecision) {
+                item(key = "program-decision", contentType = "status") {
+                    Card(
+                        onClick = onOpenProgramDecision,
+                        modifier = Modifier.fillMaxWidth().testTag("pending-program-decision-card"),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.workout_program_decision_pending_title),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                stringResource(R.string.workout_program_decision_pending_body),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
             if (openSession != null) {

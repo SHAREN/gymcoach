@@ -2391,6 +2391,96 @@ describe('Android mobile API', () => {
     ).toBe(seeded.exercise.id);
   });
 
+  it('applies program decisions only through their matching finished workout session', async () => {
+    const seeded = await seedUser('mobile-finished-program-decision@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const session = await db.session.create({
+      data: {
+        id: 'mobile_finished_program_decision_session_01',
+        userId: seeded.user.id,
+        workoutId: seeded.workout.id,
+        programId: seeded.workout.programId,
+        startedAt: new Date('2026-08-08T10:00:00Z'),
+        finishedAt: new Date('2026-08-08T11:00:00Z'),
+      },
+    });
+    const select = {
+      id: true,
+      exerciseId: true,
+      order: true,
+      targetSets: true,
+      targetDropSets: true,
+      targetRepsMin: true,
+      targetRepsMax: true,
+      targetRIR: true,
+      restSec: true,
+      tempo: true,
+      notes: true,
+      supersetGroup: true,
+      autoregulationMode: true,
+      fatigueRate: true,
+      loadAdjustmentPct: true,
+    } as const;
+    const previousExercises = await db.programExercise.findMany({
+      where: { workoutId: seeded.workout.id },
+      orderBy: [{ order: 'asc' }, { id: 'asc' }],
+      select,
+    });
+    const exercises = previousExercises.map((exercise) => ({
+      ...exercise,
+      targetSets: exercise.targetSets + 1,
+      notes: 'Saved after workout review',
+    }));
+    const operation = {
+      operationId: 'mobile_finished_program_decision_operation_01',
+      type: 'MUTATE_WORKOUT_EXERCISES',
+      sessionId: session.id,
+      workoutId: seeded.workout.id,
+      previousExercises,
+      exercises,
+      previousActiveExerciseId: seeded.exercise.id,
+      nextActiveExerciseId: seeded.exercise.id,
+      programDecision: true,
+    };
+
+    const applied = await sync(
+      jsonRequest('http://test.local/api/mobile/sync', { operations: [operation] }, accessToken),
+    );
+    expect((await applied.json()).results[0]).toMatchObject({ status: 'APPLIED' });
+    expect(
+      await db.programExercise.findMany({
+        where: { workoutId: seeded.workout.id },
+        orderBy: [{ order: 'asc' }, { id: 'asc' }],
+        select,
+      }),
+    ).toEqual(exercises);
+
+    const staleActiveWrite = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              ...operation,
+              operationId: 'mobile_finished_program_decision_operation_02',
+              programDecision: false,
+              previousExercises: exercises,
+              exercises: previousExercises,
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+    expect((await staleActiveWrite.json()).results[0]).toMatchObject({
+      status: 'REJECTED',
+      error: 'Workout session not found.',
+    });
+    expect(
+      (await db.session.findUniqueOrThrow({ where: { id: session.id } })).finishedAt,
+    ).toEqual(new Date('2026-08-08T11:00:00Z'));
+  });
+
   it('replaces an owned active-workout exercise exactly once without moving logged sets', async () => {
     const seeded = await seedUser('mobile-replace-exercise@test.dev');
     const { accessToken } = await loginDevice(seeded.user.email);

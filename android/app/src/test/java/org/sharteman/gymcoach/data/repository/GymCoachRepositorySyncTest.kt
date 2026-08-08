@@ -30,6 +30,7 @@ import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.local.ProgressCacheEntity
 import org.sharteman.gymcoach.data.local.RestRecoverySummaryEntity
 import org.sharteman.gymcoach.data.local.SyncOutboxEntity
+import org.sharteman.gymcoach.data.local.WorkoutStructureDraftEntity
 import org.sharteman.gymcoach.data.local.WatchProcessedEventEntity
 import org.sharteman.gymcoach.data.local.WatchInboxEventEntity
 import org.sharteman.gymcoach.data.local.WatchOutboxEventEntity
@@ -1226,21 +1227,26 @@ class GymCoachRepositorySyncTest {
         ))
 
         val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
-        assertEquals("exercise_2", cached.activeProgramExerciseId())
-        assertEquals("exercise_2", cached.openSessionExerciseId(sessionId))
+        assertEquals("exercise_1", cached.activeProgramExerciseId())
+        assertEquals("exercise_1", cached.openSessionExerciseId(sessionId))
+        assertEquals(
+            "exercise_2",
+            fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)?.activeProgramExerciseId(),
+        )
         assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
         assertTrue(fixture.repository.localSets(sessionId).isEmpty())
-        val operation = fixture.decodeReplacementOperation(fixture.dao.queuedOperations().single())
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+
+        fixture.finishAndQueueProgramDecision(sessionId)
+
+        val operation = fixture.decodeWorkoutMutation(fixture.dao.queuedOperations().single())
         assertEquals(sessionId, operation.sessionId)
-        assertEquals("program_exercise_1", operation.programExerciseId)
-        assertEquals("exercise_1", operation.previousExerciseId)
-        assertEquals("exercise_2", operation.replacementExerciseId)
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        val marker = requireNotNull(fixture.dao.getWatchResyncMarker(sessionId))
-        assertEquals(runtime.revision, marker.revision)
-        assertEquals("ACTIVE_EXERCISE_CHANGED", marker.reason)
-        assertEquals(listOf("EXERCISE"), publisher.commands)
-        assertEquals(1, fixture.syncCounter.count)
+        assertTrue(operation.programDecision)
+        assertEquals("exercise_1", operation.previousExercises.single().exerciseId)
+        assertEquals("exercise_2", operation.exercises.single().exerciseId)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("APPLY_QUEUED", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
     }
 
     @Test
@@ -1259,7 +1265,11 @@ class GymCoachRepositorySyncTest {
         assertEquals(listOf("exercise_1", "exercise_1"), before.map { it.exerciseId })
         assertEquals(listOf("set_replace_1", "set_replace_2"), before.map { it.id })
         assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
-        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals(
+            "exercise_2",
+            fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)?.activeProgramExerciseId(),
+        )
     }
 
     @Test
@@ -1276,10 +1286,14 @@ class GymCoachRepositorySyncTest {
 
         val refreshed = fixture.repository.refreshBootstrap()
 
-        assertEquals("exercise_2", refreshed.activeProgramExerciseId())
-        assertEquals("exercise_2", refreshed.openSessionExerciseId(sessionId))
+        assertEquals("exercise_1", refreshed.activeProgramExerciseId())
+        assertEquals("exercise_1", refreshed.openSessionExerciseId(sessionId))
+        assertEquals(
+            "exercise_2",
+            fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)?.activeProgramExerciseId(),
+        )
         assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
-        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -1291,6 +1305,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.syncFailure = IOException("offline")
 
         val failed = runCatching { fixture.repository.syncPending() }
@@ -1298,7 +1313,7 @@ class GymCoachRepositorySyncTest {
         assertTrue(failed.exceptionOrNull() is IOException)
         assertEquals("FAILED", fixture.dao.queuedOperations().single().status)
         assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
         val restarted = GymCoachRepository(
             dao = fixture.dao,
             accountStore = fixture.accountStore,
@@ -1307,7 +1322,7 @@ class GymCoachRepositorySyncTest {
             schedulePeriodicSync = {},
         )
         assertEquals("exercise_2", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_2", restarted.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, restarted.activeWorkoutRuntime(sessionId))
         assertEquals("exercise_1", restarted.localSets(sessionId).single().exerciseId)
 
         fixture.api.syncFailure = null
@@ -1328,10 +1343,10 @@ class GymCoachRepositorySyncTest {
 
         assertTrue(restarted.syncPending())
         assertEquals(1, fixture.api.syncCalls.size)
-        assertEquals(1, fixture.api.syncCalls.single().operations.filterIsInstance<ReplaceProgramExerciseOperation>().size)
+        assertEquals(1, fixture.api.syncCalls.single().operations.filterIsInstance<MutateWorkoutExercisesOperation>().size)
         assertTrue(fixture.dao.queuedOperations().isEmpty())
         assertEquals("exercise_2", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_2", restarted.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, restarted.activeWorkoutRuntime(sessionId))
     }
 
     @Test
@@ -1344,6 +1359,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.syncHandler = { request ->
             SyncBatchResponse(
                 serverTime = "2026-07-13T12:00:00Z",
@@ -1357,12 +1373,10 @@ class GymCoachRepositorySyncTest {
 
         assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
         assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.openSessionExerciseId(sessionId))
-        assertEquals("exercise_1", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
-        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
+        assertEquals("PENDING", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
     }
 
     @Test
@@ -1375,6 +1389,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
             fixture.api.bootstrapResponse,
             "program_exercise_1",
@@ -1395,11 +1410,10 @@ class GymCoachRepositorySyncTest {
         val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
         assertEquals("exercise_3", cached.activeProgramExerciseId())
         assertEquals("exercise_3", cached.openSessionExerciseId(sessionId))
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals("exercise_3", runtime.activeExerciseId)
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("PENDING", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
-        assertEquals(listOf("EXERCISE", "EXERCISE", "EXERCISE"), publisher.commands)
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
     }
 
     @Test
@@ -1412,6 +1426,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         val blocked = fixture.dao.queuedOperations().single()
         fixture.dao.markOperationBlocked(blocked.operationId, "stale exercise")
         fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
@@ -1432,10 +1447,9 @@ class GymCoachRepositorySyncTest {
 
         assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
         assertEquals("exercise_3", restarted.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        val runtime = requireNotNull(restarted.activeWorkoutRuntime(sessionId))
-        assertEquals("exercise_3", runtime.activeExerciseId)
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
-        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
+        assertEquals(null, restarted.activeWorkoutRuntime(sessionId))
+        assertEquals("APPLY_QUEUED", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
     }
 
     @Test
@@ -1448,6 +1462,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
             fixture.api.bootstrapResponse,
             "program_exercise_1",
@@ -1465,7 +1480,7 @@ class GymCoachRepositorySyncTest {
 
         assertFalse(fixture.repository.syncPending())
 
-        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
         assertEquals(
             null,
             findProgramExercise(
@@ -1473,18 +1488,15 @@ class GymCoachRepositorySyncTest {
                 "program_exercise_1",
             ),
         )
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals(null, runtime.activeExerciseId)
-        val marker = requireNotNull(fixture.dao.getWatchResyncMarker(sessionId))
-        assertEquals(runtime.revision, marker.revision)
-        assertEquals("PROGRAM_EXERCISE_REMOVED", marker.reason)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("PENDING", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
-        assertEquals(listOf("EXERCISE", "EXERCISE"), publisher.commands)
-        assertTrue(fixture.repository.syncPending())
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
+        assertFalse(fixture.repository.syncPending())
     }
 
     @Test
-    fun retryingBlockedReplacementWithDeletedTargetClearsItAndTheStaleRuntime() = runTest {
+    fun retryingBlockedProgramDecisionWithDeletedTargetFailsClosed() = runTest {
         val publisher = RecordingWatchPublisher()
         val fixture = fixture(publisher)
         val sessionId = fixture.prepareExerciseReplacementSession()
@@ -1493,6 +1505,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         val blocked = fixture.dao.queuedOperations().single()
         fixture.dao.markOperationBlocked(blocked.operationId, "target deleted")
         fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
@@ -1503,13 +1516,11 @@ class GymCoachRepositorySyncTest {
         )
         fixture.repository.refreshBootstrap()
 
-        fixture.repository.retryBlockedChange()
+        val retry = runCatching { fixture.repository.retryBlockedChange() }
 
-        assertTrue(fixture.dao.queuedOperations().isEmpty())
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals(null, runtime.activeExerciseId)
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
-        assertEquals("PROGRAM_EXERCISE_REMOVED", fixture.dao.getWatchResyncMarker(sessionId)?.reason)
+        assertTrue(retry.exceptionOrNull() is IllegalStateException)
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
     }
 
     @Test
@@ -1522,6 +1533,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         val blocked = fixture.dao.queuedOperations().single()
         fixture.dao.markOperationBlocked(blocked.operationId, "target deleted")
         fixture.api.bootstrapResponse = removeProgramExerciseFromBootstrap(
@@ -1532,14 +1544,12 @@ class GymCoachRepositorySyncTest {
         fixture.repository.discardBlockedChange()
 
         assertTrue(fixture.dao.queuedOperations().isEmpty())
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals(null, runtime.activeExerciseId)
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
-        assertEquals("PROGRAM_EXERCISE_REMOVED", fixture.dao.getWatchResyncMarker(sessionId)?.reason)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("KEPT_FOR_SESSION", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
     }
 
     @Test
-    fun retryingRejectedReplacementRestoresItAndSynchronizesExactlyOnce() = runTest {
+    fun retryingRejectedProgramDecisionWithConcurrentProgramChangeFailsClosed() = runTest {
         val fixture = fixture()
         val sessionId = fixture.prepareExerciseReplacementSession()
         fixture.repository.replaceProgramExercise(
@@ -1547,6 +1557,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
             fixture.api.bootstrapResponse,
             "program_exercise_1",
@@ -1562,7 +1573,7 @@ class GymCoachRepositorySyncTest {
         }
         assertFalse(fixture.repository.syncPending())
         assertEquals("exercise_3", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_3", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
         fixture.api.syncCalls.clear()
         fixture.api.syncHandler = { request ->
             fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
@@ -1578,17 +1589,12 @@ class GymCoachRepositorySyncTest {
             )
         }
 
-        fixture.repository.retryBlockedChange()
+        val retry = runCatching { fixture.repository.retryBlockedChange() }
 
-        val retried = fixture.dao.queuedOperations().single()
-        assertEquals("PENDING", retried.status)
-        assertEquals("exercise_3", fixture.decodeReplacementOperation(retried).previousExerciseId)
-        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
-        assertTrue(fixture.repository.syncPending())
-        assertEquals(1, fixture.api.syncCalls.size)
-        assertEquals(1, fixture.api.syncCalls.single().operations.filterIsInstance<ReplaceProgramExerciseOperation>().size)
-        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertTrue(retry.exceptionOrNull() is IllegalStateException)
+        assertEquals("BLOCKED", fixture.dao.queuedOperations().single().status)
+        assertEquals("PENDING", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertTrue(fixture.api.syncCalls.isEmpty())
     }
 
     @Test
@@ -1601,6 +1607,7 @@ class GymCoachRepositorySyncTest {
             programExerciseId = "program_exercise_1",
             replacementExerciseId = "exercise_2",
         )
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.bootstrapResponse = replaceProgramExerciseInBootstrap(
             fixture.api.bootstrapResponse,
             "program_exercise_1",
@@ -1622,15 +1629,14 @@ class GymCoachRepositorySyncTest {
         val cached = requireNotNull(fixture.repository.cachedBootstrapSnapshot())
         assertEquals("exercise_3", cached.activeProgramExerciseId())
         assertEquals("exercise_3", cached.openSessionExerciseId(sessionId))
-        val runtime = requireNotNull(fixture.repository.activeWorkoutRuntime(sessionId))
-        assertEquals("exercise_3", runtime.activeExerciseId)
-        assertEquals(runtime.revision, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
+        assertEquals("KEPT_FOR_SESSION", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
-        assertEquals(listOf("EXERCISE", "EXERCISE", "EXERCISE"), publisher.commands)
+        assertEquals(listOf("EXERCISE", "FINISH"), publisher.commands)
     }
 
     @Test
-    fun secondReplacementIsRefusedWhileTheFirstIsPending() = runTest {
+    fun secondReplacementUpdatesTheSameDraftWithoutSyncingIntermediateState() = runTest {
         val fixture = fixture()
         val sessionId = fixture.prepareExerciseReplacementSession()
         fixture.repository.replaceProgramExercise(
@@ -1647,10 +1653,14 @@ class GymCoachRepositorySyncTest {
             )
         }
 
-        assertTrue(second.exceptionOrNull() is IllegalStateException)
-        assertEquals(1, fixture.dao.queuedOperations().size)
-        assertEquals("exercise_2", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
-        assertEquals("exercise_2", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertTrue(second.getOrNull() == true)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+        assertEquals("exercise_1", fixture.repository.cachedBootstrapSnapshot()?.activeProgramExerciseId())
+        assertEquals(
+            "exercise_1",
+            fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)?.activeProgramExerciseId(),
+        )
+        assertEquals("exercise_1", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
     }
 
     @Test
@@ -1675,7 +1685,12 @@ class GymCoachRepositorySyncTest {
         fixture.repository.refreshBootstrap()
 
         assertTrue(rejected.exceptionOrNull() is IllegalArgumentException)
-        assertEquals(4, fixture.dao.cachedTargetSets())
+        assertEquals(3, fixture.dao.cachedTargetSets())
+        assertEquals(
+            4,
+            fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)
+                ?.let { findProgramExerciseTargetSets(it, "program_exercise_1") },
+        )
         assertEquals(
             4,
             fixture.repository.observeActiveTargetSetOverrides(sessionId)
@@ -1683,7 +1698,7 @@ class GymCoachRepositorySyncTest {
                 .single()
                 .targetSets,
         )
-        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -1732,7 +1747,7 @@ class GymCoachRepositorySyncTest {
         fixture.repository.refreshBootstrap()
 
         val updated = requireNotNull(findProgramExercise(
-            requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+            requireNotNull(fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)),
             "program_exercise_1",
         ))
         assertEquals(5, updated.targetSets)
@@ -1741,7 +1756,63 @@ class GymCoachRepositorySyncTest {
         assertEquals(15, updated.targetRepsMax)
         assertEquals("Controlled eccentric", updated.notes)
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
-        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertEquals(
+            3,
+            findProgramExerciseTargetSets(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "program_exercise_1",
+            ),
+        )
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
+    }
+
+    @Test
+    fun finishingWithoutStructuralChangesCreatesNoPendingProgramDecision() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
+        fixture.repository.ensureWorkoutStructureDraft(sessionId)
+
+        fixture.repository.finishSession(sessionId, "Done", 7)
+
+        assertEquals("KEPT_FOR_SESSION", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertTrue(fixture.repository.observePendingWorkoutStructureDrafts().first().isEmpty())
+        assertEquals("Done", fixture.repository.localSession(sessionId)?.notes)
+        assertEquals(1, fixture.repository.localSets(sessionId).size)
+    }
+
+    @Test
+    fun onlyThisWorkoutKeepsHistoryAndLeavesProgramBaselineAcrossRestart() = runTest {
+        val fixture = fixture()
+        val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
+        val current = requireNotNull(
+            findProgramExercise(
+                requireNotNull(fixture.repository.cachedBootstrapSnapshot()),
+                "program_exercise_1",
+            ),
+        )
+        fixture.repository.updateProgramExercisePrescription(
+            sessionId,
+            current.copy(targetSets = 5, notes = "Session experiment"),
+        )
+        fixture.repository.finishSession(sessionId, null, 8)
+
+        assertEquals(sessionId, fixture.repository.observePendingWorkoutStructureDrafts().first().single().sessionId)
+        fixture.repository.keepWorkoutStructureChangesForSession(sessionId)
+
+        assertEquals(3, fixture.dao.cachedTargetSets())
+        assertEquals("KEPT_FOR_SESSION", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
+        assertEquals(1, fixture.repository.localSets(sessionId).size)
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = {},
+            schedulePeriodicSync = {},
+        )
+        assertTrue(restarted.observePendingWorkoutStructureDrafts().first().isEmpty())
+        assertEquals(3, restarted.cachedBootstrapSnapshot()?.let {
+            findProgramExerciseTargetSets(it, "program_exercise_1")
+        })
     }
 
     @Test
@@ -1782,6 +1853,29 @@ class GymCoachRepositorySyncTest {
             restarted.cachedBootstrapSnapshot()?.gyms?.single()?.exerciseConfigs?.single()
                 ?.preferredEquipmentId,
         )
+    }
+
+    @Test
+    fun activeEquipmentPreferenceIsImmediateAndExcludedFromTheProgramDecision() = runTest {
+        val fixture = fixture()
+        fixture.api.bootstrapResponse = preferredEquipmentBootstrap(preferredEquipmentId = "equipment_a")
+        val bootstrap = fixture.repository.refreshBootstrap()
+        val workout = requireNotNull(bootstrap.activeProgram).workouts.single()
+        val sessionId = fixture.repository.startWorkout(workout, "gym_1")
+        fixture.dao.removeOperations(
+            fixture.dao.queuedOperations().map { it.operationId },
+        )
+
+        fixture.repository.updatePreferredEquipment(
+            gymId = "gym_1",
+            exerciseId = "exercise_1",
+            preferredEquipmentId = "equipment_b",
+        )
+        fixture.repository.finishSession(sessionId, null, null)
+
+        assertTrue(fixture.repository.observePendingWorkoutStructureDrafts().first().isEmpty())
+        assertEquals("equipment_b", fixture.dao.cachedPreferredEquipment("gym_1", "exercise_1"))
+        assertEquals("KEPT_FOR_SESSION", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
     }
 
     @Test
@@ -1828,7 +1922,7 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
-    fun workoutMutationIsRefusedWithoutDeadlockWhileAReplacementIsPending() = runTest {
+    fun activeDraftAcceptsFurtherChangesWithoutCreatingProgramSyncNoise() = runTest {
         val fixture = fixture()
         val sessionId = fixture.prepareWorkoutExerciseMutationSession()
         fixture.repository.replaceProgramExercise(
@@ -1848,8 +1942,11 @@ class GymCoachRepositorySyncTest {
             )
         }
 
-        assertTrue(result.exceptionOrNull() is IllegalStateException)
-        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertTrue(result.getOrNull() == true)
+        val active = requireNotNull(fixture.repository.activeWorkoutBootstrapSnapshot(sessionId))
+        assertEquals("wait for sync", findProgramExercise(active, "program_exercise_2")?.notes)
+        assertEquals("exercise_3", findProgramExercise(active, "program_exercise_1")?.exerciseId)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -1857,8 +1954,12 @@ class GymCoachRepositorySyncTest {
         val addFixture = fixture()
         val addSessionId = addFixture.prepareWorkoutExerciseMutationSession()
         val addedId = addFixture.repository.addProgramExercise(addSessionId, "workout_1", "exercise_3")
-        val addOperation = addFixture.decodeWorkoutMutation(addFixture.dao.queuedOperations().single())
-        assertTrue(addOperation.exercises.any { it.id == addedId && it.exerciseId == "exercise_3" })
+        val addedExercises = findWorkout(
+            requireNotNull(addFixture.repository.activeWorkoutBootstrapSnapshot(addSessionId)),
+            "workout_1",
+        )?.exercises.orEmpty()
+        assertTrue(addedExercises.any { it.id == addedId && it.exerciseId == "exercise_3" })
+        assertTrue(addFixture.dao.queuedOperations().isEmpty())
         assertEquals("exercise_3", addFixture.repository.activeWorkoutRuntime(addSessionId)?.activeExerciseId)
 
         val removeFixture = fixture()
@@ -1867,7 +1968,7 @@ class GymCoachRepositorySyncTest {
             "exercise_2",
             removeFixture.repository.removeProgramExercise(removeSessionId, "program_exercise_1"),
         )
-        val removed = requireNotNull(removeFixture.repository.cachedBootstrapSnapshot())
+        val removed = requireNotNull(removeFixture.repository.activeWorkoutBootstrapSnapshot(removeSessionId))
         assertEquals(listOf("exercise_2"), findWorkout(removed, "workout_1")?.exercises?.map { it.exerciseId })
         assertEquals("exercise_1", removeFixture.repository.localSets(removeSessionId).single().exerciseId)
         assertEquals("exercise_2", removeFixture.repository.activeWorkoutRuntime(removeSessionId)?.activeExerciseId)
@@ -1882,7 +1983,7 @@ class GymCoachRepositorySyncTest {
             ),
         )
         val linked = findWorkout(
-            requireNotNull(supersetFixture.repository.cachedBootstrapSnapshot()),
+            requireNotNull(supersetFixture.repository.activeWorkoutBootstrapSnapshot(supersetSessionId)),
             "workout_1",
         )?.exercises.orEmpty()
         assertEquals(listOf(1, 1), linked.map { it.supersetGroup })
@@ -1908,8 +2009,10 @@ class GymCoachRepositorySyncTest {
             fixture.repository.addProgramExercise(sessionId, "workout_1", "exercise_3")
         }
 
-        val operation = fixture.decodeWorkoutMutation(fixture.dao.queuedOperations().single())
-        val added = operation.exercises.single { it.id == addedId }
+        val added = findWorkout(
+            requireNotNull(fixture.repository.activeWorkoutBootstrapSnapshot(sessionId)),
+            "workout_1",
+        )?.exercises?.single { it.id == addedId } ?: error("Added exercise missing")
         assertEquals(defaults.targetSets, added.targetSets)
         assertEquals(defaults.targetDropSets, added.targetDropSets)
         assertEquals(defaults.targetRepsMin, added.targetRepsMin)
@@ -1918,8 +2021,8 @@ class GymCoachRepositorySyncTest {
         assertEquals(defaults.autoregulationMode, added.autoregulationMode)
         assertEquals(defaults.fatigueRate, added.fatigueRate)
         assertEquals(defaults.loadAdjustmentPct, added.loadAdjustmentPct)
-        assertTrue(repeated.exceptionOrNull() is IllegalStateException)
-        assertEquals(1, fixture.dao.queuedOperations().size)
+        assertTrue(repeated.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(fixture.dao.queuedOperations().isEmpty())
     }
 
     @Test
@@ -1931,6 +2034,7 @@ class GymCoachRepositorySyncTest {
             "program_exercise_1",
         ))
         fixture.repository.updateProgramExercisePrescription(sessionId, current.copy(targetSets = 6))
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.syncFailure = IOException("offline")
 
         assertTrue(runCatching { fixture.repository.syncPending() }.exceptionOrNull() is IOException)
@@ -1978,6 +2082,7 @@ class GymCoachRepositorySyncTest {
         val fixture = fixture()
         val sessionId = fixture.prepareWorkoutExerciseMutationSession(loggedSetCount = 1)
         fixture.repository.removeProgramExercise(sessionId, "program_exercise_1")
+        fixture.finishAndQueueProgramDecision(sessionId)
         fixture.api.syncHandler = { request ->
             SyncBatchResponse(
                 serverTime = "2026-07-22T12:00:00Z",
@@ -1997,8 +2102,9 @@ class GymCoachRepositorySyncTest {
                 "workout_1",
             )?.exercises?.map { it.exerciseId },
         )
-        assertEquals("exercise_1", fixture.repository.activeWorkoutRuntime(sessionId)?.activeExerciseId)
+        assertEquals(null, fixture.repository.activeWorkoutRuntime(sessionId))
         assertEquals("exercise_1", fixture.repository.localSets(sessionId).single().exerciseId)
+        assertEquals("PENDING", fixture.dao.getWorkoutStructureDraft(sessionId)?.status)
     }
 
     @Test
@@ -3598,6 +3704,24 @@ class GymCoachRepositorySyncTest {
         return sessionId
     }
 
+    private suspend fun Fixture.finishAndQueueProgramDecision(sessionId: String) {
+        repository.finishSession(sessionId, null, null)
+        val finishOperationIds = dao.queuedOperations().mapNotNull { entry ->
+            val operation = api.json.decodeFromString<SyncOperation>(entry.payloadJson)
+            entry.operationId.takeIf { operation is FinishSessionOperation }
+        }
+        dao.removeOperations(finishOperationIds)
+        val draft = requireNotNull(repository.observeWorkoutStructureDraft(sessionId).first())
+        check(draft.status == "PENDING")
+        check(
+            draft.baseline.exercises.map { it.exerciseId } !=
+                draft.current.exercises.map { it.exerciseId } ||
+                draft.baseline.exercises.map { it.toMutationDto() } !=
+                draft.current.exercises.map { it.toMutationDto() },
+        )
+        repository.applyWorkoutStructureChangesToProgram(sessionId)
+    }
+
     private fun BootstrapResponse.activeProgramExerciseId(): String? =
         activeProgram?.workouts?.singleOrNull()?.exercises?.singleOrNull()?.exerciseId
 
@@ -3885,6 +4009,11 @@ class GymCoachRepositorySyncTest {
             linkedMapOf<Pair<String, String>, ActiveTargetSetOverrideEntity>()
         private val activeTargetSetOverrideFlows =
             linkedMapOf<String, MutableStateFlow<List<ActiveTargetSetOverrideEntity>>>()
+        private val workoutStructureDrafts = linkedMapOf<String, WorkoutStructureDraftEntity>()
+        private val workoutStructureDraftFlows =
+            linkedMapOf<String, MutableStateFlow<WorkoutStructureDraftEntity?>>()
+        private val pendingWorkoutStructureDraftsFlow =
+            MutableStateFlow<List<WorkoutStructureDraftEntity>>(emptyList())
         private val processedWatchEvents = linkedMapOf<String, WatchProcessedEventEntity>()
         private val watchInbox = linkedMapOf<String, WatchInboxEventEntity>()
         private val watchOutbox = linkedMapOf<String, WatchOutboxEventEntity>()
@@ -3929,6 +4058,8 @@ class GymCoachRepositorySyncTest {
             sets.entries.removeIf { it.value.sessionId == sessionId }
             activeRuntimes.remove(sessionId)
             activeTargetSetOverrides.entries.removeIf { it.value.sessionId == sessionId }
+            workoutStructureDrafts.remove(sessionId)
+            publishWorkoutStructureDrafts(sessionId)
             publishActiveTargetSetOverrides(sessionId)
             publishSessions()
         }
@@ -3975,6 +4106,65 @@ class GymCoachRepositorySyncTest {
         override suspend fun deleteActiveTargetSetOverrides(sessionId: String) {
             activeTargetSetOverrides.entries.removeIf { it.value.sessionId == sessionId }
             publishActiveTargetSetOverrides(sessionId)
+        }
+        override fun observeWorkoutStructureDraft(
+            sessionId: String,
+        ): Flow<WorkoutStructureDraftEntity?> = workoutStructureDraftFlows.getOrPut(sessionId) {
+            MutableStateFlow(workoutStructureDrafts[sessionId])
+        }
+        override suspend fun getWorkoutStructureDraft(sessionId: String) =
+            workoutStructureDrafts[sessionId]
+        override fun observePendingWorkoutStructureDrafts(): Flow<List<WorkoutStructureDraftEntity>> =
+            pendingWorkoutStructureDraftsFlow
+        override suspend fun saveWorkoutStructureDraft(entity: WorkoutStructureDraftEntity) {
+            workoutStructureDrafts[entity.sessionId] = entity
+            publishWorkoutStructureDrafts(entity.sessionId)
+        }
+        override suspend fun updateWorkoutStructureDraftStatus(
+            sessionId: String,
+            status: String,
+            updatedAtEpochMs: Long,
+        ) {
+            workoutStructureDrafts[sessionId]?.let {
+                workoutStructureDrafts[sessionId] = it.copy(
+                    status = status,
+                    updatedAtEpochMs = updatedAtEpochMs,
+                )
+            }
+            publishWorkoutStructureDrafts(sessionId)
+        }
+        override suspend fun reopenWorkoutStructureDecision(
+            sessionId: String,
+            updatedAtEpochMs: Long,
+        ) {
+            workoutStructureDrafts[sessionId]
+                ?.takeIf { it.status == "APPLY_QUEUED" }
+                ?.let {
+                    workoutStructureDrafts[sessionId] = it.copy(
+                        status = "PENDING",
+                        updatedAtEpochMs = updatedAtEpochMs,
+                    )
+                }
+            publishWorkoutStructureDrafts(sessionId)
+        }
+        override suspend fun completeWorkoutStructureDecision(
+            sessionId: String,
+            updatedAtEpochMs: Long,
+        ) {
+            workoutStructureDrafts[sessionId]
+                ?.takeIf { it.status in setOf("PENDING", "APPLY_QUEUED") }
+                ?.let {
+                    workoutStructureDrafts[sessionId] = it.copy(
+                        status = "APPLIED",
+                        updatedAtEpochMs = updatedAtEpochMs,
+                    )
+                }
+            publishWorkoutStructureDrafts(sessionId)
+        }
+        override suspend fun clearWorkoutStructureDrafts() {
+            workoutStructureDrafts.clear()
+            workoutStructureDraftFlows.forEach { (_, flow) -> flow.value = null }
+            pendingWorkoutStructureDraftsFlow.value = emptyList()
         }
         override suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long =
             if (processedWatchEvents.putIfAbsent(entity.eventId, entity) == null) processedWatchEvents.size.toLong() else -1L
@@ -4293,9 +4483,12 @@ class GymCoachRepositorySyncTest {
             sets.clear()
             activeRuntimes.clear()
             activeTargetSetOverrides.clear()
+            workoutStructureDrafts.clear()
             activeTargetSetOverrideFlows.forEach { (sessionId, flow) ->
                 flow.value = activeTargetSetOverridesFor(sessionId)
             }
+            workoutStructureDraftFlows.forEach { (_, flow) -> flow.value = null }
+            pendingWorkoutStructureDraftsFlow.value = emptyList()
             publishSessions()
         }
         override suspend fun clearOutbox() {
@@ -4324,6 +4517,13 @@ class GymCoachRepositorySyncTest {
 
         private fun publishActiveTargetSetOverrides(sessionId: String) {
             activeTargetSetOverrideFlows[sessionId]?.value = activeTargetSetOverridesFor(sessionId)
+        }
+
+        private fun publishWorkoutStructureDrafts(sessionId: String) {
+            workoutStructureDraftFlows[sessionId]?.value = workoutStructureDrafts[sessionId]
+            pendingWorkoutStructureDraftsFlow.value = workoutStructureDrafts.values
+                .filter { it.status == "PENDING" }
+                .sortedWith(compareBy<WorkoutStructureDraftEntity> { it.updatedAtEpochMs }.thenBy { it.sessionId })
         }
 
         suspend fun cachedTargetSets(): Int? = getBootstrap()?.let { cached ->

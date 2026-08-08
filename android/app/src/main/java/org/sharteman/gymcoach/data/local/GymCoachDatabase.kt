@@ -15,6 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalSetEntity::class,
         ActiveWorkoutRuntimeEntity::class,
         ActiveTargetSetOverrideEntity::class,
+        WorkoutStructureDraftEntity::class,
         WatchProcessedEventEntity::class,
         WatchInboxEventEntity::class,
         WatchOutboxEventEntity::class,
@@ -30,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -57,6 +58,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
+                MIGRATION_12_13,
             )
                 .build()
                 .also { instance = it }
@@ -510,6 +512,35 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastCorrelationId TEXT")
                 db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastExceptionClass TEXT")
                 db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastStackTrace TEXT")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS workout_structure_drafts (" +
+                        "sessionId TEXT NOT NULL, " +
+                        "workoutId TEXT NOT NULL, " +
+                        "baselineJson TEXT NOT NULL, " +
+                        "currentJson TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, " +
+                        "updatedAtEpochMs INTEGER NOT NULL, " +
+                        "PRIMARY KEY(sessionId), " +
+                        "FOREIGN KEY(sessionId) REFERENCES local_sessions(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_workout_structure_drafts_workoutId " +
+                        "ON workout_structure_drafts(workoutId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_workout_structure_drafts_status " +
+                        "ON workout_structure_drafts(status)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_workout_structure_drafts_updatedAtEpochMs " +
+                        "ON workout_structure_drafts(updatedAtEpochMs)",
+                )
             }
         }
     }

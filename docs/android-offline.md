@@ -84,13 +84,22 @@ change. Supported operations are:
 - `REPLACE_PROGRAM_EXERCISE`;
 - `MUTATE_WORKOUT_EXERCISES`.
 
-`MUTATE_WORKOUT_EXERCISES` replaces one workout's ordered prescription as one
-compare-and-swap transaction. It covers active-workout add, remove, target,
-note and superset changes. The payload contains both the previous and intended
-exercise lists, so a stale server state is rejected rather than partially
-applied. Replaying an already-applied payload is idempotent. Removing or
-replacing a planned exercise never rewrites completed sets, which remain tied
-to their original exercise in session history.
+Active-workout add, remove, replace, reorder, target, note and superset changes
+first update a session-scoped Room draft. The active workout and watch read that
+draft, while the cached program remains unchanged. Finishing the session always
+saves its factual history. If the draft differs from the starting prescription,
+Android keeps a recoverable decision and asks whether to save the structural
+changes to the program or keep them only in that completed workout.
+
+Choosing Save to program creates one `MUTATE_WORKOUT_EXERCISES` compare-and-swap
+operation marked as a finished-workout program decision. Its payload contains
+both the previous and intended exercise lists, so a stale, deleted or changed
+program is rejected rather than partially applied. Replaying an already-applied
+payload is idempotent. Choosing Only this workout creates no program mutation.
+In both cases completed sets remain tied to their original exercise and frozen
+per-set equipment snapshot. The per-gym preferred equipment setting keeps its
+existing immediate durable contract. It is not a `ProgramExercise` field, is
+excluded from this final diff, and is not reverted by either choice.
 
 Each operation has a unique client-generated `operationId`. The server stores a
 hash and result for every applied operation in `MobileMutation`. Repeating the

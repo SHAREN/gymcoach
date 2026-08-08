@@ -219,6 +219,7 @@ export const mobileSyncOperationSchema = z
       exercises: z.array(mobileWorkoutExerciseMutationSchema).min(1).max(200),
       previousActiveExerciseId: opaqueId,
       nextActiveExerciseId: opaqueId,
+      programDecision: z.boolean().optional(),
     }),
     operationBase.extend({
       type: z.literal('REPLACE_PROGRAM_EXERCISE'),

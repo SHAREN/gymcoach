@@ -496,6 +496,44 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration12To13AddsDurableWorkoutStructureDecisions() {
+        helper.createDatabase(TEST_DB_V13, 12).apply {
+            execSQL(
+                "INSERT INTO local_sessions " +
+                    "(id, workoutId, gymId, startedAt, finishedAt, notes, sessionRpe) VALUES " +
+                    "('session_v13', 'workout_v13', 'gym_v13', " +
+                    "'2026-08-08T10:00:00Z', NULL, NULL, NULL)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V13,
+            13,
+            true,
+            GymCoachDatabase.MIGRATION_12_13,
+        ).use { database ->
+            database.execSQL(
+                "INSERT INTO workout_structure_drafts " +
+                    "(sessionId, workoutId, baselineJson, currentJson, status, updatedAtEpochMs) " +
+                    "VALUES ('session_v13', 'workout_v13', '{\"baseline\":true}', " +
+                    "'{\"current\":true}', 'PENDING', 1234)",
+            )
+            database.query(
+                "SELECT workoutId, baselineJson, currentJson, status, updatedAtEpochMs " +
+                    "FROM workout_structure_drafts WHERE sessionId = 'session_v13'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("workout_v13", cursor.getString(0))
+                assertEquals("{\"baseline\":true}", cursor.getString(1))
+                assertEquals("{\"current\":true}", cursor.getString(2))
+                assertEquals("PENDING", cursor.getString(3))
+                assertEquals(1234L, cursor.getLong(4))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
@@ -506,5 +544,6 @@ class GymCoachDatabaseMigrationTest {
         const val TEST_DB_V10 = "gymcoach-migration-v10-test"
         const val TEST_DB_V11 = "gymcoach-migration-v11-test"
         const val TEST_DB_V12 = "gymcoach-migration-v12-test"
+        const val TEST_DB_V13 = "gymcoach-migration-v13-test"
     }
 }

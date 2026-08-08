@@ -103,6 +103,46 @@ interface GymCoachDao {
     @Query("DELETE FROM active_target_set_overrides WHERE sessionId = :sessionId")
     suspend fun deleteActiveTargetSetOverrides(sessionId: String)
 
+    @Query("SELECT * FROM workout_structure_drafts WHERE sessionId = :sessionId")
+    fun observeWorkoutStructureDraft(sessionId: String): Flow<WorkoutStructureDraftEntity?>
+
+    @Query("SELECT * FROM workout_structure_drafts WHERE sessionId = :sessionId")
+    suspend fun getWorkoutStructureDraft(sessionId: String): WorkoutStructureDraftEntity?
+
+    @Query(
+        "SELECT * FROM workout_structure_drafts WHERE status = 'PENDING' " +
+            "ORDER BY updatedAtEpochMs, sessionId",
+    )
+    fun observePendingWorkoutStructureDrafts(): Flow<List<WorkoutStructureDraftEntity>>
+
+    @Upsert
+    suspend fun saveWorkoutStructureDraft(entity: WorkoutStructureDraftEntity)
+
+    @Query(
+        "UPDATE workout_structure_drafts SET status = :status, updatedAtEpochMs = :updatedAtEpochMs " +
+            "WHERE sessionId = :sessionId",
+    )
+    suspend fun updateWorkoutStructureDraftStatus(
+        sessionId: String,
+        status: String,
+        updatedAtEpochMs: Long,
+    )
+
+    @Query(
+        "UPDATE workout_structure_drafts SET status = 'PENDING', updatedAtEpochMs = :updatedAtEpochMs " +
+            "WHERE sessionId = :sessionId AND status = 'APPLY_QUEUED'",
+    )
+    suspend fun reopenWorkoutStructureDecision(sessionId: String, updatedAtEpochMs: Long)
+
+    @Query(
+        "UPDATE workout_structure_drafts SET status = 'APPLIED', updatedAtEpochMs = :updatedAtEpochMs " +
+            "WHERE sessionId = :sessionId AND status IN ('PENDING', 'APPLY_QUEUED')",
+    )
+    suspend fun completeWorkoutStructureDecision(sessionId: String, updatedAtEpochMs: Long)
+
+    @Query("DELETE FROM workout_structure_drafts")
+    suspend fun clearWorkoutStructureDrafts()
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertProcessedWatchEvent(entity: WatchProcessedEventEntity): Long
 
@@ -528,6 +568,7 @@ interface GymCoachDao {
         clearWatchInboxEvents()
         clearWatchPeers()
         clearActiveWorkoutRuntime()
+        clearWorkoutStructureDrafts()
         clearProcessedWatchEvents()
         clearSessions()
         clearBootstrap()
@@ -551,11 +592,13 @@ interface GymCoachDao {
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
         runtime: ActiveWorkoutRuntimeEntity,
+        draft: WorkoutStructureDraftEntity? = null,
         marker: WatchResyncMarkerEntity? = null,
     ) {
         saveSession(session)
         enqueue(operation)
         saveActiveWorkoutRuntime(runtime)
+        draft?.let { saveWorkoutStructureDraft(it) }
         marker?.let { saveWatchResyncMarker(it) }
     }
 
@@ -564,10 +607,12 @@ interface GymCoachDao {
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
         bootstrap: BootstrapCacheEntity?,
+        draft: WorkoutStructureDraftEntity? = null,
         watchEvent: WatchOutboxEventEntity? = null,
     ) {
         saveSession(session)
         enqueue(operation)
+        draft?.let { saveWorkoutStructureDraft(it) }
         deleteActiveWorkoutRuntime(session.id)
         deleteActiveTargetSetOverrides(session.id)
         watchEvent?.let { insertWatchOutboxEvent(it) }
@@ -628,6 +673,49 @@ interface GymCoachDao {
         saveActiveTargetSetOverride(override)
         bootstrap?.let { saveBootstrap(it) }
         operation?.let { enqueue(it) }
+    }
+
+    @Transaction
+    suspend fun saveWorkoutStructureDraftAndOverride(
+        draft: WorkoutStructureDraftEntity,
+        override: ActiveTargetSetOverrideEntity,
+    ) {
+        saveWorkoutStructureDraft(draft)
+        saveActiveTargetSetOverride(override)
+    }
+
+    @Transaction
+    suspend fun saveWorkoutStructureDraftAndRuntime(
+        draft: WorkoutStructureDraftEntity,
+        runtime: ActiveWorkoutRuntimeEntity?,
+        marker: WatchResyncMarkerEntity?,
+    ) {
+        saveWorkoutStructureDraft(draft)
+        runtime?.let { saveActiveWorkoutRuntime(it) }
+        marker?.let { saveWatchResyncMarker(it) }
+    }
+
+    @Transaction
+    suspend fun saveBootstrapOperationAndWorkoutStructureDraft(
+        bootstrap: BootstrapCacheEntity,
+        operation: SyncOutboxEntity,
+        draft: WorkoutStructureDraftEntity,
+    ) {
+        saveBootstrap(bootstrap)
+        enqueue(operation)
+        saveWorkoutStructureDraft(draft)
+    }
+
+    @Transaction
+    suspend fun completeOperationsAndWorkoutStructureDrafts(
+        operationIds: List<String>,
+        sessionIds: List<String>,
+        updatedAtEpochMs: Long,
+    ) {
+        if (operationIds.isNotEmpty()) removeOperations(operationIds)
+        sessionIds.forEach { sessionId ->
+            completeWorkoutStructureDecision(sessionId, updatedAtEpochMs)
+        }
     }
 
     @Transaction
@@ -732,10 +820,12 @@ interface GymCoachDao {
         processed: WatchProcessedEventEntity,
         session: LocalSessionEntity,
         operation: SyncOutboxEntity,
+        draft: WorkoutStructureDraftEntity? = null,
     ): Boolean {
         if (insertProcessedWatchEvent(processed) == -1L) return false
         saveSession(session)
         enqueue(operation)
+        draft?.let { saveWorkoutStructureDraft(it) }
         deleteActiveWorkoutRuntime(session.id)
         deleteActiveTargetSetOverrides(session.id)
         deleteWatchResyncMarker(session.id, Long.MAX_VALUE)

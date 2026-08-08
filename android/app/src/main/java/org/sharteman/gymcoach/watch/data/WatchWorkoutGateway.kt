@@ -61,7 +61,7 @@ data class PhoneExerciseChange(
 
 interface WatchWorkoutRepository {
     suspend fun <T> withWatchMutationLock(block: suspend () -> T): T
-    suspend fun bootstrap(): BootstrapResponse?
+    suspend fun bootstrap(sessionId: String): BootstrapResponse?
     suspend fun session(sessionId: String): LocalSessionEntity?
     suspend fun sets(sessionId: String): List<LocalSetEntity>
     suspend fun set(setId: String): LocalSetEntity?
@@ -136,7 +136,7 @@ class GymCoachWatchWorkoutRepository(
     override suspend fun <T> withWatchMutationLock(block: suspend () -> T): T =
         repository.withWatchMutationLock(block)
 
-    override suspend fun bootstrap() = repository.cachedBootstrapSnapshot()
+    override suspend fun bootstrap(sessionId: String) = repository.activeWorkoutBootstrapSnapshot(sessionId)
     override suspend fun session(sessionId: String) = repository.localSession(sessionId)
     override suspend fun sets(sessionId: String) = repository.localSets(sessionId)
     override suspend fun set(setId: String) = repository.localSet(setId)
@@ -837,7 +837,7 @@ class PersistentWatchWorkoutGateway(
 
     private suspend fun loadContext(sessionId: String): WorkoutContext? {
         val session = repository.session(sessionId)?.takeIf { it.finishedAt == null } ?: return null
-        val bootstrap = repository.bootstrap() ?: return null
+        val bootstrap = repository.bootstrap(sessionId) ?: return null
         val workout = bootstrap.activeProgram?.workouts?.firstOrNull { it.id == session.workoutId }
             ?: bootstrap.openSessions.firstOrNull { it.id == sessionId }?.workout
             ?: return null

@@ -90,6 +90,8 @@ private fun HomeRoute(
     onDownloadUpdate: () -> Unit,
     onLogout: () -> Unit,
     onDownloadSyncErrorReport: (SyncIssue, Int, Boolean) -> Unit,
+    pendingProgramDecision: Boolean,
+    onOpenProgramDecision: () -> Unit,
 ) {
     val context = LocalContext.current
     fun syncFailureMessage(error: Throwable): String = context.friendlyErrorMessage(
@@ -226,6 +228,8 @@ private fun HomeRoute(
         currentVersion = currentVersion,
         onDownloadUpdate = onDownloadUpdate,
         onLogout = onLogout,
+        pendingProgramDecision = pendingProgramDecision,
+        onOpenProgramDecision = onOpenProgramDecision,
     )
 }
 
@@ -256,6 +260,8 @@ fun GymCoachApp(
         accessToken?.let { token -> ProgramsCatalogRepository.remote(repository.serverUrl, token) }
     }
     val bootstrap by repository.bootstrap.collectAsState(initial = null)
+    val pendingProgramDecisions by repository.observePendingWorkoutStructureDrafts()
+        .collectAsState(initial = emptyList())
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -297,8 +303,14 @@ fun GymCoachApp(
     var syncing by remember { mutableStateOf(false) }
     var progressRefreshing by remember { mutableStateOf(false) }
     var webStartPath by rememberSaveable { mutableStateOf("/") }
+    var postponedProgramDecisionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var programDecisionBusy by remember { mutableStateOf(false) }
     val syncBlockedMessage = stringResource(R.string.sync_blocked)
     val readinessSavedMessage = stringResource(R.string.readiness_saved)
+    val programDecisionError = stringResource(R.string.workout_program_decision_error)
+    val pendingProgramDecision = pendingProgramDecisions.firstOrNull {
+        it.sessionId != postponedProgramDecisionId
+    }
     fun friendlyFailure(
         error: Throwable,
         operation: AppErrorOperation,
@@ -445,6 +457,8 @@ fun GymCoachApp(
                             )
                         }
                     },
+                    pendingProgramDecision = pendingProgramDecisions.isNotEmpty(),
+                    onOpenProgramDecision = { postponedProgramDecisionId = null },
                 )
             }
             composable("programs") {
@@ -714,5 +728,28 @@ fun GymCoachApp(
             }
         }
         SnackbarHost(hostState = snackbar)
+    }
+    pendingProgramDecision?.let { draft ->
+        WorkoutProgramDecisionDialog(
+            draft = draft,
+            busy = programDecisionBusy,
+            onApply = {
+                scope.launch {
+                    programDecisionBusy = true
+                    runCatching { repository.applyWorkoutStructureChangesToProgram(draft.sessionId) }
+                        .onFailure { snackbar.showSnackbar(programDecisionError) }
+                    programDecisionBusy = false
+                }
+            },
+            onKeepForSession = {
+                scope.launch {
+                    programDecisionBusy = true
+                    runCatching { repository.keepWorkoutStructureChangesForSession(draft.sessionId) }
+                        .onFailure { snackbar.showSnackbar(programDecisionError) }
+                    programDecisionBusy = false
+                }
+            },
+            onLater = { postponedProgramDecisionId = draft.sessionId },
+        )
     }
 }

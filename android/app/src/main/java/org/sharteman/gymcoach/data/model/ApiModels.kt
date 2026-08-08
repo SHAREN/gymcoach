@@ -572,6 +572,7 @@ data class ActiveWorkoutExerciseDefaultsDto(
 
 @Serializable
 @SerialName("MUTATE_WORKOUT_EXERCISES")
+@OptIn(ExperimentalSerializationApi::class)
 data class MutateWorkoutExercisesOperation(
     override val operationId: String,
     val sessionId: String,
@@ -580,6 +581,8 @@ data class MutateWorkoutExercisesOperation(
     val exercises: List<MobileWorkoutExerciseMutationDto>,
     val previousActiveExerciseId: String,
     val nextActiveExerciseId: String,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val programDecision: Boolean = false,
 ) : SyncOperation
 
 @Serializable

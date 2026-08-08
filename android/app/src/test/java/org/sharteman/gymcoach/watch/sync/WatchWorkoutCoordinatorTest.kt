@@ -886,7 +886,7 @@ class WatchWorkoutCoordinatorTest {
         var runtime: ActiveWorkoutRuntimeEntity? = null
         var finishedSessionAt: Long? = null
 
-        override suspend fun bootstrap() = BootstrapResponse(
+        override suspend fun bootstrap(sessionId: String) = BootstrapResponse(
             schemaVersion = 1,
             calculationVersion = "test",
             serverTime = Instant.EPOCH.toString(),

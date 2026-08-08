@@ -168,10 +168,22 @@ fun WorkoutScreen(
     val activeRuntime by repository.observeActiveWorkoutRuntime(sessionId).collectAsState(initial = null)
     val targetSetOverrides by repository.observeActiveTargetSetOverrides(sessionId)
         .collectAsState(initial = emptyList())
+    val structureDraft by repository.observeWorkoutStructureDraft(sessionId)
+        .collectAsState(initial = null)
     val progressSnapshot by repository.progress.collectAsState(initial = null)
-    val workout = remember(bootstrap, session?.workoutId) {
+    val baselineWorkout = remember(bootstrap, session?.workoutId) {
         bootstrap?.activeProgram?.workouts?.firstOrNull { it.id == session?.workoutId }
             ?: bootstrap?.openSessions?.firstOrNull { it.id == sessionId }?.workout
+    }
+    val workout = remember(baselineWorkout, structureDraft) {
+        baselineWorkout?.let { baseline ->
+            structureDraft?.current?.takeIf { it.workoutId == baseline.id }?.let { current ->
+                baseline.copy(name = current.workoutName, exercises = current.exercises)
+            } ?: baseline
+        }
+    }
+    LaunchedEffect(sessionId, session?.workoutId, structureDraft) {
+        if (session != null && structureDraft == null) repository.ensureWorkoutStructureDraft(sessionId)
     }
     val scope = rememberCoroutineScope()
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
