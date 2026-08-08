@@ -14,8 +14,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ExerciseLoadProfileDto
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
 import org.sharteman.gymcoach.data.model.MuscleLoadDimensionDto
+import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
 import org.sharteman.gymcoach.data.model.MobileHistorySessionDto
+import org.sharteman.gymcoach.data.model.MobileHistorySetDto
 import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.TaggedLoadDimensionDto
@@ -379,6 +383,162 @@ class OfflineProgramsSyncTest {
         assertTrue(engine.sync(account, "https://example.test", "token", remote, history))
         val cached = offlineJson.decodeFromString<MobileHistorySnapshot>(persistence.readCache(historyKey)!!)
         assertTrue(cached.sessions.isEmpty())
+        assertTrue(persistence.operations(account).isEmpty())
+    }
+
+    @Test
+    fun `historical set queue replays in order and keeps cached aggregates idempotent`() = runTest {
+        val persistence = InMemoryOfflinePersistence()
+        val account = "account"
+        val historyKey = historyCacheKey(account, "2026-08", null)
+        val snapshot = MobileHistorySnapshot(
+            schemaVersion = 2,
+            generatedAt = "2026-08-08T10:00:00Z",
+            month = "2026-08",
+            sessions = listOf(
+                MobileHistorySessionDto(
+                    id = "session-1",
+                    startedAt = "2026-08-08T09:00:00Z",
+                    finishedAt = "2026-08-08T10:00:00Z",
+                    durationMin = 60,
+                    workingSets = 1,
+                    volume = 200.0,
+                    exercises = listOf(
+                        MobileHistoryExerciseDto(
+                            id = "exercise-1",
+                            name = "Cable press",
+                            muscleGroup = "TRICEPS",
+                            category = "ISOLATION",
+                            equipmentType = "CABLE",
+                            volume = 200.0,
+                            estimated1RM = 26.7,
+                            sets = listOf(
+                                MobileHistorySetDto(
+                                    id = "set-1",
+                                    setNumber = 1,
+                                    weight = 20.0,
+                                    effectiveWeight = 20.0,
+                                    reps = 10,
+                                    rir = 2,
+                                    completedAt = "2026-08-08T10:00:00Z",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        persistence.saveCache(
+            account,
+            OFFLINE_DOMAIN_HISTORY,
+            historyKey,
+            offlineJson.encodeToString(snapshot),
+        )
+        val update = UpdateHistoricalSetMutation(
+            operationId = "op_history_update",
+            setId = "set-1",
+            sessionId = "session-1",
+            exerciseId = "exercise-1",
+            request = HistoricalSetUpdateRequest(weight = 30.0, reps = 8, rir = 1),
+        )
+        val add = AddHistoricalSetMutation(
+            operationId = "op_history_add",
+            sessionId = "session-1",
+            request = HistoricalSetAddRequest(
+                id = "set-2",
+                exerciseId = "exercise-1",
+                weight = 25.0,
+                reps = 10,
+                rir = 2,
+            ),
+        )
+        val delete = DeleteHistoricalSetMutation(
+            operationId = "op_history_delete",
+            setId = "set-1",
+            sessionId = "session-1",
+            exerciseId = "exercise-1",
+        )
+        persistence.enqueue(account, update)
+        persistence.enqueue(account, add)
+        persistence.enqueue(account, delete)
+        val calls = mutableListOf<String>()
+        val history = object : HistoryMutationRemote {
+            override suspend fun deleteHistorySession(baseUrl: String, token: String, sessionId: String) {
+                calls += "delete-session:$sessionId"
+            }
+
+            override suspend fun updateHistoricalSet(
+                baseUrl: String,
+                token: String,
+                setId: String,
+                request: HistoricalSetUpdateRequest,
+            ) {
+                calls += "update:$setId"
+            }
+
+            override suspend fun addHistoricalSet(
+                baseUrl: String,
+                token: String,
+                sessionId: String,
+                request: HistoricalSetAddRequest,
+            ) {
+                calls += "add:${request.id}"
+            }
+
+            override suspend fun deleteHistoricalSet(baseUrl: String, token: String, setId: String) {
+                calls += "delete:$setId"
+            }
+        }
+        val engine = OfflineSyncEngine(persistence, NetworkStatus { true })
+
+        assertTrue(engine.sync(account, "https://example.test", "token", FakeCatalogRemote(), history))
+        assertEquals(listOf("update:set-1", "add:set-2", "delete:set-1"), calls)
+        var cached = offlineJson.decodeFromString<MobileHistorySnapshot>(persistence.readCache(historyKey)!!)
+        assertEquals(listOf("set-2"), cached.sessions.single().exercises.single().sets.map { it.id })
+        assertEquals(250.0, cached.sessions.single().volume, 0.0)
+        assertEquals(33.3, cached.sessions.single().exercises.single().estimated1RM, 0.0)
+
+        persistence.enqueue(account, add.copy(operationId = "op_history_add_replay"))
+        assertTrue(engine.sync(account, "https://example.test", "token", FakeCatalogRemote(), history))
+        cached = offlineJson.decodeFromString(persistence.readCache(historyKey)!!)
+        assertEquals(1, cached.sessions.single().exercises.single().sets.count { it.id == "set-2" })
+    }
+
+    @Test
+    fun `discarding a rejected historical add also removes dependent edits`() = runTest {
+        val persistence = InMemoryOfflinePersistence()
+        val account = "account"
+        val add = AddHistoricalSetMutation(
+            operationId = "op_history_add",
+            sessionId = "session-1",
+            request = HistoricalSetAddRequest(
+                id = "set-client",
+                exerciseId = "exercise-1",
+                weight = 25.0,
+                reps = 10,
+                rir = 2,
+            ),
+        )
+        val update = UpdateHistoricalSetMutation(
+            operationId = "op_history_update",
+            setId = add.request.id,
+            sessionId = add.sessionId,
+            exerciseId = add.request.exerciseId,
+            request = HistoricalSetUpdateRequest(weight = 27.5, reps = 9, rir = 1),
+        )
+        val delete = DeleteHistoricalSetMutation(
+            operationId = "op_history_delete",
+            setId = add.request.id,
+            sessionId = add.sessionId,
+            exerciseId = add.request.exerciseId,
+        )
+        persistence.enqueue(account, add)
+        persistence.enqueue(account, update)
+        persistence.enqueue(account, delete)
+        persistence.markBlocked(add.operationId, "Rejected")
+
+        assertTrue(OfflineMutationController(persistence) {}.discard(add.operationId))
+
         assertTrue(persistence.operations(account).isEmpty())
     }
 

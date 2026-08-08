@@ -21,6 +21,28 @@ import java.util.concurrent.TimeUnit
 
 fun interface HistoryMutationRemote {
     suspend fun deleteHistorySession(baseUrl: String, token: String, sessionId: String)
+
+    suspend fun updateHistoricalSet(
+        baseUrl: String,
+        token: String,
+        setId: String,
+        request: HistoricalSetUpdateRequest,
+    ) {
+        throw UnsupportedOperationException("Historical set update is unavailable.")
+    }
+
+    suspend fun addHistoricalSet(
+        baseUrl: String,
+        token: String,
+        sessionId: String,
+        request: HistoricalSetAddRequest,
+    ) {
+        throw UnsupportedOperationException("Historical set add is unavailable.")
+    }
+
+    suspend fun deleteHistoricalSet(baseUrl: String, token: String, setId: String) {
+        throw UnsupportedOperationException("Historical set delete is unavailable.")
+    }
 }
 
 class HistoryProgressApiClient : HistoryMutationRemote {
@@ -60,7 +82,7 @@ class HistoryProgressApiClient : HistoryMutationRemote {
         )
     }
 
-    suspend fun updateHistoricalSet(
+    override suspend fun updateHistoricalSet(
         baseUrl: String,
         token: String,
         setId: String,
@@ -75,7 +97,7 @@ class HistoryProgressApiClient : HistoryMutationRemote {
         )
     }
 
-    suspend fun addHistoricalSet(
+    override suspend fun addHistoricalSet(
         baseUrl: String,
         token: String,
         sessionId: String,
@@ -89,7 +111,7 @@ class HistoryProgressApiClient : HistoryMutationRemote {
         )
     }
 
-    suspend fun deleteHistoricalSet(baseUrl: String, token: String, setId: String) {
+    override suspend fun deleteHistoricalSet(baseUrl: String, token: String, setId: String) {
         executeWithoutBody(
             Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/api/sets/$setId")

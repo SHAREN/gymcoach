@@ -105,6 +105,7 @@ fun HistoryScreen(
     initialMonthKey: String? = null,
     dataSource: HistoryProgressDataSource? = null,
     bootstrap: BootstrapResponse? = null,
+    onHistoricalMutation: suspend () -> Unit = {},
 ) {
     val context = LocalContext.current
     val defaultRepository = remember(context) { HistoryProgressRepository(context) }
@@ -124,16 +125,41 @@ fun HistoryScreen(
     var programDialogOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val mutationError = stringResource(R.string.history_edit_error)
+    val aggregateRefreshError = stringResource(R.string.history_aggregate_refresh_error)
 
-    suspend fun refreshAfterMutation(): Boolean = try {
-        snapshot = repository.refreshHistory(monthKey, programId)
-        showingCache = false
-        true
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        snackbar.showSnackbar(mutationError)
-        false
+    suspend fun refreshAfterMutation(): Boolean {
+        val cached = repository.cachedHistory(monthKey, programId)
+        if (cached != null) {
+            snapshot = cached
+            showingCache = true
+        }
+        return try {
+            snapshot = repository.refreshHistory(monthKey, programId)
+            val pendingHistoricalChanges = repository.hasPendingHistoricalChanges()
+            showingCache = pendingHistoricalChanges
+            if (pendingHistoricalChanges) {
+                snackbar.showSnackbar(aggregateRefreshError)
+            } else {
+                try {
+                    onHistoricalMutation()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    snackbar.showSnackbar(aggregateRefreshError)
+                }
+            }
+            true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            if (cached != null) {
+                snackbar.showSnackbar(aggregateRefreshError)
+                true
+            } else {
+                snackbar.showSnackbar(mutationError)
+                false
+            }
+        }
     }
 
     LaunchedEffect(monthKey, programId, refreshNonce) {

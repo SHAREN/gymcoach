@@ -569,6 +569,12 @@ fun GymCoachApp(
                     initialSessionId = entry.arguments?.getString("sessionId"),
                     initialMonthKey = entry.arguments?.getString("month"),
                     bootstrap = bootstrap,
+                    onHistoricalMutation = {
+                        if (online) {
+                            repository.refreshBootstrap()
+                            repository.refreshProgress()
+                        }
+                    },
                 )
             }
             composable(

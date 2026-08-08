@@ -6,6 +6,7 @@
     <string name="history_offline_unavailable">История за этот месяц ещё не сохранена для работы без сети.</string>
     <string name="history_delete_error">Не удалось удалить тренировку.</string>
     <string name="history_edit_error">Не удалось сохранить изменение завершённой тренировки. Прежние данные не изменены.</string>
+    <string name="history_aggregate_refresh_error">Изменение тренировки сохранено, но сводные графики пока не обновились. Откройте «Прогресс» снова при доступном соединении.</string>
     <string name="history_edit_equipment">Исправить оборудование</string>
     <string name="history_delete_set_title">Удалить этот подход?</string>
     <string name="history_delete_set_description">Подход будет удалён из завершённой тренировки. Тренировка останется завершённой.</string>

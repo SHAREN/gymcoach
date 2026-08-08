@@ -6,6 +6,7 @@
     <string name="history_offline_unavailable">This month has not been saved for offline use yet.</string>
     <string name="history_delete_error">Could not delete the session.</string>
     <string name="history_edit_error">Could not save the completed workout change. The previous data is unchanged.</string>
+    <string name="history_aggregate_refresh_error">The workout change is saved, but summary charts could not refresh yet. Reopen Progress when the connection is available.</string>
     <string name="history_edit_equipment">Correct equipment</string>
     <string name="history_delete_set_title">Delete this set?</string>
     <string name="history_delete_set_description">This removes the set from the completed workout. The workout remains finished.</string>

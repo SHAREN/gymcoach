@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
@@ -23,6 +24,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.model.MobileDeloadStatusDto
 import org.sharteman.gymcoach.data.model.BootstrapResponse
+import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
 import org.sharteman.gymcoach.data.model.GymEquipmentExerciseDto
@@ -30,6 +32,9 @@ import org.sharteman.gymcoach.data.model.GymExerciseConfigDto
 import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
 import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
 import org.sharteman.gymcoach.data.model.ProfileDto
+import org.sharteman.gymcoach.data.model.ProgramDto
+import org.sharteman.gymcoach.data.model.ProgramExerciseDto
+import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.model.MobileExerciseRecordDto
 import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
 import org.sharteman.gymcoach.data.model.MobileHistoryProgramDto
@@ -44,9 +49,11 @@ import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.model.MobileVolumeLandmarkRowDto
 import org.sharteman.gymcoach.data.model.MobileVolumeLandmarksDto
 import org.sharteman.gymcoach.data.repository.HistoryProgressDataSource
+import org.sharteman.gymcoach.data.offline.offlineJson
 import org.sharteman.gymcoach.ui.theme.GymCoachTheme
 import java.time.Instant
 import java.time.YearMonth
+import kotlinx.serialization.encodeToString
 
 class HistoryProgressNativeTest {
     @get:Rule val compose = createComposeRule()
@@ -74,13 +81,17 @@ class HistoryProgressNativeTest {
     @Test
     fun finishedWorkoutUsesSharedEditorForEquipmentEditAddDeleteAndReload() {
         val source = FakeHistorySource(historySnapshot())
+        val bootstrap = historyBootstrap()
         val originalFinishedAt = source.finishedAt
+        val originalProgram = offlineJson.encodeToString<ProgramDto?>(bootstrap.activeProgram)
+        var aggregateRefreshes = 0
         compose.setContent {
             GymCoachTheme {
                 HistoryScreen(
                     onBack = {},
                     dataSource = source,
-                    bootstrap = historyBootstrap(),
+                    bootstrap = bootstrap,
+                    onHistoricalMutation = { aggregateRefreshes++ },
                 )
             }
         }
@@ -108,13 +119,40 @@ class HistoryProgressNativeTest {
         }
         assertEquals("equipment-b", source.updatedRequest?.gymEquipmentId)
 
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-1-weight-editor").performClick()
+        compose.onNodeWithTag("set-value-option-WEIGHT-30").performClick()
+        compose.waitUntil(5_000) { source.updatedRequest?.weight == 30.0 }
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-1-reps-editor").performClick()
+        compose.onNodeWithTag("set-value-option-REPS-8").performClick()
+        compose.waitUntil(5_000) { source.updatedRequest?.reps == 8 }
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-1-rir-editor").performClick()
+        compose.onNodeWithTag("set-value-option-RIR-3").performClick()
+        compose.waitUntil(5_000) { source.updatedRequest?.rir == 3 }
+        compose.onNodeWithTag("completed-set-1-weight").assertTextContains("30")
+        compose.onNodeWithTag("completed-set-1-reps").assertTextContains("8")
+        compose.onNodeWithTag("completed-set-1-rir").assertTextContains("3")
+        compose.onNodeWithTag("history-strength-summary-pullup")
+            .performScrollTo().assertTextContains("240", substring = true)
+
         compose.onNodeWithTag("active-set-confirm").performScrollTo().performClick()
         compose.waitUntil(5_000) { source.addedRequest != null }
         assertEquals("equipment-a", source.addedRequest?.gymEquipmentId)
         compose.onNodeWithTag("completed-set-2-edit").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("history-strength-summary-pullup")
-            .performScrollTo().assertTextContains("180", substring = true)
+            .performScrollTo().assertTextContains("300", substring = true)
         saveScreenshot("ihc-added-set.png")
+
+        val back = InstrumentationRegistry.getInstrumentation().targetContext.getString(
+            org.sharteman.gymcoach.R.string.previous,
+        )
+        compose.onNodeWithContentDescription(back).performClick()
+        compose.onNodeWithTag("history-session-session-1").performClick()
+        compose.onNodeWithTag("completed-set-2-edit").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("history-strength-summary-pullup")
+            .performScrollTo().assertTextContains("300", substring = true)
 
         compose.onNodeWithTag("completed-set-1-delete").performScrollTo().performClick()
         compose.onNodeWithTag("finished-set-delete-confirm").assertIsDisplayed()
@@ -123,7 +161,12 @@ class HistoryProgressNativeTest {
         compose.waitUntil(5_000) { source.deletedSetId == "set" }
         assertEquals(listOf(source.addedRequest?.id), source.setIds)
         assertEquals(originalFinishedAt, source.finishedAt)
-        assertTrue(source.refreshCount >= 4)
+        assertEquals(1, source.workingSets)
+        assertEquals(60.0, source.volume, 0.0)
+        assertEquals(12.0, source.estimated1RM, 0.0)
+        assertEquals(originalProgram, offlineJson.encodeToString<ProgramDto?>(bootstrap.activeProgram))
+        assertEquals(6, aggregateRefreshes)
+        assertTrue(source.refreshCount >= 7)
     }
 
     @Test
@@ -146,6 +189,42 @@ class HistoryProgressNativeTest {
                 org.sharteman.gymcoach.R.string.history_edit_error,
             ),
         ).assertIsDisplayed()
+    }
+
+    @Test
+    fun queuedFinishedEditRemainsVisibleWhenRemoteRefreshFails() {
+        val source = FakeHistorySource(historySnapshot())
+        compose.setContent {
+            GymCoachTheme {
+                HistoryScreen(
+                    onBack = {},
+                    dataSource = source,
+                    bootstrap = historyBootstrap(),
+                )
+            }
+        }
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("history-session-session-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("history-session-session-1").performClick()
+        source.failRefresh = true
+        compose.onNodeWithTag("completed-set-1-edit").performScrollTo().performClick()
+        compose.onNodeWithTag("completed-set-1-weight-editor").performClick()
+        compose.onNodeWithTag("set-value-option-WEIGHT-20").performClick()
+
+        compose.waitUntil(5_000) { source.updatedRequest?.weight == 20.0 }
+        val aggregateRefreshError = InstrumentationRegistry.getInstrumentation().targetContext.getString(
+            org.sharteman.gymcoach.R.string.history_aggregate_refresh_error,
+        )
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(aggregateRefreshError).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(aggregateRefreshError).assertIsDisplayed()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("completed-set-1-weight").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("completed-set-1-weight").assertTextContains("20")
     }
 
     @Test
@@ -237,14 +316,19 @@ class HistoryProgressNativeTest {
         var addedRequest: HistoricalSetAddRequest? = null
         var deletedSetId: String? = null
         var failNextMutation: Boolean = false
+        var failRefresh: Boolean = false
         var failedMutationCount: Int = 0
         var refreshCount: Int = 0
         val finishedAt: String get() = snapshot.sessions.single().finishedAt
         val setIds: List<String> get() = snapshot.sessions.single().exercises.single().sets.map { it.id }
+        val workingSets: Int get() = snapshot.sessions.single().workingSets
+        val volume: Double get() = snapshot.sessions.single().volume
+        val estimated1RM: Double get() = snapshot.sessions.single().exercises.single().estimated1RM
 
         override suspend fun cachedHistory(month: String, programId: String?) = snapshot
         override suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot {
             refreshCount += 1
+            if (failRefresh) error("offline")
             return snapshot
         }
         override suspend fun deleteHistorySession(sessionId: String) {
@@ -271,6 +355,7 @@ class HistoryProgressNativeTest {
                         } else {
                             set.equipmentNameSnapshot
                         },
+                        selectedLoadKg = request.weight,
                     )
                 } else {
                     set
@@ -372,6 +457,40 @@ class HistoryProgressNativeTest {
         calculationVersion = "history-editor-test",
         serverTime = Instant.now().toString(),
         profile = ProfileDto(id = "user", email = "user@example.com", activeGymId = "gym-1"),
+        activeProgram = ProgramDto(
+            id = "program",
+            name = "Upper Lower",
+            phase = "Base",
+            workouts = listOf(
+                WorkoutDto(
+                    id = "workout",
+                    programId = "program",
+                    name = "Upper",
+                    order = 0,
+                    exercises = listOf(
+                        ProgramExerciseDto(
+                            id = "program-exercise",
+                            workoutId = "workout",
+                            exerciseId = "pullup",
+                            order = 0,
+                            targetSets = 3,
+                            targetRepsMin = 6,
+                            targetRepsMax = 10,
+                            targetRIR = 2,
+                            restSec = 120,
+                            exercise = ExerciseDto(
+                                id = "pullup",
+                                name = "Pull-up",
+                                muscleGroup = "BACK_WIDTH",
+                                category = "COMPOUND",
+                                usesBodyweight = true,
+                                equipmentType = "CABLE",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
         gyms = listOf(
             GymDto(
                 id = "gym-1",

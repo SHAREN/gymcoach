@@ -125,6 +125,20 @@ class OfflineSyncEngine(
             is DeleteExerciseMutation -> catalog.deleteExercise(mutation.exerciseId)
             is DeleteHistorySessionMutation ->
                 history.deleteHistorySession(baseUrl, token, mutation.sessionId)
+            is UpdateHistoricalSetMutation -> history.updateHistoricalSet(
+                baseUrl,
+                token,
+                mutation.setId,
+                mutation.request,
+            )
+            is AddHistoricalSetMutation -> history.addHistoricalSet(
+                baseUrl,
+                token,
+                mutation.sessionId,
+                mutation.request,
+            )
+            is DeleteHistoricalSetMutation ->
+                history.deleteHistoricalSet(baseUrl, token, mutation.setId)
         }
     }
 
@@ -145,7 +159,6 @@ class OfflineSyncEngine(
                 )
             }
             OFFLINE_DOMAIN_HISTORY -> {
-                val deletedSessionId = (mutation as DeleteHistorySessionMutation).sessionId
                 persistence.readDomainCaches(accountKey, OFFLINE_DOMAIN_HISTORY).mapNotNull { (key, payload) ->
                     val snapshot = runCatching {
                         offlineJson.decodeFromString<MobileHistorySnapshot>(payload)
@@ -154,9 +167,7 @@ class OfflineSyncEngine(
                         accountKey,
                         OFFLINE_DOMAIN_HISTORY,
                         key,
-                        offlineJson.encodeToString(
-                            snapshot.copy(sessions = snapshot.sessions.filterNot { it.id == deletedSessionId }),
-                        ),
+                        offlineJson.encodeToString(applyHistoryMutation(snapshot, mutation)),
                     )
                 }
             }
@@ -217,6 +228,7 @@ internal fun OfflineMutation.isDelete(): Boolean = when (this) {
     is DeleteProgramExerciseMutation,
     is DeleteExerciseMutation,
     is DeleteHistorySessionMutation,
+    is DeleteHistoricalSetMutation,
     -> true
     else -> false
 }

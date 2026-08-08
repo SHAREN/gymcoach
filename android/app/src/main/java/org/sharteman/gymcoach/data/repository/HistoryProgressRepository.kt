@@ -1,6 +1,8 @@
 package org.sharteman.gymcoach.data.repository
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.sharteman.gymcoach.data.model.MobileGoalRequest
@@ -12,16 +14,25 @@ import org.sharteman.gymcoach.data.model.MobileVolumeTargetRequest
 import org.sharteman.gymcoach.data.network.HistoryProgressApiClient
 import org.sharteman.gymcoach.data.network.ServerEndpointResolver
 import org.sharteman.gymcoach.data.offline.DeleteHistorySessionMutation
+import org.sharteman.gymcoach.data.offline.UpdateHistoricalSetMutation
+import org.sharteman.gymcoach.data.offline.AddHistoricalSetMutation
+import org.sharteman.gymcoach.data.offline.DeleteHistoricalSetMutation
 import org.sharteman.gymcoach.data.offline.NetworkStatus
 import org.sharteman.gymcoach.data.offline.OFFLINE_DOMAIN_HISTORY
 import org.sharteman.gymcoach.data.offline.OfflineMutationController
 import org.sharteman.gymcoach.data.offline.OfflinePersistence
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.offline.OfflineSyncLock
+import org.sharteman.gymcoach.data.offline.OfflineCacheUpdate
+import org.sharteman.gymcoach.data.offline.OfflineMutation
+import org.sharteman.gymcoach.data.offline.applyHistoryMutation
+import org.sharteman.gymcoach.data.offline.applyHistoryMutations
 import org.sharteman.gymcoach.data.offline.accountKey
 import org.sharteman.gymcoach.data.offline.historyCacheKey
 import org.sharteman.gymcoach.data.offline.offlineJson
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.SecureAccountStore
+import org.sharteman.gymcoach.data.network.ApiException
 import java.io.IOException
 import java.util.UUID
 
@@ -46,6 +57,7 @@ interface HistoryProgressDataSource {
     suspend fun endDeload()
     suspend fun retryOfflineChange(operationId: String): Boolean = false
     suspend fun discardOfflineChange(operationId: String): Boolean = false
+    suspend fun hasPendingHistoricalChanges(): Boolean = false
 }
 
 class HistoryProgressRepository(
@@ -76,7 +88,7 @@ class HistoryProgressRepository(
                 offlineJson.encodeToString(legacy),
             )
         }
-        return snapshot?.let { applyPendingHistoryDeletes(key, it) }
+        return snapshot?.let { applyPendingHistoryMutations(key, it) }
     }
 
     override suspend fun refreshHistory(month: String, programId: String?): MobileHistorySnapshot {
@@ -97,7 +109,7 @@ class HistoryProgressRepository(
                 offlineJson.encodeToString(it),
             )
         }
-        return applyPendingHistoryDeletes(accountKey, remote)
+        return applyPendingHistoryMutations(accountKey, remote)
     }
 
     override suspend fun deleteHistorySession(sessionId: String) {
@@ -118,27 +130,48 @@ class HistoryProgressRepository(
     }
 
     override suspend fun updateHistoricalSet(setId: String, request: HistoricalSetUpdateRequest) {
-        val account = onlineCredentials()
-        endpointResolver.execute { baseUrl ->
+        val account = credentials()
+        val key = accountKey(account.accountKeyServerUrl, account.userId)
+        val context = historicalSetContext(key, setId)
+        commitHistoricalMutation(
+            account = account,
+            mutation = UpdateHistoricalSetMutation(
+                operationId = operationId(),
+                setId = setId,
+                sessionId = context?.first,
+                exerciseId = context?.second,
+                request = request,
+            ),
+        ) { baseUrl ->
             api.updateHistoricalSet(baseUrl, account.token, setId, request)
         }
-        cache.clearUser(account.userId)
     }
 
     override suspend fun addHistoricalSet(sessionId: String, request: HistoricalSetAddRequest) {
-        val account = onlineCredentials()
-        endpointResolver.execute { baseUrl ->
+        val account = credentials()
+        commitHistoricalMutation(
+            account = account,
+            mutation = AddHistoricalSetMutation(operationId(), sessionId, request),
+        ) { baseUrl ->
             api.addHistoricalSet(baseUrl, account.token, sessionId, request)
         }
-        cache.clearUser(account.userId)
     }
 
     override suspend fun deleteHistoricalSet(setId: String) {
-        val account = onlineCredentials()
-        endpointResolver.execute { baseUrl ->
+        val account = credentials()
+        val key = accountKey(account.accountKeyServerUrl, account.userId)
+        val context = historicalSetContext(key, setId)
+        commitHistoricalMutation(
+            account = account,
+            mutation = DeleteHistoricalSetMutation(
+                operationId = operationId(),
+                setId = setId,
+                sessionId = context?.first,
+                exerciseId = context?.second,
+            ),
+        ) { baseUrl ->
             api.deleteHistoricalSet(baseUrl, account.token, setId)
         }
-        cache.clearUser(account.userId)
     }
 
     override suspend fun saveGoal(exerciseId: String, targetWeightKg: Double, targetReps: Int) {
@@ -195,17 +228,107 @@ class HistoryProgressRepository(
     override suspend fun discardOfflineChange(operationId: String): Boolean =
         offlinePersistence?.let { OfflineMutationController(it, scheduleSync).discard(operationId) } ?: false
 
-    private suspend fun applyPendingHistoryDeletes(
+    override suspend fun hasPendingHistoricalChanges(): Boolean {
+        val account = credentials()
+        val key = accountKey(account.accountKeyServerUrl, account.userId)
+        return offlinePersistence?.operations(key).orEmpty()
+            .any { it.mutation.domain == OFFLINE_DOMAIN_HISTORY }
+    }
+
+    private suspend fun applyPendingHistoryMutations(
         accountKey: String,
         snapshot: MobileHistorySnapshot,
     ): MobileHistorySnapshot {
-        val deletedSessionIds = offlinePersistence?.operations(accountKey).orEmpty()
-            .mapNotNull { (it.mutation as? DeleteHistorySessionMutation)?.sessionId }
-            .toSet()
-        return if (deletedSessionIds.isEmpty()) snapshot else snapshot.copy(
-            sessions = snapshot.sessions.filterNot { it.id in deletedSessionIds },
-        )
+        val pending = offlinePersistence?.operations(accountKey).orEmpty()
+            .map { it.mutation }
+            .filter { it.domain == OFFLINE_DOMAIN_HISTORY }
+        return applyHistoryMutations(snapshot, pending)
     }
+
+    private suspend fun commitHistoricalMutation(
+        account: Credentials,
+        mutation: OfflineMutation,
+        remote: suspend (baseUrl: String) -> Unit,
+    ) {
+        val persistence = offlinePersistence
+        if (persistence == null) {
+            if (!networkStatus.isConnected()) throw HistoryOfflineMutationException()
+            endpointResolver.execute { baseUrl -> remote(baseUrl) }
+            cache.clearUser(account.userId)
+            return
+        }
+        val key = accountKey(account.accountKeyServerUrl, account.userId)
+        OfflineSyncLock.mutex.withLock {
+            persistence.enqueue(key, mutation)
+            scheduleSync()
+            val isQueueHead = persistence.operations(key).firstOrNull()
+                ?.mutation
+                ?.operationId == mutation.operationId
+            if (!networkStatus.isConnected() || !isQueueHead) return@withLock
+            try {
+                endpointResolver.execute { baseUrl -> remote(baseUrl) }
+                val updates = historyCacheUpdates(key, mutation)
+                persistence.complete(mutation.operationId, updates)
+                cache.clearUser(account.userId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiException) {
+                if (
+                    error.statusCode == 401 ||
+                    error.statusCode == 403 ||
+                    error.statusCode == 408 ||
+                    error.statusCode == 429 ||
+                    error.statusCode >= 500
+                ) {
+                    return@withLock
+                }
+                persistence.remove(listOf(mutation.operationId))
+                throw error
+            } catch (_: IOException) {
+                // The durable idempotent operation remains queued. A lost response may mean the
+                // server already applied it, so replay is safer than surfacing a false failure.
+            } catch (error: Exception) {
+                persistence.remove(listOf(mutation.operationId))
+                throw error
+            }
+        }
+    }
+
+    private suspend fun historyCacheUpdates(
+        accountKey: String,
+        mutation: OfflineMutation,
+    ): List<OfflineCacheUpdate> = offlinePersistence
+        ?.readDomainCaches(accountKey, OFFLINE_DOMAIN_HISTORY)
+        .orEmpty()
+        .mapNotNull { (cacheKey, payload) ->
+            val snapshot = runCatching {
+                offlineJson.decodeFromString<MobileHistorySnapshot>(payload)
+            }.getOrNull() ?: return@mapNotNull null
+            OfflineCacheUpdate(
+                accountKey = accountKey,
+                domain = OFFLINE_DOMAIN_HISTORY,
+                cacheKey = cacheKey,
+                payloadJson = offlineJson.encodeToString(applyHistoryMutation(snapshot, mutation)),
+            )
+        }
+
+    private suspend fun historicalSetContext(
+        accountKey: String,
+        setId: String,
+    ): Pair<String, String>? = offlinePersistence
+        ?.readDomainCaches(accountKey, OFFLINE_DOMAIN_HISTORY)
+        .orEmpty()
+        .values
+        .asSequence()
+        .mapNotNull { payload ->
+            runCatching { offlineJson.decodeFromString<MobileHistorySnapshot>(payload) }.getOrNull()
+        }
+        .flatMap { snapshot -> snapshot.sessions.asSequence() }
+        .mapNotNull { session ->
+            session.exercises.firstOrNull { exercise -> exercise.sets.any { it.id == setId } }
+                ?.let { session.id to it.id }
+        }
+        .firstOrNull()
 
     private fun operationId() = "op_${UUID.randomUUID().toString().replace("-", "")}"
 
@@ -215,10 +338,6 @@ class HistoryProgressRepository(
         return Credentials(userId, accountStore.primaryServerUrl, token)
     }
 
-    private fun onlineCredentials(): Credentials {
-        if (!networkStatus.isConnected()) throw HistoryOfflineMutationException()
-        return credentials()
-    }
 }
 
 class HistoryOfflineCacheMissException : IOException(

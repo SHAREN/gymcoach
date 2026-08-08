@@ -2,7 +2,16 @@ package org.sharteman.gymcoach.data.offline
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import org.sharteman.gymcoach.data.model.ExerciseDto
+import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
+import org.sharteman.gymcoach.data.model.HistoricalSetUpdateRequest
+import org.sharteman.gymcoach.data.model.MobileHistoryExerciseDto
+import org.sharteman.gymcoach.data.model.MobileHistorySetDto
+import org.sharteman.gymcoach.data.model.MobileHistorySnapshot
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.programs.ExerciseInput
@@ -164,6 +173,36 @@ data class DeleteHistorySessionMutation(
     override val domain: String = OFFLINE_DOMAIN_HISTORY,
 ) : OfflineMutation
 
+@Serializable
+@SerialName("UPDATE_HISTORICAL_SET")
+data class UpdateHistoricalSetMutation(
+    override val operationId: String,
+    val setId: String,
+    val sessionId: String? = null,
+    val exerciseId: String? = null,
+    val request: HistoricalSetUpdateRequest,
+    override val domain: String = OFFLINE_DOMAIN_HISTORY,
+) : OfflineMutation
+
+@Serializable
+@SerialName("ADD_HISTORICAL_SET")
+data class AddHistoricalSetMutation(
+    override val operationId: String,
+    val sessionId: String,
+    val request: HistoricalSetAddRequest,
+    override val domain: String = OFFLINE_DOMAIN_HISTORY,
+) : OfflineMutation
+
+@Serializable
+@SerialName("DELETE_HISTORICAL_SET")
+data class DeleteHistoricalSetMutation(
+    override val operationId: String,
+    val setId: String,
+    val sessionId: String? = null,
+    val exerciseId: String? = null,
+    override val domain: String = OFFLINE_DOMAIN_HISTORY,
+) : OfflineMutation
+
 data class OfflineSyncIssue(
     val operationId: String,
     val type: String,
@@ -296,7 +335,65 @@ fun applyCatalogMutation(base: CatalogSnapshot, mutation: OfflineMutation): Cata
         exercises = base.exercises.filterNot { it.id == mutation.exerciseId },
         exerciseEditReceipts = base.exerciseEditReceipts - mutation.exerciseId,
     )
-    is DeleteHistorySessionMutation -> base
+    is DeleteHistorySessionMutation,
+    is UpdateHistoricalSetMutation,
+    is AddHistoricalSetMutation,
+    is DeleteHistoricalSetMutation,
+    -> base
+}
+
+fun applyHistoryMutations(
+    base: MobileHistorySnapshot,
+    mutations: List<OfflineMutation>,
+): MobileHistorySnapshot = mutations.fold(base, ::applyHistoryMutation)
+
+fun applyHistoryMutation(
+    base: MobileHistorySnapshot,
+    mutation: OfflineMutation,
+): MobileHistorySnapshot = when (mutation) {
+    is DeleteHistorySessionMutation -> base.copy(
+        sessions = base.sessions.filterNot { it.id == mutation.sessionId },
+    )
+    is UpdateHistoricalSetMutation -> base.mapHistoryExercises { sessionId, exercise ->
+        if (mutation.sessionId != null && mutation.sessionId != sessionId) return@mapHistoryExercises exercise
+        if (mutation.exerciseId != null && mutation.exerciseId != exercise.id) return@mapHistoryExercises exercise
+        exercise.copy(
+            sets = exercise.sets.map { set ->
+                if (set.id == mutation.setId) set.withHistoricalUpdate(mutation.request) else set
+            },
+        )
+    }.recomputeHistoryTotals()
+    is AddHistoricalSetMutation -> base.mapHistoryExercises { sessionId, exercise ->
+        if (sessionId != mutation.sessionId || exercise.id != mutation.request.exerciseId) {
+            return@mapHistoryExercises exercise
+        }
+        if (exercise.sets.any { it.id == mutation.request.id }) return@mapHistoryExercises exercise
+        val bodyweightOffset = exercise.sets.firstOrNull()
+            ?.takeIf { exercise.usesBodyweight }
+            ?.let { it.effectiveWeight - it.weight }
+            ?: 0.0
+        exercise.copy(
+            sets = exercise.sets + MobileHistorySetDto(
+                id = mutation.request.id,
+                setNumber = (exercise.sets.maxOfOrNull { it.setNumber } ?: 0) + 1,
+                weight = mutation.request.weight,
+                effectiveWeight = mutation.request.weight + bodyweightOffset,
+                reps = mutation.request.reps,
+                rir = mutation.request.rir,
+                completedAt = base.sessions.first { it.id == sessionId }.finishedAt,
+                gymEquipmentId = mutation.request.gymEquipmentId,
+                selectedLoadKg = mutation.request.weight.takeIf {
+                    mutation.request.gymEquipmentId != null
+                },
+            ),
+        )
+    }.recomputeHistoryTotals()
+    is DeleteHistoricalSetMutation -> base.mapHistoryExercises { sessionId, exercise ->
+        if (mutation.sessionId != null && mutation.sessionId != sessionId) return@mapHistoryExercises exercise
+        if (mutation.exerciseId != null && mutation.exerciseId != exercise.id) return@mapHistoryExercises exercise
+        exercise.copy(sets = exercise.sets.filterNot { it.id == mutation.setId })
+    }.recomputeHistoryTotals()
+    else -> base
 }
 
 fun OfflineMutation.dependsOn(discarded: OfflineMutation): Boolean = when (discarded) {
@@ -305,7 +402,18 @@ fun OfflineMutation.dependsOn(discarded: OfflineMutation): Boolean = when (disca
     is CreateWorkoutMutation -> referencesWorkout(discarded.workoutId)
     is CreateProgramExerciseMutation -> referencesProgramExercise(discarded.programExerciseId)
     is CreateExerciseMutation -> referencesExercise(discarded.exerciseId)
-    is DeleteHistorySessionMutation -> this is DeleteHistorySessionMutation && sessionId == discarded.sessionId
+    is DeleteHistorySessionMutation -> when (this) {
+        is DeleteHistorySessionMutation -> sessionId == discarded.sessionId
+        is UpdateHistoricalSetMutation -> sessionId == discarded.sessionId
+        is AddHistoricalSetMutation -> sessionId == discarded.sessionId
+        is DeleteHistoricalSetMutation -> sessionId == discarded.sessionId
+        else -> false
+    }
+    is AddHistoricalSetMutation -> when (this) {
+        is UpdateHistoricalSetMutation -> setId == discarded.request.id
+        is DeleteHistoricalSetMutation -> setId == discarded.request.id
+        else -> operationId == discarded.operationId
+    }
     else -> operationId == discarded.operationId
 }
 
@@ -411,4 +519,77 @@ private fun ProgramExerciseInput.toDto(
     fatigueRate = fatigueRate,
     loadAdjustmentPct = loadAdjustmentPct,
     exercise = exercise,
+)
+
+private inline fun MobileHistorySnapshot.mapHistoryExercises(
+    transform: (sessionId: String, exercise: MobileHistoryExerciseDto) -> MobileHistoryExerciseDto,
+): MobileHistorySnapshot = copy(
+    sessions = sessions.map { session ->
+        session.copy(exercises = session.exercises.map { transform(session.id, it) })
+    },
+)
+
+private fun MobileHistorySetDto.withHistoricalUpdate(
+    request: HistoricalSetUpdateRequest,
+): MobileHistorySetDto {
+    val bodyweightOffset = effectiveWeight - weight
+    val replacesEquipment = request.equipmentSnapshotAction == "REPLACE"
+    val clearsEquipment = request.equipmentSnapshotAction == "CLEAR"
+    val retainedMultiplier = selectedLoadMultiplierSnapshot.takeUnless { replacesEquipment || clearsEquipment }
+    val retainedSnapshot = equipmentLoadSnapshot.takeUnless { replacesEquipment || clearsEquipment }
+    val updatedNominal = retainedMultiplier?.let { request.weight * it }
+        ?: nominalResistanceKg.takeUnless { replacesEquipment || clearsEquipment }
+    return copy(
+        weight = request.weight,
+        effectiveWeight = request.weight + bodyweightOffset,
+        reps = request.reps,
+        rir = request.rir,
+        gymEquipmentId = when {
+            clearsEquipment -> null
+            replacesEquipment -> request.gymEquipmentId
+            else -> gymEquipmentId
+        },
+        equipmentNameSnapshot = equipmentNameSnapshot.takeUnless { replacesEquipment || clearsEquipment },
+        selectedLoadKg = when {
+            clearsEquipment -> null
+            replacesEquipment || gymEquipmentId != null || selectedLoadKg != null -> request.weight
+            else -> null
+        },
+        selectedLoadMultiplierSnapshot = retainedMultiplier,
+        nominalResistanceKg = updatedNominal,
+        equipmentLoadSnapshot = retainedSnapshot?.withMutableLoadFacts(request.weight, updatedNominal),
+    )
+}
+
+private fun kotlinx.serialization.json.JsonElement.withMutableLoadFacts(
+    selectedLoadKg: Double,
+    nominalResistanceKg: Double?,
+): kotlinx.serialization.json.JsonElement {
+    val snapshot = this as? JsonObject ?: return this
+    return buildJsonObject {
+        snapshot.forEach { (key, value) -> put(key, value) }
+        put("selectedLoadKg", JsonPrimitive(selectedLoadKg))
+        put("nominalResistanceKg", nominalResistanceKg?.let(::JsonPrimitive) ?: JsonNull)
+    }
+}
+
+private fun MobileHistorySnapshot.recomputeHistoryTotals(): MobileHistorySnapshot = copy(
+    sessions = sessions.map { session ->
+        val exercises = session.exercises.map { exercise ->
+            val working = exercise.sets.filterNot { it.isWarmup || it.durationSec != null }
+            exercise.copy(
+                volume = working.sumOf { it.effectiveWeight * it.reps },
+                estimated1RM = working.maxOfOrNull {
+                    it.effectiveWeight * (1.0 + it.reps / 30.0)
+                }?.let { kotlin.math.round(it * 10.0) / 10.0 } ?: 0.0,
+            )
+        }
+        session.copy(
+            exercises = exercises,
+            workingSets = exercises.sumOf { exercise ->
+                exercise.sets.count { !it.isWarmup && it.durationSec == null }
+            },
+            volume = exercises.sumOf { it.volume },
+        )
+    },
 )
