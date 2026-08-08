@@ -77,8 +77,10 @@ change. Supported operations are:
 - `START_SESSION`;
 - `UPSERT_SET`;
 - `DELETE_SET`;
+- `DELETE_SESSION`;
 - `FINISH_SESSION`;
 - `UPDATE_TARGET_SETS`;
+- `UPDATE_PREFERRED_EQUIPMENT`;
 - `REPLACE_PROGRAM_EXERCISE`;
 - `MUTATE_WORKOUT_EXERCISES`.
 
@@ -97,11 +99,23 @@ is rejected.
 
 The client sends at most 500 operations per request and drains additional
 batches in sequence. Only one synchronization run may execute in the process at
-a time. A rejected operation becomes the blocked queue head and later
-operations remain pending instead of bypassing it. The home screen exposes the
-rejection and lets the trainee retry it or explicitly discard it. Discarding a
-rejected session start also removes that unsynchronized local session and its
-dependent operations. Network failures retain operations for WorkManager retry.
+a time. An HTTP 4xx response for a multi-operation request is isolated with
+single-operation replay because request-schema validation is atomic and applies
+none of the original batch. The exact permanent failure becomes `BLOCKED`.
+Later operations with the same session, set, workout, program-exercise or
+preferred-equipment ordering key remain pending, while unrelated operations
+continue syncing. This prevents one incompatible legacy operation from blocking
+independent workouts or settings changes without violating causal ordering.
+
+Database migration 10 to 11 normalizes legacy Kotlin class names in the outbox
+type column to the stable wire discriminators above. A row previously blocked
+by the server's `Invalid discriminator value` schema response is retried once
+under the new isolating engine. If the server still does not support that wire
+operation, only that row returns to `BLOCKED`; it does not enter an automatic
+retry loop or stop unrelated rows. The home screen exposes blocked changes for
+explicit retry or discard. Discarding a rejected session start also removes
+that unsynchronized local session and its dependent operations. Network
+failures retain operations for WorkManager retry.
 
 ## Bootstrap reconciliation
 

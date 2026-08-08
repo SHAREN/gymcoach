@@ -277,7 +277,7 @@ class GymCoachRepositorySyncTest {
         assertEquals(123_000L, runtime.restEndsAtEpochMs)
         assertEquals(3L, fixture.dao.getWatchResyncMarker(sessionId)?.revision)
         assertEquals(
-            listOf("StartSessionOperation", "UpsertSetOperation"),
+            listOf("START_SESSION", "UPSERT_SET"),
             fixture.dao.queuedOperations().map { it.type },
         )
         assertEquals(listOf(2L), publisher.revisions.takeLast(1))
@@ -385,7 +385,7 @@ class GymCoachRepositorySyncTest {
         assertEquals(80.0, fixture.dao.getSet(set.id)?.weight ?: 0.0, 0.0)
         assertEquals(null, fixture.dao.getProcessedWatchEvent(WATCH_CONCURRENT_EVENT_ID))
         assertEquals(
-            listOf("StartSessionOperation", "UpsertSetOperation", "FinishSessionOperation"),
+            listOf("START_SESSION", "UPSERT_SET", "FINISH_SESSION"),
             fixture.dao.queuedOperations().map { it.type },
         )
         val watchFinish = fixture.dao.getReplayableWatchOutboxEvents(sessionId).single()
@@ -793,28 +793,169 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
-    fun rejectionBlocksTheQueueHeadWithoutApplyingLaterOperations() = runTest {
+    fun rejectionKeepsTheFailedOperationButSyncsAnIndependentTail() = runTest {
         val fixture = fixture()
         repeat(3) { index ->
             fixture.dao.enqueue(fixture.outbox(DeleteSetOperation("operation_$index", "set_$index")))
         }
         fixture.api.syncHandler = { request ->
-            SyncBatchResponse(
-                serverTime = "2026-07-13T12:00:00Z",
-                results = listOf(
-                    SyncOperationResult(request.operations[0].operationId, "APPLIED"),
-                    SyncOperationResult(request.operations[1].operationId, "REJECTED", error = "bad data"),
-                ),
-            )
+            if (request.operations.size == 3) {
+                SyncBatchResponse(
+                    serverTime = "2026-07-13T12:00:00Z",
+                    results = listOf(
+                        SyncOperationResult(request.operations[0].operationId, "APPLIED"),
+                        SyncOperationResult(request.operations[1].operationId, "REJECTED", error = "bad data"),
+                    ),
+                )
+            } else {
+                SyncBatchResponse(
+                    serverTime = "2026-07-13T12:00:00Z",
+                    results = request.operations.map {
+                        SyncOperationResult(it.operationId, "APPLIED")
+                    },
+                )
+            }
         }
 
         assertFalse(fixture.repository.syncPending())
 
         val queue = fixture.dao.queuedOperations()
-        assertEquals(listOf("operation_1", "operation_2"), queue.map { it.operationId })
-        assertEquals("BLOCKED", queue[0].status)
-        assertEquals("PENDING", queue[1].status)
-        assertEquals(1, fixture.api.syncCalls.size)
+        assertEquals(listOf("operation_1"), queue.map { it.operationId })
+        assertEquals("BLOCKED", queue.single().status)
+        assertEquals(listOf(3, 1), fixture.api.syncCalls.map { it.operations.size })
+    }
+
+    @Test
+    fun invalidDiscriminatorBatchIsolatesThePermanentOperationAndSyncsTheRest() = runTest {
+        val fixture = fixture()
+        val incompatible = UpdatePreferredEquipmentOperation(
+            operationId = "operation_legacy_discriminator",
+            gymId = "gym_1",
+            exerciseId = "exercise_1",
+            preferredEquipmentId = "equipment_1",
+        )
+        val independent = DeleteSetOperation("operation_independent", "set_independent")
+        fixture.dao.enqueue(fixture.outbox(incompatible))
+        fixture.dao.enqueue(fixture.outbox(independent))
+        fixture.api.syncHandler = { request ->
+            if (request.operations.any { it.operationId == incompatible.operationId }) {
+                throw ApiException(
+                    400,
+                    "Invalid discriminator value. Expected START_SESSION | UPSERT_SET.",
+                )
+            }
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "APPLIED")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        val blocked = fixture.dao.queuedOperations().single()
+        assertEquals(incompatible.operationId, blocked.operationId)
+        assertEquals("BLOCKED", blocked.status)
+        assertEquals(listOf(2, 1, 1), fixture.api.syncCalls.map { it.operations.size })
+        assertEquals(
+            listOf(
+                listOf(incompatible.operationId, independent.operationId),
+                listOf(incompatible.operationId),
+                listOf(independent.operationId),
+            ),
+            fixture.api.syncCalls.map { request -> request.operations.map { it.operationId } },
+        )
+    }
+
+    @Test
+    fun persistedPermanentFailureDoesNotBlockIndependentWorkAfterRestart() = runTest {
+        val fixture = fixture()
+        val blocked = UpdatePreferredEquipmentOperation(
+            operationId = "operation_blocked_before_restart",
+            gymId = "gym_1",
+            exerciseId = "exercise_1",
+            preferredEquipmentId = "equipment_1",
+        )
+        val independent = DeleteSetOperation("operation_after_restart", "set_after_restart")
+        fixture.dao.enqueue(fixture.outbox(blocked))
+        fixture.dao.enqueue(fixture.outbox(independent))
+        fixture.dao.markOperationBlocked(blocked.operationId, "Invalid discriminator value.")
+        val restarted = GymCoachRepository(
+            dao = fixture.dao,
+            accountStore = fixture.accountStore,
+            api = fixture.api,
+            scheduleSyncNow = { fixture.syncCounter.count++ },
+            schedulePeriodicSync = {},
+        )
+
+        assertFalse(restarted.syncPending())
+
+        assertEquals(listOf(blocked.operationId), fixture.dao.queuedOperations().map { it.operationId })
+        assertEquals(
+            listOf(independent.operationId),
+            fixture.api.syncCalls.single().operations.map { it.operationId },
+        )
+    }
+
+    @Test
+    fun permanentSessionFailureBlocksItsDependentsButNotAnotherSession() = runTest {
+        val fixture = fixture()
+        val blockedStart = StartSessionOperation(
+            operationId = "operation_bad_start",
+            session = MobileSessionPayload(
+                id = "session_bad",
+                workoutId = "workout_1",
+                gymId = null,
+                startedAt = "2026-07-13T10:00:00Z",
+            ),
+        )
+        val dependentSet = UpsertSetOperation(
+            operationId = "operation_dependent_set",
+            set = MobileSetPayload(
+                id = "set_dependent",
+                sessionId = blockedStart.session.id,
+                exerciseId = "exercise_1",
+                setNumber = 1,
+                weight = 80.0,
+                reps = 8,
+                rir = 2,
+                completedAt = "2026-07-13T10:05:00Z",
+            ),
+        )
+        val independent = DeleteSetOperation("operation_other_session", "set_other")
+        fixture.dao.enqueue(fixture.outbox(blockedStart))
+        fixture.dao.enqueue(fixture.outbox(dependentSet))
+        fixture.dao.enqueue(fixture.outbox(independent))
+        fixture.api.syncHandler = { request ->
+            if (request.operations.any { it.operationId == blockedStart.operationId }) {
+                throw ApiException(400, "Invalid discriminator value.")
+            }
+            SyncBatchResponse(
+                serverTime = "2026-07-13T12:00:00Z",
+                results = request.operations.map {
+                    SyncOperationResult(it.operationId, "APPLIED")
+                },
+            )
+        }
+
+        assertFalse(fixture.repository.syncPending())
+
+        val remaining = fixture.dao.queuedOperations()
+        assertEquals(
+            listOf(blockedStart.operationId, dependentSet.operationId),
+            remaining.map { it.operationId },
+        )
+        assertEquals("BLOCKED", remaining[0].status)
+        assertEquals("PENDING", remaining[1].status)
+        assertEquals(
+            listOf(
+                listOf(blockedStart.operationId, dependentSet.operationId, independent.operationId),
+                listOf(blockedStart.operationId),
+                listOf(independent.operationId),
+            ),
+            fixture.api.syncCalls.map { request -> request.operations.map { it.operationId } },
+        )
     }
 
     @Test
@@ -3502,7 +3643,7 @@ class GymCoachRepositorySyncTest {
     ) {
         fun outbox(operation: SyncOperation) = SyncOutboxEntity(
             operationId = operation.operationId,
-            type = operation::class.simpleName.orEmpty(),
+            type = operation.wireType(),
             payloadJson = api.json.encodeToString<SyncOperation>(operation),
         )
 

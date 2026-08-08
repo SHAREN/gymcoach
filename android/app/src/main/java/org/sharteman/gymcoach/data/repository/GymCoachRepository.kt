@@ -58,6 +58,7 @@ import org.sharteman.gymcoach.data.model.ReadinessCheckinRequest
 import org.sharteman.gymcoach.data.model.ReplaceProgramExerciseOperation
 import org.sharteman.gymcoach.data.model.StartSessionOperation
 import org.sharteman.gymcoach.data.model.SyncBatchRequest
+import org.sharteman.gymcoach.data.model.SyncBatchResponse
 import org.sharteman.gymcoach.data.model.SyncOperation
 import org.sharteman.gymcoach.data.model.UpdateTargetSetsOperation
 import org.sharteman.gymcoach.data.model.UpdatePreferredEquipmentOperation
@@ -2444,74 +2445,122 @@ class GymCoachRepository(
         var rejectedReplacement: ReplaceProgramExerciseOperation? = null
         var rejectedWorkoutMutation: MutateWorkoutExercisesOperation? = null
 
-        while (true) {
+        syncLoop@ while (true) {
             val queue = dao.queuedOperations()
-            val blockedHead = queue.firstOrNull()?.takeIf { it.status == "BLOCKED" }
-            if (blockedHead != null) {
-                rejectedReplacement = runCatching {
-                    api.json.decodeFromString<SyncOperation>(blockedHead.payloadJson)
-                }.getOrNull() as? ReplaceProgramExerciseOperation
-                rejectedWorkoutMutation = runCatching {
-                    api.json.decodeFromString<SyncOperation>(blockedHead.payloadJson)
-                }.getOrNull() as? MutateWorkoutExercisesOperation
-                allAccepted = false
-                break
-            }
-            val pending = queue.takeWhile { it.status != "BLOCKED" }
-                .filter { it.status == "PENDING" || it.status == "FAILED" }
-                .take(500)
-            if (pending.isEmpty()) break
+            if (queue.isEmpty()) break
 
-            val decoded = mutableListOf<Pair<SyncOutboxEntity, SyncOperation>>()
-            for (entry in pending) {
+            val decodedQueue = mutableListOf<Pair<SyncOutboxEntity, SyncOperation>>()
+            var newlyBlockedCorruptOperation = false
+            val undecodableBlockedSequences = mutableSetOf<Long>()
+            for (entry in queue) {
                 val decodedOperation = runCatching {
                     api.json.decodeFromString<SyncOperation>(entry.payloadJson)
                 }
-                if (decodedOperation.isFailure) {
-                    val error = decodedOperation.exceptionOrNull()
-                    dao.markOperationBlocked(
-                        entry.operationId,
-                        "Stored operation cannot be decoded: ${error?.message ?: "invalid payload"}",
-                    )
+                val operation = decodedOperation.getOrNull()
+                if (operation == null) {
+                    if (entry.status != "BLOCKED") {
+                        val error = decodedOperation.exceptionOrNull()
+                        dao.markOperationBlocked(
+                            entry.operationId,
+                            "Stored operation cannot be decoded: ${error?.message ?: "invalid payload"}",
+                        )
+                        newlyBlockedCorruptOperation = true
+                    }
+                    undecodableBlockedSequences += entry.sequence
                     allAccepted = false
-                    break
+                } else {
+                    decodedQueue += entry to operation
                 }
-                val operation = decodedOperation.getOrThrow()
-                decoded += entry to operation
             }
+            if (newlyBlockedCorruptOperation) continue@syncLoop
+
+            val blocked = decodedQueue.filter { (entry) -> entry.status == "BLOCKED" }
+            if (blocked.isNotEmpty() || undecodableBlockedSequences.isNotEmpty()) {
+                allAccepted = false
+            }
+            blocked.asSequence().map { it.second }.forEach { operation ->
+                if (rejectedReplacement == null) {
+                    rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                }
+                if (rejectedWorkoutMutation == null) {
+                    rejectedWorkoutMutation = operation as? MutateWorkoutExercisesOperation
+                }
+            }
+
+            val queuedSetSessions = decodedQueue.mapNotNull { (_, operation) ->
+                (operation as? UpsertSetOperation)?.let { it.set.id to it.set.sessionId }
+            }.toMap().toMutableMap()
+            decodedQueue.asSequence()
+                .mapNotNull { (_, operation) -> operation as? DeleteSetOperation }
+                .forEach { operation ->
+                    if (operation.setId !in queuedSetSessions) {
+                        dao.getSet(operation.setId)?.sessionId?.let { sessionId ->
+                            queuedSetSessions[operation.setId] = sessionId
+                        }
+                    }
+                }
+            val blockedScopes = blocked.map { (entry, operation) ->
+                entry.sequence to syncOrderingKeys(operation, queuedSetSessions)
+            }
+            val decoded = decodedQueue.asSequence()
+                .filter { (entry) -> entry.status == "PENDING" || entry.status == "FAILED" }
+                .filter { (entry, operation) ->
+                    val operationScopes = syncOrderingKeys(operation, queuedSetSessions)
+                    val hasUnknownPriorBlock = undecodableBlockedSequences.any { it < entry.sequence }
+                    val hasRelatedPriorBlock = blockedScopes.any { (sequence, scopes) ->
+                        sequence < entry.sequence && operationScopes.any(scopes::contains)
+                    }
+                    !hasUnknownPriorBlock && !hasRelatedPriorBlock
+                }
+                .take(500)
+                .toList()
             if (decoded.isEmpty()) break
 
-            val syncAttempt = runCatching {
-                endpointResolver.execute { baseUrl ->
-                    api.sync(
-                        baseUrl,
-                        token,
-                        SyncBatchRequest(decoded.map { it.second }),
-                    )
+            var attempted = decoded
+            var syncAttempt: Result<SyncBatchResponse>
+            while (true) {
+                syncAttempt = runCatching {
+                    endpointResolver.execute { baseUrl ->
+                        api.sync(
+                            baseUrl,
+                            token,
+                            SyncBatchRequest(attempted.map { it.second }),
+                        )
+                    }
                 }
+                val error = syncAttempt.exceptionOrNull()
+                val isolateClientError = error is ApiException &&
+                    error.statusCode in 400..499 &&
+                    error.statusCode !in setOf(401, 403, 429) &&
+                    attempted.size > 1
+                if (!isolateClientError) break
+                attempted = listOf(attempted.first())
             }
+
             if (syncAttempt.isFailure) {
                 val error = syncAttempt.exceptionOrNull() ?: IOException("Unknown sync failure")
                 if (error is ApiException && error.statusCode in setOf(401, 403)) {
-                    decoded.forEach { (entry) ->
+                    attempted.forEach { (entry) ->
                         dao.markOperationFailed(entry.operationId, "Mobile authentication expired.")
                     }
                     accountStore.clearAccessToken()
                     throw MobileAuthenticationRequiredException()
                 }
                 if (error is ApiException && error.statusCode in 400..499 && error.statusCode != 429) {
-                    val (entry, operation) = decoded.first()
+                    val (entry, operation) = attempted.single()
                     rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                        ?: rejectedReplacement
                     rejectedWorkoutMutation = operation as? MutateWorkoutExercisesOperation
+                        ?: rejectedWorkoutMutation
                     blockRejectedOperation(
                         entry = entry,
                         operation = operation,
-                        error = error.message ?: "Server rejected the synchronization batch.",
+                        error = error.message ?: "Server rejected the synchronization operation.",
                     )
                     allAccepted = false
-                    break
+                    continue@syncLoop
                 }
-                decoded.forEach { (entry) ->
+                attempted.forEach { (entry) ->
                     dao.markOperationFailed(entry.operationId, error.message ?: "Network sync failed")
                 }
                 throw error
@@ -2519,42 +2568,44 @@ class GymCoachRepository(
             val response = syncAttempt.getOrThrow()
 
             val applied = mutableListOf<String>()
-            var stopAfterCurrentBatch = decoded.size < pending.size
-            for ((index, pair) in decoded.withIndex()) {
+            var incompleteResponse = false
+            for ((index, pair) in attempted.withIndex()) {
                 val (entry, operation) = pair
                 val result = response.results.getOrNull(index)
                 if (result == null || result.operationId != operation.operationId) {
                     dao.markOperationFailed(entry.operationId, "Server returned an incomplete sync response.")
                     allAccepted = false
-                    stopAfterCurrentBatch = true
+                    incompleteResponse = true
                     break
                 }
                 when (result.status) {
                     "APPLIED", "DUPLICATE" -> applied += result.operationId
                     "REJECTED" -> {
                         rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                            ?: rejectedReplacement
                         rejectedWorkoutMutation = operation as? MutateWorkoutExercisesOperation
+                            ?: rejectedWorkoutMutation
                         blockRejectedOperation(entry, operation, result.error ?: "Rejected")
                         allAccepted = false
-                        stopAfterCurrentBatch = true
                         break
                     }
                     else -> {
                         rejectedReplacement = operation as? ReplaceProgramExerciseOperation
+                            ?: rejectedReplacement
                         rejectedWorkoutMutation = operation as? MutateWorkoutExercisesOperation
+                            ?: rejectedWorkoutMutation
                         blockRejectedOperation(
                             entry,
                             operation,
                             result.error ?: "Unknown sync status",
                         )
                         allAccepted = false
-                        stopAfterCurrentBatch = true
                         break
                     }
                 }
             }
             if (applied.isNotEmpty()) dao.removeOperations(applied)
-            if (stopAfterCurrentBatch) break
+            if (incompleteResponse) break
         }
         runCatching { refreshBootstrap() }
             .getOrNull()
@@ -2676,7 +2727,7 @@ class GymCoachRepository(
 
     private fun outbox(operation: SyncOperation) = SyncOutboxEntity(
         operationId = operation.operationId,
-        type = operation::class.simpleName.orEmpty(),
+        type = operation.wireType(),
         payloadJson = api.json.encodeToString<SyncOperation>(operation),
     )
 
@@ -3119,6 +3170,59 @@ internal fun pendingMutationTargets(
         }
     }
     return PendingMutationTargets(sessionIds, setIds, deletedSessionIds, complete = true)
+}
+
+internal fun SyncOperation.wireType(): String = when (this) {
+    is StartSessionOperation -> "START_SESSION"
+    is UpsertSetOperation -> "UPSERT_SET"
+    is DeleteSetOperation -> "DELETE_SET"
+    is DeleteSessionOperation -> "DELETE_SESSION"
+    is UpdateTargetSetsOperation -> "UPDATE_TARGET_SETS"
+    is UpdatePreferredEquipmentOperation -> "UPDATE_PREFERRED_EQUIPMENT"
+    is MutateWorkoutExercisesOperation -> "MUTATE_WORKOUT_EXERCISES"
+    is ReplaceProgramExerciseOperation -> "REPLACE_PROGRAM_EXERCISE"
+    is FinishSessionOperation -> "FINISH_SESSION"
+}
+
+internal fun syncOrderingKeys(
+    operation: SyncOperation,
+    setSessions: Map<String, String> = emptyMap(),
+): Set<String> = buildSet {
+    fun session(id: String) {
+        add("session:$id")
+    }
+    fun set(id: String) {
+        add("set:$id")
+        setSessions[id]?.let(::session)
+    }
+    fun programExercise(id: String) {
+        add("program-exercise:$id")
+    }
+
+    when (operation) {
+        is StartSessionOperation -> session(operation.session.id)
+        is UpsertSetOperation -> {
+            session(operation.set.sessionId)
+            set(operation.set.id)
+        }
+        is DeleteSetOperation -> set(operation.setId)
+        is DeleteSessionOperation -> session(operation.sessionId)
+        is FinishSessionOperation -> session(operation.sessionId)
+        is UpdateTargetSetsOperation -> programExercise(operation.programExerciseId)
+        is UpdatePreferredEquipmentOperation ->
+            add("preferred-equipment:${operation.gymId}:${operation.exerciseId}")
+        is MutateWorkoutExercisesOperation -> {
+            session(operation.sessionId)
+            add("workout:${operation.workoutId}")
+            (operation.previousExercises + operation.exercises).forEach { exercise ->
+                programExercise(exercise.id)
+            }
+        }
+        is ReplaceProgramExerciseOperation -> {
+            session(operation.sessionId)
+            programExercise(operation.programExerciseId)
+        }
+    }
 }
 
 internal fun findProgramExerciseTargetSets(

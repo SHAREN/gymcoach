@@ -359,6 +359,102 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration10To11NormalizesWireTypesAndRetriesLegacyDiscriminatorFailures() {
+        helper.createDatabase(TEST_DB_V11, 10).apply {
+            val legacyTypes = listOf(
+                "StartSessionOperation" to "START_SESSION",
+                "UpsertSetOperation" to "UPSERT_SET",
+                "DeleteSetOperation" to "DELETE_SET",
+                "DeleteSessionOperation" to "DELETE_SESSION",
+                "UpdateTargetSetsOperation" to "UPDATE_TARGET_SETS",
+                "UpdatePreferredEquipmentOperation" to "UPDATE_PREFERRED_EQUIPMENT",
+                "MutateWorkoutExercisesOperation" to "MUTATE_WORKOUT_EXERCISES",
+                "ReplaceProgramExerciseOperation" to "REPLACE_PROGRAM_EXERCISE",
+                "FinishSessionOperation" to "FINISH_SESSION",
+            )
+            legacyTypes.forEachIndexed { index, (legacyType, wireType) ->
+                execSQL(
+                    "INSERT INTO sync_outbox " +
+                        "(operationId, type, payloadJson, status, attempts, lastError, " +
+                        "lastRetryRequestedAtEpochMs, createdAtEpochMs) " +
+                        "VALUES (?, ?, ?, 'PENDING', 0, NULL, 0, ?)",
+                    arrayOf<Any>(
+                        "operation_type_$index",
+                        legacyType,
+                        "{\"type\":\"$wireType\",\"operationId\":\"operation_type_$index\"}",
+                        index,
+                    ),
+                )
+            }
+            execSQL(
+                "INSERT INTO sync_outbox " +
+                    "(operationId, type, payloadJson, status, attempts, lastError, " +
+                    "lastRetryRequestedAtEpochMs, createdAtEpochMs) VALUES " +
+                    "('operation_incompatible', 'UpdatePreferredEquipmentOperation', " +
+                    "'{\"type\":\"UPDATE_PREFERRED_EQUIPMENT\",\"operationId\":\"operation_incompatible\",\"gymId\":\"gym_1\",\"exerciseId\":\"exercise_1\",\"preferredEquipmentId\":null}', " +
+                    "'BLOCKED', 1, 'Invalid discriminator value. Expected START_SESSION | UPSERT_SET.', 99, 1000)",
+            )
+            execSQL(
+                "INSERT INTO sync_outbox " +
+                    "(operationId, type, payloadJson, status, attempts, lastError, " +
+                    "lastRetryRequestedAtEpochMs, createdAtEpochMs) VALUES " +
+                    "('operation_other', 'DeleteSetOperation', " +
+                    "'{\"type\":\"DELETE_SET\",\"operationId\":\"operation_other\",\"setId\":\"set_1\"}', " +
+                    "'BLOCKED', 2, 'Set no longer exists.', 88, 1001)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V11,
+            11,
+            true,
+            GymCoachDatabase.MIGRATION_10_11,
+        ).use { database ->
+            val expectedWireTypes = listOf(
+                "START_SESSION",
+                "UPSERT_SET",
+                "DELETE_SET",
+                "DELETE_SESSION",
+                "UPDATE_TARGET_SETS",
+                "UPDATE_PREFERRED_EQUIPMENT",
+                "MUTATE_WORKOUT_EXERCISES",
+                "REPLACE_PROGRAM_EXERCISE",
+                "FINISH_SESSION",
+            )
+            database.query(
+                "SELECT type FROM sync_outbox WHERE operationId LIKE 'operation_type_%' " +
+                    "ORDER BY createdAtEpochMs",
+            ).use { cursor ->
+                val actual = buildList {
+                    while (cursor.moveToNext()) add(cursor.getString(0))
+                }
+                assertEquals(expectedWireTypes, actual)
+            }
+            database.query(
+                "SELECT type, status, lastError, lastRetryRequestedAtEpochMs " +
+                    "FROM sync_outbox WHERE operationId = 'operation_incompatible'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("UPDATE_PREFERRED_EQUIPMENT", cursor.getString(0))
+                assertEquals("PENDING", cursor.getString(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(0L, cursor.getLong(3))
+            }
+            database.query(
+                "SELECT type, status, lastError, lastRetryRequestedAtEpochMs " +
+                    "FROM sync_outbox WHERE operationId = 'operation_other'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("DELETE_SET", cursor.getString(0))
+                assertEquals("BLOCKED", cursor.getString(1))
+                assertEquals("Set no longer exists.", cursor.getString(2))
+                assertEquals(88L, cursor.getLong(3))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
@@ -367,5 +463,6 @@ class GymCoachDatabaseMigrationTest {
         const val TEST_DB_V8 = "gymcoach-migration-v8-test"
         const val TEST_DB_V9 = "gymcoach-migration-v9-test"
         const val TEST_DB_V10 = "gymcoach-migration-v10-test"
+        const val TEST_DB_V11 = "gymcoach-migration-v11-test"
     }
 }

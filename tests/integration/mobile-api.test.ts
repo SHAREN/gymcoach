@@ -199,6 +199,48 @@ function frozenSnapshot(equipment: BootstrapEquipment, selectedLoadKg: number) {
 beforeEach(() => mockUserId.mockReset());
 
 describe('Android mobile API', () => {
+  it('rejects an incompatible discriminator before applying any operation in the batch', async () => {
+    const seeded = await seedUser('mobile-incompatible-discriminator@test.dev');
+    const { accessToken } = await loginDevice(seeded.user.email);
+    const sessionId = 'mobile_incompatible_discriminator_session';
+
+    const response = await sync(
+      jsonRequest(
+        'http://test.local/api/mobile/sync',
+        {
+          operations: [
+            {
+              operationId: 'operation_valid_before_incompatible',
+              type: 'START_SESSION',
+              session: {
+                id: sessionId,
+                workoutId: seeded.workout.id,
+                gymId: seeded.gym.id,
+                startedAt: '2026-08-07T10:00:00.000Z',
+              },
+            },
+            {
+              operationId: 'operation_legacy_incompatible',
+              type: 'UPDATE_PROGRAM_EXERCISE',
+            },
+          ],
+        },
+        accessToken,
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await db.session.findUnique({ where: { id: sessionId } })).toBeNull();
+    expect(
+      await db.mobileMutation.findMany({
+        where: {
+          userId: seeded.user.id,
+          operationId: { in: ['operation_valid_before_incompatible', 'operation_legacy_incompatible'] },
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it('stores a bearer-authenticated readiness check-in and exposes it in bootstrap', async () => {
     const seeded = await seedUser('mobile-readiness@test.dev');
     const { accessToken } = await loginDevice(seeded.user.email);

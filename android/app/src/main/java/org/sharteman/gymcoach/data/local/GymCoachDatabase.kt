@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -55,6 +55,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
+                MIGRATION_10_11,
             )
                 .build()
                 .also { instance = it }
@@ -472,6 +473,30 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_active_target_set_overrides_updatedAtEpochMs " +
                         "ON active_target_set_overrides(updatedAtEpochMs)",
+                )
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "UPDATE sync_outbox SET type = CASE type " +
+                        "WHEN 'StartSessionOperation' THEN 'START_SESSION' " +
+                        "WHEN 'UpsertSetOperation' THEN 'UPSERT_SET' " +
+                        "WHEN 'DeleteSetOperation' THEN 'DELETE_SET' " +
+                        "WHEN 'DeleteSessionOperation' THEN 'DELETE_SESSION' " +
+                        "WHEN 'UpdateTargetSetsOperation' THEN 'UPDATE_TARGET_SETS' " +
+                        "WHEN 'UpdatePreferredEquipmentOperation' THEN 'UPDATE_PREFERRED_EQUIPMENT' " +
+                        "WHEN 'MutateWorkoutExercisesOperation' THEN 'MUTATE_WORKOUT_EXERCISES' " +
+                        "WHEN 'ReplaceProgramExerciseOperation' THEN 'REPLACE_PROGRAM_EXERCISE' " +
+                        "WHEN 'FinishSessionOperation' THEN 'FINISH_SESSION' " +
+                        "ELSE type END",
+                )
+                db.execSQL(
+                    "UPDATE sync_outbox SET status = 'PENDING', lastError = NULL, " +
+                        "lastRetryRequestedAtEpochMs = 0 " +
+                        "WHERE status = 'BLOCKED' AND " +
+                        "lastError LIKE 'Invalid discriminator value%'",
                 )
             }
         }
