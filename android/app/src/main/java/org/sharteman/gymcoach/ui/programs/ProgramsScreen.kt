@@ -1,5 +1,6 @@
 package org.sharteman.gymcoach.ui.programs
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +62,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ProgramDto
 import org.sharteman.gymcoach.data.model.ProgramExerciseDto
@@ -70,6 +75,7 @@ import org.sharteman.gymcoach.data.programs.ProgramInput
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.programs.WorkoutInput
+import org.sharteman.gymcoach.ui.friendlyErrorMessage
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 import java.time.DayOfWeek
 import java.time.format.TextStyle
@@ -116,6 +122,7 @@ fun ProgramsScreen(
     initialWorkoutId: String? = null,
     onChanged: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     var selectedProgramId by remember(initialProgramId) { mutableStateOf(initialProgramId) }
     if (selectedProgramId != null) {
         ProgramDetailScreen(
@@ -145,7 +152,7 @@ fun ProgramsScreen(
             error = null
             runCatching { dataSource.listPrograms() }
                 .onSuccess { programs = it }
-                .onFailure { error = it.message }
+                .onFailure { error = context.programFailure(it, AppErrorOperation.LOAD) }
             loading = false
         }
     }
@@ -211,7 +218,7 @@ fun ProgramsScreen(
                             scope.launch {
                                 runCatching { dataSource.setProgramActive(program.id, !program.isActive) }
                                     .onSuccess { reload() }
-                                    .onFailure { error = it.message }
+                                    .onFailure { error = context.programFailure(it, AppErrorOperation.SAVE) }
                             }
                         },
                     )
@@ -233,7 +240,7 @@ fun ProgramsScreen(
                         creating = false
                         editProgram = null
                         reload()
-                    }.onFailure { error = it.message }
+                    }.onFailure { error = context.programFailure(it, AppErrorOperation.SAVE) }
                 }
             },
         )
@@ -247,7 +254,7 @@ fun ProgramsScreen(
                 scope.launch {
                     runCatching { dataSource.deleteProgram(program.id) }
                         .onSuccess { reload() }
-                        .onFailure { error = it.message }
+                        .onFailure { error = context.programFailure(it, AppErrorOperation.DELETE) }
                 }
             },
         )
@@ -327,6 +334,7 @@ private fun ProgramDetailScreen(
     onBack: () -> Unit,
     onChanged: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var program by remember { mutableStateOf<ManagedProgramDto?>(null) }
     var catalog by remember { mutableStateOf<List<ExerciseDto>>(emptyList()) }
@@ -351,7 +359,7 @@ private fun ProgramDetailScreen(
             }.onSuccess { (loadedProgram, loadedCatalog) ->
                 program = loadedProgram
                 catalog = loadedCatalog
-            }.onFailure { error = it.message }
+            }.onFailure { error = context.programFailure(it, AppErrorOperation.LOAD) }
             loading = false
         }
     }
@@ -404,7 +412,9 @@ private fun ProgramDetailScreen(
                                         scope.launch {
                                             runCatching { dataSource.setProgramActive(current.id, active) }
                                                 .onSuccess { onChanged(); reload() }
-                                                .onFailure { error = it.message }
+                                                .onFailure {
+                                                    error = context.programFailure(it, AppErrorOperation.SAVE)
+                                                }
                                         }
                                     },
                                 )
@@ -450,7 +460,7 @@ private fun ProgramDetailScreen(
                 scope.launch {
                     runCatching { dataSource.updateProgram(programId, input) }
                         .onSuccess { editingProgram = false; onChanged(); reload() }
-                        .onFailure { error = it.message }
+                        .onFailure { error = context.programFailure(it, AppErrorOperation.SAVE) }
                 }
             },
         )
@@ -469,7 +479,7 @@ private fun ProgramDetailScreen(
                         editingWorkout = null
                         onChanged()
                         reload()
-                    }.onFailure { error = it.message }
+                    }.onFailure { error = context.programFailure(it, AppErrorOperation.SAVE) }
                 }
             },
         )
@@ -485,7 +495,7 @@ private fun ProgramDetailScreen(
                         existing?.let { dataSource.updateProgramExercise(it.id, input) }
                             ?: dataSource.createProgramExercise(workout.id, input)
                     }.onSuccess { exerciseTarget = null; onChanged(); reload() }
-                        .onFailure { error = it.message }
+                        .onFailure { error = context.programFailure(it, AppErrorOperation.SAVE) }
                 }
             },
         )
@@ -499,7 +509,7 @@ private fun ProgramDetailScreen(
                 scope.launch {
                     runCatching { dataSource.deleteWorkout(workout.id) }
                         .onSuccess { onChanged(); reload() }
-                        .onFailure { error = it.message }
+                        .onFailure { error = context.programFailure(it, AppErrorOperation.DELETE) }
                 }
             },
         )
@@ -516,7 +526,7 @@ private fun ProgramDetailScreen(
                 scope.launch {
                     runCatching { dataSource.deleteProgramExercise(target.id) }
                         .onSuccess { onChanged(); reload() }
-                        .onFailure { error = it.message }
+                        .onFailure { error = context.programFailure(it, AppErrorOperation.DELETE) }
                 }
             },
         )
@@ -833,3 +843,15 @@ internal fun ErrorCard(message: String?, onRetry: () -> Unit) {
 }
 
 private fun digits(value: String): String = value.filter(Char::isDigit).take(3)
+
+private fun Context.programFailure(error: Throwable, operation: AppErrorOperation): String =
+    friendlyErrorMessage(
+        error,
+        AppErrorContext(
+            operation = operation,
+            dataState = when (operation) {
+                AppErrorOperation.LOAD -> AppErrorDataState.SAVED_LOCALLY
+                else -> AppErrorDataState.UNKNOWN
+            },
+        ),
+    )

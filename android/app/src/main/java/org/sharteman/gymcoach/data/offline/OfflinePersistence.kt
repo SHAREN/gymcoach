@@ -126,6 +126,7 @@ class RoomOfflinePersistence(
                     attempts = entry.attempts,
                     nextAttemptAtEpochMs = entry.nextAttemptAtEpochMs,
                     blocked = true,
+                    createdAtEpochMs = entry.createdAtEpochMs,
                 )
             }
         }

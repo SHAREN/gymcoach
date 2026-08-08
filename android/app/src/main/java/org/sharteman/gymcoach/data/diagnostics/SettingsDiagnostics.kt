@@ -16,6 +16,7 @@ import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.data.security.AccountStore
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.data.settings.SettingsException
+import org.sharteman.gymcoach.data.errors.UserFacingError
 
 class SettingsDiagnostics private constructor(
     private val context: Context,
@@ -80,6 +81,18 @@ class SettingsDiagnostics private constructor(
             category = input.category,
             retryDecision = input.decision,
             exception = input.exception,
+        )
+    }
+
+    fun recordAppError(error: UserFacingError) {
+        append(
+            kind = "app-error",
+            correlationId = error.technical.correlationId,
+            subrequest = error.technical.operationType ?: error.operation.name,
+            statusCode = error.technical.httpStatus,
+            category = error.category.name,
+            errorCode = error.technical.errorCode,
+            retryDecision = if (error.retryable) "retryable" else "permanent",
         )
     }
 
@@ -151,6 +164,8 @@ class SettingsDiagnostics private constructor(
     )
 
     internal fun appInfo(): SettingsDiagnosticAppInfo = appInfo
+
+    internal fun networkClass(): String = currentNetworkClass(context)
 
     private fun append(
         kind: String,

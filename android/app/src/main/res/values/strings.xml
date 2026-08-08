@@ -77,16 +77,9 @@
     <string name="cancel">Cancel</string>
     <string name="delete">Delete</string>
     <string name="edit">Edit</string>
-    <string name="sync_error">Sync failed. Data stays safely on this phone.</string>
     <string name="sync_blocked">One change was rejected. Later changes remain safely queued.</string>
     <string name="sync_issue_title">Synchronization needs attention</string>
-    <string name="sync_issue_session_not_found">This workout was already deleted on the server. Local sets and changes remain queued, but there is no longer a session to receive them.</string>
     <string name="retry">Retry</string>
-    <string name="discard_change">Discard rejected change</string>
-    <string name="discard_session_changes">Remove workout changes</string>
-    <string name="discard_session_changes_warning">This removes all pending sets and changes for this deleted workout only. Other workouts and already synchronized data are not affected.</string>
-    <string name="discard">Discard</string>
-    <string name="discard_change_warning">This removes the rejected local change. If starting the session was rejected, the complete unsynchronized session is removed. Use Retry first when the server problem may be temporary.</string>
     <string name="login_error">Could not sign in.</string>
     <string name="primary_server">Primary server</string>
     <string name="fallback_server">Fallback server</string>
@@ -253,7 +246,6 @@
     <string name="muscle_lower_back">Lower back</string>
     <string name="muscle_other">Other</string>
     <string name="syncing_now">Synchronizing...</string>
-    <string name="sync_issue_generic">The server rejected this change: %1$s. Retry after checking the connection. If the data itself is invalid, discard only this rejected change.</string>
     <string name="saving">Saving...</string>
     <string name="deleting">Deleting...</string>
     <string name="home_sections">All sections</string>

@@ -18,6 +18,7 @@
     <string name="watch_status_conflicts">Неразрешённые конфликты</string>
     <string name="watch_status_last_error">Последняя ошибка</string>
     <string name="watch_status_no_error">Нет</string>
+    <string name="watch_status_error_present">Синхронизация с часами требует внимания. Данные тренировки остаются в очереди.</string>
     <string name="watch_status_sync_setting">Синхронизировать тренировки с часами</string>
     <string name="watch_status_sync_setting_disabled">В этой сборке не установлен официальный адаптер Wear Engine.</string>
     <string name="watch_status_sync_setting_available">Синхронизировать debug-транспорт с устойчивой очередью часов.</string>

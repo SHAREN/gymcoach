@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -18,10 +19,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -34,6 +39,7 @@ import org.sharteman.gymcoach.watch.domain.WatchConnectionStatus
 @Composable
 fun WatchStatusScreen(onBack: () -> Unit, dataSource: WatchStatusDataSource) {
     val state by dataSource.state.collectAsState()
+    var showTechnicalError by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -89,8 +95,17 @@ fun WatchStatusScreen(onBack: () -> Unit, dataSource: WatchStatusDataSource) {
                     )
                     StatusRow(
                         stringResource(R.string.watch_status_last_error),
-                        state.lastErrorCode ?: stringResource(R.string.watch_status_no_error),
+                        if (state.lastErrorCode == null) {
+                            stringResource(R.string.watch_status_no_error)
+                        } else {
+                            stringResource(R.string.watch_status_error_present)
+                        },
                     )
+                    if (state.lastErrorCode != null) {
+                        TextButton(onClick = { showTechnicalError = true }) {
+                            Text(stringResource(R.string.technical_details))
+                        }
+                    }
                     StatusRow(
                         stringResource(R.string.watch_status_protocol_label),
                         WatchProtocol.VERSION,
@@ -132,6 +147,22 @@ fun WatchStatusScreen(onBack: () -> Unit, dataSource: WatchStatusDataSource) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+    if (showTechnicalError) {
+        val technicalTitle = stringResource(R.string.technical_details)
+        val doneLabel = stringResource(R.string.done)
+        AlertDialog(
+            onDismissRequest = { showTechnicalError = false },
+            title = { Text(technicalTitle) },
+            text = {
+                Text("Watch error code: ${state.lastErrorCode ?: "not available"}")
+            },
+            confirmButton = {
+                TextButton(onClick = { showTechnicalError = false }) {
+                    Text(doneLabel)
+                }
+            },
+        )
     }
 }
 

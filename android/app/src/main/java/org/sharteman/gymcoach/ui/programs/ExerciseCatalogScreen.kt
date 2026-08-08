@@ -28,11 +28,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ExerciseHistorySessionDto
 import org.sharteman.gymcoach.data.model.MobileProgressPointDto
@@ -41,6 +45,7 @@ import org.sharteman.gymcoach.data.programs.ProgramsCatalogDataSource
 import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.ui.ExerciseDetailsDialog
 import org.sharteman.gymcoach.ui.ExerciseEditorDialog
+import org.sharteman.gymcoach.ui.friendlyErrorMessage
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 @Composable
@@ -90,6 +95,7 @@ fun ExerciseCatalogScreen(
         dataSource.updateExercise(exercise.id, input)
     },
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exercises by remember { mutableStateOf<List<ExerciseDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -107,7 +113,15 @@ fun ExerciseCatalogScreen(
             error = null
             runCatching { dataSource.listExercises() }
                 .onSuccess { exercises = it }
-                .onFailure { error = it.message }
+                .onFailure {
+                    error = context.friendlyErrorMessage(
+                        it,
+                        AppErrorContext(
+                            operation = AppErrorOperation.LOAD,
+                            dataState = AppErrorDataState.SAVED_LOCALLY,
+                        ),
+                    )
+                }
             loading = false
         }
     }
@@ -244,7 +258,15 @@ fun ExerciseCatalogScreen(
                 scope.launch {
                     runCatching { dataSource.deleteExercise(exercise.id) }
                         .onSuccess { reload() }
-                        .onFailure { error = it.message }
+                        .onFailure {
+                            error = context.friendlyErrorMessage(
+                                it,
+                                AppErrorContext(
+                                    operation = AppErrorOperation.DELETE,
+                                    dataState = AppErrorDataState.UNKNOWN,
+                                ),
+                            )
+                        }
                 }
             },
         )

@@ -1,7 +1,10 @@
 package org.sharteman.gymcoach.ui
 
 import android.net.Uri
+import android.content.Intent
 import android.webkit.CookieManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.SnackbarHost
@@ -24,10 +27,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.sharteman.gymcoach.BuildConfig
 import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.offline.OfflineRuntime
+import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnostics
+import org.sharteman.gymcoach.data.diagnostics.buildErrorReport
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
+import org.sharteman.gymcoach.data.errors.classifyAppError
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
@@ -36,7 +47,6 @@ import org.sharteman.gymcoach.data.programs.ProgramsCatalogRepository
 import org.sharteman.gymcoach.data.repository.GymCoachRepository
 import org.sharteman.gymcoach.data.repository.MobileAuthenticationRequiredException
 import org.sharteman.gymcoach.data.repository.SyncIssue
-import org.sharteman.gymcoach.data.repository.syncIssueKind
 import org.sharteman.gymcoach.data.security.SecureAccountStore
 import org.sharteman.gymcoach.ui.coach.ChatScreen
 import org.sharteman.gymcoach.ui.coach.CoachScreen
@@ -59,7 +69,6 @@ private fun HomeRoute(
     onSyncingChange: (Boolean) -> Unit,
     syncAllPending: suspend () -> Boolean,
     snackbar: SnackbarHostState,
-    syncFailedMessage: String,
     syncBlockedMessage: String,
     readinessSavedMessage: String,
     scope: CoroutineScope,
@@ -80,7 +89,17 @@ private fun HomeRoute(
     currentVersion: String,
     onDownloadUpdate: () -> Unit,
     onLogout: () -> Unit,
+    onDownloadSyncErrorReport: (SyncIssue, Int, Boolean) -> Unit,
 ) {
+    val context = LocalContext.current
+    fun syncFailureMessage(error: Throwable): String = context.friendlyErrorMessage(
+        error,
+        AppErrorContext(
+            operation = AppErrorOperation.SYNC,
+            dataState = AppErrorDataState.QUEUED_LOCALLY,
+            online = online,
+        ),
+    )
     val openSessions by repository.openSessions.collectAsState(initial = emptyList())
     val pendingCount by repository.pendingCount.collectAsState(initial = 0)
     val syncIssue by repository.syncIssue.collectAsState(initial = null)
@@ -90,11 +109,25 @@ private fun HomeRoute(
     val offlineIssues by offlineIssuesFlow.collectAsState(initial = emptyList())
     val offlineIssue = offlineIssues.firstOrNull()
     val displayedSyncIssue = syncIssue ?: offlineIssue?.let {
+        val userError = classifyAppError(
+            error = null,
+            context = AppErrorContext(
+                operation = AppErrorOperation.SYNC,
+                dataState = AppErrorDataState.QUEUED_LOCALLY,
+                operationType = it.type,
+                queueItemId = it.operationId,
+                attemptCount = it.attempts,
+                createdAtEpochMs = it.createdAtEpochMs,
+                serverResponse = it.message,
+            ),
+        )
         SyncIssue(
             operationId = it.operationId,
-            message = it.message,
-            kind = syncIssueKind(it.message),
-            canRetry = true,
+            type = it.type,
+            attempts = it.attempts,
+            createdAtEpochMs = it.createdAtEpochMs,
+            lastRetryAtEpochMs = 0,
+            userError = userError,
         )
     }
     HomeScreen(
@@ -117,7 +150,7 @@ private fun HomeRoute(
                     .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                     .onFailure {
                         if (it is MobileAuthenticationRequiredException) onAuthenticationRequired()
-                        else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                        else snackbar.showSnackbar(syncFailureMessage(it))
                     }
                 onSyncingChange(false)
             }
@@ -136,7 +169,7 @@ private fun HomeRoute(
                     .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                     .onFailure {
                         if (it is MobileAuthenticationRequiredException) onAuthenticationRequired()
-                        else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                        else snackbar.showSnackbar(syncFailureMessage(it))
                     }
                 onSyncingChange(false)
             }
@@ -149,7 +182,16 @@ private fun HomeRoute(
                     } else {
                         offlineIssue?.let { OfflineRuntime.controller()?.discard(it.operationId) }
                     }
-                }.onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                }.onFailure { snackbar.showSnackbar(syncFailureMessage(it)) }
+            }
+        },
+        onDownloadSyncErrorReport = {
+            displayedSyncIssue?.let { issue ->
+                onDownloadSyncErrorReport(
+                    issue,
+                    pendingCount + offlinePendingCount,
+                    online,
+                )
             }
         },
         onSaveReadiness = { readiness, sleepQuality, note ->
@@ -158,7 +200,18 @@ private fun HomeRoute(
             } else {
                 runCatching { repository.saveReadiness(readiness, sleepQuality, note) }
                     .onSuccess { snackbar.showSnackbar(readinessSavedMessage) }
-                    .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                    .onFailure {
+                        snackbar.showSnackbar(
+                            context.friendlyErrorMessage(
+                                it,
+                                AppErrorContext(
+                                    operation = AppErrorOperation.SAVE,
+                                    dataState = AppErrorDataState.NOT_SAVED,
+                                    online = online,
+                                ),
+                            ),
+                        )
+                    }
                     .isSuccess
             }
         },
@@ -206,12 +259,58 @@ fun GymCoachApp(
     val online by rememberIsOnline()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val diagnostics = remember(context) {
+        (context.applicationContext as? org.sharteman.gymcoach.GymCoachApplication)?.settingsDiagnostics
+            ?: SettingsDiagnostics.create(context.applicationContext)
+    }
+    var pendingErrorReport by remember { mutableStateOf<String?>(null) }
+    val reportSavedMessage = stringResource(R.string.error_report_saved)
+    val reportSaveFailedMessage = stringResource(R.string.error_report_save_failed)
+    val errorReportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        val report = pendingErrorReport
+        pendingErrorReport = null
+        if (uri != null && report != null) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri, "w")?.use { output ->
+                            output.write(report.toByteArray(Charsets.UTF_8))
+                        } ?: error("Android did not provide a writable file.")
+                    }
+                }.onSuccess {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW)
+                                .setDataAndType(uri, "text/plain")
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                        )
+                    }
+                    snackbar.showSnackbar(reportSavedMessage)
+                }.onFailure {
+                    snackbar.showSnackbar(reportSaveFailedMessage)
+                }
+            }
+        }
+    }
     var syncing by remember { mutableStateOf(false) }
     var progressRefreshing by remember { mutableStateOf(false) }
     var webStartPath by rememberSaveable { mutableStateOf("/") }
-    val syncFailedMessage = stringResource(R.string.sync_error)
     val syncBlockedMessage = stringResource(R.string.sync_blocked)
     val readinessSavedMessage = stringResource(R.string.readiness_saved)
+    fun friendlyFailure(
+        error: Throwable,
+        operation: AppErrorOperation,
+        dataState: AppErrorDataState,
+    ): String = context.friendlyErrorMessage(
+        error,
+        AppErrorContext(
+            operation = operation,
+            dataState = dataState,
+            online = online,
+        ),
+    )
     val updateExercise: suspend (ExerciseDto, ExerciseInput) -> ExerciseDto =
         remember(exerciseCatalogRepository, repository) {
             { exercise, input ->
@@ -255,7 +354,11 @@ fun GymCoachApp(
             scope.launch {
                 progressRefreshing = true
                 runCatching { repository.refreshProgress(exerciseId) }
-                    .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                    .onFailure {
+                        snackbar.showSnackbar(
+                            friendlyFailure(it, AppErrorOperation.LOAD, AppErrorDataState.SAVED_LOCALLY),
+                        )
+                    }
                 progressRefreshing = false
             }
         }
@@ -268,7 +371,9 @@ fun GymCoachApp(
                 .onSuccess { if (!it) snackbar.showSnackbar(syncBlockedMessage) }
                 .onFailure {
                     if (it is MobileAuthenticationRequiredException) loggedIn = false
-                    else snackbar.showSnackbar(it.message ?: syncFailedMessage)
+                    else snackbar.showSnackbar(
+                        friendlyFailure(it, AppErrorOperation.SYNC, AppErrorDataState.QUEUED_LOCALLY),
+                    )
                 }
             syncing = false
         }
@@ -285,7 +390,6 @@ fun GymCoachApp(
                     onSyncingChange = { syncing = it },
                     syncAllPending = syncAllPending,
                     snackbar = snackbar,
-                    syncFailedMessage = syncFailedMessage,
                     syncBlockedMessage = syncBlockedMessage,
                     readinessSavedMessage = readinessSavedMessage,
                     scope = scope,
@@ -321,6 +425,24 @@ fun GymCoachApp(
                             repository.logout()
                             CookieManager.getInstance().removeAllCookies(null)
                             loggedIn = false
+                        }
+                    },
+                    onDownloadSyncErrorReport = { issue, pending, isOnline ->
+                        scope.launch {
+                            pendingErrorReport = withContext(Dispatchers.Default) {
+                                diagnostics.buildErrorReport(
+                                    error = issue.userError,
+                                    pendingCount = pending,
+                                    online = isOnline,
+                                )
+                            }
+                            errorReportLauncher.launch(
+                                context.getString(
+                                    R.string.error_report_file_name,
+                                    BuildConfig.VERSION_NAME,
+                                    BuildConfig.VERSION_CODE,
+                                ),
+                            )
                         }
                     },
                 )
@@ -393,7 +515,15 @@ fun GymCoachApp(
                     LaunchedEffect(online) {
                         if (online) {
                             runCatching { repository.refreshBootstrap() }
-                                .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                                .onFailure {
+                                    snackbar.showSnackbar(
+                                        friendlyFailure(
+                                            it,
+                                            AppErrorOperation.LOAD,
+                                            AppErrorDataState.SAVED_LOCALLY,
+                                        ),
+                                    )
+                                }
                         }
                     }
                     ExerciseCatalogScreen(
@@ -464,7 +594,15 @@ fun GymCoachApp(
                                 runCatching {
                                     repository.refreshProgress(entry.arguments?.getString("exerciseId"))
                                 }
-                                    .onFailure { snackbar.showSnackbar(it.message ?: syncFailedMessage) }
+                                    .onFailure {
+                                        snackbar.showSnackbar(
+                                            friendlyFailure(
+                                                it,
+                                                AppErrorOperation.LOAD,
+                                                AppErrorDataState.SAVED_LOCALLY,
+                                            ),
+                                        )
+                                    }
                                 progressRefreshing = false
                             }
                         }

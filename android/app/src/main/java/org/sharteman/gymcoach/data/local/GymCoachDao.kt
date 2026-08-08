@@ -383,21 +383,86 @@ interface GymCoachDao {
     @Query("DELETE FROM sync_outbox WHERE operationId IN (:operationIds)")
     suspend fun removeOperations(operationIds: List<String>)
 
-    @Query("UPDATE sync_outbox SET status = 'FAILED', attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
+    @Query(
+        "UPDATE sync_outbox SET status = 'FAILED', attempts = attempts + 1, lastError = :error, " +
+            "lastErrorCategory = NULL, lastHttpStatus = NULL, lastErrorCode = NULL, " +
+            "lastCorrelationId = NULL, lastExceptionClass = NULL, lastStackTrace = NULL " +
+            "WHERE operationId = :operationId",
+    )
     suspend fun markOperationFailed(operationId: String, error: String)
 
-    @Query("UPDATE sync_outbox SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
+    @Query(
+        "UPDATE sync_outbox SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error, " +
+            "lastErrorCategory = NULL, lastHttpStatus = NULL, lastErrorCode = NULL, " +
+            "lastCorrelationId = NULL, lastExceptionClass = NULL, lastStackTrace = NULL " +
+            "WHERE operationId = :operationId",
+    )
     suspend fun markOperationBlocked(operationId: String, error: String)
 
     @Query(
-        "UPDATE sync_outbox SET status = 'PENDING', lastError = NULL, " +
+        "UPDATE sync_outbox SET status = 'FAILED', attempts = attempts + 1, lastError = :error, " +
+            "lastErrorCategory = :category, lastHttpStatus = :httpStatus, lastErrorCode = :errorCode, " +
+            "lastCorrelationId = :correlationId, lastExceptionClass = :exceptionClass, " +
+            "lastStackTrace = :stackTrace WHERE operationId = :operationId",
+    )
+    suspend fun markOperationFailedDetailed(
+        operationId: String,
+        error: String,
+        category: String?,
+        httpStatus: Int?,
+        errorCode: String?,
+        correlationId: String?,
+        exceptionClass: String?,
+        stackTrace: String?,
+    )
+
+    @Query(
+        "UPDATE sync_outbox SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error, " +
+            "lastErrorCategory = :category, lastHttpStatus = :httpStatus, lastErrorCode = :errorCode, " +
+            "lastCorrelationId = :correlationId, lastExceptionClass = :exceptionClass, " +
+            "lastStackTrace = :stackTrace WHERE operationId = :operationId",
+    )
+    suspend fun markOperationBlockedDetailed(
+        operationId: String,
+        error: String,
+        category: String?,
+        httpStatus: Int?,
+        errorCode: String?,
+        correlationId: String?,
+        exceptionClass: String?,
+        stackTrace: String?,
+    )
+
+    @Query(
+        "UPDATE sync_outbox SET lastErrorCategory = :category, lastHttpStatus = :httpStatus, " +
+            "lastErrorCode = :errorCode, lastCorrelationId = :correlationId, " +
+            "lastExceptionClass = :exceptionClass, lastStackTrace = :stackTrace " +
+            "WHERE operationId = :operationId",
+    )
+    suspend fun updateOperationErrorMetadata(
+        operationId: String,
+        category: String?,
+        httpStatus: Int?,
+        errorCode: String?,
+        correlationId: String?,
+        exceptionClass: String?,
+        stackTrace: String?,
+    )
+
+    @Query(
+        "UPDATE sync_outbox SET status = 'PENDING', lastError = NULL, lastErrorCategory = NULL, " +
+            "lastHttpStatus = NULL, lastErrorCode = NULL, lastCorrelationId = NULL, " +
+            "lastExceptionClass = NULL, lastStackTrace = NULL, " +
             "lastRetryRequestedAtEpochMs = :requestedAtEpochMs WHERE operationId = :operationId",
     )
     suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long)
 
     @Query(
         "UPDATE sync_outbox SET type = :type, payloadJson = :payloadJson, status = 'PENDING', " +
-            "lastError = NULL, lastRetryRequestedAtEpochMs = :requestedAtEpochMs " +
+            "lastError = NULL, lastErrorCategory = NULL, lastHttpStatus = NULL, " +
+            "lastErrorCode = NULL, lastCorrelationId = NULL, lastExceptionClass = NULL, " +
+            "lastStackTrace = NULL, " +
+            "lastRetryRequestedAtEpochMs = :requestedAtEpochMs " +
             "WHERE operationId = :operationId",
     )
     suspend fun retryOperationWithPayload(

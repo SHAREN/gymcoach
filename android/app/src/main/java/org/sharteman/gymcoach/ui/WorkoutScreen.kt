@@ -925,7 +925,7 @@ fun WorkoutScreen(
                                     resetDialog = false
                                     onExit()
                                 }
-                                .onFailure { snackbar.showSnackbar(it.message ?: resetError) }
+                                .onFailure { snackbar.showSnackbar(resetError) }
                             resetBusy = false
                         }
                     },

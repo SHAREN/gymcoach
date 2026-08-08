@@ -63,6 +63,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.model.MobileProgressExerciseDto
 import org.sharteman.gymcoach.data.model.MobileProgressSnapshot
 import org.sharteman.gymcoach.data.repository.HistoryProgressRepository
@@ -97,7 +100,13 @@ fun ProgressScreen(
             runCatching { action() }
                 .onSuccess { onRefresh() }
                 .onFailure {
-                    dashboardError = it.message ?: context.getString(R.string.progress_action_failed)
+                    dashboardError = context.friendlyErrorMessage(
+                        it,
+                        AppErrorContext(
+                            operation = AppErrorOperation.SAVE,
+                            dataState = AppErrorDataState.UNKNOWN,
+                        ),
+                    )
                 }
             dashboardBusy = false
         }

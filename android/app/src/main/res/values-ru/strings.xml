@@ -79,16 +79,9 @@
     <string name="cancel">Отмена</string>
     <string name="delete">Удалить</string>
     <string name="edit">Изменить</string>
-    <string name="sync_error">Синхронизация не удалась. Данные надёжно сохранены на телефоне.</string>
     <string name="sync_blocked">Одно изменение отклонено сервером. Последующие изменения безопасно остались в очереди.</string>
     <string name="sync_issue_title">Синхронизация требует внимания</string>
-    <string name="sync_issue_session_not_found">Эта тренировка уже удалена на сервере. В очереди остались локальные подходы и изменения, которые больше некуда отправлять.</string>
     <string name="retry">Повторить</string>
-    <string name="discard_change">Отбросить отклонённое изменение</string>
-    <string name="discard_session_changes">Удалить изменения тренировки</string>
-    <string name="discard_session_changes_warning">Будут удалены все ожидающие отправки подходы и изменения только этой удалённой тренировки. Другие тренировки и уже синхронизированные данные не затрагиваются.</string>
-    <string name="discard">Отбросить</string>
-    <string name="discard_change_warning">Отклонённое локальное изменение будет удалено. Если сервер отклонил начало тренировки, удалится вся несинхронизированная тренировка. Если ошибка могла быть временной, сначала нажмите «Повторить».</string>
     <string name="login_error">Не удалось войти.</string>
     <string name="primary_server">Основной сервер</string>
     <string name="fallback_server">Резервный сервер</string>
@@ -255,7 +248,6 @@
     <string name="muscle_lower_back">Поясница</string>
     <string name="muscle_other">Другое</string>
     <string name="syncing_now">Синхронизация...</string>
-    <string name="sync_issue_generic">Сервер отклонил это изменение: %1$s. Проверьте соединение и повторите. Если сами данные некорректны, отбросьте только это отклонённое изменение.</string>
     <string name="saving">Сохранение...</string>
     <string name="deleting">Удаление...</string>
     <string name="home_sections">Все разделы</string>

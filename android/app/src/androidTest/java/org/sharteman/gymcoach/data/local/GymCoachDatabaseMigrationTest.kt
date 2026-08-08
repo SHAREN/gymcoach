@@ -455,6 +455,47 @@ class GymCoachDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration11To12AddsStructuredErrorMetadataWithoutChangingQueuedOperations() {
+        helper.createDatabase(TEST_DB_V12, 11).apply {
+            execSQL(
+                "INSERT INTO sync_outbox " +
+                    "(operationId, type, payloadJson, status, attempts, lastError, " +
+                    "lastRetryRequestedAtEpochMs, createdAtEpochMs) VALUES " +
+                    "('operation_legacy_error', 'UPSERT_SET', '{}', 'BLOCKED', 3, " +
+                    "'Invalid legacy operation.', 77, 1000)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DB_V12,
+            12,
+            true,
+            GymCoachDatabase.MIGRATION_11_12,
+        ).use { database ->
+            database.query(
+                "SELECT type, status, attempts, lastError, lastRetryRequestedAtEpochMs, " +
+                    "lastErrorCategory, lastHttpStatus, lastErrorCode, lastCorrelationId, " +
+                    "lastExceptionClass, lastStackTrace " +
+                    "FROM sync_outbox WHERE operationId = 'operation_legacy_error'",
+            ).use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("UPSERT_SET", cursor.getString(0))
+                assertEquals("BLOCKED", cursor.getString(1))
+                assertEquals(3, cursor.getInt(2))
+                assertEquals("Invalid legacy operation.", cursor.getString(3))
+                assertEquals(77L, cursor.getLong(4))
+                assertEquals(true, cursor.isNull(5))
+                assertEquals(true, cursor.isNull(6))
+                assertEquals(true, cursor.isNull(7))
+                assertEquals(true, cursor.isNull(8))
+                assertEquals(true, cursor.isNull(9))
+                assertEquals(true, cursor.isNull(10))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "gymcoach-migration-test"
         const val TEST_DB_V5 = "gymcoach-migration-v5-test"
@@ -464,5 +505,6 @@ class GymCoachDatabaseMigrationTest {
         const val TEST_DB_V9 = "gymcoach-migration-v9-test"
         const val TEST_DB_V10 = "gymcoach-migration-v10-test"
         const val TEST_DB_V11 = "gymcoach-migration-v11-test"
+        const val TEST_DB_V12 = "gymcoach-migration-v12-test"
     }
 }

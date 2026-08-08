@@ -1,24 +1,41 @@
 package org.sharteman.gymcoach.ui
 
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.LocalSessionEntity
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
+import org.sharteman.gymcoach.data.errors.classifyAppError
+import org.sharteman.gymcoach.data.network.ApiException
+import org.sharteman.gymcoach.data.repository.SyncIssue
+import org.sharteman.gymcoach.data.repository.SyncIssueDiscardScope
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.ProfileDto
@@ -236,6 +253,196 @@ class HomeScreenNativeTest {
         composeRule.onNodeWithText("Веб-панель").assertIsDisplayed().performClick()
 
         assertTrue(webOpened)
+    }
+
+    @Test
+    fun invalidDiscriminatorUsesFriendlyRussianCopyAndKeepsTechnicalDetailsSeparate() {
+        var reportRequested = false
+        val issue = incompatibleSyncIssue()
+        composeRule.setContent {
+            val baseContext = LocalContext.current
+            val baseConfiguration = LocalConfiguration.current
+            val configuration = remember(baseConfiguration) {
+                Configuration(baseConfiguration).apply { setLocale(Locale("ru")) }
+            }
+            val localizedContext = remember(baseContext, configuration) {
+                baseContext.createConfigurationContext(configuration)
+            }
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides configuration,
+            ) {
+                GymCoachTheme(darkTheme = true) {
+                    HomeScreen(
+                        email = null,
+                        bootstrap = bootstrap(emptyList()),
+                        openSessions = emptyList(),
+                        pendingCount = 2,
+                        syncIssue = issue,
+                        online = true,
+                        syncing = false,
+                        onOpenSession = {},
+                        onStartWorkout = { _, _ -> },
+                        onSync = {},
+                        onRetrySyncIssue = {},
+                        onDiscardSyncIssue = {},
+                        onDownloadSyncErrorReport = { reportRequested = true },
+                        onSaveReadiness = { _, _, _ -> true },
+                        onPrograms = {},
+                        onExerciseCatalog = {},
+                        onHistory = {},
+                        onProgress = {},
+                        onCoach = {},
+                        onChat = {},
+                        onSettings = {},
+                        onWebPanel = {},
+                        currentVersion = "test",
+                        onDownloadUpdate = {},
+                        onLogout = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText(
+            "Одно изменение несовместимо или некорректно. Остальные данные сохранены или " +
+                "остаются в безопасной очереди. Обновите GymCoach, прежде чем удалять только это изменение.",
+        ).assertIsDisplayed()
+        composeRule.onAllNodesWithText("START_SESSION", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("UPSERT_SET", substring = true).assertCountEquals(0)
+        composeRule.onAllNodes(hasTestTag("sync-retry")).assertCountEquals(0)
+        saveScreenshot("home-sync-error-ru.png")
+
+        composeRule.onNodeWithTag("sync-technical-details-open").performClick()
+        composeRule.onAllNodesWithText("Технические подробности").assertCountEquals(2)
+        composeRule.onNode(
+            hasTestTag("sync-technical-details") and
+                hasText("Invalid discriminator value", substring = true),
+        ).assertIsDisplayed()
+        composeRule.onNode(
+            hasTestTag("sync-technical-details") and hasText("UPSERT_SET", substring = true),
+        ).assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-technical-details-close").performClick()
+
+        composeRule.onNodeWithTag("sync-download-report").performClick()
+        assertTrue(reportRequested)
+        composeRule.onNodeWithTag("sync-delete-problem-change").performClick()
+        composeRule.onNodeWithTag("sync-delete-confirm").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-delete-consequence")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Будет удалено только это отклонённое локальное изменение. Остальные " +
+                "синхронизированные данные и изменения в очереди не удалятся.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun sessionScopedDeletionUsesTheWholeWorkoutConsequence() {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val configuration = Configuration(base.resources.configuration).apply {
+            setLocale(Locale("ru"))
+        }
+        val context = base.createConfigurationContext(configuration)
+        val issue = incompatibleSyncIssue().copy(
+            discardScope = SyncIssueDiscardScope.SESSION_AND_RELATED_CHANGES,
+        )
+
+        assertEquals(
+            "Несинхронизированная тренировка и её локальные подходы будут безвозвратно " +
+                "удалены с этого устройства. Другие тренировки и синхронизированные данные не изменятся.",
+            context.syncDiscardConsequence(issue),
+        )
+    }
+
+    @Test
+    fun friendlyEnglishSyncCardSupportsLargeFontWithoutRawEnums() {
+        val issue = incompatibleSyncIssue()
+        composeRule.setContent {
+            val baseContext = LocalContext.current
+            val baseConfiguration = LocalConfiguration.current
+            val configuration = remember(baseConfiguration) {
+                Configuration(baseConfiguration).apply {
+                    setLocale(Locale.ENGLISH)
+                    fontScale = 1.8f
+                }
+            }
+            val localizedContext = remember(baseContext, configuration) {
+                baseContext.createConfigurationContext(configuration)
+            }
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides configuration,
+            ) {
+                GymCoachTheme(darkTheme = true) {
+                    HomeScreen(
+                        email = null,
+                        bootstrap = bootstrap(emptyList()),
+                        openSessions = emptyList(),
+                        pendingCount = 1,
+                        syncIssue = issue,
+                        online = true,
+                        syncing = false,
+                        onOpenSession = {},
+                        onStartWorkout = { _, _ -> },
+                        onSync = {},
+                        onRetrySyncIssue = {},
+                        onDiscardSyncIssue = {},
+                        onSaveReadiness = { _, _, _ -> true },
+                        onPrograms = {},
+                        onExerciseCatalog = {},
+                        onHistory = {},
+                        onProgress = {},
+                        onCoach = {},
+                        onChat = {},
+                        onSettings = {},
+                        onWebPanel = {},
+                        currentVersion = "test",
+                        onDownloadUpdate = {},
+                        onLogout = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("sync-issue-friendly-summary").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-delete-problem-change").assertIsDisplayed()
+        composeRule.onAllNodesWithText("START_SESSION", substring = true).assertCountEquals(0)
+        saveScreenshot("home-sync-error-en-large.png")
+    }
+
+    private fun incompatibleSyncIssue(): SyncIssue {
+        val error = classifyAppError(
+            ApiException(
+                400,
+                "Invalid discriminator value. Expected START_SESSION | UPSERT_SET",
+            ),
+            AppErrorContext(
+                operation = AppErrorOperation.SYNC,
+                dataState = AppErrorDataState.QUEUED_LOCALLY,
+                operationType = "UPSERT_SET",
+                queueItemId = "operation-1",
+                attemptCount = 2,
+            ),
+        )
+        return SyncIssue(
+            operationId = "operation-1",
+            type = "UPSERT_SET",
+            attempts = 2,
+            createdAtEpochMs = 1,
+            lastRetryAtEpochMs = 0,
+            userError = error,
+        )
+    }
+
+    private fun saveScreenshot(name: String) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = requireNotNull(context.getExternalFilesDir("ui-evidence"))
+        val output = File(directory, name)
+        FileOutputStream(output).use { stream ->
+            composeRule.onRoot().captureToImage().asAndroidBitmap()
+                .compress(Bitmap.CompressFormat.PNG, 100, stream)
+        }
     }
 
     private fun bootstrap(workout: WorkoutDto) = bootstrap(listOf(workout))

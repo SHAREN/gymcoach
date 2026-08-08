@@ -32,6 +32,12 @@ import org.sharteman.gymcoach.data.local.WatchOutboxEventEntity
 import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
+import org.sharteman.gymcoach.data.errors.AppErrorCategory
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
+import org.sharteman.gymcoach.data.errors.UserFacingError
+import org.sharteman.gymcoach.data.errors.classifyAppError
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.CoachingProfileDto
 import org.sharteman.gymcoach.data.model.DeleteSetOperation
@@ -136,12 +142,48 @@ class GymCoachRepository(
     val pendingCount: Flow<Int> = dao.observePendingCount()
     val syncIssue: Flow<SyncIssue?> = dao.observeBlockedOperation().map { operation ->
         operation?.let {
-            val kind = syncIssueKind(it.lastError)
+            val queued = dao.queuedOperations()
+            val decodedOperation = decodeSyncOperation(it)
+            val sessionId = syncOperationSessionId(decodedOperation, queued)
+            val userError = classifyAppError(
+                error = null,
+                context = AppErrorContext(
+                    categoryHint = it.lastErrorCategory?.let { value ->
+                        runCatching { AppErrorCategory.valueOf(value) }.getOrNull()
+                    },
+                    operation = AppErrorOperation.SYNC,
+                    dataState = AppErrorDataState.QUEUED_LOCALLY,
+                    operationType = it.type,
+                    queueItemId = it.operationId,
+                    attemptCount = it.attempts,
+                    createdAtEpochMs = it.createdAtEpochMs,
+                    lastRetryAtEpochMs = it.lastRetryRequestedAtEpochMs,
+                    httpStatus = it.lastHttpStatus,
+                    correlationId = it.lastCorrelationId,
+                    errorCode = it.lastErrorCode,
+                    serverResponse = it.lastError,
+                    exceptionClass = it.lastExceptionClass,
+                    stackTrace = it.lastStackTrace,
+                ),
+            )
             SyncIssue(
                 operationId = it.operationId,
-                message = it.lastError ?: "Server rejected a queued change.",
-                kind = kind,
-                canRetry = true,
+                type = it.type,
+                attempts = it.attempts,
+                createdAtEpochMs = it.createdAtEpochMs,
+                lastRetryAtEpochMs = it.lastRetryRequestedAtEpochMs,
+                userError = userError,
+                discardScope = if (
+                    sessionId != null &&
+                    (
+                        decodedOperation is StartSessionOperation ||
+                            syncIssueKind(it.lastError) == SyncIssueKind.SESSION_NOT_FOUND
+                        )
+                ) {
+                    SyncIssueDiscardScope.SESSION_AND_RELATED_CHANGES
+                } else {
+                    SyncIssueDiscardScope.SINGLE_OPERATION
+                },
             )
         }
     }
@@ -228,6 +270,27 @@ class GymCoachRepository(
 
     suspend fun retryBlockedChange() = syncMutex.withLock {
         val blocked = dao.queuedOperations().firstOrNull { it.status == "BLOCKED" } ?: return@withLock
+        val blockedError = classifyAppError(
+            error = null,
+            context = AppErrorContext(
+                categoryHint = blocked.lastErrorCategory?.let { value ->
+                    runCatching { AppErrorCategory.valueOf(value) }.getOrNull()
+                },
+                operation = AppErrorOperation.SYNC,
+                dataState = AppErrorDataState.QUEUED_LOCALLY,
+                operationType = blocked.type,
+                queueItemId = blocked.operationId,
+                attemptCount = blocked.attempts,
+                createdAtEpochMs = blocked.createdAtEpochMs,
+                lastRetryAtEpochMs = blocked.lastRetryRequestedAtEpochMs,
+                httpStatus = blocked.lastHttpStatus,
+                correlationId = blocked.lastCorrelationId,
+                errorCode = blocked.lastErrorCode,
+                serverResponse = blocked.lastError,
+                exceptionClass = blocked.lastExceptionClass,
+                stackTrace = blocked.lastStackTrace,
+            ),
+        )
         val operation = runCatching {
             api.json.decodeFromString<SyncOperation>(blocked.payloadJson)
         }.getOrNull()
@@ -243,6 +306,7 @@ class GymCoachRepository(
             scheduleSyncSafely()
             return@withLock
         }
+        if (!blockedError.retryable) return@withLock
         dao.retryOperation(blocked.operationId, System.currentTimeMillis())
         scheduleSyncNow()
     }
@@ -250,29 +314,8 @@ class GymCoachRepository(
     suspend fun discardBlockedChange() = syncMutex.withLock {
         val queue = dao.queuedOperations()
         val blocked = queue.firstOrNull { it.status == "BLOCKED" } ?: return@withLock
-        val operation = runCatching {
-            api.json.decodeFromString<SyncOperation>(blocked.payloadJson)
-        }.getOrNull()
-        val sessionId = when (operation) {
-            is StartSessionOperation -> operation.session.id
-            is UpsertSetOperation -> operation.set.sessionId
-            is FinishSessionOperation -> operation.sessionId
-            is DeleteSessionOperation -> operation.sessionId
-            is DeleteSetOperation -> dao.getSet(operation.setId)?.sessionId
-                ?: queue.asSequence()
-                    .mapNotNull { entry ->
-                        runCatching { api.json.decodeFromString<SyncOperation>(entry.payloadJson) }.getOrNull()
-                    }
-                    .filterIsInstance<UpsertSetOperation>()
-                    .firstOrNull { it.set.id == operation.setId }
-                    ?.set
-                    ?.sessionId
-            is UpdateTargetSetsOperation -> null
-            is UpdatePreferredEquipmentOperation -> null
-            is MutateWorkoutExercisesOperation -> null
-            is ReplaceProgramExerciseOperation -> null
-            null -> null
-        }
+        val operation = decodeSyncOperation(blocked)
+        val sessionId = syncOperationSessionId(operation, queue)
         if (operation is ReplaceProgramExerciseOperation) {
             val authoritative = refreshBootstrap()
             val watchCommand = reconcileExerciseReplacementWithAuthoritativeBootstrap(
@@ -365,6 +408,33 @@ class GymCoachRepository(
         }
         runCatching { refreshBootstrap() }
         scheduleSyncNow()
+    }
+
+    private fun decodeSyncOperation(entry: SyncOutboxEntity): SyncOperation? = runCatching {
+        api.json.decodeFromString<SyncOperation>(entry.payloadJson)
+    }.getOrNull()
+
+    private suspend fun syncOperationSessionId(
+        operation: SyncOperation?,
+        queue: List<SyncOutboxEntity>,
+    ): String? = when (operation) {
+        is StartSessionOperation -> operation.session.id
+        is UpsertSetOperation -> operation.set.sessionId
+        is FinishSessionOperation -> operation.sessionId
+        is DeleteSessionOperation -> operation.sessionId
+        is DeleteSetOperation -> dao.getSet(operation.setId)?.sessionId
+            ?: queue.asSequence()
+                .mapNotNull(::decodeSyncOperation)
+                .filterIsInstance<UpsertSetOperation>()
+                .firstOrNull { it.set.id == operation.setId }
+                ?.set
+                ?.sessionId
+        is UpdateTargetSetsOperation,
+        is UpdatePreferredEquipmentOperation,
+        is MutateWorkoutExercisesOperation,
+        is ReplaceProgramExerciseOperation,
+        null,
+        -> null
     }
 
     suspend fun refreshBootstrap(): BootstrapResponse {
@@ -1887,8 +1957,9 @@ class GymCoachRepository(
     private suspend fun blockRejectedOperation(
         entry: SyncOutboxEntity,
         operation: SyncOperation,
-        error: String,
+        userError: UserFacingError,
     ) {
+        val error = userError.technical.sanitizedServerResponse ?: "Synchronization operation rejected."
         if (operation is MutateWorkoutExercisesOperation) {
             val watchCommand = rollbackRejectedWorkoutExerciseMutation(
                 operation,
@@ -1896,15 +1967,73 @@ class GymCoachRepository(
                 error,
             )
             dispatchPreparedWatchCommand(watchCommand)
+            persistSyncErrorMetadata(entry.operationId, userError)
             return
         }
         if (operation !is ReplaceProgramExerciseOperation) {
-            dao.markOperationBlocked(entry.operationId, error)
+            val technical = userError.technical
+            dao.markOperationBlockedDetailed(
+                operationId = entry.operationId,
+                error = error,
+                category = userError.category.name,
+                httpStatus = technical.httpStatus,
+                errorCode = technical.errorCode,
+                correlationId = technical.correlationId,
+                exceptionClass = technical.exceptionClass,
+                stackTrace = technical.sanitizedStackTrace,
+            )
             return
         }
         val watchCommand = rollbackRejectedExerciseReplacement(operation, entry.operationId, error)
         dispatchPreparedWatchCommand(watchCommand)
+        persistSyncErrorMetadata(entry.operationId, userError)
     }
+
+    private suspend fun persistSyncErrorMetadata(operationId: String, userError: UserFacingError) {
+        val technical = userError.technical
+        dao.updateOperationErrorMetadata(
+            operationId = operationId,
+            category = userError.category.name,
+            httpStatus = technical.httpStatus,
+            errorCode = technical.errorCode,
+            correlationId = technical.correlationId,
+            exceptionClass = technical.exceptionClass,
+            stackTrace = technical.sanitizedStackTrace,
+        )
+    }
+
+    private suspend fun markSyncOperationFailed(entry: SyncOutboxEntity, error: Throwable) {
+        val userError = syncOperationError(entry, error)
+        val technical = userError.technical
+        dao.markOperationFailedDetailed(
+            operationId = entry.operationId,
+            error = technical.sanitizedServerResponse ?: "Synchronization failed.",
+            category = userError.category.name,
+            httpStatus = technical.httpStatus,
+            errorCode = technical.errorCode,
+            correlationId = technical.correlationId,
+            exceptionClass = technical.exceptionClass,
+            stackTrace = technical.sanitizedStackTrace,
+        )
+    }
+
+    private fun syncOperationError(
+        entry: SyncOutboxEntity,
+        error: Throwable? = null,
+        serverResponse: String? = null,
+    ): UserFacingError = classifyAppError(
+        error = error,
+        context = AppErrorContext(
+            operation = AppErrorOperation.SYNC,
+            dataState = AppErrorDataState.QUEUED_LOCALLY,
+            operationType = entry.type,
+            queueItemId = entry.operationId,
+            attemptCount = entry.attempts + 1,
+            createdAtEpochMs = entry.createdAtEpochMs,
+            lastRetryAtEpochMs = entry.lastRetryRequestedAtEpochMs,
+            serverResponse = serverResponse,
+        ),
+    )
 
     private suspend fun rollbackRejectedWorkoutExerciseMutation(
         operation: MutateWorkoutExercisesOperation,
@@ -2541,7 +2670,7 @@ class GymCoachRepository(
                 val error = syncAttempt.exceptionOrNull() ?: IOException("Unknown sync failure")
                 if (error is ApiException && error.statusCode in setOf(401, 403)) {
                     attempted.forEach { (entry) ->
-                        dao.markOperationFailed(entry.operationId, "Mobile authentication expired.")
+                        markSyncOperationFailed(entry, error)
                     }
                     accountStore.clearAccessToken()
                     throw MobileAuthenticationRequiredException()
@@ -2555,13 +2684,13 @@ class GymCoachRepository(
                     blockRejectedOperation(
                         entry = entry,
                         operation = operation,
-                        error = error.message ?: "Server rejected the synchronization operation.",
+                        userError = syncOperationError(entry, error),
                     )
                     allAccepted = false
                     continue@syncLoop
                 }
                 attempted.forEach { (entry) ->
-                    dao.markOperationFailed(entry.operationId, error.message ?: "Network sync failed")
+                    markSyncOperationFailed(entry, error)
                 }
                 throw error
             }
@@ -2585,7 +2714,11 @@ class GymCoachRepository(
                             ?: rejectedReplacement
                         rejectedWorkoutMutation = operation as? MutateWorkoutExercisesOperation
                             ?: rejectedWorkoutMutation
-                        blockRejectedOperation(entry, operation, result.error ?: "Rejected")
+                        blockRejectedOperation(
+                            entry,
+                            operation,
+                            syncOperationError(entry, serverResponse = result.error ?: "Rejected"),
+                        )
                         allAccepted = false
                         break
                     }
@@ -2597,7 +2730,10 @@ class GymCoachRepository(
                         blockRejectedOperation(
                             entry,
                             operation,
-                            result.error ?: "Unknown sync status",
+                            syncOperationError(
+                                entry,
+                                serverResponse = result.error ?: "Unknown sync status",
+                            ),
                         )
                         allAccepted = false
                         break
@@ -3615,10 +3751,20 @@ class LoginInitializationException(cause: Throwable) : IOException(
 
 data class SyncIssue(
     val operationId: String,
-    val message: String,
-    val kind: SyncIssueKind = SyncIssueKind.GENERIC,
-    val canRetry: Boolean = true,
-)
+    val type: String,
+    val attempts: Int,
+    val createdAtEpochMs: Long,
+    val lastRetryAtEpochMs: Long,
+    val userError: UserFacingError,
+    val discardScope: SyncIssueDiscardScope = SyncIssueDiscardScope.SINGLE_OPERATION,
+) {
+    val canRetry: Boolean get() = userError.retryable
+}
+
+enum class SyncIssueDiscardScope {
+    SINGLE_OPERATION,
+    SESSION_AND_RELATED_CHANGES,
+}
 
 enum class SyncIssueKind {
     SESSION_NOT_FOUND,

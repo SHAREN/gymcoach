@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_error_title_offline">No connection</string>
+    <string name="app_error_title_timeout">The server took too long to respond</string>
+    <string name="app_error_title_server_temporary">The server is temporarily unavailable</string>
+    <string name="app_error_title_auth">Sign in again</string>
+    <string name="app_error_title_update">GymCoach needs an update</string>
+    <string name="app_error_title_incompatible">The app and server versions do not match</string>
+    <string name="app_error_title_validation">This change could not be accepted</string>
+    <string name="app_error_title_conflict">The data changed elsewhere</string>
+    <string name="app_error_title_not_found">The requested item is no longer available</string>
+    <string name="app_error_title_storage">GymCoach could not access local storage</string>
+    <string name="app_error_title_file">The file could not be opened or saved</string>
+    <string name="app_error_title_unknown">Something unexpected happened</string>
+
+    <string name="app_error_what_offline">GymCoach could not contact the server.</string>
+    <string name="app_error_what_timeout">The request ended before the server responded.</string>
+    <string name="app_error_what_server_temporary">The server could not complete the request right now.</string>
+    <string name="app_error_what_auth">Your saved session is no longer accepted by the server.</string>
+    <string name="app_error_what_update">This version of GymCoach cannot complete the requested action.</string>
+    <string name="app_error_what_incompatible">The server returned data or an operation format this app version does not support.</string>
+    <string name="app_error_what_validation">The server or local validation rejected this action.</string>
+    <string name="app_error_what_conflict">A newer version of the same data exists.</string>
+    <string name="app_error_what_not_found">It may have been deleted or changed on another device.</string>
+    <string name="app_error_what_storage">The app could not read or write its local data.</string>
+    <string name="app_error_what_file">Android did not allow GymCoach to read or write the selected file.</string>
+    <string name="app_error_what_unknown">GymCoach could not complete the action.</string>
+
+    <string name="app_error_data_saved">Your latest data is saved on this device. It can be sent later.</string>
+    <string name="app_error_data_queued">The problem affects one queued change. Other saved and queued data remains available.</string>
+    <string name="app_error_data_not_saved">This action was not saved. Existing data was not changed.</string>
+    <string name="app_error_data_unknown">GymCoach cannot confirm the result of this action. Check the relevant screen before repeating it.</string>
+
+    <string name="app_error_next_retry">Try again when the connection or server is available.</string>
+    <string name="app_error_next_sign_in">Sign in again. Queued local changes will remain on this device.</string>
+    <string name="app_error_next_update">Update GymCoach, then try again. If no update is available, send an error report to the developer.</string>
+    <string name="app_error_next_review">Check the entered values. If they are correct, send an error report to the developer.</string>
+    <string name="app_error_next_refresh">Reload the data before making the change again.</string>
+    <string name="app_error_next_remove_operation">Update GymCoach first. Remove only the problem change if it still cannot be sent.</string>
+    <string name="app_error_next_file">Choose another file or location and try again.</string>
+    <string name="app_error_next_support">Download an error report and send it to the developer.</string>
+    <string name="app_error_next_none">No action is required right now.</string>
+
+    <string name="sync_problem_summary_retryable">One change could not be sent. Other data is saved or remains safely queued. Try sending it again.</string>
+    <string name="sync_problem_summary_permanent">One change is incompatible or invalid. Other data is saved or remains safely queued. Update GymCoach before removing only this problem change.</string>
+    <string name="sync_problem_summary_deleted">The destination for one change was deleted. Other data is saved or remains safely queued. Remove only this problem change after reviewing the details.</string>
+    <string name="sync_operation_start_session">starting an offline workout</string>
+    <string name="sync_operation_upsert_set">saving a workout set</string>
+    <string name="sync_operation_delete_set">deleting a workout set</string>
+    <string name="sync_operation_finish_session">finishing a workout</string>
+    <string name="sync_operation_delete_session">deleting a workout</string>
+    <string name="sync_operation_target_sets">changing the planned set count</string>
+    <string name="sync_operation_preferred_equipment">saving preferred equipment</string>
+    <string name="sync_operation_workout_exercises">changing exercises in this workout</string>
+    <string name="sync_operation_replace_exercise">replacing an exercise</string>
+    <string name="sync_operation_generic">sending one local change</string>
+    <string name="sync_operation_description">Problem action: %1$s.</string>
+    <string name="sync_delete_problem_change">Delete problem change</string>
+    <string name="sync_delete_start_session_consequence">This permanently removes this unsynchronized workout and its local sets from this device. Other workouts and synchronized data are not affected.</string>
+    <string name="sync_delete_target_sets_consequence">This removes the rejected set-count change and restores the last accepted value. Other workout data is not affected.</string>
+    <string name="sync_delete_program_change_consequence">This removes the rejected program or exercise change and reloads the last server version. Recorded workout sets are not deleted.</string>
+    <string name="sync_delete_generic_consequence">This removes only this rejected local change. Other synchronized and queued changes are not deleted.</string>
+    <string name="technical_details">Technical details</string>
+    <string name="technical_details_description">These details may help the developer. They are not required to use GymCoach.</string>
+    <string name="download_error_report">Download error report</string>
+    <string name="error_report_saved">The error report was saved.</string>
+    <string name="error_report_save_failed">The report could not be saved. Choose another location and try again.</string>
+    <string name="error_report_file_name">gymcoach-error-%1$s-%2$d.txt</string>
+    <string name="error_report_action_description">Save a sanitized GymCoach error report</string>
+    <string name="sync_issue_state_description_retryable">Synchronization issue. Retry is available.</string>
+    <string name="sync_issue_state_description_permanent">Synchronization issue. An app update or removal of the single problem change is required.</string>
+</resources>

@@ -171,6 +171,7 @@ data class OfflineSyncIssue(
     val attempts: Int,
     val nextAttemptAtEpochMs: Long,
     val blocked: Boolean,
+    val createdAtEpochMs: Long = 0,
 )
 
 fun applyCatalogMutations(

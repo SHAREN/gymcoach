@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_error_title_offline">Нет соединения</string>
+    <string name="app_error_title_timeout">Сервер не ответил вовремя</string>
+    <string name="app_error_title_server_temporary">Сервер временно недоступен</string>
+    <string name="app_error_title_auth">Войдите снова</string>
+    <string name="app_error_title_update">Нужно обновить GymCoach</string>
+    <string name="app_error_title_incompatible">Версии приложения и сервера не совпадают</string>
+    <string name="app_error_title_validation">Изменение не удалось принять</string>
+    <string name="app_error_title_conflict">Данные изменились в другом месте</string>
+    <string name="app_error_title_not_found">Запрошенный объект больше недоступен</string>
+    <string name="app_error_title_storage">GymCoach не получил доступ к локальному хранилищу</string>
+    <string name="app_error_title_file">Не удалось открыть или сохранить файл</string>
+    <string name="app_error_title_unknown">Произошла непредвиденная ошибка</string>
+
+    <string name="app_error_what_offline">GymCoach не смог связаться с сервером.</string>
+    <string name="app_error_what_timeout">Запрос завершился до ответа сервера.</string>
+    <string name="app_error_what_server_temporary">Сервер сейчас не смог выполнить запрос.</string>
+    <string name="app_error_what_auth">Сервер больше не принимает сохранённую сессию входа.</string>
+    <string name="app_error_what_update">Эта версия GymCoach не может выполнить действие.</string>
+    <string name="app_error_what_incompatible">Сервер вернул данные или операцию в формате, который эта версия приложения не поддерживает.</string>
+    <string name="app_error_what_validation">Сервер или локальная проверка отклонили действие.</string>
+    <string name="app_error_what_conflict">У этих данных уже есть более новая версия.</string>
+    <string name="app_error_what_not_found">Объект мог быть удалён или изменён на другом устройстве.</string>
+    <string name="app_error_what_storage">Приложение не смогло прочитать или записать локальные данные.</string>
+    <string name="app_error_what_file">Android не разрешил GymCoach прочитать или записать выбранный файл.</string>
+    <string name="app_error_what_unknown">GymCoach не смог выполнить действие.</string>
+
+    <string name="app_error_data_saved">Последние данные сохранены на этом устройстве. Их можно отправить позже.</string>
+    <string name="app_error_data_queued">Проблема относится к одному изменению в очереди. Остальные сохранённые данные и изменения доступны.</string>
+    <string name="app_error_data_not_saved">Это действие не сохранено. Существующие данные не изменились.</string>
+    <string name="app_error_data_unknown">GymCoach не может подтвердить результат действия. Перед повтором проверьте соответствующий экран.</string>
+
+    <string name="app_error_next_retry">Повторите попытку, когда соединение или сервер будут доступны.</string>
+    <string name="app_error_next_sign_in">Войдите снова. Локальные изменения в очереди останутся на устройстве.</string>
+    <string name="app_error_next_update">Обновите GymCoach и повторите. Если обновления нет, отправьте отчёт разработчику.</string>
+    <string name="app_error_next_review">Проверьте введённые значения. Если они верны, отправьте отчёт разработчику.</string>
+    <string name="app_error_next_refresh">Обновите данные перед повторным изменением.</string>
+    <string name="app_error_next_remove_operation">Сначала обновите GymCoach. Если изменение всё равно не отправляется, удалите только его.</string>
+    <string name="app_error_next_file">Выберите другой файл или место и повторите.</string>
+    <string name="app_error_next_support">Скачайте отчёт об ошибке и отправьте разработчику.</string>
+    <string name="app_error_next_none">Сейчас ничего делать не нужно.</string>
+
+    <string name="sync_problem_summary_retryable">Не удалось отправить одно изменение. Остальные данные сохранены или остаются в безопасной очереди. Повторите отправку.</string>
+    <string name="sync_problem_summary_permanent">Одно изменение несовместимо или некорректно. Остальные данные сохранены или остаются в безопасной очереди. Обновите GymCoach, прежде чем удалять только это изменение.</string>
+    <string name="sync_problem_summary_deleted">Объект для одного изменения удалён. Остальные данные сохранены или остаются в безопасной очереди. После проверки подробностей удалите только проблемное изменение.</string>
+    <string name="sync_operation_start_session">запуск офлайн-тренировки</string>
+    <string name="sync_operation_upsert_set">сохранение подхода</string>
+    <string name="sync_operation_delete_set">удаление подхода</string>
+    <string name="sync_operation_finish_session">завершение тренировки</string>
+    <string name="sync_operation_delete_session">удаление тренировки</string>
+    <string name="sync_operation_target_sets">изменение планового числа подходов</string>
+    <string name="sync_operation_preferred_equipment">сохранение предпочитаемого оборудования</string>
+    <string name="sync_operation_workout_exercises">изменение упражнений в этой тренировке</string>
+    <string name="sync_operation_replace_exercise">замена упражнения</string>
+    <string name="sync_operation_generic">отправка одного локального изменения</string>
+    <string name="sync_operation_description">Проблемное действие: %1$s.</string>
+    <string name="sync_delete_problem_change">Удалить проблемное изменение</string>
+    <string name="sync_delete_start_session_consequence">Несинхронизированная тренировка и её локальные подходы будут безвозвратно удалены с этого устройства. Другие тренировки и синхронизированные данные не изменятся.</string>
+    <string name="sync_delete_target_sets_consequence">Отклонённое изменение числа подходов будет удалено, восстановится последнее принятое значение. Остальные данные тренировки не изменятся.</string>
+    <string name="sync_delete_program_change_consequence">Отклонённое изменение программы или упражнения будет удалено, затем загрузится последняя серверная версия. Записанные подходы тренировки не удалятся.</string>
+    <string name="sync_delete_generic_consequence">Будет удалено только это отклонённое локальное изменение. Остальные синхронизированные данные и изменения в очереди не удалятся.</string>
+    <string name="technical_details">Технические подробности</string>
+    <string name="technical_details_description">Эти сведения могут помочь разработчику. Для обычной работы с GymCoach они не нужны.</string>
+    <string name="download_error_report">Скачать отчёт об ошибке</string>
+    <string name="error_report_saved">Отчёт об ошибке сохранён.</string>
+    <string name="error_report_save_failed">Не удалось сохранить отчёт. Выберите другое место и повторите.</string>
+    <string name="error_report_file_name">gymcoach-error-%1$s-%2$d.txt</string>
+    <string name="error_report_action_description">Сохранить безопасный отчёт об ошибке GymCoach</string>
+    <string name="sync_issue_state_description_retryable">Проблема синхронизации. Доступна повторная отправка.</string>
+    <string name="sync_issue_state_description_permanent">Проблема синхронизации. Нужно обновить приложение или удалить одно проблемное изменение.</string>
+</resources>

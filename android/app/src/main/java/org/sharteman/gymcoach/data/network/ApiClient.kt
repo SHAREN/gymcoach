@@ -162,11 +162,14 @@ class ApiClient : MobileApi {
             serverMessage = envelope?.error,
             errorCode = envelope?.code,
             retryAfterSeconds = response.header("Retry-After")?.toIntOrNull(),
+            correlationId = response.header(CORRELATION_HEADER),
+            serverResponse = responseBody,
         )
     }
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        const val CORRELATION_HEADER = "X-GymCoach-Correlation-ID"
     }
 }
 
@@ -175,4 +178,6 @@ class ApiException(
     val serverMessage: String?,
     val errorCode: String? = null,
     val retryAfterSeconds: Int? = null,
+    val correlationId: String? = null,
+    val serverResponse: String? = null,
 ) : IOException(serverMessage?.takeIf { it.isNotBlank() } ?: "HTTP $statusCode")

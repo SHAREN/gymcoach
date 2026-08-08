@@ -40,6 +40,7 @@ import org.sharteman.gymcoach.data.local.WatchFileTransferEntity
 import org.sharteman.gymcoach.data.local.WatchSensorBatchEntity
 import org.sharteman.gymcoach.data.local.WatchSensorSampleEntity
 import org.sharteman.gymcoach.data.local.WatchResyncMarkerEntity
+import org.sharteman.gymcoach.data.errors.AppErrorCategory
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ActiveWorkoutExerciseDefaultsDto
 import org.sharteman.gymcoach.data.model.CoachingFieldDto
@@ -842,6 +843,8 @@ class GymCoachRepositorySyncTest {
                 throw ApiException(
                     400,
                     "Invalid discriminator value. Expected START_SESSION | UPSERT_SET.",
+                    errorCode = "invalid_discriminator",
+                    correlationId = "request-sync-123",
                 )
             }
             SyncBatchResponse(
@@ -857,6 +860,15 @@ class GymCoachRepositorySyncTest {
         val blocked = fixture.dao.queuedOperations().single()
         assertEquals(incompatible.operationId, blocked.operationId)
         assertEquals("BLOCKED", blocked.status)
+        assertEquals(AppErrorCategory.CLIENT_SERVER_INCOMPATIBLE.name, blocked.lastErrorCategory)
+        assertEquals(400, blocked.lastHttpStatus)
+        assertEquals("invalid_discriminator", blocked.lastErrorCode)
+        assertEquals("request-sync-123", blocked.lastCorrelationId)
+        assertTrue(blocked.lastExceptionClass?.endsWith("ApiException") == true)
+        assertTrue(blocked.lastStackTrace?.contains("ApiException") == true)
+        val issue = fixture.repository.syncIssue.first()
+        assertEquals(AppErrorCategory.CLIENT_SERVER_INCOMPATIBLE, issue?.userError?.category)
+        assertFalse(requireNotNull(issue).canRetry)
         assertEquals(listOf(2, 1, 1), fixture.api.syncCalls.map { it.operations.size })
         assertEquals(
             listOf(
@@ -3106,6 +3118,11 @@ class GymCoachRepositorySyncTest {
         fixture.dao.enqueue(fixture.outbox(unrelatedUpsert))
         fixture.dao.markOperationBlocked(firstUpsert.operationId, "Session not found.")
 
+        assertEquals(
+            SyncIssueDiscardScope.SESSION_AND_RELATED_CHANGES,
+            requireNotNull(fixture.repository.syncIssue.first()).discardScope,
+        )
+
         fixture.repository.discardBlockedChange()
 
         assertEquals(
@@ -3172,6 +3189,11 @@ class GymCoachRepositorySyncTest {
         fixture.dao.enqueue(fixture.outbox(goodUpsert))
         fixture.dao.markOperationBlocked(badUpsert.operationId, "Invalid repetitions.")
 
+        assertEquals(
+            SyncIssueDiscardScope.SINGLE_OPERATION,
+            requireNotNull(fixture.repository.syncIssue.first()).discardScope,
+        )
+
         fixture.repository.discardBlockedChange()
 
         assertEquals(listOf(goodUpsert.operationId), fixture.dao.queuedOperations().map { it.operationId })
@@ -3179,7 +3201,7 @@ class GymCoachRepositorySyncTest {
     }
 
     @Test
-    fun retryingSessionNotFoundRecordsTheRequestAndSchedulesARealSync() = runTest {
+    fun permanentSessionNotFoundDoesNotEnterAnInfiniteManualRetryLoop() = runTest {
         val fixture = fixture()
         val operation = UpsertSetOperation(
             operationId = "operation_retry_missing_session",
@@ -3196,15 +3218,15 @@ class GymCoachRepositorySyncTest {
         )
         fixture.dao.enqueue(fixture.outbox(operation))
         fixture.dao.markOperationBlocked(operation.operationId, "Session not found.")
-        assertTrue(requireNotNull(fixture.repository.syncIssue.first()).canRetry)
+        assertFalse(requireNotNull(fixture.repository.syncIssue.first()).canRetry)
 
         fixture.repository.retryBlockedChange()
 
         val retried = fixture.dao.queuedOperations().single()
-        assertEquals("PENDING", retried.status)
-        assertEquals(null, retried.lastError)
-        assertTrue(retried.lastRetryRequestedAtEpochMs > 0)
-        assertEquals(1, fixture.syncCounter.count)
+        assertEquals("BLOCKED", retried.status)
+        assertEquals("Session not found.", retried.lastError)
+        assertEquals(0L, retried.lastRetryRequestedAtEpochMs)
+        assertEquals(0, fixture.syncCounter.count)
     }
 
     @Test
@@ -4149,11 +4171,85 @@ class GymCoachRepositorySyncTest {
         override suspend fun markOperationBlocked(operationId: String, error: String) {
             updateOperation(operationId) { it.copy(status = "BLOCKED", attempts = it.attempts + 1, lastError = error) }
         }
+        override suspend fun markOperationFailedDetailed(
+            operationId: String,
+            error: String,
+            category: String?,
+            httpStatus: Int?,
+            errorCode: String?,
+            correlationId: String?,
+            exceptionClass: String?,
+            stackTrace: String?,
+        ) {
+            updateOperation(operationId) {
+                it.copy(
+                    status = "FAILED",
+                    attempts = it.attempts + 1,
+                    lastError = error,
+                    lastErrorCategory = category,
+                    lastHttpStatus = httpStatus,
+                    lastErrorCode = errorCode,
+                    lastCorrelationId = correlationId,
+                    lastExceptionClass = exceptionClass,
+                    lastStackTrace = stackTrace,
+                )
+            }
+        }
+        override suspend fun markOperationBlockedDetailed(
+            operationId: String,
+            error: String,
+            category: String?,
+            httpStatus: Int?,
+            errorCode: String?,
+            correlationId: String?,
+            exceptionClass: String?,
+            stackTrace: String?,
+        ) {
+            updateOperation(operationId) {
+                it.copy(
+                    status = "BLOCKED",
+                    attempts = it.attempts + 1,
+                    lastError = error,
+                    lastErrorCategory = category,
+                    lastHttpStatus = httpStatus,
+                    lastErrorCode = errorCode,
+                    lastCorrelationId = correlationId,
+                    lastExceptionClass = exceptionClass,
+                    lastStackTrace = stackTrace,
+                )
+            }
+        }
+        override suspend fun updateOperationErrorMetadata(
+            operationId: String,
+            category: String?,
+            httpStatus: Int?,
+            errorCode: String?,
+            correlationId: String?,
+            exceptionClass: String?,
+            stackTrace: String?,
+        ) {
+            updateOperation(operationId) {
+                it.copy(
+                    lastErrorCategory = category,
+                    lastHttpStatus = httpStatus,
+                    lastErrorCode = errorCode,
+                    lastCorrelationId = correlationId,
+                    lastExceptionClass = exceptionClass,
+                    lastStackTrace = stackTrace,
+                )
+            }
+        }
         override suspend fun retryOperation(operationId: String, requestedAtEpochMs: Long) {
             updateOperation(operationId) {
                 it.copy(
                     status = "PENDING",
                     lastError = null,
+                    lastErrorCategory = null,
+                    lastHttpStatus = null,
+                    lastErrorCode = null,
+                    lastCorrelationId = null,
+                    lastExceptionClass = null,
+                    lastStackTrace = null,
                     lastRetryRequestedAtEpochMs = requestedAtEpochMs,
                 )
             }
@@ -4170,6 +4266,12 @@ class GymCoachRepositorySyncTest {
                     payloadJson = payloadJson,
                     status = "PENDING",
                     lastError = null,
+                    lastErrorCategory = null,
+                    lastHttpStatus = null,
+                    lastErrorCode = null,
+                    lastCorrelationId = null,
+                    lastExceptionClass = null,
+                    lastStackTrace = null,
                     lastRetryRequestedAtEpochMs = requestedAtEpochMs,
                 )
             }

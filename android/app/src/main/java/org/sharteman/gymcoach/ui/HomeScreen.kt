@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
@@ -60,6 +63,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,7 +75,7 @@ import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ReadinessDto
 import org.sharteman.gymcoach.data.model.WorkoutDto
 import org.sharteman.gymcoach.data.repository.SyncIssue
-import org.sharteman.gymcoach.data.repository.SyncIssueKind
+import org.sharteman.gymcoach.data.repository.SyncIssueDiscardScope
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -109,6 +114,7 @@ fun HomeScreen(
     onSync: () -> Unit,
     onRetrySyncIssue: () -> Unit,
     onDiscardSyncIssue: () -> Unit,
+    onDownloadSyncErrorReport: () -> Unit = {},
     onSaveReadiness: suspend (Int, Int, String?) -> Boolean,
     onPrograms: () -> Unit,
     onExerciseCatalog: () -> Unit,
@@ -126,6 +132,7 @@ fun HomeScreen(
     serverUrl: String? = null,
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
+    var showSyncTechnicalDetails by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showReadinessDialog by remember { mutableStateOf(false) }
     var selectedWorkout by remember { mutableStateOf<WorkoutDto?>(null) }
@@ -315,6 +322,8 @@ fun HomeScreen(
                         syncing = syncing,
                         onRetry = onRetrySyncIssue,
                         onDiscard = { confirmDiscard = true },
+                        onTechnicalDetails = { showSyncTechnicalDetails = true },
+                        onDownloadReport = onDownloadSyncErrorReport,
                     )
                 }
             }
@@ -409,6 +418,41 @@ fun HomeScreen(
             },
         )
     }
+    if (showSyncTechnicalDetails && syncIssue != null) {
+        val technicalTitle = stringResource(R.string.technical_details)
+        val technicalDescription = stringResource(R.string.technical_details_description)
+        val doneLabel = stringResource(R.string.done)
+        AlertDialog(
+            onDismissRequest = { showSyncTechnicalDetails = false },
+            title = { Text(technicalTitle) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        technicalDescription,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        technicalDetailsText(syncIssue.userError),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("sync-technical-details"),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showSyncTechnicalDetails = false },
+                    modifier = Modifier.testTag("sync-technical-details-close"),
+                ) {
+                    Text(doneLabel)
+                }
+            },
+        )
+    }
     if (showUpdateDialog) {
         AlertDialog(
             onDismissRequest = { showUpdateDialog = false },
@@ -498,11 +542,24 @@ private fun SyncIssueCard(
     syncing: Boolean,
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
+    onTechnicalDetails: () -> Unit,
+    onDownloadReport: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val stateDescription = stringResource(
+        if (syncIssue.canRetry) {
+            R.string.sync_issue_state_description_retryable
+        } else {
+            R.string.sync_issue_state_description_permanent
+        },
+    )
     Card(
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { this.stateDescription = stateDescription }
+            .testTag("sync-issue-card"),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -514,29 +571,49 @@ private fun SyncIssueCard(
                 Text(stringResource(R.string.sync_issue_title), style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                if (syncIssue.kind == SyncIssueKind.SESSION_NOT_FOUND) {
-                    stringResource(R.string.sync_issue_session_not_found)
-                } else {
-                    stringResource(R.string.sync_issue_generic, syncIssue.message)
-                },
+                context.syncIssueSummary(syncIssue.userError),
                 style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("sync-issue-friendly-summary"),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                stringResource(
+                    R.string.sync_operation_description,
+                    context.syncOperationDescription(syncIssue.type),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.78f),
+            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 if (syncIssue.canRetry) {
-                    Button(onClick = onRetry, enabled = !syncing) {
+                    Button(
+                        onClick = onRetry,
+                        enabled = !syncing,
+                        modifier = Modifier.fillMaxWidth().testTag("sync-retry"),
+                    ) {
                         Text(stringResource(if (syncing) R.string.syncing_now else R.string.retry))
                     }
                 }
-                TextButton(onClick = onDiscard, enabled = !syncing) {
-                    Text(
-                        stringResource(
-                            if (syncIssue.kind == SyncIssueKind.SESSION_NOT_FOUND) {
-                                R.string.discard_session_changes
-                            } else {
-                                R.string.discard_change
-                            },
-                        ),
-                    )
+                OutlinedButton(
+                    onClick = onDiscard,
+                    enabled = !syncing,
+                    modifier = Modifier.fillMaxWidth().testTag("sync-delete-problem-change"),
+                ) {
+                    Text(stringResource(R.string.sync_delete_problem_change))
+                }
+                TextButton(
+                    onClick = onTechnicalDetails,
+                    modifier = Modifier.fillMaxWidth().testTag("sync-technical-details-open"),
+                ) {
+                    Text(stringResource(R.string.technical_details))
+                }
+                TextButton(
+                    onClick = onDownloadReport,
+                    modifier = Modifier.fillMaxWidth().testTag("sync-download-report"),
+                ) {
+                    Text(stringResource(R.string.download_error_report))
                 }
             }
         }
@@ -712,35 +789,34 @@ private fun DiscardSyncDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val title = stringResource(R.string.sync_delete_problem_change)
+    val consequence = LocalContext.current.syncDiscardConsequence(issue)
+    val cancelLabel = stringResource(R.string.cancel)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                stringResource(
-                    if (issue?.kind == SyncIssueKind.SESSION_NOT_FOUND) {
-                        R.string.discard_session_changes
-                    } else {
-                        R.string.discard_change
-                    },
-                ),
-            )
+            Text(title)
         },
         text = {
-            Text(
-                stringResource(
-                    if (issue?.kind == SyncIssueKind.SESSION_NOT_FOUND) {
-                        R.string.discard_session_changes_warning
-                    } else {
-                        R.string.discard_change_warning
-                    },
-                ),
-            )
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 280.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    consequence,
+                    modifier = Modifier.testTag("sync-delete-consequence"),
+                )
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text(stringResource(R.string.discard)) }
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("sync-delete-confirm"),
+            ) { Text(title) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+            TextButton(onClick = onDismiss) { Text(cancelLabel) }
         },
     )
 }

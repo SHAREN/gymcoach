@@ -85,6 +85,9 @@ import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnosticQueueCounts
 import org.sharteman.gymcoach.data.diagnostics.SettingsDiagnostics
 import org.sharteman.gymcoach.data.diagnostics.buildArchive
 import org.sharteman.gymcoach.data.diagnostics.buildCopyPayload
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.local.GymCoachDatabase
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.network.enqueueAndroidUpdate
@@ -111,6 +114,7 @@ import org.sharteman.gymcoach.data.settings.isConfirmedCredentialFailure
 import org.sharteman.gymcoach.training.SetTableMetric
 import org.sharteman.gymcoach.training.setTableMetricEnabled
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
+import org.sharteman.gymcoach.ui.friendlyErrorMessage
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -196,6 +200,17 @@ fun SettingsScreen(
         feedback = null
     }
 
+    fun showFileFailure(throwable: Throwable, operation: AppErrorOperation) {
+        error = context.friendlyErrorMessage(
+            throwable,
+            AppErrorContext(
+                operation = operation,
+                dataState = AppErrorDataState.NOT_SAVED,
+            ),
+        )
+        feedback = null
+    }
+
     suspend fun refresh(preferredGymId: String? = gymDraft.id) {
         loading = snapshot == null
         error = null
@@ -248,7 +263,7 @@ fun SettingsScreen(
                         feedback = context.getString(R.string.settings_native_backup_exported)
                         error = null
                     }
-                    .onFailure { showFailure(it) }
+                    .onFailure { showFileFailure(it, AppErrorOperation.EXPORT) }
             }
         }
     }
@@ -264,7 +279,7 @@ fun SettingsScreen(
                         feedback = context.getString(R.string.settings_diagnostics_exported)
                         error = null
                     }
-                    .onFailure { showFailure(it) }
+                    .onFailure { showFileFailure(it, AppErrorOperation.EXPORT) }
             }
         }
     }
@@ -273,7 +288,7 @@ fun SettingsScreen(
             scope.launch {
                 runCatching { readBytes(context, uri).toString(Charsets.UTF_8) }
                     .onSuccess { restoreBackup = (uri.lastPathSegment ?: "backup.json") to it }
-                    .onFailure { showFailure(it) }
+                    .onFailure { showFileFailure(it, AppErrorOperation.IMPORT) }
             }
         }
     }
@@ -294,7 +309,7 @@ fun SettingsScreen(
                     importPreview = it
                     feedback = null
                     error = null
-                }.onFailure { showFailure(it) }
+                }.onFailure { showFileFailure(it, AppErrorOperation.IMPORT) }
                 busy = false
             }
         }
@@ -357,7 +372,7 @@ fun SettingsScreen(
                 )
                 feedback = context.getString(R.string.settings_diagnostics_copied)
                 error = null
-            }.onFailure { showFailure(it) }
+            }.onFailure { showFileFailure(it, AppErrorOperation.EXPORT) }
             diagnosticCount = diagnostics.snapshot().size
             busy = false
         }
@@ -378,7 +393,7 @@ fun SettingsScreen(
                 diagnosticExportLauncher.launch(
                     "gymcoach-diagnostics-${BuildConfig.VERSION_NAME}-${BuildConfig.VERSION_CODE}.zip",
                 )
-            }.onFailure { showFailure(it) }
+            }.onFailure { showFileFailure(it, AppErrorOperation.EXPORT) }
             diagnosticCount = diagnostics.snapshot().size
             busy = false
         }

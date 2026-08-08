@@ -64,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.HistoricalSetAddRequest
@@ -153,7 +156,17 @@ fun HistoryScreen(
                 ) {
                     context.getString(R.string.history_offline_unavailable)
                 } else {
-                    throwable.message ?: context.getString(R.string.history_load_error)
+                    context.friendlyErrorMessage(
+                        throwable,
+                        AppErrorContext(
+                            operation = AppErrorOperation.LOAD,
+                            dataState = if (cached == null) {
+                                AppErrorDataState.UNKNOWN
+                            } else {
+                                AppErrorDataState.SAVED_LOCALLY
+                            },
+                        ),
+                    )
                 }
             }
         loading = false
@@ -265,7 +278,15 @@ fun HistoryScreen(
                                 selectedSessionId = null
                                 refreshNonce++
                             }
-                            .onFailure { error = it.message ?: context.getString(R.string.history_delete_error) }
+                            .onFailure {
+                                error = context.friendlyErrorMessage(
+                                    it,
+                                    AppErrorContext(
+                                        operation = AppErrorOperation.DELETE,
+                                        dataState = AppErrorDataState.UNKNOWN,
+                                    ),
+                                )
+                            }
                         loading = false
                     }
                 },

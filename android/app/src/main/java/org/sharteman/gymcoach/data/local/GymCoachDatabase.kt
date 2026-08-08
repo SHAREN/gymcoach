@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineReadCacheEntity::class,
         OfflineMutationEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class GymCoachDatabase : RoomDatabase() {
@@ -56,6 +56,7 @@ abstract class GymCoachDatabase : RoomDatabase() {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
+                MIGRATION_11_12,
             )
                 .build()
                 .also { instance = it }
@@ -498,6 +499,17 @@ abstract class GymCoachDatabase : RoomDatabase() {
                         "WHERE status = 'BLOCKED' AND " +
                         "lastError LIKE 'Invalid discriminator value%'",
                 )
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastErrorCategory TEXT")
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastHttpStatus INTEGER")
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastCorrelationId TEXT")
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastExceptionClass TEXT")
+                db.execSQL("ALTER TABLE sync_outbox ADD COLUMN lastStackTrace TEXT")
             }
         }
     }

@@ -58,6 +58,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.coach.CoachAdjustment
 import org.sharteman.gymcoach.data.coach.CoachContextDto
 import org.sharteman.gymcoach.data.coach.CoachDebriefDto
@@ -66,6 +69,7 @@ import org.sharteman.gymcoach.data.coach.CoachRepository
 import org.sharteman.gymcoach.data.coach.firstCoachLine
 import org.sharteman.gymcoach.data.coach.parseCoachResponse
 import org.sharteman.gymcoach.data.coach.withDefaults
+import org.sharteman.gymcoach.ui.friendlyErrorMessage
 import org.sharteman.gymcoach.ui.localization.exerciseDisplayName
 
 data class CoachUiState(
@@ -88,9 +92,9 @@ fun CoachScreen(
     onOpenChat: () -> Unit,
     repository: CoachRepository = CoachRepository.create(LocalContext.current),
 ) {
+    val context = LocalContext.current
     var state by remember { mutableStateOf(CoachUiState()) }
     var confirmApply by remember { mutableStateOf(false) }
-    val unknownError = stringResource(R.string.coach_native_error_unknown)
     val noteSaved = stringResource(R.string.coach_native_note_saved)
     val noteCleared = stringResource(R.string.coach_native_note_cleared)
     val appliedTemplate = stringResource(R.string.coach_native_apply_result)
@@ -115,7 +119,13 @@ fun CoachScreen(
             .onFailure { error ->
                 state = state.copy(
                     loading = false,
-                    error = error.message ?: unknownError,
+                    error = context.friendlyErrorMessage(
+                        error,
+                        AppErrorContext(
+                            operation = AppErrorOperation.LOAD,
+                            dataState = AppErrorDataState.SAVED_LOCALLY,
+                        ),
+                    ),
                 )
             }
     }
@@ -169,7 +179,18 @@ fun CoachScreen(
                     feedback = if (trimmed == null) noteCleared else noteSaved,
                 )
             }
-            .onFailure { state = state.copy(savingNote = false, error = it.message ?: unknownError) }
+            .onFailure {
+                state = state.copy(
+                    savingNote = false,
+                    error = context.friendlyErrorMessage(
+                        it,
+                        AppErrorContext(
+                            operation = AppErrorOperation.SAVE,
+                            dataState = AppErrorDataState.NOT_SAVED,
+                        ),
+                    ),
+                )
+            }
     }
     LaunchedEffect(state.generating) {
         if (!state.generating) return@LaunchedEffect
@@ -178,7 +199,18 @@ fun CoachScreen(
                 state = state.copy(generating = false)
                 refresh(generated.id)
             }
-            .onFailure { state = state.copy(generating = false, error = it.message ?: unknownError) }
+            .onFailure {
+                state = state.copy(
+                    generating = false,
+                    error = context.friendlyErrorMessage(
+                        it,
+                        AppErrorContext(
+                            operation = AppErrorOperation.SAVE,
+                            dataState = AppErrorDataState.NOT_SAVED,
+                        ),
+                    ),
+                )
+            }
     }
 
     if (confirmApply) {
@@ -211,7 +243,16 @@ fun CoachScreen(
             }
             .onFailure {
                 confirmApply = false
-                state = state.copy(applying = false, error = it.message ?: unknownError)
+                state = state.copy(
+                    applying = false,
+                    error = context.friendlyErrorMessage(
+                        it,
+                        AppErrorContext(
+                            operation = AppErrorOperation.SAVE,
+                            dataState = AppErrorDataState.UNKNOWN,
+                        ),
+                    ),
+                )
             }
     }
 }

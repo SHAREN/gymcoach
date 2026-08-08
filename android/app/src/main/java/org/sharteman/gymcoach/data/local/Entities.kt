@@ -393,6 +393,12 @@ data class SyncOutboxEntity(
     val status: String = "PENDING",
     val attempts: Int = 0,
     val lastError: String? = null,
+    val lastErrorCategory: String? = null,
+    val lastHttpStatus: Int? = null,
+    val lastErrorCode: String? = null,
+    val lastCorrelationId: String? = null,
+    val lastExceptionClass: String? = null,
+    val lastStackTrace: String? = null,
     val lastRetryRequestedAtEpochMs: Long = 0,
     val createdAtEpochMs: Long = System.currentTimeMillis(),
 )

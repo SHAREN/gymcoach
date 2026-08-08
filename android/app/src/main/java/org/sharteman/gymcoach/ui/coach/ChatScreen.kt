@@ -50,11 +50,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.errors.AppErrorContext
+import org.sharteman.gymcoach.data.errors.AppErrorDataState
+import org.sharteman.gymcoach.data.errors.AppErrorOperation
 import org.sharteman.gymcoach.data.coach.ChatMessage
 import org.sharteman.gymcoach.data.coach.ChatRole
 import org.sharteman.gymcoach.data.coach.CoachProviderDto
 import org.sharteman.gymcoach.data.coach.CoachRepository
 import org.sharteman.gymcoach.data.coach.ConversationSummaryDto
+import org.sharteman.gymcoach.ui.friendlyErrorMessage
 
 data class ChatUiState(
     val loading: Boolean = true,
@@ -75,8 +79,15 @@ fun ChatScreen(
     onBack: () -> Unit,
     repository: CoachRepository = CoachRepository.create(LocalContext.current),
 ) {
+    val context = LocalContext.current
     var state by remember(sessionId) { mutableStateOf(ChatUiState()) }
-    val unknownError = stringResource(R.string.coach_native_error_unknown)
+    fun loadFailure(error: Throwable): String = context.friendlyErrorMessage(
+        error,
+        AppErrorContext(
+            operation = AppErrorOperation.LOAD,
+            dataState = AppErrorDataState.SAVED_LOCALLY,
+        ),
+    )
 
     LaunchedEffect(sessionId) {
         runCatching { repository.loadOverview() }
@@ -91,10 +102,10 @@ fun ChatScreen(
                 if (activeId != null) {
                     runCatching { repository.loadMessages(activeId) }
                         .onSuccess { state = state.copy(messages = it) }
-                        .onFailure { state = state.copy(error = it.message ?: unknownError) }
+                        .onFailure { state = state.copy(error = loadFailure(it)) }
                 }
             }
-            .onFailure { state = state.copy(loading = false, error = it.message ?: unknownError) }
+            .onFailure { state = state.copy(loading = false, error = loadFailure(it)) }
     }
 
     ChatScreenContent(
@@ -138,7 +149,7 @@ fun ChatScreen(
         runCatching { repository.loadMessages(id) }
             .onSuccess { state = state.copy(openingConversation = false, messages = it) }
             .onFailure {
-                state = state.copy(openingConversation = false, error = it.message ?: unknownError)
+                state = state.copy(openingConversation = false, error = loadFailure(it))
             }
     }
 
@@ -166,14 +177,22 @@ fun ChatScreen(
                 pendingMessage = null,
             )
         }.onFailure {
+            val friendly = context.friendlyErrorMessage(
+                it,
+                AppErrorContext(
+                    operation = AppErrorOperation.SAVE,
+                    dataState = AppErrorDataState.UNKNOWN,
+                ),
+            )
             state = state.copy(
                 messages = state.messages + ChatMessage(
                     ChatRole.ASSISTANT,
-                    "[error] ${it.message ?: unknownError}",
+                    "[error] $friendly",
                 ),
+                input = text,
                 sending = false,
                 pendingMessage = null,
-                error = it.message ?: unknownError,
+                error = friendly,
             )
         }
     }

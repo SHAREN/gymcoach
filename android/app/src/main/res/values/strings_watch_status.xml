@@ -18,6 +18,7 @@
     <string name="watch_status_conflicts">Unresolved conflicts</string>
     <string name="watch_status_last_error">Last error</string>
     <string name="watch_status_no_error">None</string>
+    <string name="watch_status_error_present">Watch synchronization needs attention. Workout data remains queued.</string>
     <string name="watch_status_sync_setting">Sync workouts with the watch</string>
     <string name="watch_status_sync_setting_disabled">The official Wear Engine adapter is not installed in this build.</string>
     <string name="watch_status_sync_setting_available">Keep the debug transport synchronized with the durable watch queue.</string>
