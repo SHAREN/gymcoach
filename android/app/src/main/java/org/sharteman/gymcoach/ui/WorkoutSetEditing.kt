@@ -2,8 +2,10 @@ package org.sharteman.gymcoach.ui
 
 import java.util.Locale
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.training.LoadConstraints
 import org.sharteman.gymcoach.training.SetRecommendation
 import org.sharteman.gymcoach.training.fromDisplayWeight
+import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.roundWeight
 import org.sharteman.gymcoach.training.toDisplayWeight
 
@@ -29,6 +31,37 @@ internal data class UpcomingWorkoutSet(
     val performanceIndex: Int,
     val isDropSet: Boolean,
 )
+
+internal data class WorkoutWeightPickerModel(
+    val options: List<Double>,
+    val manualEntryOnly: Boolean,
+)
+
+internal fun workoutWeightPickerModel(
+    constraints: LoadConstraints,
+    referenceWeightKg: Double,
+    unit: String,
+): WorkoutWeightPickerModel {
+    val decimals = if (unit.equals("LB", ignoreCase = true)) 1 else 2
+    val options = gymWeightOptions(constraints, referenceWeightKg)
+        .map { weight -> roundWeight(toDisplayWeight(weight, unit), decimals) }
+        .distinct()
+        .sorted()
+    return WorkoutWeightPickerModel(
+        options = options,
+        manualEntryOnly = options.isEmpty(),
+    )
+}
+
+internal fun finishedEditLoadConstraints(constraints: LoadConstraints): LoadConstraints =
+    if (constraints.isAvailable) {
+        constraints
+    } else {
+        LoadConstraints(
+            equipmentType = constraints.equipmentType,
+            isAvailable = true,
+        )
+    }
 
 internal fun displayedWorkoutSets(sets: List<LocalSetEntity>): List<DisplayWorkoutSet> {
     var workingNumber = 0

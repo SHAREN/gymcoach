@@ -22,6 +22,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.sharteman.gymcoach.R
 import org.sharteman.gymcoach.data.model.MobileDeloadStatusDto
 import org.sharteman.gymcoach.data.model.BootstrapResponse
 import org.sharteman.gymcoach.data.model.ExerciseDto
@@ -167,6 +168,56 @@ class HistoryProgressNativeTest {
         assertEquals(originalProgram, offlineJson.encodeToString<ProgramDto?>(bootstrap.activeProgram))
         assertEquals(6, aggregateRefreshes)
         assertTrue(source.refreshCount >= 7)
+    }
+
+    @Test
+    fun finishedWorkoutWithUnlinkedEquipmentUsesExplicitManualWeightFallback() {
+        val source = FakeHistorySource(historySnapshot())
+        val bootstrap = historyBootstrap().copy(
+            gyms = listOf(
+                GymDto(
+                    id = "gym-1",
+                    name = "History gym",
+                    inventoryMode = "EQUIPMENT_FIRST",
+                    equipment = emptyList(),
+                    exerciseConfigs = emptyList(),
+                ),
+            ),
+        )
+        compose.setContent {
+            GymCoachTheme {
+                HistoryScreen(
+                    onBack = {},
+                    dataSource = source,
+                    bootstrap = bootstrap,
+                )
+            }
+        }
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("history-session-session-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("history-session-session-1").performClick()
+        compose.onNodeWithTag("active-weight-picker").performScrollTo().performClick()
+        compose.onNodeWithTag("weight-picker-manual-fallback").assertIsDisplayed()
+        compose.onNodeWithText(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                R.string.weight_options_manual_fallback,
+            ),
+        ).assertIsDisplayed()
+        saveScreenshot("y3n-finished-manual-fallback.png")
+
+        repeat(2) { compose.onNodeWithTag("set-value-key-backspace").performClick() }
+        compose.onNodeWithTag("set-value-key-2").performClick()
+        compose.onNodeWithTag("set-value-key-7").performClick()
+        compose.onNodeWithTag("set-value-key-decimal").performClick()
+        compose.onNodeWithTag("set-value-key-5").performClick()
+        compose.onNodeWithTag("set-value-apply").performClick()
+        compose.onNodeWithTag("active-set-confirm").performScrollTo().performClick()
+        compose.waitUntil(5_000) { source.addedRequest != null }
+
+        assertEquals(27.5, source.addedRequest?.weight ?: 0.0, 0.001)
+        assertEquals(null, source.addedRequest?.gymEquipmentId)
     }
 
     @Test

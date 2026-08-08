@@ -6,9 +6,70 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.sharteman.gymcoach.data.local.LocalSetEntity
+import org.sharteman.gymcoach.training.LoadConstraints
+import org.sharteman.gymcoach.training.ResolvedEquipmentLoadProfile
 import org.sharteman.gymcoach.training.SetRecommendation
+import org.sharteman.gymcoach.training.isAchievableLoad
 
 class WorkoutSetEditingTest {
+    @Test
+    fun `weight picker follows only the exact selected equipment options`() {
+        val cableA = equipmentProfile("cable-a", listOf(10.0, 20.0, 30.0))
+        val cableB = equipmentProfile("cable-b", listOf(12.5, 17.5, 22.5))
+        val base = LoadConstraints(
+            equipmentType = "CABLE",
+            equipmentOptions = listOf(cableA, cableB),
+        )
+
+        val first = workoutWeightPickerModel(
+            constraints = base.copy(equipmentId = cableA.equipmentId),
+            referenceWeightKg = 20.0,
+            unit = "KG",
+        )
+        val switched = workoutWeightPickerModel(
+            constraints = base.copy(equipmentId = cableB.equipmentId),
+            referenceWeightKg = 20.0,
+            unit = "KG",
+        )
+
+        assertEquals(listOf(10.0, 20.0, 30.0), first.options)
+        assertEquals(listOf(12.5, 17.5, 22.5), switched.options)
+        assertTrue(first.options.intersect(switched.options.toSet()).isEmpty())
+        assertFalse(first.manualEntryOnly)
+        assertFalse(switched.manualEntryOnly)
+    }
+
+    @Test
+    fun `missing equipment options use manual entry without inventing a load tape`() {
+        val model = workoutWeightPickerModel(
+            constraints = LoadConstraints(equipmentType = "MACHINE"),
+            referenceWeightKg = 47.5,
+            unit = "KG",
+        )
+
+        assertTrue(model.options.isEmpty())
+        assertTrue(model.manualEntryOnly)
+    }
+
+    @Test
+    fun `finished history without current equipment remains manually editable`() {
+        val constraints = finishedEditLoadConstraints(
+            LoadConstraints(
+                equipmentType = "BARBELL",
+                isAvailable = false,
+                weightOptions = listOf(5.0, 10.0),
+            ),
+        )
+
+        assertTrue(constraints.isAvailable)
+        assertTrue(constraints.weightOptions.isEmpty())
+        assertTrue(isAchievableLoad(constraints, 72.5))
+        assertTrue(
+            workoutWeightPickerModel(constraints, referenceWeightKg = 72.5, unit = "KG")
+                .manualEntryOnly,
+        )
+    }
+
     @Test
     fun `completed set opens as an editable draft and saves all strength values`() {
         val set = completedSet(weight = 100.0, reps = 10, rir = 2)
@@ -282,5 +343,24 @@ class WorkoutSetEditingTest {
         predictedRepsAtSameLoad = reps,
         fatigueLoss = 0.5,
         confidence = "medium",
+    )
+
+    private fun equipmentProfile(
+        id: String,
+        loads: List<Double>,
+    ) = ResolvedEquipmentLoadProfile(
+        equipmentId = id,
+        equipmentName = id,
+        equipmentType = "CABLE",
+        loadType = "SELECTORIZED",
+        weightOptions = loads,
+        selectedLoadMultiplier = 0.5,
+        baseLoadKg = 0.0,
+        loadingSides = 1,
+        platePoolId = null,
+        platePoolName = null,
+        plates = emptyList(),
+        attainableLoads = loads,
+        inventoryPrecision = "NOT_APPLICABLE",
     )
 }

@@ -196,7 +196,13 @@ fun SetValuePickerDialog(
             color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                PickerHeader(kind = kind, unit = unit, onDismiss = onDismiss)
+                PickerHeader(
+                    kind = kind,
+                    unit = unit,
+                    equipmentName = selectedEquipment?.equipmentName
+                        ?.takeIf { kind == SetValuePickerKind.WEIGHT },
+                    onDismiss = onDismiss,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                 SnapValuePickerOptions(
                     kind = kind,
@@ -279,9 +285,15 @@ fun SetValuePickerDialog(
 }
 
 @Composable
-private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -> Unit) {
+private fun PickerHeader(
+    kind: SetValuePickerKind,
+    unit: String,
+    equipmentName: String?,
+    onDismiss: () -> Unit,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth().height(if (equipmentName == null) 56.dp else 68.dp)
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextButton(
@@ -290,20 +302,33 @@ private fun PickerHeader(kind: SetValuePickerKind, unit: String, onDismiss: () -
         ) {
             Text(stringResource(R.string.cancel))
         }
-        Text(
-            text = when (kind) {
-                SetValuePickerKind.WEIGHT -> stringResource(
-                    R.string.choose_weight,
-                    unit.lowercase(Locale.getDefault()),
-                )
-                SetValuePickerKind.REPS -> stringResource(R.string.choose_reps)
-                SetValuePickerKind.RIR -> stringResource(R.string.choose_rir)
-            },
+        Column(
             modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = when (kind) {
+                    SetValuePickerKind.WEIGHT -> stringResource(
+                        R.string.choose_weight,
+                        unit.lowercase(Locale.getDefault()),
+                    )
+                    SetValuePickerKind.REPS -> stringResource(R.string.choose_reps)
+                    SetValuePickerKind.RIR -> stringResource(R.string.choose_rir)
+                },
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            equipmentName?.let { name ->
+                Text(
+                    text = stringResource(R.string.weight_picker_equipment, name),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
         Spacer(Modifier.width(84.dp))
     }
 }
@@ -327,7 +352,20 @@ private fun SnapValuePickerOptions(
     modifier: Modifier = Modifier,
 ) {
     if (options.isEmpty()) {
-        Box(modifier = modifier.testTag(pickerElementTag(kind, "viewport")))
+        Box(
+            modifier = modifier
+                .testTag(pickerElementTag(kind, "viewport"))
+                .padding(horizontal = 32.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.weight_options_manual_fallback),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag(pickerElementTag(kind, "manual-fallback")),
+            )
+        }
         return
     }
 

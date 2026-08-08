@@ -1,5 +1,10 @@
 package org.sharteman.gymcoach.ui
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -20,6 +25,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.sharteman.gymcoach.R
+import org.sharteman.gymcoach.data.local.LocalSetEntity
 import org.sharteman.gymcoach.data.model.ExerciseDto
 import org.sharteman.gymcoach.data.model.GymDto
 import org.sharteman.gymcoach.data.model.GymEquipmentDto
@@ -222,6 +228,223 @@ class PreferredEquipmentPickerTest {
         composeRule.onNodeWithTag("equipment-option-cable_b").assertIsSelected()
         assertEquals(1, preferenceWrites.get())
     }
+
+    @Test
+    fun activeSharedEditorSwitchesExactMachineOptionsWithoutLeakingThePreviousScale() {
+        val exercise = selectorExercise()
+        val gym = selectorGym(exercise.exerciseId)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        composeRule.setContent {
+            var selectedId by remember { mutableStateOf("cable_a") }
+            var weight by remember { mutableStateOf("10") }
+            var reps by remember { mutableStateOf("10") }
+            var rir by remember { mutableStateOf("2") }
+            val inventory = resolveExerciseInventory(exercise, gym, selectedId)
+            GymCoachTheme {
+                Column {
+                    EquipmentSelectorCard(
+                        inventoryAvailable = true,
+                        equipment = inventory.equipment,
+                        selectedEquipmentId = selectedId,
+                        selectionRequired = false,
+                        onSelect = { selectedId = it },
+                    )
+                    StrengthSetEditor(
+                        mode = StrengthSetEditorMode.ACTIVE,
+                        sets = emptyList(),
+                        target = exercise,
+                        lastPerformance = null,
+                        unit = "KG",
+                        metrics = emptyList(),
+                        onMetricToggle = { _, _ -> },
+                        loadConstraints = inventory.constraints,
+                        selectedEquipment = selectedEquipment(inventory),
+                        submissionEnabled = true,
+                        recommendation = null,
+                        weightText = weight,
+                        repsText = reps,
+                        rirText = rir,
+                        notesText = "",
+                        isWarmup = false,
+                        isDropSet = false,
+                        onWeightChange = { weight = it },
+                        onRepsChange = { reps = it },
+                        onRirChange = { rir = it },
+                        onNotesChange = {},
+                        onWarmupChange = {},
+                        onDropSetChange = {},
+                        onUpdateSet = { _, _, _, _, _ -> true },
+                        onDelete = { true },
+                        onTargetSetsChange = {},
+                        onConfirm = { false },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("active-weight-picker").performClick()
+        composeRule.onNodeWithText(context.getString(R.string.weight_picker_equipment, "Cable A"))
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-10").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-12.5").assertDoesNotExist()
+        saveScreenshot("y3n-active-cable-a-options-labeled.png")
+        composeRule.onNodeWithTag("set-value-cancel").performClick()
+
+        composeRule.onNodeWithTag("equipment-option-cable_b").performClick()
+        composeRule.onNodeWithTag("equipment-option-cable_b").assertIsSelected()
+        composeRule.onNodeWithTag("active-weight-picker").performClick()
+        composeRule.onNodeWithText(context.getString(R.string.weight_picker_equipment, "Cable B"))
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-12.5").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-10").assertDoesNotExist()
+        saveScreenshot("y3n-active-cable-b-options-labeled.png")
+    }
+
+    @Test
+    fun finishedSharedEditorKeepsTheSetEquipmentOptionsInsteadOfTheCurrentSelection() {
+        val exercise = selectorExercise()
+        val gym = selectorGym(exercise.exerciseId)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val currentInventory = resolveExerciseInventory(exercise, gym, selectedEquipmentId = "cable_b")
+        val set = LocalSetEntity(
+            id = "set-a",
+            sessionId = "finished-session",
+            exerciseId = exercise.exerciseId,
+            gymEquipmentId = "cable_a",
+            equipmentNameSnapshot = "Cable A",
+            selectedLoadKg = 9.0,
+            selectedLoadMultiplierSnapshot = 1.0,
+            nominalResistanceKg = 9.0,
+            equipmentLoadSnapshotJson = """
+                {
+                  "version": 2,
+                  "revisionId": "frozen-cable-a",
+                  "gymEquipmentId": "cable_a",
+                  "loadType": "SELECTORIZED",
+                  "equipmentType": "CABLE",
+                  "selectedLoadKg": 9.0,
+                  "selectedLoadMultiplier": 1.0,
+                  "nominalResistanceKg": 9.0,
+                  "baseLoadKg": 0.0,
+                  "loadingSides": 1,
+                  "weightOptions": [9.0, 19.0, 29.0],
+                  "platePool": null
+                }
+            """.trimIndent(),
+            setNumber = 1,
+            weight = 9.0,
+            reps = 10,
+            rir = 2,
+            completedAt = "2026-08-08T10:00:00Z",
+        )
+
+        composeRule.setContent {
+            var weight by remember { mutableStateOf("12.5") }
+            GymCoachTheme {
+                StrengthSetEditor(
+                    mode = StrengthSetEditorMode.FINISHED_EDIT,
+                    sets = listOf(set),
+                    target = exercise,
+                    lastPerformance = null,
+                    unit = "KG",
+                    metrics = emptyList(),
+                    onMetricToggle = { _, _ -> },
+                    loadConstraints = currentInventory.constraints,
+                    selectedEquipment = selectedEquipment(currentInventory),
+                    submissionEnabled = true,
+                    recommendation = null,
+                    weightText = weight,
+                    repsText = "10",
+                    rirText = "2",
+                    notesText = "",
+                    isWarmup = false,
+                    isDropSet = false,
+                    onWeightChange = { weight = it },
+                    onRepsChange = {},
+                    onRirChange = {},
+                    onNotesChange = {},
+                    onWarmupChange = {},
+                    onDropSetChange = {},
+                    onUpdateSet = { _, _, _, _, _ -> true },
+                    onDelete = { true },
+                    onTargetSetsChange = {},
+                    onConfirm = { false },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("completed-set-1-weight").performClick()
+        composeRule.onNodeWithText(context.getString(R.string.weight_picker_equipment, "Cable A"))
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-9").assertIsDisplayed()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-10").assertDoesNotExist()
+        composeRule.onNodeWithTag("set-value-option-WEIGHT-12.5").assertDoesNotExist()
+        saveScreenshot("y3n-finished-frozen-v2-equipment-options-labeled.png")
+    }
+
+    private fun saveScreenshot(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/GymCoachTests")
+        }
+        val uri = requireNotNull(
+            context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values),
+        )
+        context.contentResolver.openOutputStream(uri).use { output ->
+            requireNotNull(output)
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                .compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
+    }
+
+    private fun selectorExercise() = ProgramExerciseDto(
+        id = "pe-selector-options",
+        workoutId = "workout-selector-options",
+        exerciseId = "exercise-selector-options",
+        order = 0,
+        targetSets = 1,
+        targetRepsMin = 8,
+        targetRepsMax = 12,
+        targetRIR = 2,
+        restSec = 90,
+        exercise = ExerciseDto(
+            id = "exercise-selector-options",
+            name = "Cable pressdown",
+            muscleGroup = "TRICEPS",
+            category = "ISOLATION",
+            equipmentType = "CABLE",
+        ),
+    )
+
+    private fun selectorGym(exerciseId: String) = GymDto(
+        id = "gym-selector-options",
+        name = "Selector gym",
+        inventoryMode = "EQUIPMENT_FIRST",
+        equipment = listOf(
+            GymEquipmentDto(
+                id = "cable_a",
+                gymId = "gym-selector-options",
+                name = "Cable A",
+                equipmentType = "CABLE",
+                loadType = "SELECTORIZED",
+                weightOptions = listOf(10.0, 20.0, 30.0),
+                exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = exerciseId)),
+            ),
+            GymEquipmentDto(
+                id = "cable_b",
+                gymId = "gym-selector-options",
+                name = "Cable B",
+                equipmentType = "CABLE",
+                loadType = "SELECTORIZED",
+                weightOptions = listOf(12.5, 17.5, 22.5),
+                exerciseLinks = listOf(GymEquipmentExerciseDto(exerciseId = exerciseId)),
+            ),
+        ),
+    )
 
     private fun plateLoadedBar(
         id: String,

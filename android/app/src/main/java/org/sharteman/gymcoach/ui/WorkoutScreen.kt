@@ -119,7 +119,6 @@ import org.sharteman.gymcoach.training.constraintsFor
 import org.sharteman.gymcoach.training.formatSetTableMetric
 import org.sharteman.gymcoach.training.frozenEquipmentLoadState
 import org.sharteman.gymcoach.training.fromDisplayWeight
-import org.sharteman.gymcoach.training.gymWeightOptions
 import org.sharteman.gymcoach.training.isAchievableLoad
 import org.sharteman.gymcoach.training.nominalResistanceKg
 import org.sharteman.gymcoach.training.normalizeSetTableMetrics
@@ -1627,18 +1626,11 @@ internal fun StrengthSetEditor(
     val referenceWeightKg = referenceWeightText.replace(',', '.').toDoubleOrNull()
         ?.let { fromDisplayWeight(it, unit) }
         ?: 0.0
-    val configuredWeights = gymWeightOptions(pickerLoadConstraints, referenceWeightKg)
-    val fallbackStep = if (target.exercise.category == "ISOLATION") 1.0 else 2.5
-    val weightOptionsKg = configuredWeights.ifEmpty {
-        List(81) { index -> index * fallbackStep }
-    }
-    val weightOptions = weightOptionsKg
-        .map { weight ->
-            val decimals = if (unit.equals("LB", ignoreCase = true)) 1 else 2
-            roundWeight(toDisplayWeight(weight, unit), decimals)
-        }
-        .distinct()
-        .sorted()
+    val weightPickerModel = workoutWeightPickerModel(
+        constraints = pickerLoadConstraints,
+        referenceWeightKg = referenceWeightKg,
+        unit = unit,
+    )
     val currentRecommendationKey = recommendationKey(recommendation)
     val applyRecommendationDescription = stringResource(R.string.apply_set_recommendation)
     val recommendationActionVisible = mode == StrengthSetEditorMode.ACTIVE &&
@@ -2027,7 +2019,7 @@ internal fun StrengthSetEditor(
                 SetValuePickerKind.RIR -> if (editingPicker) editingRirText else rirText
             },
             options = when (kind) {
-                SetValuePickerKind.WEIGHT -> weightOptions
+                SetValuePickerKind.WEIGHT -> weightPickerModel.options
                 SetValuePickerKind.REPS -> (1..30).map(Int::toDouble)
                 SetValuePickerKind.RIR -> (0..5).map(Int::toDouble)
             },

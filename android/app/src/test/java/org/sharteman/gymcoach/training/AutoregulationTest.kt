@@ -460,6 +460,77 @@ class AutoregulationTest {
     }
 
     @Test
+    fun concreteFixedDumbbellUsesItsSortedDeduplicatedEquipmentOptions() {
+        val exercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS")
+        val inventory = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_1",
+                name = "Olymp",
+                equipment = listOf(
+                    GymEquipmentDto(
+                        id = "dumbbell-rack",
+                        gymId = "gym_1",
+                        name = "Dumbbell rack",
+                        equipmentType = "DUMBBELL",
+                        loadType = "FIXED",
+                        weightOptions = listOf(22.5, 10.0, 22.5, 15.0),
+                        exerciseLinks = listOf(
+                            GymEquipmentExerciseDto(exerciseId = exercise.exerciseId),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("dumbbell-rack", selectedEquipment(inventory)?.equipmentId)
+        assertEquals(listOf(10.0, 15.0, 22.5), inventory.weightOptions)
+    }
+
+    @Test
+    fun gymSwitchReplacesTheExactEquipmentScaleInsteadOfRetainingOldOptions() {
+        val exercise = programExercise(
+            mode = "PRESERVE_RIR",
+            muscle = "TRICEPS",
+            equipmentType = "CABLE",
+        )
+        val first = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_a",
+                name = "Gym A",
+                equipment = listOf(
+                    selectorized(
+                        "cable_a",
+                        exercise.exerciseId,
+                        listOf(10.0, 20.0, 30.0),
+                        gymId = "gym_a",
+                    ),
+                ),
+            ),
+        )
+        val second = resolveExerciseInventory(
+            exercise,
+            GymDto(
+                id = "gym_b",
+                name = "Gym B",
+                equipment = listOf(
+                    selectorized(
+                        "cable_b",
+                        exercise.exerciseId,
+                        listOf(12.5, 17.5, 22.5),
+                        gymId = "gym_b",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf(10.0, 20.0, 30.0), first.weightOptions)
+        assertEquals(listOf(12.5, 17.5, 22.5), second.weightOptions)
+        assertTrue(first.weightOptions.intersect(second.weightOptions.toSet()).isEmpty())
+    }
+
+    @Test
     fun equipmentFirstDumbbellProfilePersistsAnExplicitRemoval() {
         val exercise = programExercise(mode = "PRESERVE_REPS", muscle = "BICEPS")
         val inventory = resolveExerciseInventory(
@@ -570,6 +641,50 @@ class AutoregulationTest {
         assertTrue(19.0 !in small.weightOptions)
     }
 
+    @Test
+    fun deletedEquipmentKeepsItsFrozenSelectorizedOptionsAndMultiplier() {
+        val set = LocalSetEntity(
+            id = "set-deleted-equipment",
+            sessionId = "finished-session",
+            exerciseId = "cable-exercise",
+            gymEquipmentId = null,
+            equipmentNameSnapshot = "Deleted cable",
+            selectedLoadKg = 20.0,
+            selectedLoadMultiplierSnapshot = 0.5,
+            nominalResistanceKg = 10.0,
+            equipmentLoadSnapshotJson = """
+                {
+                  "version": 2,
+                  "revisionId": "revision-deleted-cable",
+                  "gymEquipmentId": "deleted-cable",
+                  "loadType": "SELECTORIZED",
+                  "equipmentType": "CABLE",
+                  "selectedLoadKg": 20.0,
+                  "selectedLoadMultiplier": 0.5,
+                  "nominalResistanceKg": 10.0,
+                  "baseLoadKg": 0.0,
+                  "loadingSides": 1,
+                  "weightOptions": [10.0, 20.0, 30.0],
+                  "platePool": null
+                }
+            """.trimIndent(),
+            setNumber = 1,
+            weight = 20.0,
+            reps = 10,
+            rir = 2,
+            completedAt = "2026-08-08T10:00:00Z",
+        )
+
+        val supported = frozenEquipmentLoadState(set) as FrozenEquipmentLoadState.Supported
+        val profile = supported.constraints.equipmentOptions.single()
+
+        assertEquals("deleted-cable", supported.constraints.equipmentId)
+        assertEquals(listOf(10.0, 20.0, 30.0), gymWeightOptions(supported.constraints, 20.0))
+        assertEquals(10.0, nominalResistanceKg(profile, 20.0) ?: 0.0, 0.001)
+        assertTrue(isAchievableLoad(supported.constraints, 30.0))
+        assertFalse(isAchievableLoad(supported.constraints, 25.0))
+    }
+
     private fun programExercise(
         mode: String,
         muscle: String,
@@ -645,10 +760,15 @@ class AutoregulationTest {
         confidence = "medium",
     )
 
-    private fun selectorized(id: String, exerciseId: String, loads: List<Double>) =
+    private fun selectorized(
+        id: String,
+        exerciseId: String,
+        loads: List<Double>,
+        gymId: String = "gym_1",
+    ) =
         GymEquipmentDto(
             id = id,
-            gymId = "gym_1",
+            gymId = gymId,
             name = id,
             equipmentType = "CABLE",
             loadType = "SELECTORIZED",

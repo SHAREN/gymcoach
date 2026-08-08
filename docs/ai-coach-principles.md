@@ -733,6 +733,11 @@ The following deterministic domain rules are engineering heuristics:
 - plate-loaded displays use the selected item's exact empty bar or carriage
   load, compatible plate quantities and equally loaded side count. A generic
   bar weight must not replace a known concrete equipment profile.
+- active and finished-set editors expose the selected current or frozen
+  equipment profile's exact attainable loads. If no usable option list exists,
+  the picker switches to explicit validated manual entry instead of inventing a
+  generic load tape; manual entry alone does not change the preferred equipment
+  or replace a frozen historical snapshot.
 
 Workout history preserves `Set.weight` and the displayed/selected load as the
 primary historical facts. It also stores the concrete equipment ID, equipment

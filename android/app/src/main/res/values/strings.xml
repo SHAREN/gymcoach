@@ -107,6 +107,8 @@
     <string name="set_options">Set options</string>
     <string name="set_target_complete">Planned sets are complete. Extra sets do not change the program target.</string>
     <string name="add_extra_set">Add extra set</string>
+    <string name="weight_options_manual_fallback">No saved weight options are available for this equipment. Enter the weight manually.</string>
+    <string name="weight_picker_equipment">Equipment: %1$s</string>
     <string name="choose_set_metric">Choose calculated columns</string>
     <string name="set_metric_one_rm">Estimated 1RM</string>
     <string name="set_metric_ten_rm">Estimated 10RM</string>

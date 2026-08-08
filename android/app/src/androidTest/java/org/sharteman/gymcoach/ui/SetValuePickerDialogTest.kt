@@ -131,6 +131,29 @@ class SetValuePickerDialogTest {
     }
 
     @Test
+    fun emptyEquipmentOptionsExplainAndAcceptValidatedManualWeight() {
+        var confirmedValue: String? = null
+        setWeightPicker(
+            value = "",
+            options = emptyList(),
+            onConfirm = { confirmedValue = it },
+        )
+        val explanation = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(org.sharteman.gymcoach.R.string.weight_options_manual_fallback)
+
+        composeRule.onNodeWithTag("weight-picker-manual-fallback").assertIsDisplayed()
+        composeRule.onNodeWithText(explanation).assertIsDisplayed()
+        composeRule.onNodeWithTag("weight-picker-list").assertDoesNotExist()
+        composeRule.onNodeWithTag("set-value-key-4").performClick()
+        composeRule.onNodeWithTag("set-value-key-7").performClick()
+        composeRule.onNodeWithTag("set-value-key-decimal").performClick()
+        composeRule.onNodeWithTag("set-value-key-5").performClick()
+        composeRule.onNodeWithTag("set-value-apply").performClick()
+
+        assertEquals("47.5", confirmedValue)
+    }
+
+    @Test
     fun manualKeyPressedDuringFlingWinsOverSettledPreview() {
         val confirmations = AtomicInteger(0)
         setWeightPicker(

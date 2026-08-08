@@ -808,6 +808,7 @@ private fun HistoricalStrengthExerciseEditor(
     }
     val inventory = resolveExerciseInventory(target, gym, selectedEquipmentId)
     val selectedProfile = selectedEquipment(inventory)
+    val editorLoadConstraints = finishedEditLoadConstraints(inventory.constraints)
     LaunchedEffect(inventory.constraints.equipmentId) {
         if (selectedEquipmentId == null) selectedEquipmentId = inventory.constraints.equipmentId
     }
@@ -863,10 +864,11 @@ private fun HistoricalStrengthExerciseEditor(
         onMetricToggle = { metric, enabled ->
             metrics = org.sharteman.gymcoach.training.setTableMetricEnabled(metrics, metric, enabled)
         },
-        loadConstraints = inventory.constraints,
+        loadConstraints = editorLoadConstraints,
         selectedEquipment = selectedProfile,
-        submissionEnabled = inventory.isAvailable &&
-            (!inventory.requiresEquipmentSelection || selectedProfile != null),
+        submissionEnabled = !inventory.isAvailable ||
+            !inventory.requiresEquipmentSelection ||
+            selectedProfile != null,
         recommendation = null,
         weightText = weightText,
         repsText = repsText,
