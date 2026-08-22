@@ -130,8 +130,17 @@ describe('photo file storage', () => {
     await writePhotoFile(rel, Uint8Array.from([0xff, 0xd8, 0xff]));
 
     const abs = path.join(progressPhotoStorageDir(), rel);
-    expect((await stat(abs)).mode & 0o777).toBe(0o600);
-    expect((await stat(path.dirname(abs))).mode & 0o777).toBe(0o700);
+    const fileStat = await stat(abs);
+    const dirStat = await stat(path.dirname(abs));
+    expect(fileStat.isFile()).toBe(true);
+    expect(dirStat.isDirectory()).toBe(true);
+
+    // Windows does not expose POSIX permission bits with Unix semantics. Keep
+    // these assertions mandatory on Linux/macOS, including production/CI.
+    if (process.platform !== 'win32') {
+      expect(fileStat.mode & 0o777).toBe(0o600);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    }
   });
 
   it('tightens a per-user dir left behind with looser permissions', async () => {
@@ -142,7 +151,11 @@ describe('photo file storage', () => {
       photoRelativePath('user-legacy', 'photo-2', 'image/png'),
       Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
     );
-    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    const dirStat = await stat(dir);
+    expect(dirStat.isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    }
   });
 
   it('refuses a stored path that escapes the uploads dir', async () => {

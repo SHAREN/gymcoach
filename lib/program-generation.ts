@@ -167,9 +167,9 @@ export async function buildProgramFromGenerated(
             targetRIR: ex.targetRIR,
             restSec: ex.restSec,
             autoregulationMode: ex.autoregulationMode ?? 'PRESERVE_RIR',
-            fatigueRate: ex.fatigueRate ?? defaultIntraSetConfig(exercise).fatigueRate,
+            fatigueRate: ex.fatigueRate ?? autoregDefaults.fatigueRate,
             loadAdjustmentPct:
-              ex.loadAdjustmentPct ?? defaultIntraSetConfig(exercise).loadAdjustmentPct,
+              ex.loadAdjustmentPct ?? autoregDefaults.loadAdjustmentPct,
             tempo: ex.tempo ?? null,
             notes: ex.notes ?? null,
             supersetGroup: ex.supersetGroup ?? null,
