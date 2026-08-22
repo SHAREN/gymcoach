@@ -21,6 +21,7 @@ import {
   WEEKLY_SETS_MEV,
   WEEKLY_SETS_MRV,
 } from '@/lib/stats';
+import { buildMuscleMap } from '@/lib/muscle-map';
 import {
   DELOAD_READINESS_LOOKBACK,
   DELOAD_READINESS_MAX_AGE_DAYS,
@@ -34,6 +35,7 @@ import { ConsistencyCard } from '@/components/progress/consistency-card';
 import { DeloadBanner } from '@/components/progress/deload-banner';
 import { BodyweightCard } from '@/components/progress/bodyweight-card';
 import { MeasurementsCard } from '@/components/progress/measurements-card';
+import { PhotosCard } from '@/components/progress/photos-card';
 import { ConditioningCard } from '@/components/progress/conditioning-card';
 import { RecordsCard } from '@/components/progress/records-card';
 
@@ -265,6 +267,12 @@ export default async function ProgressPage(props: { searchParams: Promise<Search
       }
     : null;
 
+  // Muscle heat map (issue #299): same week and same personal-target
+  // resolution as the volume-landmarks card, mapped onto silhouette regions.
+  const muscleMap = latestCompletedWeek
+    ? buildMuscleMap(latestCompletedWeek.byMuscleGroup, volumeTargets)
+    : [];
+
   // Recap table: per exercise, first and last session in the period,
   // delta of the max load and the 1RM.
   const recapRows = await Promise.all(
@@ -354,6 +362,16 @@ export default async function ProgressPage(props: { searchParams: Promise<Search
     where: { userId: auth.userId, measuredAt: { gte: since } },
     orderBy: { measuredAt: 'desc' },
     select: { id: true, site: true, valueCm: true, measuredAt: true },
+  });
+
+  // Progress photos (issue #269): ALL of the user's photos (not just the
+  // 12-week window - a before/after compare wants the full timeline), newest
+  // first. Only metadata crosses the boundary; the bytes stay behind the
+  // ownership-scoped image route.
+  const progressPhotos = await db.progressPhoto.findMany({
+    where: { userId: auth.userId },
+    orderBy: { takenAt: 'desc' },
+    select: { id: true, takenAt: true, note: true },
   });
 
   // Conditioning card (issue #135, display-only): weekly cardio minutes /
@@ -456,6 +474,14 @@ export default async function ProgressPage(props: { searchParams: Promise<Search
           unit={unit}
         />
 
+        <PhotosCard
+          photos={progressPhotos.map((p) => ({
+            id: p.id,
+            takenAt: p.takenAt.toISOString(),
+            note: p.note,
+          }))}
+        />
+
         {conditioningWeeks && (
           <ConditioningCard
             weeks={conditioningWeeks.map((w) => ({
@@ -500,6 +526,7 @@ export default async function ProgressPage(props: { searchParams: Promise<Search
                 total: w.total,
               }))}
               volumeLandmarks={volumeLandmarks}
+              muscleMap={muscleMap}
               defaultBand={{ mev: WEEKLY_SETS_MEV, mrv: WEEKLY_SETS_MRV }}
               recap={recap}
               unit={unit}

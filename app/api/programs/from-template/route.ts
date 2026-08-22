@@ -7,6 +7,7 @@ import {
   classificationMetadataAfterServerUpdate,
   deriveServerExerciseClassification,
 } from '@/lib/exercise-classification';
+import { SYSTEM_EXERCISE_CATALOG_ORIGIN } from '@/lib/exercise-catalog';
 
 export async function POST(req: Request) {
   try {
@@ -43,39 +44,49 @@ export async function POST(req: Request) {
           const existingExercise = await tx.exercise.findUnique({
             where: { userId_name: { userId, name: exercise.name } },
           });
-          const identity = {
+          // A template describes the program prescription, not permission to
+          // overwrite a user's edited exercise catalog. User-owned/custom
+          // exercises are therefore reused exactly as they are.
+          //
+          // The one exception is an untouched system-catalog exercise. Those
+          // rows are still owned by the server catalog, so a newer template may
+          // correct stale system metadata/classification. A client edit clears
+          // catalogOrigin elsewhere, which moves the exercise back into the
+          // protected user-owned path above.
+          const templateIdentity = {
             name: exercise.name,
             muscleGroup: exercise.muscleGroup,
             category: exercise.category,
             defaultRestSec: exercise.restSec,
-            notes: exercise.notes ?? existingExercise?.notes ?? null,
+            notes: exercise.notes ?? null,
             usesBodyweight: existingExercise?.usesBodyweight ?? false,
             equipmentType: exercise.equipmentType ?? existingExercise?.equipmentType ?? 'OTHER',
           };
-          const updatedClassification = existingExercise
-            ? classificationMetadataAfterServerUpdate(existingExercise, identity)
-            : deriveServerExerciseClassification(identity);
-          const createdExercise = await tx.exercise.upsert({
-            where: {
-              userId_name: {
+
+          let createdExercise;
+          if (!existingExercise) {
+            createdExercise = await tx.exercise.create({
+              data: {
                 userId,
-                name: exercise.name,
+                ...templateIdentity,
+                ...deriveServerExerciseClassification(templateIdentity),
               },
-            },
-            update: {
-              muscleGroup: identity.muscleGroup,
-              category: identity.category,
-              defaultRestSec: identity.defaultRestSec,
-              notes: identity.notes,
-              equipmentType: identity.equipmentType,
-              ...updatedClassification,
-            },
-            create: {
-              userId,
-              ...identity,
-              ...updatedClassification,
-            },
-          });
+            });
+          } else if (existingExercise.catalogOrigin === SYSTEM_EXERCISE_CATALOG_ORIGIN) {
+            createdExercise = await tx.exercise.update({
+              where: { id: existingExercise.id },
+              data: {
+                muscleGroup: templateIdentity.muscleGroup,
+                category: templateIdentity.category,
+                defaultRestSec: templateIdentity.defaultRestSec,
+                notes: templateIdentity.notes,
+                equipmentType: templateIdentity.equipmentType,
+                ...classificationMetadataAfterServerUpdate(existingExercise, templateIdentity),
+              },
+            });
+          } else {
+            createdExercise = existingExercise;
+          }
 
           await tx.programExercise.create({
             data: {

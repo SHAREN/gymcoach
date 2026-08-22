@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Muscle heat map on the progress page: front and back body silhouettes whose
+  regions are tinted by the latest completed week's working sets per muscle
+  group, compared against that muscle's MEV/MRV band (a personal volume target
+  wins over the defaults, exactly as the volume-landmarks card). Untrained,
+  under-MEV, in-band and over-MRV read as four steps of one warm ramp, checked
+  for separation in light and dark and for common color-vision deficiencies;
+  every region is labelled and keyboard-reachable for screen readers. Derived
+  on read from existing set history - display-only, and it never affects
+  progression.
+- ChatGPT / external-agent MCP connector: an authenticated Streamable HTTP
+  MCP endpoint exposes your training context and program editing to any
+  MCP-compatible agent. Access uses per-user bearer tokens created in
+  Settings - stored as SHA-256 hashes, read-only by default, write-scoped
+  only on explicit opt-in, revocable anytime; every tool is bound to the
+  token owner's data and write tools require an explicit confirmation
+  argument. Community contribution by @SHAREN (#276).
+- Exercise technique media: about 80 catalog exercises now show start/end
+  position photos in the logger and the catalog, vendored from the Unlicense
+  free-exercise-db project - served locally, no hotlinking, no tracking.
+  Community contribution by @SHAREN (#275).
+- Saved gyms and equipment-aware load selection: describe each gym you train
+  in (dumbbells, plates, bars, machines) and load suggestions round to what
+  is actually loadable there, including plate-math reachability for barbells.
+  The backup export/import round-trips gym profiles (v3). Community
+  contribution by @SHAREN (#274).
+- Per-set workout autoregulation: during a session, the suggested next set
+  adapts to how the previous one actually went, in two modes (keep effort
+  stable and let reps drift, or adjust load to keep reps stable). Changes are
+  conservative by design - clamped per set, increases gated behind readiness
+  and deload state, and always just a prefill you can override. Community
+  contribution by @SHAREN (#273).
+- Progress photos alongside your body metrics: upload a photo (JPEG, PNG or
+  WebP) and compare any two side by side to see change over time, on the
+  Progress page. Storage is local-only - files live under a configurable,
+  gitignored `UPLOADS_DIR` on the server and are served solely through an
+  ownership-scoped route, never a public static path. Every upload is validated
+  by its magic bytes (not the client's declared content-type), capped in size
+  during a streamed read, and written non-executable. No cloud, no third party.
+- Interface localization: an extensible message-catalog system
+  (`messages/<locale>`) with English and Russian across the app's screens; an
+  unknown locale falls back to English. Community contribution by @SHAREN
+  (#272), which also added the OpenAI-Responses-compatible `codex-lb` LLM
+  provider option.
+- Aerobic decoupling (HR drift) on an imported cardio session: the history
+  detail page now shows how much your pace-per-heartbeat efficiency faded
+  between the first and second half of a run or ride, with a plain-language
+  read ("held steady" under ~5 percent, "faded" above). Derived purely from
+  the stored activity track (cumulative distance + heart rate); shown only
+  when the track can support it, and it changes no schema or API.
+- Import your training history from a GymCoach-native CSV: the symmetric
+  inverse of the history CSV export brings the same columns back in through
+  the hardened import pipeline (streamed size/row caps, Zod on every value,
+  dry-run preview with per-line errors, exact-duplicate skipping,
+  transactional confirm, ownership-scoped exercises). It un-escapes the
+  export's formula-injection guard for a true round-trip, and the Strong and
+  Hevy import paths are unchanged (pinned byte-identical by tests).
 - Multi-user accounts: registration, profiles, per-user data isolation, and
   rate limiting.
 - Workout logging with sets, reps, RIR, warmups, and drop sets.
@@ -274,11 +330,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The plate-calculator fallback inventory is editable again in Settings, in
+  both kilograms and pounds. Its editor had been dropped when saved gyms
+  landed, leaving the no-active-gym fallback (and the only place an lb plate
+  inventory lives) unreachable from the UI. The restored card also displays
+  the stored values properly - its inputs were uncontrolled before, so
+  hydrated bars and plates never showed - and settings cards now re-read
+  stored preferences before every write, so editing plates and then toggling
+  another setting no longer reverts the plates.
+- A hung `codex-lb` upstream can no longer stall an AI request forever: the
+  request is aborted if response headers do not arrive within 120 seconds and
+  surfaces as a 504 instead of hanging.
+- Two concurrent `scripts/verify.sh --full` runs no longer corrupt each other:
+  the integration and E2E tiers take a machine-wide lock, so the second run
+  waits for the shared test database and dev port instead of truncating tables
+  under the first run's suite.
+- The E2E suite is repeatable back to back: each spec file now signs up from its
+  own client IP (`x-forwarded-for`) instead of sharing the default
+  `register:<ip>` bucket, so a second run started inside the rate limit's 60s
+  window no longer reds unrelated specs. The registration rate limit itself is
+  unchanged.
+- Restoring a backup no longer fails on a file that carries the same saved-gym
+  name twice: the first gym of that name is kept and later duplicates are
+  skipped, instead of the unique-name constraint aborting the whole restore.
+  Imported gym weight arrays are also normalized (rounded, deduped, sorted)
+  exactly as the gym editor does, so a hand-edited file cannot store a shape
+  the app would never write.
 - Neutralized leading formula characters in the CSV history export so
   imported exercise names or notes cannot plant spreadsheet formulas
   (CSV/DDE injection) in an exported file.
 - Mapped the popover color token so dropdown menus render opaque instead of
   transparent.
 - Used a literal `DATABASE_URL` in the E2E CI job environment.
+
+### Security
+
+- Hardened the MCP endpoint: setting `MCP_ALLOWED_ORIGINS` and/or
+  `MCP_ALLOWED_HOSTS` turns on DNS-rebinding protection and makes CORS echo
+  only allowlisted origins (with `Vary: Origin` on both the allow and the deny
+  answer) instead of `*`. Both are opt-in, so existing deployments keep their
+  current behavior until they set them. The MCP training-context tool also
+  stopped selecting the token owner's email address, which it never used.
+- Hardened progress-photo storage: deleting a photo now unlinks the file before
+  its row, so an unlink failure other than "already gone" keeps the photo
+  listed instead of orphaning bytes; path containment resolves symlinks
+  (`realpath`) on top of the textual check; and per-user directories are
+  `0o700` (files stay `0o600`), including directories created by an earlier
+  version.
+- Session cookies are now `Secure` by default in production; self-hosting over
+  plain HTTP requires an explicit `SESSION_COOKIE_SECURE=false` opt-out.
 
 [Unreleased]: https://github.com/Julien-Au/gymcoach/commits/main

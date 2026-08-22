@@ -1,0 +1,10 @@
+-- Compatibility no-op for the SHAREN production migration history.
+--
+-- The exact same SQL was already applied under
+-- 20260711033000_add_intra_set_autoregulation before upstream accepted the
+-- feature under this later migration name. Keeping this directory lets Prisma
+-- record the upstream migration name without attempting to recreate the enum
+-- and ProgramExercise columns on existing SHAREN databases.
+--
+-- Fresh databases also run the earlier migration first, so no SQL is required
+-- here.

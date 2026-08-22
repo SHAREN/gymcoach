@@ -27,6 +27,7 @@ import {
 } from '@/lib/cardio';
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { sorenessSchema } from '@/lib/schemas/readiness';
+import { gymWeightListSchema } from '@/lib/schemas/gym';
 import { assertLegacySetEquipmentSnapshotConsistency } from '@/lib/set-equipment';
 import { ensureGymSystemProfiles } from '@/lib/gym-system-profiles';
 import { resolveEquipmentType } from '@/lib/gym-loads';
@@ -576,9 +577,9 @@ const importSchema = z.object({
       z.object({
         name: z.string().trim().min(1).max(80),
         inventoryMode: z.nativeEnum(GymInventoryMode).optional(),
-        dumbbellWeights: z.array(z.number().min(0.1).max(5000)).max(200),
-        plateWeights: z.array(z.number().min(0.1).max(5000)).max(200),
-        barWeights: z.array(z.number().min(0.1).max(5000)).max(200),
+        dumbbellWeights: gymWeightListSchema,
+        plateWeights: gymWeightListSchema,
+        barWeights: gymWeightListSchema,
         platePools: z
           .array(
             z.object({
@@ -612,7 +613,7 @@ const importSchema = z.object({
               modelName: z.string().max(120).nullable().optional(),
               quantity: z.number().int().min(1).max(100),
               loadType: z.nativeEnum(EquipmentLoadType).optional(),
-              weightOptions: z.array(z.number().min(0.1).max(5000)).max(200),
+              weightOptions: gymWeightListSchema,
               selectedLoadMultiplier: z.number().positive().max(20).optional(),
               baseLoadKg: z.number().min(0).max(5000).optional(),
               platePoolCompatibilityKey: z.string().max(80).nullable().optional(),
@@ -640,10 +641,10 @@ const importSchema = z.object({
             z.object({
               exerciseName: z.string().max(120),
               isAvailable: z.boolean(),
-              weightOptions: z.array(z.number().min(0.1).max(5000)).max(200),
-              dumbbellWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
-              plateWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
-              barWeights: z.array(z.number().min(0.1).max(5000)).max(200).default([]),
+              weightOptions: gymWeightListSchema,
+              dumbbellWeights: gymWeightListSchema.default([]),
+              plateWeights: gymWeightListSchema.default([]),
+              barWeights: gymWeightListSchema.default([]),
               isEquipmentMirror: z.boolean().optional(),
               systemProfileSupported: z.boolean().nullable().optional(),
               preferredEquipmentName: z.string().trim().min(1).max(120).nullable().optional(),
@@ -941,6 +942,7 @@ export async function POST(req: Request) {
         const gymIdByName = new Map<string, string>();
         const equipmentIdByGymAndName = new Map<string, string>();
         for (const gym of payload.gyms ?? []) {
+          if (gymIdByName.has(gym.name)) continue;
           const configs = gym.exerciseConfigs.flatMap((config) => {
             const exerciseId = exerciseIdByName.get(config.exerciseName);
             return exerciseId

@@ -105,6 +105,20 @@ Format per entry: trigger/evidence, the lesson (actionable), and **Status** = `g
   multiple "lenses" - independence, not effort, is what catches the defect.
 - **Status:** graduated -> charter (`07-autonomy.md`, "Subagent challenge protocol"): the
   no-reviewer-available case is now an explicit rule with the post-merge backstop.
+- **Reinforced (2026-08-20).** Two of the five PRs in that batch shipped a REAL defect that
+  the author's own gate (green `verify.sh`, green CI 5/5, the author's own re-read) had
+  missed, and the independent pre-merge review found both. #297: adding a second settings
+  writer turned the pre-existing spread-own-state write pattern into a live clobber - editing
+  the plate inventory and then toggling vibration reverted the plates, because each card wrote
+  its own mount-time copy back (fixed by re-reading `localStorage` before every write in BOTH
+  writers, with a symmetric regression test). #298: the flock fd 9 leaked into the `npm`
+  children, so a zombie next-server surviving an interrupted run could hold the shared-infra
+  lock forever while the blocking `flock` had no timeout (fixed with `9>&-` on both npm calls,
+  `flock --wait 3600`, and an actionable failure message). Both defects are the same shape -
+  a *new* piece of code makes an *existing* pattern unsafe, which is exactly the blind spot an
+  author has after writing the new piece. The rate (2 real defects in 5 PRs) is the argument
+  for keeping the review pre-merge and independent even when everything is green; treat a
+  CLEAN verdict as information, not as the expected outcome.
 
 ### L9 - Gates rot, permissions creep: schedule the meta-checks
 - **Trigger:** an external loop-engineering writeup (2026-06-11) listed two failure modes
@@ -182,3 +196,78 @@ Format per entry: trigger/evidence, the lesson (actionable), and **Status** = `g
 - **Trigger:** twice now (#259 GPX-track on 2026-06-23, and the TCX-track work on 2026-06-30) I committed and pushed a feature DIRECTLY to `main`. Both times the cause was identical: a prior step ended with `git switch main` (to sync / merge a previous PR), then the next task's edits started without a `git switch -c` - so the work landed on `main`, bypassing the PR + pre-merge review gate (a CLAUDE.md rule).
 - **Lesson:** the dangerous moment is the START of a new unit of work that follows a `main` checkout. Make branching the FIRST action of any task that will edit files - `git switch -c <type>/<slug>` before the first Edit/Write, not after. Recovery when it happens anyway: CI runs on push to `main` (so the change is still gated), but run the independent review POST-HOC and fix any finding forward via a real PR; never force-push to "undo" shared `main`. Both slips ended green + reviewed SHIP, but a gate-skip is exactly what the charter forbids - the fix is the habit, not the recovery.
 - **Status:** standing rule. If a turn begins on `main` and will write code, branch first.
+
+### L15 - Concurrent ticks must not share one working tree: isolate with git worktrees, or serialize
+- **Trigger:** 2026-07-15 batch. Two ticks ran against the SAME checkout at once: the #278
+  ship tick did `git switch main` (to sync the merged PR) while the #270 dev tick still had
+  uncommitted work in that same tree. The switch + a stray commit put an intermediate commit
+  (`a49e21f`) directly on `main` - a breach of hard guardrail 1 (never commit to `main`).
+  This is a DIFFERENT cause than L14: L14 is one writer forgetting to branch; L15 is two
+  writers sharing one tree, where even a correctly-branched tick is unsafe because another
+  tick can move `HEAD`/`main` and capture its uncommitted work. Remediated without
+  force-push: revert `fe25d66` restored `main` to `b2221f5` exactly (CI green), work
+  cherry-picked onto a feature branch and shipped as PR #279.
+- **Lesson:** a git checkout is single-writer state. Two ticks in one working tree race on
+  `HEAD`, the index, and the branch pointer - one tick's `git switch`/commit can strand or
+  mis-attribute the other's work onto `main`. The orchestrator must give each concurrently
+  running dev/ship tick its OWN git worktree (`git worktree add`), so branch checkouts and
+  commits never collide; until worktree isolation is in place, same-checkout ticks must be
+  strictly SERIALIZED (never overlap two ticks in one tree). Extends L7/L11 ("one writer per
+  checkout") from same-file and zombie-writer cases to the general concurrent-tick case, and
+  makes the control structural (separate trees) rather than behavioral (remember to branch).
+- **Status:** graduated -> `06-orchestration.md` ("Concurrent ticks: one worktree each"):
+  concurrent dev/ship ticks get isolated `git worktree`s; without isolation, serialize
+  same-checkout ticks. Recovery when a commit still lands on `main`: revert forward (never
+  force-push shared history), then re-ship via a proper PR.
+
+### L16 - Isolated worktrees are not enough: the shared test Postgres (:5434) and dev port (:3031) also need a lock
+- **Trigger:** 2026-07-22 batch. Two loop sessions ran `bash scripts/verify.sh --full` at the
+  same time from SEPARATE git worktrees (so L15 was satisfied - no shared checkout). They still
+  collided on shared INFRA: both point at the one test Postgres on host port 5434 and both bind
+  the dev/E2E server on 3031. One run's `TRUNCATE ... CASCADE` reset the DB while the other was
+  mid-suite, and the port was contended, yielding a spurious E2E failure that was green on an
+  isolated re-run.
+- **Lesson:** worktree isolation fixes the git-state race (L15) but not the runtime-infra race.
+  The integration/E2E tiers assume single-tenant ownership of :5434 and :3031; two concurrent
+  `--full` runs violate that assumption and corrupt each other non-deterministically. The fix is
+  structural (a lock around those tiers, or a per-run unique DB name + free port), not "remember
+  not to overlap."
+- **Status:** graduated -> filed **#283** to serialize-or-isolate the shared test infra. INTERIM
+  rule until #283 lands: the orchestrator must not run two `verify.sh --full` invocations against
+  :5434/:3031 concurrently - serialize them (a green isolated re-run of the failed tier is the
+  tell that a red was this contention, not a regression; acknowledge the actual failing step
+  before re-planning, per L2).
+- **Resolved by #298 on 2026-08-20.** `scripts/verify.sh --full` now takes a machine-wide
+  `flock` on `${TMPDIR:-/tmp}/gymcoach-test-infra.lock` around the integration and E2E tiers,
+  so a second concurrent run prints a wait notice and blocks instead of truncating the first
+  run's database. Verified against a real 300s lock holder rather than asserted. The control
+  is structural, so the interim "do not overlap two `--full` runs" rule is retired - but the
+  lock is per machine and per lock file: two runs with different `TMPDIR`s, or an integration
+  tier invoked outside `verify.sh`, still bypass it.
+
+### L17 - The E2E tier is not repeatable back to back: the app's own register rate limit reds unrelated specs
+- **Trigger:** 2026-07-27 batch (#282). One tick ran `verify.sh --full` and then, to confirm a
+  flake, re-ran the E2E tier twice more within a couple of minutes. Different specs failed each
+  time (`measurements` on `ECONNRESET`, then `auth` + `deload` stuck on `/signup`) while the
+  change under test touched only progress-photo storage. CI, running the suite once, was green
+  on the first try.
+- **Lesson:** the E2E specs sign up through the real API, which enforces `register:<ip>` at 5 per
+  60s. A suite run consumes most of that budget, so a second run inside the window starves the
+  specs that sign up through the UI (the ones that cannot set a distinct `x-forwarded-for`). This
+  is self-inflicted: re-running "to check the flake" is exactly what causes the next red, and the
+  moving target of which spec fails is the tell. Distinct from L16 - that is two CONCURRENT runs
+  contending on shared infra; this is one session running SEQUENTIALLY too fast.
+- **Status:** graduated -> `CLAUDE.md` (green-gate section) now states the tier is not safely
+  repeatable inside a minute and how to read an auth/signup red after a recent run. Filed **#292**
+  to make the UI-signup specs use a per-spec client IP so the suite stops sharing one bucket.
+- **Resolved by #294 on 2026-08-20.** The root cause (one shared bucket) is gone: the five specs
+  that sign up through the UI now each set a dedicated `x-forwarded-for` via
+  `test.use({ extraHTTPHeaders })`, and three client IPs accidentally reused across API-signup
+  specs were deduped. The rate limit itself was left untouched (fix the code, not the test).
+  Acceptance was measured, not assumed: a second `npm run test:e2e` started immediately after the
+  first, inside the 60s window, was green 17/17 both runs. `CLAUDE.md` now says back-to-back runs
+  are expected green. Residual caveat kept: the guarantee is bounded, not unconditional - on CI
+  (`retries: 2`) one flaky spec can burn up to three of its bucket's five registers, so a flaky
+  run combined with a re-run inside the same minute can still trip the limit. The interim "wait
+  out the minute" rule is retired; **#283** (concurrent runs sharing
+  :5434/:3031, lesson L16) is a different race and is still open.

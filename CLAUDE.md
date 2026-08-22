@@ -33,6 +33,27 @@ CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit, integration, build
 and E2E on every PR. The default gate mirrors the fast, DB-free part so a loop
 can catch its own regressions locally.
 
+**Back-to-back E2E runs are expected green.** The specs still register users
+through the app's real per-IP rate limit (`register:<ip>`, 5 per 60s), but since
+#294 every spec file sends its own `x-forwarded-for`, so no two specs share a
+bucket and a second `--full` run inside the same minute is green (verified 17/17
+on two consecutive runs). Two residual caveats: the guarantee is bounded, not
+unconditional - on CI (`retries: 2`) a spec that flakes can burn up to three of
+its bucket's five registers, so a flaky run plus a re-run inside the same minute
+can still trip the limit; and two concurrent `verify.sh --full` runs are a
+different, unrelated race, now handled by the lock below. History: lesson L17,
+resolved by #294.
+
+**Concurrent `--full` runs serialize themselves.** Since #298 the integration
+and E2E tiers run under a machine-wide `flock` on
+`${TMPDIR:-/tmp}/gymcoach-test-infra.lock`, so a second run prints a wait notice
+and blocks instead of truncating the first run's tables on the shared test
+Postgres (:5434) / dev server (:3031). If a run waits unexpectedly long, an
+interrupted run's leftover process may hold the lock: `fuser -v` the lock file.
+The lock is per machine and per lock file - a different `TMPDIR`, or an
+integration tier invoked outside `verify.sh`, bypasses it. History: lesson L16,
+resolved by #298.
+
 **Fix the code, never the test.** A red gate is fixed at its cause. Deleting or
 skipping a test, loosening an assertion, or silencing an error to get green is
 forbidden - it improves the scoreboard, not the code. A diff that weakens a test

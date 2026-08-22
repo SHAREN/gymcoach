@@ -263,3 +263,179 @@ The thrice-flagged local-vs-UTC week-helper skew was fixed for all consumers in 
 **Skim:** #156 (display-only card), #163 (UTC getters, 2-line change, suite verified
 under TZ=America/New_York for the first time), this write-up (demo seed gains a superset
 pairing; all four clips re-recorded at the staleness cap).
+
+---
+
+## 2026-07-15 - batch #278/#279: aerobic decoupling + GymCoach-native CSV import
+
+Merged: #278 (aerobic-decoupling readout on imported cardio, display-only), #279
+(GymCoach-native CSV history import through the shared hardened import pipeline). One
+hard-guardrail-1 breach this batch (an intermediate commit hit `main` directly from a
+shared working tree; reverted forward and re-shipped as #279 - see the autonomy-log entry
+and lesson L15).
+
+**Read first, in order:**
+
+1. **#279 - the new import path and the shared-planner change.** `gh pr diff 279`. Highest
+   risk x impact: an untrusted-input parser (`lib/import/gymcoach-csv.ts`) plus a new
+   ownership-scoped API route (`app/api/import/gymcoach/route.ts`) plus an ADDITIVE change
+   to the shared planner/executor that also feeds the Strong and Hevy imports
+   (`lib/import/strong-import.ts`). Read for two properties: (a) the Strong/Hevy paths stay
+   byte-identical (pinned by the new `strong-import.test.ts` cases), and (b) the parser
+   un-escapes the export's formula-injection guard only for the round-trip and does not
+   re-introduce an injection sink. Security lens already READY; this is the diff to
+   understand fully.
+2. **#278 - the decoupling math.** `gh pr diff 278`. `trackDecoupling()` in `lib/cardio.ts`:
+   midpoint split, per-half efficiency = speed / mean HR, null-guards for degenerate tracks.
+   Display-only (a server component on the history detail page), no schema/API change, so
+   lower risk - but worth a skim to confirm the null-when-unsupportable behavior and that no
+   lifting metric is touched.
+
+**Skim:** this write-up (CHANGELOG + README decoupling bullet, lesson L15, the
+06-orchestration "one worktree each" rule). The #272-#276 fork stack is untrusted and NOT
+merged - do not review it as loop work; it awaits human vetting.
+
+**Media note:** the history detail page gained the decoupling readout, but it is not in the
+captured screenshot set (home/progress/generator/catalog + the 4 flow GIFs), so no shot is
+due for it. The recorded GIFs (dated 2026-06-12) now lag several feature batches; none of
+the new cardio/import work is a clip scenario, so this is noted as lag, not a blocker for a
+docs tick - a periodic re-record is due soon.
+
+---
+
+## 2026-07-22 - progress photos (#281) + a human-directed fork adoption (#272)
+
+Merged since the last digest: **#281** (progress photos, loop-authored) and **#272**
+(localization + a security hardening, a concurrent session's fork adoption confirmed by the
+operator). Read these first, highest risk x impact:
+
+1. **#272 - the security-relevant slice of the fork adoption.** `gh pr diff 272`. This is
+   EXTERNAL code (author `SHAREN`, a fork) merged by a concurrent session and kept by operator
+   decision - so it deserves your eyes more than loop-authored work, not less. Focus on the two
+   files that are not translation strings: `lib/auth.ts` (session cookies now `Secure` by
+   default in production, with a `SESSION_COOKIE_SECURE=false` opt-out - confirm the opt-out is
+   the only escape hatch and that HTTP self-hosters get a clear default) and
+   `app/api/programs/from-template/route.ts` (rerouted through `buildProgramFromGenerated` so
+   instantiating a template can no longer overwrite user-authored exercise metadata - confirm
+   that reuse is faithful). The `messages/en|ru/*` catalogs are low-risk string data.
+2. **#281 - the file-upload surface.** `gh pr diff 281`. Highest intrinsic risk of the two by
+   design (a new upload endpoint + local file storage + an additive migration). Two independent
+   skeptics (correctness + security) already returned READY, but if you read one loop diff this
+   batch, read this: the sniffer (`lib/progress-photo.ts`, magic-byte allowlist as sole type
+   authority + `resolveInsideStorageDir` containment), the capped streamed read and 404-no-oracle
+   ownership routes (`app/api/progress-photos/**`), and the additive migration. Non-blocking
+   hardening is tracked in #282.
+
+**Skim:** this write-up (CHANGELOG Added: progress photos + localization, Security: cookie
+default; README features/roadmap; lesson L16; autonomy-log). The remaining SHAREN PRs
+#273-#276 are untrusted and NOT merged - do not review them as loop work; they await human
+vetting.
+
+**Media note:** the Progress page gained a photos card, but it renders an empty state until
+demo photos are seeded (`scripts/seed-demo-history.ts` has none yet), so no screenshot re-shoot
+is worthwhile until the demo seed carries a couple of photos - noted as a small demo-media
+follow-up, within the staleness cap.
+
+## 2026-07-27 - backup gym import (#290) + progress-photo storage hardening (#291)
+
+Merged since the last digest: **#290** and **#291** (both loop-authored, from follow-up issues
+the previous batch's reviews filed), plus **#288** (docs thanking the fork contributor) and
+**#289** (CI: more headroom for the Docker smoke job on a cold cache). Read these first:
+
+1. **#291 - the file-storage security surface.** `gh pr diff 291`. It changes the containment
+   check that every photo read, write and delete goes through (`lib/progress-photo.ts`): the
+   textual `startsWith` check now has a `realpath` companion resolved against the deepest
+   existing component of the target. Read it for the case where the storage dir itself does not
+   exist yet (containment then compares two identical ancestors - intended, nothing to escape)
+   and for the delete-ordering swap in `app/api/progress-photos/[id]/route.ts`, which trades
+   "row gone, file orphaned" for "file gone, row retryable".
+2. **#290 - the restore path.** `gh pr diff 290`. Backup restore runs in one transaction over a
+   user's whole dataset, so a change to what it accepts is worth a look: gym weight arrays are
+   now parsed with the same schema the gym API uses (which also means `z.coerce.number()`, so a
+   numeric string in a hand-edited file is now accepted rather than rejected), and duplicate gym
+   names are skipped instead of aborting the restore. Both are covered by an integration test
+   that was confirmed to fail without the fix.
+
+**Skim:** this write-up (CHANGELOG Fixed + Security, README uploads paragraph, lesson L17, the
+new `CLAUDE.md` note on re-running the E2E tier), #288 and #289.
+
+**Media note:** still no re-shoot. The captured pages HAVE drifted since 2026-06-18 (the catalog
+and logger now show exercise technique media, the Progress page has a photos card), so the
+screenshots are the oldest debt in this repo - but the Progress card renders empty until the demo
+seed carries photos, so the shoot is worth doing once, after `scripts/seed-demo-history.ts` seeds
+a couple of demo photos. That is the next media tick, not this one; it is now at the edge of the
+~3-batch staleness cap.
+
+## 2026-08-20 - E2E signup IPs (#294), the pipeline fix that closes lesson L17
+
+One PR merged since the last digest: **#294** (closes #292, filed by the previous batch's own
+lesson L17). It is test infrastructure only - no product code, no schema, no prompts - but it
+touches the **pipeline**, which is the high-priority tier of the rule above, so it is worth one
+read:
+
+1. **#294 - who the E2E suite looks like to the rate limiter.** `gh pr diff 294`. The five specs
+   that sign up through the UI (auth, bodyweight, deload, goals, import) now each set a dedicated
+   `x-forwarded-for` through `test.use({ extraHTTPHeaders })`, and three IPs that had been reused
+   across API-signup specs were deduped. Read it for one thing: the fix moves the *tests* off the
+   shared bucket and leaves `register:<ip>` (5 per 60s) exactly as users experience it - the gate
+   was fixed at the test's assumption, not by loosening the product's limit. Worth knowing that
+   the suite now depends on the app trusting `x-forwarded-for` in the E2E environment.
+
+**Skim:** this write-up (CHANGELOG Fixed, the rewritten `CLAUDE.md` green-gate paragraph, the
+resolution note on lesson L17, autonomy-log entry).
+
+**Caveat to carry:** back-to-back E2E is green now, but bounded - on CI (`retries: 2`) a single
+flaky spec can spend three of its bucket's five registers. And #283 (two concurrent `verify.sh`
+runs contending on :5434/:3031, lesson L16) is untouched and still open; do not read #294 as
+having fixed that one.
+
+**Media note:** nothing user-visible shipped this batch, so no screenshot or clip work is owed by
+it. The pre-existing debt stands unchanged: the captured pages have drifted since 2026-06-18 and
+the re-shoot is still waiting on `scripts/seed-demo-history.ts` seeding a couple of progress
+photos. It is now past the edge of the ~3-batch staleness cap and should be the next media tick.
+
+## 2026-08-20 - five-PR batch: MCP hardening (#296), plate fallback (#297), infra lock (#298), ideation (#305), muscle heat map (#306)
+
+Merged since the last digest: **#296** (closes #287), **#297** (closes #285), **#298** (closes
+#283), **#305** (the ideate batch record for #299-#304) and **#306** (closes #299). All five are
+loop-authored, all five passed CI 5/5 and an independent pre-merge review, and two of those
+reviews found a real defect that was fixed on the branch before merge. Read these first:
+
+1. **#296 - the externally reachable surface.** `gh pr diff 296`. This is the only diff in the
+   batch that changes what a remote party can do: `lib/mcp/cors.ts` decides which `Origin` the
+   MCP endpoint echoes and whether the transport's DNS-rebinding protection is armed. Read it for
+   the opt-in semantics (unset envs preserve today's open behavior, so an existing deployment is
+   not silently hardened *or* silently broken), for CORS keying off `MCP_ALLOWED_ORIGINS` alone
+   while `MCP_ALLOWED_HOSTS` only arms rebinding protection, and for `Vary: Origin` being sent on
+   the deny branch too (without it a shared cache can serve a deny to a later allowlisted
+   origin). The `get_training_context` email drop is one line and needs no review time.
+2. **#298 - the gate protecting every other gate.** `gh pr diff 298`. A bug here silently
+   weakens or hangs the green-gate itself. Read the lock lifecycle: `exec 9>`, non-blocking
+   attempt, wait notice, `flock --wait 3600`, and `9>&-` on both `npm` invocations so the lock fd
+   does not survive into a test child. The `9>&-` is the review finding - without it a zombie
+   next-server holds the lock for its whole lifetime while the waiter blocks forever.
+3. **#297 - the settings write race.** `gh pr diff 297`. The restored card is plain UI, but the
+   review finding is worth reading as a pattern: two components that each hydrate a copy of one
+   `localStorage` blob and write `{...ownState, key: value}` back will clobber each other's edits
+   as soon as the second one exists. Both writers now re-read before writing. The symmetric
+   regression test is the part to check.
+4. **#306 - the money shot.** `gh pr diff 306`. Additive display-only UI on the progress page, so
+   it ranks last by risk, but it is the batch's visible feature: `lib/muscle-map.ts` maps weekly
+   working sets per muscle group to heat levels through the SAME `classifyWeeklySets` /
+   `resolveVolumeBand` path as the volume-landmarks card (so the two cards can never disagree),
+   and nothing feeds back into progression. Skim the mapping table for muscle-group coverage;
+   `OTHER` is deliberately unpainted.
+
+**Skim:** #305 (the ideation record) and this write-up (CHANGELOG Added/Fixed/Security, the README
+feature bullet and roadmap line, the L8 reinforcement and L16 resolution note, the `CLAUDE.md`
+concurrency paragraph, autonomy-log).
+
+**Carry forward:** #300-#304 (recap poster, strength level badges, GPX route drawing, year-long
+training heatmap, PR celebration) remain in the backlog, unimplemented.
+
+**Media note:** the progress page changed visibly this batch and the muscle heat map is the money
+shot for both a screenshot and a clip - neither was captured here (this tick does not launch the
+app). The re-shoot is now the highest-value media debt: `progress.png` predates the photos card
+AND the heat map, and no committed clip shows either. Next media tick should seed a couple of
+demo progress photos in `scripts/seed-demo-history.ts`, re-shoot the progress page, and re-record
+the progress scenario in one pass.

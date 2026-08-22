@@ -74,8 +74,9 @@ on your own key - all self-hosted.
   navigation and superset-aware rest.
 - **Readiness check-in** - an optional pre-session soreness/readiness prompt that
   auto-regulates the suggested load and says why it held or dropped.
-- **Quality-of-life** - kilograms or pounds per user, multi-user with strict
-  per-user data isolation, and an installable PWA with offline logging.
+- **Quality-of-life** - kilograms or pounds per user, an interface in English or
+  Russian (extensible message catalogs), multi-user with strict per-user data
+  isolation, and an installable PWA with offline logging.
 
 ### Track progress
 
@@ -83,6 +84,9 @@ on your own key - all self-hosted.
   percentage loading table.
 - **Volume and frequency** - weekly volume per muscle group with MEV/MRV landmark
   bands, and per-muscle weekly training frequency.
+- **Muscle heat map** - front and back body silhouettes tinted by last week's
+  working sets per muscle against its MEV/MRV band, so a neglected or
+  over-cooked area is one glance away.
 - **Records and consistency** - an all-time records board, personal-record badges
   in-session and on the summary, and a training-consistency calendar.
 - **Auto-regulation** - stalled-lift detection and a deload recommendation from
@@ -90,6 +94,8 @@ on your own key - all self-hosted.
   10% until it expires.
 - **Goals and body comp** - per-exercise goals (weight x reps) with a progress
   bar, bodyweight tracking, and body measurements - each with a trend.
+- **Progress photos** - upload photos alongside your body metrics and compare
+  any two side by side. Stored locally on your server, visible only to you.
 - **Home dashboard** - a coach-insight card surfaces the single most important
   signal right now (due deload, stalled lift, fresh PR, or your weekly streak),
   with no AI call.
@@ -102,7 +108,8 @@ on your own key - all self-hosted.
 - **Watch-file import, no cloud** - bring activities in as **TCX, GPX or Garmin
   FIT** (duration, distance, heart rate; no OAuth, no cloud account). FIT imports
   a whole batch at once, and every imported run or ride shows a
-  **heart-rate-over-time chart** on the session detail.
+  **heart-rate-over-time chart** plus its **aerobic decoupling** (how much your
+  pace per heartbeat drifted over the effort) on the session detail.
 
 ### Huawei Watch companion
 
@@ -271,6 +278,17 @@ The demo account credentials come from `.env` (`USER_EMAIL` and `USER_PASSWORD`)
 
 All configuration is done through environment variables. See `.env.example` for the full list (database, JWT secret, demo account, and the AI provider keys).
 
+### Progress photos / uploads
+
+Progress photos are stored as plain files on the server's local filesystem,
+under `UPLOADS_DIR` (default `./uploads`, gitignored) - no cloud, no third
+party. Images are served only through an ownership-scoped API route, never as
+a public static path. Files are written owner-only (`0o600`) inside per-user
+directories created `0o700`, and every stored path is re-resolved (symlinks
+included) inside the uploads dir before it is read, written or deleted. If you
+self-host with Docker, mount that directory as a volume and include it in your
+backups alongside the database.
+
 ## Testing
 
 Three tiers: unit/component (Vitest + jsdom), integration (Vitest against a
@@ -395,12 +413,26 @@ than CI reaching in to a small VPS.
       session attached)
 - [x] Free-text (AI-parsed) set logging (opt-in "Parse with AI" fills the set
       form from plain language; you confirm before it logs)
+- [x] Progress photos (local-only upload with side-by-side compare)
+- [x] Interface localization (English and Russian, extensible message catalogs)
+- [x] Muscle heat map (body silhouettes tinted by weekly volume vs MEV/MRV)
 
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
 conventions and the test commands. Notable changes are tracked in the
 [CHANGELOG](CHANGELOG.md).
+
+### Thanks
+
+- [@SHAREN](https://github.com/SHAREN) - first external contributor, and a
+  big one: interface localization with Russian (#272), per-set workout
+  autoregulation (#273), saved gyms with equipment-aware load selection
+  (#274), exercise technique media (#275), and the ChatGPT / MCP connector
+  (#276). Along the way they also found and fixed a latent `.gitignore` bug
+  that shadowed an API route in fresh clones.
+- Exercise technique photos come from
+  [free-exercise-db](https://github.com/yuhonas/free-exercise-db) (Unlicense).
 
 ## License
 

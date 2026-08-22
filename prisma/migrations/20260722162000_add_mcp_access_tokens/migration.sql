@@ -1,0 +1,9 @@
+-- Compatibility no-op for the SHAREN production migration history.
+--
+-- The exact same SQL was already applied under
+-- 20260711210000_add_mcp_access_tokens before upstream accepted the feature
+-- under this later migration name. Keeping this directory lets Prisma record
+-- the upstream migration name without recreating McpAccessToken.
+--
+-- Fresh databases run the earlier SHAREN migration first, so no SQL is needed
+-- here.

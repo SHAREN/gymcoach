@@ -58,6 +58,7 @@ function renderDashboard() {
       ]}
       weeklyPoints={[]}
       volumeLandmarks={null}
+      muscleMap={[]}
       defaultBand={{ mev: 10, mrv: 20 }}
       recap={[]}
       unit="KG"

@@ -154,6 +154,7 @@ export async function buildProgramFromGenerated(
             },
           }));
 
+        const autoregDefaults = defaultIntraSetConfig(exercise);
         await tx.programExercise.create({
           data: {
             workoutId: workout.id,

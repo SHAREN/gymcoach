@@ -42,6 +42,8 @@ import {
   type ProgressChartRange,
 } from '@/lib/progress-chart';
 import { ExerciseGoalCard, type GoalView } from '@/components/progress/exercise-goal-card';
+import { MuscleMapCard } from '@/components/progress/muscle-map-card';
+import type { MuscleMapRegion } from '@/lib/muscle-map';
 import { VolumeTargetEditor } from '@/components/progress/volume-target-editor';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 
@@ -97,6 +99,8 @@ interface Props {
   exercisePoints: ExerciseChartPoint[];
   weeklyPoints: SerializedWeeklyPoint[];
   volumeLandmarks: VolumeLandmarks | null;
+  // Issue #299: silhouette regions for the same week as volumeLandmarks.
+  muscleMap: MuscleMapRegion[];
   // Issue #211: the user's saved per-muscle targets (muscleGroup -> band) and
   // the global defaults, for the inline editor.
   defaultBand: { mev: number; mrv: number };
@@ -165,6 +169,7 @@ export function ProgressDashboard({
   exercisePoints,
   weeklyPoints,
   volumeLandmarks,
+  muscleMap,
   defaultBand,
   recap,
   unit,
@@ -547,6 +552,11 @@ export function ProgressDashboard({
             </ul>
           </CardContent>
         </Card>
+      )}
+
+      {/* Muscle heat map (issue #299): same week as the landmarks card */}
+      {volumeLandmarks && muscleMap.length > 0 && (
+        <MuscleMapCard regions={muscleMap} weekLabel={weekLabel(volumeLandmarks.weekKey)} />
       )}
 
       {/* Volume landmarks: latest week vs the MEV/MRV band */}

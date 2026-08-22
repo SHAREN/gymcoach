@@ -185,15 +185,6 @@ node scripts/test-worktree-cleanup.mjs || fail "Worktree cleanup regression test
 node scripts/test-harness-status.mjs || fail "stateless Dispatcher harness regression tests"
 node scripts/test-mobile-settings-incident.mjs || fail "mobile Settings incident collector tests"
 
-if [ "$FULL" = "1" ]; then
-  step "full-gate production safety preflight"
-  node scripts/test-port.mjs assert-free 3031 || fail "port 3031 preflight"
-  FULL_SNAPSHOT="$(node scripts/test-compose-safety.mjs snapshot)" || fail "test Compose preflight"
-  trap cleanup_full EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-fi
-
 step "prisma generate"
 npx prisma generate >/dev/null || fail "prisma generate"
 
@@ -214,31 +205,47 @@ JWT_SECRET="ci-build-placeholder-secret-at-least-32-chars" \
   npm run build || fail "production build"
 
 if [ "$FULL" = "1" ]; then
+  # Serialize DB/port-sharing tiers across concurrent verify runs.
+  # All worktrees share test Postgres :5434 and E2E port :3031.
+  LOCK_FILE="${TMPDIR:-/tmp}/gymcoach-test-infra.lock"
+  exec 9>"$LOCK_FILE" || fail "test-infra lock (cannot open $LOCK_FILE)"
+  if ! flock --nonblock 9; then
+    echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
+    flock --wait 3600 9 || fail "test-infra lock (still held after 60m; check for a stale verify/next/vitest process)"
+  fi
+
+  step "full-gate production safety preflight"
+  node scripts/test-port.mjs assert-free 3031 9>&- || fail "port 3031 preflight"
+  FULL_SNAPSHOT="$(node scripts/test-compose-safety.mjs snapshot 9>&-)" || fail "test Compose preflight"
+  trap cleanup_full EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
   step "start isolated test Postgres"
-  node scripts/test-compose-safety.mjs up "$FULL_SNAPSHOT" || fail "isolated test Postgres startup"
+  node scripts/test-compose-safety.mjs up "$FULL_SNAPSHOT" 9>&- || fail "isolated test Postgres startup"
 
   export DATABASE_URL="$TEST_DATABASE_URL"
 
   step "apply migrations to isolated test Postgres"
-  npx prisma migrate deploy || fail "test database migrations"
+  npx prisma migrate deploy 9>&- || fail "test database migrations"
 
   step "integration tests"
-  npx vitest run --config vitest.integration.config.ts || fail "integration tests"
+  npx vitest run --config vitest.integration.config.ts 9>&- || fail "integration tests"
 
   step "E2E tests (Playwright)"
-  node scripts/test-port.mjs assert-free 3031 || fail "port 3031 ownership preflight"
+  node scripts/test-port.mjs assert-free 3031 9>&- || fail "port 3031 ownership preflight"
   export JWT_SECRET="e2e-test-secret-at-least-32-characters"
   export LLM_PROVIDER="demo"
-  node node_modules/next/dist/bin/next start -p 3031 &
+  node node_modules/next/dist/bin/next start -p 3031 9>&- &
   E2E_PID=$!
-  node scripts/test-port.mjs wait-http http://127.0.0.1:3031/login 120000 || fail "E2E server startup"
+  node scripts/test-port.mjs wait-http http://127.0.0.1:3031/login 120000 9>&- || fail "E2E server startup"
   export E2E_EXTERNAL_SERVER=1
   export CI=1
-  npx playwright test || fail "E2E tests"
+  npx playwright test 9>&- || fail "E2E tests"
   cleanup_e2e || fail "E2E server cleanup"
 
   step "scoped test cleanup and canonical runtime comparison"
-  node scripts/test-compose-safety.mjs down "$FULL_SNAPSHOT" || fail "scoped test cleanup"
+  node scripts/test-compose-safety.mjs down "$FULL_SNAPSHOT" 9>&- || fail "scoped test cleanup"
   FULL_SNAPSHOT=""
   trap - EXIT INT TERM
 fi

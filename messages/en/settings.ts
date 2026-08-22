@@ -16,7 +16,7 @@ export const settings = {
   volumeDisplay: 'Volume',
   plateCalculator: 'Plate calculator',
   plateCalculatorDescription:
-    'Bar weight and available plates per side, used by the in-workout plate calculator. Set the values for the unit you train in.',
+    'Bar weight and available plates per side, used by the in-workout plate calculator when no saved gym is active. Set the values for the unit you train in.',
   equipment: 'Equipment ({unit})',
   barWeight: 'Bar weight ({unit})',
   platesPerSide: 'Plates per side ({unit})',

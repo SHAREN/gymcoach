@@ -1,0 +1,10 @@
+-- Compatibility no-op for the SHAREN production migration history.
+--
+-- The exact same SQL was already applied under
+-- 20260711150000_add_gym_profiles before upstream accepted the feature under
+-- this later migration name. Keeping the upstream directory allows Prisma to
+-- record the upstream migration name without trying to recreate Gym,
+-- GymExerciseConfig, EquipmentType, and related columns/indexes.
+--
+-- Fresh databases run the earlier SHAREN migration first, so no SQL is needed
+-- here.

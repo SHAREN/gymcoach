@@ -547,7 +547,6 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         db.user.findUnique({
           where: { id: principal.userId },
           select: {
-            email: true,
             unit: true,
             activeGym: {
               include: {
