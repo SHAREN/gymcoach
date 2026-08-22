@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { clearLocalePageCaches } from '@/lib/locale-cache';
 
 export function LanguageSelector({ showLabel = false }: { showLabel?: boolean }) {
   const locale = useLocale();
@@ -37,12 +38,7 @@ export function LanguageSelector({ showLabel = false }: { showLabel?: boolean })
       if (!response.ok) throw new Error('Could not update locale.');
 
       if ('caches' in window) {
-        const cacheNames = await window.caches.keys();
-        await Promise.all(
-          cacheNames
-            .filter((name) => name === 'start-url' || name.startsWith('pages'))
-            .map((name) => window.caches.delete(name)),
-        );
+        await clearLocalePageCaches(window.caches);
       }
 
       window.location.reload();
