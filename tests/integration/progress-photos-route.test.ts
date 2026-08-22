@@ -111,9 +111,13 @@ describe('POST /api/progress-photos - valid uploads', () => {
       const abs = path.join(uploadsDir, 'progress-photos', row!.storagePath);
       expect(existsSync(abs)).toBe(true);
       expect(new Uint8Array(await readFile(abs))).toEqual(bytes);
-      // Written non-executable, owner-only (0o600).
-      const mode = (await stat(abs)).mode & 0o777;
-      expect(mode).toBe(0o600);
+      const fileStat = await stat(abs);
+      expect(fileStat.isFile()).toBe(true);
+      // Windows does not expose POSIX permission bits with Unix semantics.
+      // Keep 0o600 mandatory on Linux/macOS, including production/CI.
+      if (process.platform !== 'win32') {
+        expect(fileStat.mode & 0o777).toBe(0o600);
+      }
     },
   );
 
