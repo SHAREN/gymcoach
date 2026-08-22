@@ -80,6 +80,10 @@ RUN addgroup --system --gid 1001 nodejs && \
 # bundled output on top. The standalone tree is a subset of prod-deps, so this
 # order keeps the full, correctly-resolved dependency closure.
 COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+# npm ci --omit=dev does not retain Prisma's native schema engine, while the
+# builder has already downloaded the exact engine during Prisma generation.
+# Copy that verified engine into the runner so migration startup is offline-safe.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x /app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x
 
 # Next.js standalone output.
 COPY --from=builder /app/public ./public
