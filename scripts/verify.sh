@@ -37,6 +37,7 @@ FULL=0
 TEST_DATABASE_URL="postgresql://gymcoach_test:gymcoach_test@localhost:5434/gymcoach_test"
 FULL_SNAPSHOT=""
 E2E_PID=""
+LOCK_DIR=""
 
 fail() { echo ""; echo "❌ GREEN-GATE FAILED at: $1"; exit 1; }
 step() { echo ""; echo "▶ $1"; }
@@ -71,6 +72,11 @@ cleanup_full() {
   cleanup_e2e || cleanup_status=1
   if [ -n "$FULL_SNAPSHOT" ]; then
     node scripts/test-compose-safety.mjs down "$FULL_SNAPSHOT" || cleanup_status=1
+  fi
+
+  if [ -n "$LOCK_DIR" ]; then
+    rm -rf "$LOCK_DIR" >/dev/null 2>&1 || cleanup_status=1
+    LOCK_DIR=""
   fi
 
   if [ "$original_status" -ne 0 ]; then
@@ -206,20 +212,46 @@ JWT_SECRET="ci-build-placeholder-secret-at-least-32-chars" \
 
 if [ "$FULL" = "1" ]; then
   # Serialize DB/port-sharing tiers across concurrent verify runs.
-  # All worktrees share test Postgres :5434 and E2E port :3031.
+  # All worktrees share test Postgres :5434 and E2E port :3031. Prefer
+  # flock on POSIX hosts. Git Bash on Windows does not ship flock, so use an
+  # atomic mkdir lock there instead of disabling the concurrency protection.
   LOCK_FILE="${TMPDIR:-/tmp}/gymcoach-test-infra.lock"
-  exec 9>"$LOCK_FILE" || fail "test-infra lock (cannot open $LOCK_FILE)"
-  if ! flock --nonblock 9; then
-    echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
-    flock --wait 3600 9 || fail "test-infra lock (still held after 60m; check for a stale verify/next/vitest process)"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE" || fail "test-infra lock (cannot open $LOCK_FILE)"
+    if ! flock --nonblock 9; then
+      echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
+      flock --wait 3600 9 || fail "test-infra lock (still held after 60m; check for a stale verify/next/vitest process)"
+    fi
+  else
+    LOCK_DIR="${LOCK_FILE}.d"
+    lock_waited=0
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+      if [ "$lock_waited" -eq 0 ]; then
+        echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
+      fi
+      if [ -f "$LOCK_DIR/pid" ]; then
+        lock_owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+        if [ -n "$lock_owner" ] && ! kill -0 "$lock_owner" >/dev/null 2>&1; then
+          rm -rf "$LOCK_DIR" >/dev/null 2>&1 || true
+          continue
+        fi
+      fi
+      [ "$lock_waited" -lt 3600 ] || fail "test-infra lock (still held after 60m; check for a stale verify/next/vitest process)"
+      sleep 1
+      lock_waited=$((lock_waited + 1))
+    done
+    printf '%s\n' "$$" >"$LOCK_DIR/pid" || fail "test-infra lock (cannot record owner PID)"
   fi
+
+  # Install cleanup immediately after acquiring the lock so a preflight failure
+  # cannot leave the Windows fallback lock behind.
+  trap cleanup_full EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   step "full-gate production safety preflight"
   node scripts/test-port.mjs assert-free 3031 9>&- || fail "port 3031 preflight"
   FULL_SNAPSHOT="$(node scripts/test-compose-safety.mjs snapshot 9>&-)" || fail "test Compose preflight"
-  trap cleanup_full EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
 
   step "start isolated test Postgres"
   node scripts/test-compose-safety.mjs up "$FULL_SNAPSHOT" 9>&- || fail "isolated test Postgres startup"
