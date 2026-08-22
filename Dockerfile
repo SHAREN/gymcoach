@@ -65,6 +65,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Prisma ships the matching schema engine in @prisma/engines. Point the CLI
+# at that bundled binary so migrate deploy never depends on binaries.prisma.sh
+# during container startup/restart.
+ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x
 
 # User non-root pour la securite
 RUN addgroup --system --gid 1001 nodejs && \
