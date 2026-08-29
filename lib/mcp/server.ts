@@ -61,6 +61,15 @@ import {
   historicalWorkoutImportSchema,
   importHistoricalWorkout,
 } from '@/lib/mcp/historical-workout-import';
+import { resolveMcpEntities } from '@/lib/mcp/entity-resolver';
+import { getMcpWorkouts } from '@/lib/mcp/workout-query';
+import { analyzeMcpWorkoutConflicts } from '@/lib/mcp/workout-conflicts';
+import { deleteOwnedWorkouts } from '@/lib/mcp/workout-delete';
+import {
+  historicalWorkoutDraftSchema,
+  importHistoricalWorkoutBatch,
+  previewHistoricalWorkoutBatch,
+} from '@/lib/mcp/historical-workout-batch';
 
 export const GYMCOACH_MCP_INSTRUCTIONS = `GymCoach stores the trainee's profile, gyms, equipment, programs, workout history, sets, RIR, goals and recovery signals.
 
@@ -74,7 +83,7 @@ Before creating, extending or revising a program, read gymcoach://methodology/pr
 
 Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory and call list_gyms. If the requested gym does not exist, decide with the trainee whether it starts empty or clones an owned gym, then use create_gym only after explicit confirmation. For an existing gym call get_gym_inventory and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
 
-Before importing a completed historical workout, call list_gyms and list_exercises to resolve real IDs. Preserve unknown values as unknown instead of inventing them. Use a stable importId and reuse it on retries. import_historical_workout is for completed strength sessions and may omit gymEquipmentId when the exact historical machine is unknown.
+For historical-workout repair, prefer task-oriented MCP tools instead of manually discovering opaque IDs. Use resolve_entities for bulk human-name lookup, get_workouts for exact dates/gym summaries, and analyze_historical_workout_conflicts for stale/duplicate classification. For one or many proposed imports, call preview_historical_workout_import first; it resolves human gym/exercise/equipment names and never writes. After one explicit batch confirmation, use import_historical_workouts with atomic=true when all workouts must commit together. Use delete_workout/delete_workouts only for explicitly confirmed erroneous sessions. Preserve unknown values as unknown instead of inventing them. The older import_historical_workout remains as a strict ID-oriented compatibility tool.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
@@ -291,6 +300,24 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         },
       ],
     }),
+  );
+
+  server.registerTool(
+    'resolve_entities',
+    {
+      title: 'Resolve gyms, exercises and equipment by human names',
+      description:
+        'Bulk-resolves human gym, exercise and physical-equipment names to GymCoach IDs. Uses Russian exercise display names plus the trainee recent history, active program and selected gym context. Ambiguous inputs return ranked candidates instead of silently choosing.',
+      inputSchema: {
+        gym: z.string().trim().min(1).max(120).optional(),
+        gymId: gymIdSchema.optional(),
+        exercises: z.array(z.string().trim().min(1).max(160)).max(100).default([]),
+        equipment: z.array(z.string().trim().min(1).max(160)).max(100).default([]),
+        maxCandidates: z.number().int().min(1).max(10).default(5),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async (input) => result(await resolveMcpEntities(principal.userId, input)),
   );
 
   server.registerTool(
@@ -742,6 +769,89 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'get_workouts',
+    {
+      title: 'Get workouts by human gym name and exact dates',
+      description:
+        'Returns complete session summaries for exact date-only values or a timestamp range, optionally resolving a gym by human name. Includes gym, duration, exercise/set counts, physical equipment, overlap IDs and server-derived stale-session indicators.',
+      inputSchema: {
+        gym: z.string().trim().min(1).max(120).optional(),
+        gymId: gymIdSchema.optional(),
+        dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).default([]),
+        from: historyDateTimeSchema.optional(),
+        to: historyDateTimeSchema.optional(),
+        limit: z.number().int().min(1).max(200).default(100),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async (input) => result(await getMcpWorkouts(principal.userId, input)),
+  );
+
+  server.registerTool(
+    'analyze_historical_workout_conflicts',
+    {
+      title: 'Analyze historical workout duplicates and stale sessions',
+      description:
+        'Analyzes sessions on exact dates and classifies stale multi-day/open sessions, overlaps, same-date cross-gym sessions, exact duplicates and probable duplicates. This tool never deletes anything.',
+      inputSchema: {
+        dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1).max(100),
+        sourceGym: z.string().trim().min(1).max(120).optional(),
+        targetGym: z.string().trim().min(1).max(120).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async (input) => result(await analyzeMcpWorkoutConflicts(principal.userId, input)),
+  );
+
+  server.registerTool(
+    'delete_workout',
+    {
+      title: 'Delete one historical workout',
+      description:
+        'Deletes one owned session after explicit confirmation and returns the deleted session summary. If the session is missing, already deleted or not owned, nothing is changed.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        sessionId: databaseIdSchema,
+        reason: z.string().trim().max(500).nullable().optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ sessionId, reason, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedWorkouts(principal.userId, [sessionId], reason ?? null));
+    },
+  );
+
+  server.registerTool(
+    'delete_workouts',
+    {
+      title: 'Delete historical workouts as one checked batch',
+      description:
+        'Deletes multiple owned sessions after one explicit batch confirmation. Ownership/existence of every session is checked first; if any ID is unresolved, the batch changes nothing.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        sessionIds: z.array(databaseIdSchema).min(1).max(100),
+        reason: z.string().trim().max(500).nullable().optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ sessionIds, reason, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedWorkouts(principal.userId, sessionIds, reason ?? null));
+    },
+  );
+
+  server.registerTool(
     'get_training_history',
     {
       title: 'Get exact training history',
@@ -807,6 +917,44 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         interpretation:
           'Returned sets are recorded facts. Missing RIR remains unknown. Direct and indirect totals remain separate; equivalent sets are a versioned engineering heuristic and unknown participation receives no coefficient.',
       });
+    },
+  );
+
+  server.registerTool(
+    'preview_historical_workout_import',
+    {
+      title: 'Preview a batch historical-workout import',
+      description:
+        'Resolves human gym/exercise/equipment names, validates up to 50 historical strength workouts, finds stale/duplicate conflicts on their dates and returns proposed writes. This tool never writes data.',
+      inputSchema: {
+        workouts: z.array(historicalWorkoutDraftSchema).min(1).max(50),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ workouts }) => result(await previewHistoricalWorkoutBatch(principal.userId, workouts)),
+  );
+
+  server.registerTool(
+    'import_historical_workouts',
+    {
+      title: 'Import multiple completed historical workouts',
+      description:
+        'Resolves human gym/exercise/equipment names and imports up to 50 completed historical strength workouts after one explicit confirmation. atomic=true writes all or none; atomic=false returns an independent result per workout.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        workouts: z.array(historicalWorkoutDraftSchema).min(1).max(50),
+        atomic: z.boolean().default(true),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, workouts, atomic }) => {
+      requireWrite(principal);
+      return result(await importHistoricalWorkoutBatch(principal.userId, workouts, atomic));
     },
   );
 

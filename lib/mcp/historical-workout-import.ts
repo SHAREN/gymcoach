@@ -5,6 +5,7 @@ import { resolveSetEquipmentSnapshot } from '@/lib/set-equipment';
 import { rederiveGoalAchievement } from '@/lib/set-goal-sync';
 import { databaseIdSchema } from '@/lib/schemas/database-id';
 import type { Prisma } from '@/lib/prisma-client';
+import { McpOperationError } from '@/lib/mcp/operation-error';
 
 const dateTimeWithOffset = z
   .string()
@@ -80,43 +81,109 @@ interface StoredExpectedSet {
 }
 
 export async function importHistoricalWorkout(userId: string, rawInput: HistoricalWorkoutImportInput) {
+  const written = await db.$transaction((tx) => importHistoricalWorkoutWithTx(tx, userId, rawInput));
+  await rederiveHistoricalWorkoutGoals(userId, written.exerciseIds);
+  return formatHistoricalWorkoutResult(written);
+}
+
+export async function importHistoricalWorkoutWithTx(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  rawInput: HistoricalWorkoutImportInput,
+) {
   const input = historicalWorkoutImportSchema.parse(rawInput);
   const startedAt = new Date(input.startedAt);
   const finishedAt = input.finishedAt ? new Date(input.finishedAt) : startedAt;
   if (finishedAt.getTime() < startedAt.getTime()) {
-    throw new Error('Historical workout finishedAt cannot be earlier than startedAt.');
+    throw new McpOperationError(
+      'FINISHED_BEFORE_STARTED',
+      'Historical workout finishedAt cannot be earlier than startedAt.',
+      { field: 'finishedAt', input: input.finishedAt },
+    );
   }
   const futureToleranceMs = 5 * 60_000;
   if (startedAt.getTime() > Date.now() + futureToleranceMs) {
-    throw new Error('Historical workout startedAt cannot be in the future.');
+    throw new McpOperationError('FUTURE_WORKOUT', 'Historical workout startedAt cannot be in the future.', {
+      field: 'startedAt',
+      input: input.startedAt,
+    });
   }
   if (finishedAt.getTime() > Date.now() + futureToleranceMs) {
-    throw new Error('Historical workout finishedAt cannot be in the future.');
+    throw new McpOperationError('FUTURE_WORKOUT', 'Historical workout finishedAt cannot be in the future.', {
+      field: 'finishedAt',
+      input: input.finishedAt,
+    });
   }
 
   const exerciseIds = input.exercises.map((exercise) => exercise.exerciseId);
   if (new Set(exerciseIds).size !== exerciseIds.length) {
-    throw new Error('Each exercise may appear only once in a historical workout import.');
+    throw new McpOperationError(
+      'DUPLICATE_EXERCISE_IN_WORKOUT',
+      'Each exercise may appear only once in a historical workout import.',
+      { field: 'exercises' },
+    );
   }
   const totalSets = input.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
-  if (totalSets > 500) throw new Error('Historical workout import is limited to 500 sets.');
+  if (totalSets > 500) {
+    throw new McpOperationError('TOO_MANY_SETS', 'Historical workout import is limited to 500 sets.', {
+      field: 'exercises',
+      details: { totalSets, maximum: 500 },
+    });
+  }
   if (
     !input.gymId &&
     input.exercises.some((exercise) => exercise.sets.some((set) => set.gymEquipmentId))
   ) {
-    throw new Error('gymId is required when a historical set references physical gym equipment.');
+    throw new McpOperationError(
+      'GYM_REQUIRED_FOR_EQUIPMENT',
+      'gymId is required when a historical set references physical gym equipment.',
+      { field: 'gymId' },
+    );
+  }
+
+  const [gym, ownedExercises] = await Promise.all([
+    input.gymId
+      ? tx.gym.findFirst({
+          where: { id: input.gymId, userId },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve(null),
+    tx.exercise.findMany({
+      where: { userId, id: { in: exerciseIds } },
+      select: { id: true, name: true, category: true },
+    }),
+  ]);
+  if (input.gymId && !gym) {
+    throw new McpOperationError('GYM_NOT_FOUND', 'Gym not found.', {
+      field: 'gymId',
+      input: input.gymId,
+    });
+  }
+  if (ownedExercises.length !== exerciseIds.length) {
+    const found = new Set(ownedExercises.map((exercise) => exercise.id));
+    const missing = exerciseIds.filter((id) => !found.has(id));
+    throw new McpOperationError(
+      'EXERCISE_NOT_FOUND',
+      'One or more exercises were not found in the trainee exercise catalog.',
+      { field: 'exercises', details: { missingExerciseIds: missing } },
+    );
+  }
+  if (ownedExercises.some((exercise) => exercise.category === 'CARDIO')) {
+    throw new McpOperationError(
+      'UNSUPPORTED_CARDIO',
+      'import_historical_workout currently accepts strength exercises only.',
+      { field: 'exercises' },
+    );
   }
 
   const sessionId = stableHistoricalSessionId(userId, input.importId);
   const expectedSets = flattenExpectedSets(input);
-  let created = false;
-
-  const session = await db.$transaction(async (tx) => {
-    const existing = await tx.session.findUnique({
-      where: { id: sessionId },
-      include: { sets: true },
-    });
-    if (existing) {
+  const existing = await tx.session.findUnique({
+    where: { id: sessionId },
+    include: { sets: true },
+  });
+  if (existing) {
+    try {
       assertIdempotentHistoricalWorkout(existing, {
         userId,
         gymId: input.gymId ?? null,
@@ -126,104 +193,145 @@ export async function importHistoricalWorkout(userId: string, rawInput: Historic
         sessionRpe: input.sessionRpe ?? null,
         sets: expectedSets,
       });
-      return existing;
+    } catch {
+      throw new McpOperationError(
+        'IMPORT_ID_CONFLICT',
+        'Historical workout importId already exists with different data.',
+        { field: 'importId', input: input.importId, details: { sessionId } },
+      );
     }
+    return buildWriteResult(existing, false, input, gym, ownedExercises, totalSets);
+  }
 
-    if (input.gymId) {
-      const gym = await tx.gym.findFirst({
-        where: { id: input.gymId, userId },
-        select: { id: true },
-      });
-      if (!gym) throw new Error('Gym not found.');
-    }
+  const createdSession = await tx.session.create({
+    data: {
+      id: sessionId,
+      userId,
+      gymId: input.gymId ?? null,
+      startedAt,
+      finishedAt,
+      notes: input.notes ?? null,
+      sessionRpe: input.sessionRpe ?? null,
+    },
+  });
 
-    const ownedExercises = await tx.exercise.findMany({
-      where: { userId, id: { in: exerciseIds } },
-      select: { id: true, category: true },
-    });
-    if (ownedExercises.length !== exerciseIds.length) {
-      throw new Error('One or more exercises were not found in the trainee exercise catalog.');
-    }
-    if (ownedExercises.some((exercise) => exercise.category === 'CARDIO')) {
-      throw new Error('import_historical_workout currently accepts strength exercises only.');
-    }
-
-    const createdSession = await tx.session.create({
-      data: {
-        id: sessionId,
-        userId,
-        gymId: input.gymId ?? null,
-        startedAt,
-        finishedAt,
-        notes: input.notes ?? null,
-        sessionRpe: input.sessionRpe ?? null,
-      },
-    });
-
-    for (const exercise of input.exercises) {
-      for (let index = 0; index < exercise.sets.length; index++) {
-        const set = exercise.sets[index]!;
-        const normalized = normalizeHistoricalSet(set);
-        const equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
+  for (let exerciseIndex = 0; exerciseIndex < input.exercises.length; exerciseIndex += 1) {
+    const exercise = input.exercises[exerciseIndex]!;
+    for (let setIndex = 0; setIndex < exercise.sets.length; setIndex += 1) {
+      const set = exercise.sets[setIndex]!;
+      const normalized = normalizeHistoricalSet(set);
+      let equipmentSnapshot;
+      try {
+        equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
           userId,
           sessionGymId: input.gymId ?? null,
           exerciseId: exercise.exerciseId,
           gymEquipmentId: set.gymEquipmentId ?? null,
           selectedLoadKg: set.weightKg,
         });
-        await tx.set.create({
-          data: {
-            sessionId,
-            exerciseId: exercise.exerciseId,
-            setNumber: index + 1,
-            weight: set.weightKg,
-            reps: set.reps,
-            rir: normalized.rir,
-            isWarmup: set.isWarmup ?? false,
-            isDropSet: set.isDropSet ?? false,
-            recoverySec: set.recoverySec ?? null,
-            notes: normalized.notes,
-            completedAt: finishedAt,
-            ...equipmentSnapshot,
+      } catch (error) {
+        throw new McpOperationError(
+          'EQUIPMENT_NOT_FOUND_OR_INCOMPATIBLE',
+          error instanceof Error ? error.message : 'Historical equipment reference is invalid.',
+          {
+            field: `exercises[${exerciseIndex}].sets[${setIndex}].gymEquipmentId`,
+            input: set.gymEquipmentId ?? null,
           },
-        });
+        );
       }
+      await tx.set.create({
+        data: {
+          sessionId,
+          exerciseId: exercise.exerciseId,
+          setNumber: setIndex + 1,
+          weight: set.weightKg,
+          reps: set.reps,
+          rir: normalized.rir,
+          isWarmup: set.isWarmup ?? false,
+          isDropSet: set.isDropSet ?? false,
+          recoverySec: set.recoverySec ?? null,
+          notes: normalized.notes,
+          completedAt: finishedAt,
+          ...equipmentSnapshot,
+        },
+      });
     }
-    created = true;
-    return createdSession;
-  });
+  }
+  return buildWriteResult(createdSession, true, input, gym, ownedExercises, totalSets);
+}
 
-  for (const exerciseId of exerciseIds) {
+export async function rederiveHistoricalWorkoutGoals(userId: string, exerciseIds: string[]) {
+  for (const exerciseId of [...new Set(exerciseIds)]) {
     try {
       await rederiveGoalAchievement(userId, exerciseId);
     } catch (error) {
       console.error('[mcp] historical workout goal re-derivation failed:', error);
     }
   }
+}
 
-  const fractionalRirSets = input.exercises.reduce(
+export function formatHistoricalWorkoutResult(
+  written: Awaited<ReturnType<typeof importHistoricalWorkoutWithTx>>,
+) {
+  const fractionalRirSets = written.input.exercises.reduce(
     (count, exercise) =>
       count + exercise.sets.filter((set) => set.rir != null && !Number.isInteger(set.rir)).length,
     0,
   );
-
+  const exerciseNameById = new Map(written.ownedExercises.map((exercise) => [exercise.id, exercise.name]));
   return {
     ok: true,
-    created,
-    idempotentReplay: !created,
-    importId: input.importId,
-    sessionId: session.id,
-    gymId: session.gymId,
-    startedAt: session.startedAt.toISOString(),
-    finishedAt: session.finishedAt?.toISOString() ?? null,
-    exerciseCount: input.exercises.length,
-    setCount: totalSets,
+    created: written.created,
+    idempotentReplay: !written.created,
+    importId: written.input.importId,
+    sessionId: written.session.id,
+    date: written.session.startedAt.toISOString().slice(0, 10),
+    gymId: written.session.gymId,
+    gym: written.gym,
+    startedAt: written.session.startedAt.toISOString(),
+    finishedAt: written.session.finishedAt?.toISOString() ?? null,
+    exerciseCount: written.input.exercises.length,
+    setCount: written.totalSets,
+    exercises: written.input.exercises.map((exercise) => ({
+      exerciseId: exercise.exerciseId,
+      exerciseName: exerciseNameById.get(exercise.exerciseId) ?? null,
+      setCount: exercise.sets.length,
+      sets: exercise.sets.map((set, index) => ({
+        setNumber: index + 1,
+        weightKg: set.weightKg,
+        reps: set.reps,
+        rir: set.rir ?? null,
+        isWarmup: set.isWarmup ?? false,
+        isDropSet: set.isDropSet ?? false,
+        gymEquipmentId: set.gymEquipmentId ?? null,
+        notes: set.notes ?? null,
+      })),
+    })),
     warnings:
       fractionalRirSets > 0
         ? [
             `${fractionalRirSets} fractional RIR value(s) were preserved verbatim in set notes; structured Set.rir remains null for those rows because the current database column stores whole integers.`,
           ]
         : [],
+  };
+}
+
+function buildWriteResult(
+  session: { id: string; gymId: string | null; startedAt: Date; finishedAt: Date | null },
+  created: boolean,
+  input: HistoricalWorkoutImportInput,
+  gym: { id: string; name: string } | null,
+  ownedExercises: Array<{ id: string; name: string; category: string }>,
+  totalSets: number,
+) {
+  return {
+    session,
+    created,
+    input,
+    gym,
+    ownedExercises,
+    totalSets,
+    exerciseIds: input.exercises.map((exercise) => exercise.exerciseId),
   };
 }
 

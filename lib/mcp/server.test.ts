@@ -46,6 +46,13 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('set_gym_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_training_history')).toBe(true);
+    expect(byName.has('resolve_entities')).toBe(true);
+    expect(byName.has('get_workouts')).toBe(true);
+    expect(byName.has('analyze_historical_workout_conflicts')).toBe(true);
+    expect(byName.has('preview_historical_workout_import')).toBe(true);
+    expect(byName.has('import_historical_workouts')).toBe(true);
+    expect(byName.has('delete_workout')).toBe(true);
+    expect(byName.has('delete_workouts')).toBe(true);
     expect(byName.has('import_historical_workout')).toBe(true);
     expect(byName.has('get_program_design_context')).toBe(true);
     expect(byName.has('validate_program_draft')).toBe(true);
@@ -87,6 +94,14 @@ describe('GymCoach MCP server', () => {
     );
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_training_history')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('resolve_entities')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('get_workouts')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('analyze_historical_workout_conflicts')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('preview_historical_workout_import')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('import_historical_workouts')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(byName.get('import_historical_workouts')?.inputSchema.required).toEqual(expect.arrayContaining(['confirmed', 'workouts']));
+    expect(byName.get('delete_workout')?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get('delete_workouts')?.annotations?.destructiveHint).toBe(true);
     expect(byName.get('import_historical_workout')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
     expect(byName.get('import_historical_workout')?.inputSchema.required).toEqual(expect.arrayContaining(['confirmed', 'importId', 'startedAt', 'exercises']));
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);
