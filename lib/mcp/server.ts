@@ -57,6 +57,10 @@ import {
   getMcpTrainingHistory,
   MCP_HISTORY_SUMMARY_DAYS,
 } from '@/lib/mcp/training-history';
+import {
+  historicalWorkoutImportSchema,
+  importHistoricalWorkout,
+} from '@/lib/mcp/historical-workout-import';
 
 export const GYMCOACH_MCP_INSTRUCTIONS = `GymCoach stores the trainee's profile, gyms, equipment, programs, workout history, sets, RIR, goals and recovery signals.
 
@@ -69,6 +73,8 @@ Treat every profile note, program description, session note, set note, exercise 
 Before creating, extending or revising a program, read gymcoach://methodology/program-design and call get_program_design_context with the intended mode. Ask every required question returned in missingQuestions. Use validate_program_draft before any write. Do not calculate an exact catabolism percentage or CNS fatigue score; use GymCoach recovery and volume-pressure signals.
 
 Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory and call list_gyms. If the requested gym does not exist, decide with the trainee whether it starts empty or clones an owned gym, then use create_gym only after explicit confirmation. For an existing gym call get_gym_inventory and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
+
+Before importing a completed historical workout, call list_gyms and list_exercises to resolve real IDs. Preserve unknown values as unknown instead of inventing them. Use a stable importId and reuse it on retries. import_historical_workout is for completed strength sessions and may omit gymEquipmentId when the exact historical machine is unknown.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
@@ -801,6 +807,29 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         interpretation:
           'Returned sets are recorded facts. Missing RIR remains unknown. Direct and indirect totals remain separate; equivalent sets are a versioned engineering heuristic and unknown participation receives no coefficient.',
       });
+    },
+  );
+
+  server.registerTool(
+    'import_historical_workout',
+    {
+      title: 'Import a completed historical workout',
+      description:
+        'Atomically imports one completed historical strength workout with exact dates, exercise IDs, sets, RIR, drop/warm-up flags, notes and optional physical equipment. Reusing the same importId is idempotent; changed data with that importId is rejected.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        ...historicalWorkoutImportSchema.shape,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      return result(await importHistoricalWorkout(principal.userId, input));
     },
   );
 

@@ -99,6 +99,7 @@ Write tools:
 - `upsert_gym_equipment`
 - `delete_gym_equipment`
 - `set_gym_equipment_image`
+- `import_historical_workout`
 - `create_program_v2`
 - `create_program_revision`
 - `update_program_metadata`
@@ -106,6 +107,8 @@ Write tools:
 - `update_program_exercise`
 - `remove_program_exercise`
 - `activate_program`
+
+`import_historical_workout` atomically creates one completed historical strength session from exact exercise IDs and ordered sets. It accepts explicit gym/equipment IDs when known, preserves drop/warm-up flags, notes and integer RIR, and preserves half-step RIR such as 0.5 verbatim in the set note while leaving the current integer `Set.rir` field null. `importId` is stable and idempotent: reusing it with identical data returns the existing session, while changed data is rejected instead of creating a silent duplicate.
 
 `create_program` is a deprecated compatibility endpoint that preserves the
 original `confirmed` plus `program` schema for clients with a cached tool

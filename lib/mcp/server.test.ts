@@ -46,6 +46,7 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('set_gym_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_training_history')).toBe(true);
+    expect(byName.has('import_historical_workout')).toBe(true);
     expect(byName.has('get_program_design_context')).toBe(true);
     expect(byName.has('validate_program_draft')).toBe(true);
     expect(byName.has('create_program')).toBe(true);
@@ -86,6 +87,8 @@ describe('GymCoach MCP server', () => {
     );
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_training_history')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('import_historical_workout')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(byName.get('import_historical_workout')?.inputSchema.required).toEqual(expect.arrayContaining(['confirmed', 'importId', 'startedAt', 'exercises']));
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);
 
     const resources = await client.listResources();
