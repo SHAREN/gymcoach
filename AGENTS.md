@@ -36,6 +36,17 @@ principles, engineering heuristics, current formulas and safety boundaries.
 - Final deployment verification must confirm that `3030` is serving the latest
   integrated version and that no other GymCoach containers or listeners remain
   on temporary host ports such as `3031`, `3032` or `3033`.
+- Any task that adds, removes, renames, or changes the schema or behavior of an
+  MCP tool is not complete merely because local tests, Docker health checks, or
+  the Home PC runtime pass. Before reporting the MCP change to the owner as ready
+  or available, verify the real public MCP endpoint from the external Renat VPS:
+  perform a fresh MCP `initialize`, inspect `tools/list`, and confirm the exact
+  tool name plus required input fields and annotations. When practical, also
+  perform a safe read-only `tools/call` through that public endpoint. If the VPS
+  cannot see the expected tool or schema, keep the task open and diagnose,
+  deploy, or refresh the server instead of asking the owner to test it manually.
+  Only report the MCP change as available after this Renat-VPS verification
+  succeeds.
 
 ## Mandatory training-science research workflow
 
