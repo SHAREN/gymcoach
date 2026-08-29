@@ -13,6 +13,11 @@ import { isCardioSet } from '@/lib/cardio';
 
 // Set-like input that may carry the cardio marker.
 type MaybeCardio = { durationSec?: number | null };
+type MaybeKnownReps = { repsKnown?: boolean };
+
+function hasKnownReps(set: MaybeKnownReps) {
+  return set.repsKnown !== false;
+}
 
 // ============================================================
 // Bodyweight: effective tonnage on bodyweight exercises
@@ -50,14 +55,16 @@ export function applyBodyweight<T extends { weight: number; usesBodyweight?: boo
 // Volume of a set = load × reps. For bodyweight (weight = 0),
 // we return 0 by convention (impossible to compare with a load).
 // Cardio sets carry no tonnage and always count 0.
-export function setVolume(set: Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio): number {
-  if (set.isWarmup || isCardioSet(set)) return 0;
+export function setVolume(
+  set: Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio & MaybeKnownReps,
+): number {
+  if (set.isWarmup || isCardioSet(set) || !hasKnownReps(set)) return 0;
   return set.weight * set.reps;
 }
 
 // Total volume of a list of sets (sum, excluding warmups and cardio).
 export function totalVolume(
-  sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio)[],
+  sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio & MaybeKnownReps)[],
 ): number {
   return sets.reduce((acc, s) => acc + setVolume(s), 0);
 }
@@ -81,10 +88,12 @@ export function estimateRepMax(weight: number, reps: number, targetReps: 1 | 10)
 // Best estimated 1RM over a list of sets (warmups and drop sets included
 // since they are technically valid for estimating strength). Cardio sets
 // are skipped: they have no load to estimate from.
-export function best1RM(sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio)[]): number {
+export function best1RM(
+  sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> & MaybeCardio & MaybeKnownReps)[],
+): number {
   let best = 0;
   for (const s of sets) {
-    if (s.isWarmup || isCardioSet(s)) continue;
+    if (s.isWarmup || isCardioSet(s) || !hasKnownReps(s)) continue;
     const e = estimate1RM(s.weight, s.reps);
     if (e > best) best = e;
   }
@@ -140,7 +149,8 @@ export interface ExerciseChartPoint {
 // Input: sets ordered by session, with sessionStartedAt joined.
 export function exerciseProgress(
   sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> &
-    MaybeCardio & {
+    MaybeCardio &
+    MaybeKnownReps & {
       sessionId: string;
       sessionStartedAt: Date;
       gymEquipmentId?: string | null;
@@ -149,7 +159,7 @@ export function exerciseProgress(
 ): ExerciseChartPoint[] {
   const bySession = new Map<string, { startedAt: Date; sets: typeof sets }>();
   for (const s of sets) {
-    if (s.isWarmup || isCardioSet(s)) continue;
+    if (s.isWarmup || isCardioSet(s) || !hasKnownReps(s)) continue;
     const entry = bySession.get(s.sessionId);
     if (entry) {
       entry.sets.push(s);
@@ -287,14 +297,15 @@ export interface WeeklyVolumePoint {
 // Input: non-warmup sets with their muscle group and the session date.
 export function weeklyVolumeByMuscleGroup(
   sets: (Pick<Set, 'weight' | 'reps' | 'isWarmup'> &
-    MaybeCardio & {
+    MaybeCardio &
+    MaybeKnownReps & {
       muscleGroup: string;
       sessionStartedAt: Date;
     })[],
 ): WeeklyVolumePoint[] {
   const byWeek = new Map<string, WeeklyVolumePoint>();
   for (const s of sets) {
-    if (s.isWarmup || isCardioSet(s)) continue;
+    if (s.isWarmup || isCardioSet(s) || !hasKnownReps(s)) continue;
     const key = isoWeekKey(s.sessionStartedAt);
     let entry = byWeek.get(key);
     if (!entry) {

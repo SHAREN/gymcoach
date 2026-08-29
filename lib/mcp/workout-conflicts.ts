@@ -62,13 +62,13 @@ export async function analyzeMcpWorkoutConflicts(
     const left = workouts[i]!;
     for (let j = i + 1; j < workouts.length; j += 1) {
       const right = workouts[j]!;
-      const sameDate = left.startedAt.slice(0, 10) === right.startedAt.slice(0, 10);
+      const sameDate = left.date === right.date;
       if (sameDate && left.gym?.id !== right.gym?.id) {
         findings.push({
           classification: 'SAME_DATE_OTHER_GYM',
           confidence: 1,
           sessionIds: [left.sessionId, right.sessionId],
-          reason: `Both sessions start on ${left.startedAt.slice(0, 10)} but are assigned to different gyms.`,
+          reason: 'Both sessions are recorded on ' + left.date + ' but are assigned to different gyms.',
         });
       }
 
@@ -129,7 +129,8 @@ function workoutFacts(workout: {
     sets: Array<{
       setNumber: number;
       weightKg: number;
-      reps: number;
+      reps: number | null;
+      loadBasis: string;
       rir: number | null;
       isWarmup: boolean;
       isDropSet: boolean;
@@ -143,7 +144,8 @@ function workoutFacts(workout: {
           exercise.exerciseId,
           set.setNumber,
           set.weightKg,
-          set.reps,
+          set.reps ?? 'unknown-reps',
+          set.loadBasis,
           set.rir ?? 'unknown-rir',
           set.isWarmup ? 'warmup' : 'work',
           set.isDropSet ? 'drop' : 'regular',

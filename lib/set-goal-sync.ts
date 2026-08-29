@@ -8,7 +8,7 @@ export async function stampGoalIfAchieved(
   exercise: Exercise,
   set: Set,
 ): Promise<void> {
-  if (set.isWarmup) return;
+  if (set.isWarmup || !set.repsKnown) return;
   const goal = await db.exerciseGoal.findUnique({
     where: { userId_exerciseId: { userId, exerciseId: exercise.id } },
   });
@@ -42,7 +42,7 @@ export async function rederiveGoalAchievement(userId: string, exerciseId: string
       select: { usesBodyweight: true },
     }),
     db.set.findMany({
-      where: { exerciseId, isWarmup: false, session: { userId } },
+      where: { exerciseId, isWarmup: false, repsKnown: true, session: { userId } },
       select: { weight: true, reps: true, isWarmup: true, completedAt: true },
     }),
   ]);

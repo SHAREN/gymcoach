@@ -1,4 +1,8 @@
 import { db } from '@/lib/db';
+import {
+  captureOwnedSessionSnapshots,
+  createWorkoutOperationAudit,
+} from '@/lib/mcp/workout-operation-audit';
 
 export async function deleteOwnedWorkouts(
   userId: string,
@@ -45,23 +49,35 @@ export async function deleteOwnedWorkouts(
     notes: row.notes,
   }));
 
-  await db.$transaction(async (tx) => {
+  const audit = await db.$transaction(async (tx) => {
+    const snapshots = await captureOwnedSessionSnapshots(tx, userId, uniqueIds);
+    if (snapshots.length !== uniqueIds.length) {
+      throw new Error('Workout deletion changed concurrently; the transaction was rolled back.');
+    }
     const result = await tx.session.deleteMany({
       where: { userId, id: { in: uniqueIds } },
     });
     if (result.count !== uniqueIds.length) {
       throw new Error('Workout deletion changed concurrently; the transaction was rolled back.');
     }
+    return createWorkoutOperationAudit(tx, {
+      userId,
+      operation: uniqueIds.length === 1 ? 'delete_workout' : 'delete_workouts',
+      reason,
+      request: { sessionIds: uniqueIds },
+      result: { deletedSessionIds: uniqueIds },
+      undoSnapshot: { version: 1, createdSessions: [], deletedSessions: snapshots },
+    });
   });
 
   return {
     ok: true,
     status: 'DELETED' as const,
+    operationId: audit.operationId,
+    operationCreatedAt: audit.createdAt,
     reason,
     deletedCount: deleted.length,
     deleted,
-    recoverable: false,
-    recoveryNote:
-      'This P0 endpoint uses the existing hard-delete session model. Operation audit/undo is a planned follow-up and is not claimed as available yet.',
+    recoverable: true,
   };
 }

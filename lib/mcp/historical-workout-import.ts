@@ -11,6 +11,13 @@ const dateTimeWithOffset = z
   .string()
   .datetime({ offset: true })
   .describe('ISO 8601 date-time with an explicit timezone offset.');
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((value) => isValidDateOnly(value), 'Invalid calendar date.')
+  .describe('Calendar date YYYY-MM-DD when the historical source did not record a time.');
+const historicalStart = z.union([dateTimeWithOffset, dateOnly]);
+const setLoadBasisSchema = z.enum(['TOTAL', 'PER_SIDE', 'PER_HAND', 'STACK_DISPLAY', 'PLATE_PER_SIDE']);
 
 const historicalRirSchema = z
   .number()
@@ -19,9 +26,7 @@ const historicalRirSchema = z
   .multipleOf(0.5)
   .nullable()
   .optional()
-  .describe(
-    'Reported RIR from 0 to 5. Half-step values are preserved in the set note because the current structured Set.rir column stores whole integers.',
-  );
+  .describe('Reported RIR from 0 to 5. Half-step values such as 0.5 are stored structurally.');
 
 export const historicalWorkoutImportSchema = z
   .object({
@@ -34,7 +39,7 @@ export const historicalWorkoutImportSchema = z
       .describe(
         'Stable caller-generated identifier for this historical workout. Reuse the same value on retries; a changed payload with the same importId is rejected.',
       ),
-    startedAt: dateTimeWithOffset,
+    startedAt: historicalStart,
     finishedAt: dateTimeWithOffset.optional(),
     gymId: databaseIdSchema.optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
@@ -47,7 +52,8 @@ export const historicalWorkoutImportSchema = z
             .array(
               z.object({
                 weightKg: z.number().min(0).max(5000),
-                reps: z.number().int().min(1).max(100),
+                reps: z.number().int().min(1).max(100).nullable().optional(),
+                loadBasis: setLoadBasisSchema.optional().default('TOTAL'),
                 rir: historicalRirSchema,
                 isWarmup: z.boolean().optional().default(false),
                 isDropSet: z.boolean().optional().default(false),
@@ -72,6 +78,8 @@ interface StoredExpectedSet {
   setNumber: number;
   weight: number;
   reps: number;
+  repsKnown: boolean;
+  loadBasis: 'TOTAL' | 'PER_SIDE' | 'PER_HAND' | 'STACK_DISPLAY' | 'PLATE_PER_SIDE';
   rir: number | null;
   isWarmup: boolean;
   isDropSet: boolean;
@@ -92,7 +100,16 @@ export async function importHistoricalWorkoutWithTx(
   rawInput: HistoricalWorkoutImportInput,
 ) {
   const input = historicalWorkoutImportSchema.parse(rawInput);
-  const startedAt = new Date(input.startedAt);
+  const timePrecision = isDateOnly(input.startedAt) ? 'DATE_ONLY' : 'EXACT';
+  const historicalDate = timePrecision === 'DATE_ONLY' ? dateOnlyAnchor(input.startedAt) : null;
+  const startedAt = historicalDate ?? new Date(input.startedAt);
+  if (timePrecision === 'DATE_ONLY' && input.finishedAt) {
+    throw new McpOperationError(
+      'FINISHED_TIME_WITH_DATE_ONLY_START',
+      'finishedAt cannot be supplied when startedAt is date-only because that would mix unknown and exact time precision.',
+      { field: 'finishedAt', input: input.finishedAt },
+    );
+  }
   const finishedAt = input.finishedAt ? new Date(input.finishedAt) : startedAt;
   if (finishedAt.getTime() < startedAt.getTime()) {
     throw new McpOperationError(
@@ -189,6 +206,8 @@ export async function importHistoricalWorkoutWithTx(
         gymId: input.gymId ?? null,
         startedAt,
         finishedAt,
+        historicalDate,
+        timePrecision,
         notes: input.notes ?? null,
         sessionRpe: input.sessionRpe ?? null,
         sets: expectedSets,
@@ -210,6 +229,8 @@ export async function importHistoricalWorkoutWithTx(
       gymId: input.gymId ?? null,
       startedAt,
       finishedAt,
+      historicalDate,
+      timePrecision,
       notes: input.notes ?? null,
       sessionRpe: input.sessionRpe ?? null,
     },
@@ -245,7 +266,9 @@ export async function importHistoricalWorkoutWithTx(
           exerciseId: exercise.exerciseId,
           setNumber: setIndex + 1,
           weight: set.weightKg,
-          reps: set.reps,
+          reps: set.reps ?? 0,
+          repsKnown: set.reps != null,
+          loadBasis: set.loadBasis,
           rir: normalized.rir,
           isWarmup: set.isWarmup ?? false,
           isDropSet: set.isDropSet ?? false,
@@ -273,11 +296,6 @@ export async function rederiveHistoricalWorkoutGoals(userId: string, exerciseIds
 export function formatHistoricalWorkoutResult(
   written: Awaited<ReturnType<typeof importHistoricalWorkoutWithTx>>,
 ) {
-  const fractionalRirSets = written.input.exercises.reduce(
-    (count, exercise) =>
-      count + exercise.sets.filter((set) => set.rir != null && !Number.isInteger(set.rir)).length,
-    0,
-  );
   const exerciseNameById = new Map(written.ownedExercises.map((exercise) => [exercise.id, exercise.name]));
   return {
     ok: true,
@@ -285,11 +303,13 @@ export function formatHistoricalWorkoutResult(
     idempotentReplay: !written.created,
     importId: written.input.importId,
     sessionId: written.session.id,
-    date: written.session.startedAt.toISOString().slice(0, 10),
+    date: (written.session.historicalDate ?? written.session.startedAt).toISOString().slice(0, 10),
+    timePrecision: written.session.timePrecision,
     gymId: written.session.gymId,
     gym: written.gym,
-    startedAt: written.session.startedAt.toISOString(),
-    finishedAt: written.session.finishedAt?.toISOString() ?? null,
+    startedAt: written.session.timePrecision === 'EXACT' ? written.session.startedAt.toISOString() : null,
+    finishedAt:
+      written.session.timePrecision === 'EXACT' ? written.session.finishedAt?.toISOString() ?? null : null,
     exerciseCount: written.input.exercises.length,
     setCount: written.totalSets,
     exercises: written.input.exercises.map((exercise) => ({
@@ -299,7 +319,8 @@ export function formatHistoricalWorkoutResult(
       sets: exercise.sets.map((set, index) => ({
         setNumber: index + 1,
         weightKg: set.weightKg,
-        reps: set.reps,
+        reps: set.reps ?? null,
+        loadBasis: set.loadBasis,
         rir: set.rir ?? null,
         isWarmup: set.isWarmup ?? false,
         isDropSet: set.isDropSet ?? false,
@@ -307,17 +328,19 @@ export function formatHistoricalWorkoutResult(
         notes: set.notes ?? null,
       })),
     })),
-    warnings:
-      fractionalRirSets > 0
-        ? [
-            `${fractionalRirSets} fractional RIR value(s) were preserved verbatim in set notes; structured Set.rir remains null for those rows because the current database column stores whole integers.`,
-          ]
-        : [],
+    warnings: [],
   };
 }
 
 function buildWriteResult(
-  session: { id: string; gymId: string | null; startedAt: Date; finishedAt: Date | null },
+  session: {
+    id: string;
+    gymId: string | null;
+    startedAt: Date;
+    finishedAt: Date | null;
+    historicalDate: Date | null;
+    timePrecision: 'EXACT' | 'DATE_ONLY';
+  },
   created: boolean,
   input: HistoricalWorkoutImportInput,
   gym: { id: string; name: string } | null,
@@ -343,16 +366,7 @@ function stableHistoricalSessionId(userId: string, importId: string) {
 function normalizeHistoricalSet(
   set: HistoricalWorkoutImportInput['exercises'][number]['sets'][number],
 ) {
-  const fractionalRir = set.rir != null && !Number.isInteger(set.rir) ? set.rir : null;
-  const note = set.notes ?? null;
-  if (fractionalRir == null) {
-    return { rir: set.rir ?? null, notes: note };
-  }
-  const marker = `Reported RIR ${fractionalRir} (fractional value preserved by MCP import)`;
-  return {
-    rir: null,
-    notes: note ? `${note}\n${marker}` : marker,
-  };
+  return { rir: set.rir ?? null, notes: set.notes ?? null };
 }
 
 function flattenExpectedSets(input: HistoricalWorkoutImportInput): StoredExpectedSet[] {
@@ -363,7 +377,9 @@ function flattenExpectedSets(input: HistoricalWorkoutImportInput): StoredExpecte
         exerciseId: exercise.exerciseId,
         setNumber: index + 1,
         weight: set.weightKg,
-        reps: set.reps,
+        reps: set.reps ?? 0,
+        repsKnown: set.reps != null,
+        loadBasis: set.loadBasis,
         rir: normalized.rir,
         isWarmup: set.isWarmup ?? false,
         isDropSet: set.isDropSet ?? false,
@@ -381,6 +397,8 @@ function assertIdempotentHistoricalWorkout(
     gymId: string | null;
     startedAt: Date;
     finishedAt: Date | null;
+    historicalDate: Date | null;
+    timePrecision: 'EXACT' | 'DATE_ONLY';
     notes: string | null;
     sessionRpe: number | null;
     sets: Array<{
@@ -388,6 +406,8 @@ function assertIdempotentHistoricalWorkout(
       setNumber: number;
       weight: number;
       reps: number;
+      repsKnown: boolean;
+      loadBasis: 'TOTAL' | 'PER_SIDE' | 'PER_HAND' | 'STACK_DISPLAY' | 'PLATE_PER_SIDE';
       rir: number | null;
       isWarmup: boolean;
       isDropSet: boolean;
@@ -402,6 +422,8 @@ function assertIdempotentHistoricalWorkout(
     gymId: string | null;
     startedAt: Date;
     finishedAt: Date;
+    historicalDate: Date | null;
+    timePrecision: 'EXACT' | 'DATE_ONLY';
     notes: string | null;
     sessionRpe: number | null;
     sets: StoredExpectedSet[];
@@ -412,6 +434,8 @@ function assertIdempotentHistoricalWorkout(
     existing.gymId === expected.gymId &&
     existing.startedAt.getTime() === expected.startedAt.getTime() &&
     existing.finishedAt?.getTime() === expected.finishedAt.getTime() &&
+    (existing.historicalDate?.getTime() ?? null) === (expected.historicalDate?.getTime() ?? null) &&
+    existing.timePrecision === expected.timePrecision &&
     existing.notes === expected.notes &&
     existing.sessionRpe === expected.sessionRpe;
   if (!sameSession || existing.sets.length !== expected.sets.length) {
@@ -427,6 +451,8 @@ function assertIdempotentHistoricalWorkout(
       !actual ||
       Math.abs(actual.weight - expectedSet.weight) > 0.001 ||
       actual.reps !== expectedSet.reps ||
+      actual.repsKnown !== expectedSet.repsKnown ||
+      actual.loadBasis !== expectedSet.loadBasis ||
       actual.rir !== expectedSet.rir ||
       actual.isWarmup !== expectedSet.isWarmup ||
       actual.isDropSet !== expectedSet.isDropSet ||
@@ -437,6 +463,21 @@ function assertIdempotentHistoricalWorkout(
       throw new Error('Historical workout importId already exists with different data.');
     }
   }
+}
+
+function isDateOnly(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function isValidDateOnly(value: string) {
+  if (!isDateOnly(value)) return false;
+  const date = new Date(value + 'T00:00:00.000Z');
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function dateOnlyAnchor(value: string) {
+  if (!isValidDateOnly(value)) throw new Error('Invalid date-only value.');
+  return new Date(value + 'T00:00:00.000Z');
 }
 
 function originalGymEquipmentId(set: {

@@ -394,7 +394,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 14 with exercise load profiles and all earlier fields', async () => {
+  it('exports version 15 with historical semantics, aliases, exercise load profiles and all earlier fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -402,7 +402,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(14);
+    expect(dump.version).toBe(15);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -551,6 +551,20 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
 describe('POST /api/backup - restore round trip (issue #168)', () => {
   it('restores an export losslessly into a second user, ownership-scoped', async () => {
     const userA = await seedFullUser('a@test.dev');
+    const bench = await db.exercise.findFirstOrThrow({ where: { userId: userA.id, name: 'Bench Press' } });
+    const gym = await db.gym.findFirstOrThrow({ where: { userId: userA.id, name: 'Basement' } });
+    const equipment = await db.gymEquipment.findFirstOrThrow({ where: { gymId: gym.id, name: 'Competition bench station' } });
+    const session = await db.session.findFirstOrThrow({ where: { userId: userA.id } });
+    await db.session.update({
+      where: { id: session.id },
+      data: { historicalDate: new Date('2026-06-01T00:00:00.000Z'), timePrecision: 'DATE_ONLY' },
+    });
+    await db.set.updateMany({
+      where: { sessionId: session.id, exerciseId: bench.id },
+      data: { repsKnown: false, loadBasis: 'PER_HAND', rir: 0.5 },
+    });
+    await db.exerciseAlias.create({ data: { userId: userA.id, exerciseId: bench.id, alias: 'Жим', normalizedAlias: 'жим' } });
+    await db.gymEquipmentAlias.create({ data: { userId: userA.id, gymId: gym.id, equipmentId: equipment.id, alias: 'Стойка для жима', normalizedAlias: 'стойка для жима' } });
     actAs(userA.id);
     const dumpA = await (await getBackup(getReq())).json();
     const countsA = await countsFor(userA.id);

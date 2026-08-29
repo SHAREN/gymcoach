@@ -7,8 +7,10 @@ import {
   EquipmentLoadType,
   EquipmentType,
   GymInventoryMode,
+  HistoricalTimePrecision,
   MessageRole,
   MuscleGroup,
+  SetLoadBasis,
   Sex,
   TrainingGoal,
   WeightUnit,
@@ -39,6 +41,7 @@ import {
 import { deriveBackupExerciseClassification } from '@/lib/exercise-classification';
 import { SYSTEM_EXERCISE_CATALOG_ORIGIN } from '@/lib/exercise-catalog';
 import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
+import { normalizeEntityName } from '@/lib/mcp/entity-match';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -72,7 +75,7 @@ import { sanitizeCoachAuditPrompt } from '@/lib/coach-audit';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 14;
+const VERSION = 15;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -95,6 +98,8 @@ export async function GET(req: Request) {
       readinessCheckins,
       conversations,
       gyms,
+      exerciseAliases,
+      equipmentAliases,
     ] = await Promise.all([
       db.user.findUnique({
         where: { id: userId },
@@ -184,6 +189,19 @@ export async function GET(req: Request) {
           },
         },
       }),
+      db.exerciseAlias.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+        include: { exercise: { select: { name: true } } },
+      }),
+      db.gymEquipmentAlias.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          gym: { select: { name: true } },
+          equipment: { select: { name: true } },
+        },
+      }),
     ]);
 
     if (!user) throw new ApiError(404, 'User not found.');
@@ -219,6 +237,15 @@ export async function GET(req: Request) {
         equipmentType: e.equipmentType,
         catalogOrigin: e.catalogOrigin,
         loadProfile: normalizeExerciseLoadProfile(e.loadProfile, e.muscleGroup),
+      })),
+      exerciseAliases: exerciseAliases.map((row) => ({
+        exerciseName: row.exercise.name,
+        alias: row.alias,
+      })),
+      equipmentAliases: equipmentAliases.map((row) => ({
+        gymName: row.gym.name,
+        equipmentName: row.equipment.name,
+        alias: row.alias,
       })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
@@ -304,6 +331,8 @@ export async function GET(req: Request) {
           programs.flatMap((p) => p.workouts).find((w) => w.id === s.workoutId)?.name ?? null,
         startedAt: s.startedAt.toISOString(),
         finishedAt: s.finishedAt?.toISOString() ?? null,
+        historicalDate: s.historicalDate?.toISOString() ?? null,
+        timePrecision: s.timePrecision,
         notes: s.notes,
         sessionRpe: s.sessionRpe,
         gymName: gyms.find((gym) => gym.id === s.gymId)?.name ?? null,
@@ -318,6 +347,8 @@ export async function GET(req: Request) {
           setNumber: set.setNumber,
           weight: set.weight,
           reps: set.reps,
+          repsKnown: set.repsKnown,
+          loadBasis: set.loadBasis,
           rir: set.rir,
           durationSec: set.durationSec,
           distanceM: set.distanceM,
@@ -441,6 +472,25 @@ const importSchema = z.object({
       }),
     )
     .max(2000),
+  exerciseAliases: z
+    .array(
+      z.object({
+        exerciseName: z.string().max(120),
+        alias: z.string().trim().min(1).max(120),
+      }),
+    )
+    .max(5000)
+    .optional(),
+  equipmentAliases: z
+    .array(
+      z.object({
+        gymName: z.string().max(80),
+        equipmentName: z.string().max(120),
+        alias: z.string().trim().min(1).max(120),
+      }),
+    )
+    .max(5000)
+    .optional(),
   programs: z
     .array(
       z.object({
@@ -496,6 +546,8 @@ const importSchema = z.object({
         workoutName: z.string().max(200).nullable().optional(),
         startedAt: dateString,
         finishedAt: dateString.nullable().optional(),
+        historicalDate: dateString.nullable().optional(),
+        timePrecision: z.nativeEnum(HistoricalTimePrecision).optional(),
         notes: z.string().max(5000).nullable().optional(),
         sessionRpe: z.number().int().min(1).max(10).nullable().optional(),
         gymName: z.string().max(80).nullable().optional(),
@@ -521,7 +573,9 @@ const importSchema = z.object({
               setNumber: z.number().int().min(1).max(1000),
               weight: z.number().min(0).max(5000),
               reps: z.number().int().min(0).max(1000),
-              rir: z.number().int().min(0).max(10).nullable().optional(),
+              repsKnown: z.boolean().optional(),
+              loadBasis: z.nativeEnum(SetLoadBasis).optional(),
+              rir: z.number().min(0).max(10).multipleOf(0.5).nullable().optional(),
               // v2 cardio fields; absent in v1 backups.
               durationSec: z.number().int().min(1).max(MAX_DURATION_SEC).nullable().optional(),
               distanceM: z.number().min(0).max(MAX_DISTANCE_M).nullable().optional(),
@@ -1082,6 +1136,27 @@ export async function POST(req: Request) {
           await ensureGymSystemProfiles(tx, userId, created.id);
           gymIdByName.set(gym.name, created.id);
         }
+        const exerciseAliasRows = (payload.exerciseAliases ?? []).flatMap((row) => {
+          const exerciseId = exerciseIdByName.get(row.exerciseName);
+          const normalizedAlias = normalizeEntityName(row.alias);
+          return exerciseId && normalizedAlias
+            ? [{ userId, exerciseId, alias: row.alias.trim(), normalizedAlias }]
+            : [];
+        });
+        if (exerciseAliasRows.length > 0) {
+          await tx.exerciseAlias.createMany({ data: exerciseAliasRows, skipDuplicates: true });
+        }
+        const equipmentAliasRows = (payload.equipmentAliases ?? []).flatMap((row) => {
+          const gymId = gymIdByName.get(row.gymName);
+          const equipmentId = equipmentIdByGymAndName.get(`${row.gymName}\u0000${row.equipmentName}`);
+          const normalizedAlias = normalizeEntityName(row.alias);
+          return gymId && equipmentId && normalizedAlias
+            ? [{ userId, gymId, equipmentId, alias: row.alias.trim(), normalizedAlias }]
+            : [];
+        });
+        if (equipmentAliasRows.length > 0) {
+          await tx.gymEquipmentAlias.createMany({ data: equipmentAliasRows, skipDuplicates: true });
+        }
         const activeGymId = payload.profile?.activeGymName
           ? (gymIdByName.get(payload.profile.activeGymName) ?? null)
           : null;
@@ -1157,6 +1232,8 @@ export async function POST(req: Request) {
               workoutId: workout?.id ?? null,
               startedAt: new Date(s.startedAt),
               finishedAt: s.finishedAt ? new Date(s.finishedAt) : null,
+              historicalDate: s.historicalDate ? new Date(s.historicalDate) : null,
+              timePrecision: s.timePrecision ?? HistoricalTimePrecision.EXACT,
               notes: s.notes ?? null,
               sessionRpe: s.sessionRpe ?? null,
               gymId: s.gymName ? (gymIdByName.get(s.gymName) ?? null) : null,
@@ -1200,6 +1277,8 @@ export async function POST(req: Request) {
                 setNumber: set.setNumber,
                 weight: set.weight,
                 reps: set.reps,
+                repsKnown: set.repsKnown ?? true,
+                loadBasis: set.loadBasis ?? SetLoadBasis.TOTAL,
                 rir: set.rir ?? null,
                 durationSec: set.durationSec ?? null,
                 distanceM: set.distanceM ?? null,

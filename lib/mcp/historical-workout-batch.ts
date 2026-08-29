@@ -6,24 +6,32 @@ import { analyzeMcpWorkoutConflicts } from '@/lib/mcp/workout-conflicts';
 import {
   formatHistoricalWorkoutResult,
   historicalWorkoutImportSchema,
-  importHistoricalWorkout,
   importHistoricalWorkoutWithTx,
   rederiveHistoricalWorkoutGoals,
   type HistoricalWorkoutImportInput,
 } from '@/lib/mcp/historical-workout-import';
 import { asMcpIssue, McpOperationError } from '@/lib/mcp/operation-error';
+import { learnMcpEntityAliases, type McpEntityAliasProposals } from '@/lib/mcp/entity-aliases';
+import {
+  captureOwnedSessionSnapshots,
+  createWorkoutOperationAudit,
+} from '@/lib/mcp/workout-operation-audit';
 
 const dateTimeWithOffset = z.string().datetime({ offset: true });
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const historicalStart = z.union([dateTimeWithOffset, dateOnly]);
+const aliasSchema = z.string().trim().min(1).max(160);
 const entityRefSchema = z.union([
-  z.object({ id: databaseIdSchema }).strict(),
-  z.object({ name: z.string().trim().min(1).max(160) }).strict(),
+  z.object({ id: databaseIdSchema, alias: aliasSchema.optional() }).strict(),
+  z.object({ name: aliasSchema }).strict(),
 ]);
+const setLoadBasisSchema = z.enum(['TOTAL', 'PER_SIDE', 'PER_HAND', 'STACK_DISPLAY', 'PLATE_PER_SIDE']);
 const equipmentRefSchema = z.union([entityRefSchema, z.null()]).optional();
 
 export const historicalWorkoutDraftSchema = z
   .object({
     importId: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
-    startedAt: dateTimeWithOffset,
+    startedAt: historicalStart,
     finishedAt: dateTimeWithOffset.optional(),
     gym: entityRefSchema.optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
@@ -36,7 +44,8 @@ export const historicalWorkoutDraftSchema = z
             .array(
               z.object({
                 weightKg: z.number().min(0).max(5000),
-                reps: z.number().int().min(1).max(100),
+                reps: z.number().int().min(1).max(100).nullable().optional(),
+                loadBasis: setLoadBasisSchema.optional().default('TOTAL'),
                 rir: z.number().min(0).max(5).multipleOf(0.5).nullable().optional(),
                 isWarmup: z.boolean().default(false),
                 isDropSet: z.boolean().default(false),
@@ -89,6 +98,7 @@ export async function previewHistoricalWorkoutBatch(userId: string, rawDrafts: H
       status: 'READY',
       resolvedWorkout: resolved.input,
       resolvedEntities: resolved.entities,
+      aliasProposals: resolved.aliasProposals,
       proposedChange: {
         action: 'CREATE_OR_IDEMPOTENT_REPLAY',
         date: resolved.input.startedAt.slice(0, 10),
@@ -112,7 +122,7 @@ export async function previewHistoricalWorkoutBatch(userId: string, rawDrafts: H
     conflicts: conflictAnalysis?.status === 'READY' ? conflictAnalysis.findings : [],
     warnings: [
       'This preview does not write data.',
-      'Date-only/no-time imports, unknown reps, loadBasis and rollback are planned follow-ups and are not silently invented here.',
+      'Date-only sessions preserve DATE_ONLY precision; unknown reps remain null in MCP output and are not used as fabricated repetitions; loadBasis is persisted per set.',
     ],
   };
 }
@@ -139,7 +149,16 @@ export async function importHistoricalWorkoutBatch(
         const results = [];
         for (let index = 0; index < resolvedInputs.length; index += 1) {
           try {
-            results.push(await importHistoricalWorkoutWithTx(tx, userId, resolvedInputs[index]!));
+            const written = await importHistoricalWorkoutWithTx(tx, userId, resolvedInputs[index]!);
+            const previewRow = preview.workouts[index];
+            if (previewRow && 'aliasProposals' in previewRow) {
+              await learnMcpEntityAliases(
+                tx,
+                userId,
+                previewRow.aliasProposals as McpEntityAliasProposals,
+              );
+            }
+            results.push(written);
           } catch (error) {
             const issue = asMcpIssue(error);
             throw new McpOperationError(
@@ -149,13 +168,25 @@ export async function importHistoricalWorkoutBatch(
             );
           }
         }
-        return results;
+        const createdSessionIds = results.filter((row) => row.created).map((row) => row.session.id);
+        const createdSnapshots = await captureOwnedSessionSnapshots(tx, userId, createdSessionIds);
+        const audit = await createWorkoutOperationAudit(tx, {
+          userId,
+          operation: 'import_historical_workouts',
+          request: { importIds: resolvedInputs.map((input) => input.importId), atomic: true },
+          result: { createdSessionIds },
+          undoSnapshot: { version: 1, createdSessions: createdSnapshots, deletedSessions: [] },
+        });
+        return { written: results, audit };
       });
-      await rederiveHistoricalWorkoutGoals(userId, written.flatMap((row) => row.exerciseIds));
-      const results = written.map(formatHistoricalWorkoutResult);
+      await rederiveHistoricalWorkoutGoals(userId, written.written.flatMap((row) => row.exerciseIds));
+      const results = written.written.map(formatHistoricalWorkoutResult);
       return {
         ok: true,
         status: 'IMPORTED',
+        operationId: written.audit.operationId,
+        operationCreatedAt: written.audit.createdAt,
+        recoverable: results.some((row) => row.created),
         atomic: true,
         imported: results.filter((row) => row.created).length,
         idempotentReplays: results.filter((row) => row.idempotentReplay).length,
@@ -179,10 +210,23 @@ export async function importHistoricalWorkoutBatch(
   const results = [];
   for (let index = 0; index < resolvedInputs.length; index += 1) {
     try {
+      const written = await db.$transaction(async (tx) => {
+        const row = await importHistoricalWorkoutWithTx(tx, userId, resolvedInputs[index]!);
+        const previewRow = preview.workouts[index];
+        if (previewRow && 'aliasProposals' in previewRow) {
+          await learnMcpEntityAliases(
+            tx,
+            userId,
+            previewRow.aliasProposals as McpEntityAliasProposals,
+          );
+        }
+        return row;
+      });
+      await rederiveHistoricalWorkoutGoals(userId, written.exerciseIds);
       results.push({
         workoutIndex: index,
         ok: true,
-        result: await importHistoricalWorkout(userId, resolvedInputs[index]!),
+        result: formatHistoricalWorkoutResult(written),
       });
     } catch (error) {
       results.push({ workoutIndex: index, ok: false, issue: asMcpIssue(error) });
@@ -233,6 +277,32 @@ async function resolveHistoricalDraft(userId: string, draft: HistoricalWorkoutDr
     ) ?? [],
   );
 
+  const aliasProposals: McpEntityAliasProposals = {
+    exercises: draft.exercises.flatMap((exercise) => {
+      const exerciseId =
+        'id' in exercise.exercise
+          ? exercise.exercise.id
+          : exerciseByQuery.get(exercise.exercise.name) ?? null;
+      const alias = 'name' in exercise.exercise ? exercise.exercise.name : exercise.exercise.alias;
+      return exerciseId && alias ? [{ exerciseId, alias }] : [];
+    }),
+    equipment: selectedGymId
+      ? draft.exercises.flatMap((exercise) =>
+          exercise.sets.flatMap((set) => {
+            if (!set.equipment) return [];
+            const equipmentId =
+              'id' in set.equipment
+                ? set.equipment.id
+                : equipmentByQuery.get(set.equipment.name) ?? null;
+            const alias = 'name' in set.equipment ? set.equipment.name : set.equipment.alias;
+            return equipmentId && alias
+              ? [{ gymId: selectedGymId, equipmentId, alias }]
+              : [];
+          }),
+        )
+      : [],
+  };
+
   const input: HistoricalWorkoutImportInput = {
     importId: draft.importId,
     startedAt: draft.startedAt,
@@ -247,7 +317,8 @@ async function resolveHistoricalDraft(userId: string, draft: HistoricalWorkoutDr
           : exerciseByQuery.get(exercise.exercise.name) ?? '',
       sets: exercise.sets.map((set) => ({
         weightKg: set.weightKg,
-        reps: set.reps,
+        ...(set.reps !== undefined ? { reps: set.reps } : {}),
+        loadBasis: set.loadBasis,
         ...(set.rir !== undefined ? { rir: set.rir } : {}),
         isWarmup: set.isWarmup,
         isDropSet: set.isDropSet,
@@ -268,6 +339,7 @@ async function resolveHistoricalDraft(userId: string, draft: HistoricalWorkoutDr
   };
   return {
     input,
+    aliasProposals,
     entities: {
       gym: baseResolution.gym,
       exercises: baseResolution.exercises,

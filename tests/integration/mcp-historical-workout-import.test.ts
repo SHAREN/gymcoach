@@ -140,10 +140,9 @@ describe('GymCoach MCP historical workout import', () => {
       setNumber: 2,
       weight: 70,
       reps: 8,
-      rir: null,
+      rir: 0.5,
       gymEquipmentId: machine.id,
     });
-    expect(benchSets[1]?.notes).toContain('Reported RIR 0.5');
 
     const curlSet = stored.sets.find((set) => set.exerciseId === curl.id);
     expect(curlSet).toMatchObject({

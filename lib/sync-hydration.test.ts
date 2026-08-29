@@ -17,6 +17,8 @@ function serverSet(id: string, setNumber = 1): PrismaSet {
     setNumber,
     weight: 100,
     reps: 8,
+    repsKnown: true,
+    loadBasis: 'TOTAL',
     rir: 2,
     durationSec: null,
     distanceM: null,

@@ -83,4 +83,101 @@ describe('GymCoach MCP entity resolver', () => {
       .exercises;
     expect(exercises.map((row) => row.selected.id)).toEqual([bench.id, reverseCurl.id]);
   });
+
+  it('persists, uses, corrects and deletes exercise/equipment aliases through MCP', async () => {
+    const user = await db.user.create({
+      data: { email: 'mcp-aliases@test.dev', passwordHash: 'x' },
+    });
+    const bench = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Bench Press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'BARBELL',
+      },
+    });
+    const fly = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Machine Fly',
+        muscleGroup: 'CHEST',
+        category: 'ISOLATION',
+        equipmentType: 'MACHINE',
+      },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: 'Alias Gym', inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    const equipment = await db.gymEquipment.create({
+      data: {
+        gymId: gym.id,
+        name: 'Pec Deck #1',
+        equipmentType: 'MACHINE',
+        loadType: 'SELECTORIZED',
+        exerciseLinks: { create: { exerciseId: fly.id } },
+      },
+    });
+
+    const client = await connect(user.id);
+    const exerciseAlias = await client.callTool({
+      name: 'upsert_exercise_alias',
+      arguments: { confirmed: true, exerciseId: fly.id, alias: 'бабочка широкими' },
+    });
+    expect(exerciseAlias.isError).not.toBe(true);
+    const equipmentAlias = await client.callTool({
+      name: 'upsert_equipment_alias',
+      arguments: { confirmed: true, equipmentId: equipment.id, alias: 'бабочка у окна' },
+    });
+    expect(equipmentAlias.isError).not.toBe(true);
+
+    const resolved = await client.callTool({
+      name: 'resolve_entities',
+      arguments: {
+        gym: 'Alias Gym',
+        exercises: ['бабочка широкими'],
+        equipment: ['бабочка у окна'],
+      },
+    });
+    expect(resolved.structuredContent).toMatchObject({
+      status: 'READY',
+      exercises: [{ status: 'RESOLVED', selected: { id: fly.id } }],
+      equipment: [{ status: 'RESOLVED', selected: { id: equipment.id } }],
+    });
+
+    const corrected = await client.callTool({
+      name: 'upsert_exercise_alias',
+      arguments: { confirmed: true, exerciseId: bench.id, alias: 'бабочка широкими' },
+    });
+    expect(corrected.structuredContent).toMatchObject({
+      status: 'OK',
+      alias: { exercise: { id: bench.id } },
+    });
+
+    const listed = await client.callTool({ name: 'list_exercise_aliases', arguments: {} });
+    expect(listed.structuredContent).toMatchObject({
+      aliases: [{ alias: 'бабочка широкими', exercise: { id: bench.id } }],
+    });
+    const listedEquipment = await client.callTool({
+      name: 'list_equipment_aliases',
+      arguments: { gymId: gym.id },
+    });
+    expect(listedEquipment.structuredContent).toMatchObject({
+      aliases: [{ alias: 'бабочка у окна', equipment: { id: equipment.id } }],
+    });
+
+    const deleteExercise = await client.callTool({
+      name: 'delete_exercise_alias',
+      arguments: { confirmed: true, alias: 'бабочка широкими' },
+    });
+    expect(deleteExercise.structuredContent).toMatchObject({ status: 'OK' });
+    const deleteEquipment = await client.callTool({
+      name: 'delete_equipment_alias',
+      arguments: { confirmed: true, gymId: gym.id, alias: 'бабочка у окна' },
+    });
+    expect(deleteEquipment.structuredContent).toMatchObject({ status: 'OK' });
+
+    expect(await db.exerciseAlias.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.gymEquipmentAlias.count({ where: { userId: user.id } })).toBe(0);
+  });
 });

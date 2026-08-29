@@ -33,6 +33,9 @@ describe('setVolume / totalVolume', () => {
   it('returns 0 for warmup', () => {
     expect(setVolume({ weight: 80, reps: 10, isWarmup: true })).toBe(0);
   });
+  it('does not invent tonnage when repetitions are unknown', () => {
+    expect(setVolume({ weight: 80, reps: 0, repsKnown: false, isWarmup: false })).toBe(0);
+  });
   it('sums working sets only', () => {
     expect(
       totalVolume([
@@ -76,6 +79,14 @@ describe('best1RM', () => {
   it('returns 0 when no working set exists', () => {
     expect(best1RM([{ weight: 80, reps: 10, isWarmup: true }])).toBe(0);
   });
+  it('ignores historical sets whose repetition count is unknown', () => {
+    expect(
+      best1RM([
+        { weight: 200, reps: 0, repsKnown: false, isWarmup: false },
+        { weight: 100, reps: 5, repsKnown: true, isWarmup: false },
+      ]),
+    ).toBeCloseTo(116.667, 2);
+  });
 });
 
 describe('isoWeekKey / isoWeekStart', () => {
@@ -95,7 +106,7 @@ describe('isoWeekKey / isoWeekStart', () => {
 
 describe('exerciseProgress', () => {
   it('produces one point per session sorted by date', () => {
-    const sets = [
+    const sets: Parameters<typeof exerciseProgress>[0] = [
       {
         weight: 80,
         reps: 10,
@@ -126,6 +137,14 @@ describe('exerciseProgress', () => {
         sessionStartedAt: new Date('2026-04-27T10:00:00Z'),
       },
     ];
+    sets.push({
+      weight: 250,
+      reps: 0,
+      repsKnown: false,
+      isWarmup: false,
+      sessionId: 's2',
+      sessionStartedAt: new Date('2026-04-27T10:00:00Z'),
+    });
     const points = exerciseProgress(sets);
     expect(points).toHaveLength(2);
     expect(points[0]).toMatchObject({

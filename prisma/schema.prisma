@@ -60,6 +60,9 @@ model User {
   mcpAccessTokens          McpAccessToken[]
   mobileAccessTokens       MobileAccessToken[]
   mobileMutations          MobileMutation[]
+  exerciseAliases          ExerciseAlias[]
+  equipmentAliases         GymEquipmentAlias[]
+  mcpOperationAudits       McpOperationAudit[]
   activeGymId              String?
   activeGym                Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
@@ -77,6 +80,24 @@ model McpAccessToken {
   createdAt   DateTime  @default(now())
   lastUsedAt  DateTime?
   revokedAt   DateTime?
+
+  @@index([userId, createdAt])
+}
+
+// Durable audit record for high-level MCP data corrections. undoSnapshot is a
+// server-owned snapshot of the rows needed for a safe all-or-nothing rollback;
+// it is never treated as user instructions.
+model McpOperationAudit {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  operation    String    @db.VarChar(80)
+  reason       String?
+  request      Json?
+  result       Json?
+  undoSnapshot Json?
+  createdAt    DateTime  @default(now())
+  undoneAt     DateTime?
 
   @@index([userId, createdAt])
 }
@@ -197,8 +218,24 @@ model Exercise {
   gymConfigs         GymExerciseConfig[]
   gymEquipmentLinks  GymEquipmentExercise[]
   sessionMemberships SessionExercise[]
+  aliases            ExerciseAlias[]
 
   @@unique([userId, name])
+}
+
+model ExerciseAlias {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseId      String
+  exercise        Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  alias           String
+  normalizedAlias String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, normalizedAlias])
+  @@index([exerciseId])
 }
 
 enum EquipmentType {
@@ -221,6 +258,19 @@ enum EquipmentLoadType {
   FIXED
   SELECTORIZED
   PLATE_LOADED
+}
+
+enum HistoricalTimePrecision {
+  EXACT
+  DATE_ONLY
+}
+
+enum SetLoadBasis {
+  TOTAL
+  PER_SIDE
+  PER_HAND
+  STACK_DISPLAY
+  PLATE_PER_SIDE
 }
 
 enum BarbellDiameterFamily {
@@ -331,22 +381,24 @@ enum SetAutoregulationMode {
 }
 
 model Session {
-  id                  String            @id @default(cuid())
+  id                  String                  @id @default(cuid())
   userId              String
-  user                User              @relation(fields: [userId], references: [id])
+  user                User                    @relation(fields: [userId], references: [id])
   programId           String?
-  program             Program?          @relation(fields: [programId], references: [id])
+  program             Program?                @relation(fields: [programId], references: [id])
   workoutId           String?
-  workout             Workout?          @relation(fields: [workoutId], references: [id])
-  startedAt           DateTime          @default(now())
+  workout             Workout?                @relation(fields: [workoutId], references: [id])
+  startedAt           DateTime                @default(now())
   finishedAt          DateTime?
+  historicalDate      DateTime?               @db.Date
+  timePrecision       HistoricalTimePrecision @default(EXACT)
   notes               String?
   // Whole-session effort rating captured at finish (1 easy to 10 maximal).
   sessionRpe          Int?
   // The gym is frozen when the session starts so later switching gyms does
   // not change the inventory used by an in-progress or historical workout.
   gymId               String?
-  gym                 Gym?              @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  gym                 Gym?                    @relation(fields: [gymId], references: [id], onDelete: SetNull)
   sets                Set[]
   exerciseMemberships SessionExercise[]
 
@@ -390,6 +442,7 @@ model Gym {
   sessions          Session[]
   exerciseConfigs   GymExerciseConfig[]
   equipment         GymEquipment[]
+  equipmentAliases  GymEquipmentAlias[]
   platePools        GymPlatePool[]
   snapshotRevisions MobileEquipmentSnapshotRevision[]
 
@@ -466,11 +519,29 @@ model GymEquipment {
   exerciseLinks          GymEquipmentExercise[]
   preferredForConfigs    GymExerciseConfig[]    @relation("PreferredGymEquipment")
   performedSets          Set[]
+  aliases                GymEquipmentAlias[]
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
   @@index([gymId, systemBarbellFamily])
   @@index([platePoolId])
+}
+
+model GymEquipmentAlias {
+  id              String       @id @default(cuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymId           String
+  gym             Gym          @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  equipmentId     String
+  equipment       GymEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  alias           String
+  normalizedAlias String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([userId, gymId, normalizedAlias])
+  @@index([equipmentId])
 }
 
 // Plates are universal within a gym through named compatibility pools. A Smith
@@ -571,7 +642,14 @@ model Set {
   setNumber                      Int
   weight                         Float
   reps                           Int
-  rir                            Int?
+  // False means the historical source did not report repetitions. The stored
+  // numeric sentinel is compatibility-only and must be excluded from PR,
+  // volume and progression calculations that require real repetitions.
+  repsKnown                      Boolean       @default(true)
+  // Describes what the recorded weight means without changing Set.weight.
+  // Existing web/mobile writers remain TOTAL by default.
+  loadBasis                      SetLoadBasis  @default(TOTAL)
+  rir                            Float?
   // Cardio sets (issue #133, additive): duration in seconds (>= 1 when set)
   // and optional distance in meters. NULL on strength sets - existing rows
   // are untouched and lifting flows never write these.

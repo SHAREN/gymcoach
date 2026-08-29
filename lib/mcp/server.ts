@@ -70,6 +70,19 @@ import {
   importHistoricalWorkoutBatch,
   previewHistoricalWorkoutBatch,
 } from '@/lib/mcp/historical-workout-batch';
+import { reconcileHistoricalWorkouts } from '@/lib/mcp/historical-workout-reconcile';
+import {
+  deleteMcpEquipmentAlias,
+  deleteMcpExerciseAlias,
+  listMcpEquipmentAliases,
+  listMcpExerciseAliases,
+  upsertMcpEquipmentAlias,
+  upsertMcpExerciseAlias,
+} from '@/lib/mcp/entity-aliases';
+import {
+  getMcpOperationAudit,
+  undoMcpWorkoutOperation,
+} from '@/lib/mcp/workout-operation-audit';
 
 export const GYMCOACH_MCP_INSTRUCTIONS = `GymCoach stores the trainee's profile, gyms, equipment, programs, workout history, sets, RIR, goals and recovery signals.
 
@@ -83,7 +96,7 @@ Before creating, extending or revising a program, read gymcoach://methodology/pr
 
 Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory and call list_gyms. If the requested gym does not exist, decide with the trainee whether it starts empty or clones an owned gym, then use create_gym only after explicit confirmation. For an existing gym call get_gym_inventory and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
 
-For historical-workout repair, prefer task-oriented MCP tools instead of manually discovering opaque IDs. Use resolve_entities for bulk human-name lookup, get_workouts for exact dates/gym summaries, and analyze_historical_workout_conflicts for stale/duplicate classification. For one or many proposed imports, call preview_historical_workout_import first; it resolves human gym/exercise/equipment names and never writes. After one explicit batch confirmation, use import_historical_workouts with atomic=true when all workouts must commit together. Use delete_workout/delete_workouts only for explicitly confirmed erroneous sessions. Preserve unknown values as unknown instead of inventing them. The older import_historical_workout remains as a strict ID-oriented compatibility tool.
+For historical-workout repair, prefer task-oriented MCP tools instead of manually discovering opaque IDs. Use resolve_entities for bulk human-name lookup, get_workouts for exact dates/gym summaries, and analyze_historical_workout_conflicts for stale/duplicate classification. For one or many proposed imports, call preview_historical_workout_import first; it resolves human gym/exercise/equipment names and never writes. After one explicit batch confirmation, use import_historical_workouts with atomic=true when all workouts must commit together. When cleanup deletes and replacement imports must succeed or fail as one unit, use reconcile_historical_workouts. Use delete_workout/delete_workouts only for explicitly confirmed erroneous sessions. Preserve unknown values as unknown instead of inventing them. The older import_historical_workout remains as a strict ID-oriented compatibility tool.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
@@ -318,6 +331,124 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     },
     async (input) => result(await resolveMcpEntities(principal.userId, input)),
+  );
+
+  server.registerTool(
+    'list_exercise_aliases',
+    {
+      title: 'List learned exercise aliases',
+      description:
+        'Lists the trainee-specific natural-language aliases remembered for exercises. These aliases are used by resolve_entities and historical-workout tools before fuzzy catalog matching.',
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async () => result(await listMcpExerciseAliases(principal.userId)),
+  );
+
+  server.registerTool(
+    'upsert_exercise_alias',
+    {
+      title: 'Remember an exercise alias',
+      description:
+        'Saves or corrects one trainee-specific natural-language alias for an owned exercise after explicit confirmation. The same normalized alias maps to only one exercise for this trainee.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        exerciseId: databaseIdSchema,
+        alias: z.string().trim().min(1).max(160),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, exerciseId, alias }) => {
+      requireWrite(principal);
+      return result(await upsertMcpExerciseAlias(principal.userId, exerciseId, alias));
+    },
+  );
+
+  server.registerTool(
+    'delete_exercise_alias',
+    {
+      title: 'Delete an exercise alias',
+      description:
+        'Deletes one trainee-specific exercise alias by its human text after explicit confirmation. The exercise itself is never deleted.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        alias: z.string().trim().min(1).max(160),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, alias }) => {
+      requireWrite(principal);
+      return result(await deleteMcpExerciseAlias(principal.userId, alias));
+    },
+  );
+
+  server.registerTool(
+    'list_equipment_aliases',
+    {
+      title: 'List learned gym-equipment aliases',
+      description:
+        'Lists trainee-specific natural-language aliases remembered for physical gym equipment. Optionally scopes the result to one owned gym.',
+      inputSchema: { gymId: gymIdSchema.optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ gymId }) => result(await listMcpEquipmentAliases(principal.userId, gymId)),
+  );
+
+  server.registerTool(
+    'upsert_equipment_alias',
+    {
+      title: 'Remember a gym-equipment alias',
+      description:
+        'Saves or corrects one trainee-specific natural-language alias for owned physical gym equipment after explicit confirmation. The equipment gym is derived server-side.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        equipmentId: databaseIdSchema,
+        alias: z.string().trim().min(1).max(160),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, equipmentId, alias }) => {
+      requireWrite(principal);
+      return result(await upsertMcpEquipmentAlias(principal.userId, equipmentId, alias));
+    },
+  );
+
+  server.registerTool(
+    'delete_equipment_alias',
+    {
+      title: 'Delete a gym-equipment alias',
+      description:
+        'Deletes one trainee-specific equipment alias inside an owned gym after explicit confirmation. The equipment itself is never deleted.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema,
+        alias: z.string().trim().min(1).max(160),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, gymId, alias }) => {
+      requireWrite(principal);
+      return result(await deleteMcpEquipmentAlias(principal.userId, gymId, alias));
+    },
   );
 
   server.registerTool(
@@ -852,6 +983,41 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'get_operation_audit',
+    {
+      title: 'Get one MCP workout-operation audit record',
+      description:
+        'Returns the server-owned audit record for a historical-workout write operation and whether it is still eligible for undo. The private rollback snapshot is never exposed.',
+      inputSchema: { operationId: databaseIdSchema },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ operationId }) => result(await getMcpOperationAudit(principal.userId, operationId)),
+  );
+
+  server.registerTool(
+    'undo_operation',
+    {
+      title: 'Undo one historical-workout MCP operation',
+      description:
+        'Safely reverses an eligible audited historical-workout import/delete/reconciliation after explicit confirmation. Undo is all-or-nothing and refuses to overwrite sessions that changed after the original operation.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        operationId: databaseIdSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, operationId }) => {
+      requireWrite(principal);
+      return result(await undoMcpWorkoutOperation(principal.userId, operationId));
+    },
+  );
+
+  server.registerTool(
     'get_training_history',
     {
       title: 'Get exact training history',
@@ -959,11 +1125,43 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'reconcile_historical_workouts',
+    {
+      title: 'Atomically reconcile historical workouts',
+      description:
+        'Atomically deletes explicitly selected owned sessions and imports the replacement historical workouts in one transaction. Human exercise/equipment aliases learned from confirmed ID mappings are persisted. Any delete/import failure rolls the whole operation back.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        workouts: z.array(historicalWorkoutDraftSchema).min(1).max(50),
+        deleteSessionIds: z.array(databaseIdSchema).max(100).default([]),
+        reason: z.string().trim().max(500).nullable().optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, workouts, deleteSessionIds, reason }) => {
+      requireWrite(principal);
+      return result(
+        await reconcileHistoricalWorkouts(
+          principal.userId,
+          workouts,
+          deleteSessionIds,
+          reason ?? null,
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
     'import_historical_workout',
     {
       title: 'Import a completed historical workout',
       description:
-        'Atomically imports one completed historical strength workout with exact dates, exercise IDs, sets, RIR, drop/warm-up flags, notes and optional physical equipment. Reusing the same importId is idempotent; changed data with that importId is rejected.',
+        'Atomically imports one completed historical strength workout using exercise IDs. startedAt accepts either an exact offset timestamp or YYYY-MM-DD DATE_ONLY precision; reps may be null when unknown and loadBasis preserves TOTAL/PER_SIDE/PER_HAND/STACK_DISPLAY/PLATE_PER_SIDE semantics. Reusing the same importId is idempotent; changed data with that importId is rejected.',
       inputSchema: {
         confirmed: explicitConfirmation,
         ...historicalWorkoutImportSchema.shape,

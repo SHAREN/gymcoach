@@ -64,6 +64,7 @@ interface PeriodSummary {
   setsWithRir: number;
   setsAtRir0To4: number;
   rirCoveragePct: number | null;
+  unknownRepSets: number;
   directSetsByPrimaryMuscle: Record<string, MuscleSetSummary>;
   loadByMuscle: ReturnType<typeof aggregateTrainingLoad>['muscles'];
   loadProfileMetadata: Omit<ReturnType<typeof aggregateTrainingLoad>, 'muscles'>;
@@ -254,6 +255,7 @@ export function summarizeMcpTrainingHistory(
 }
 
 export function serializeTrainingSession(session: McpHistorySessionRow) {
+  const isDateOnly = session.timePrecision === 'DATE_ONLY';
   const grouped = new Map<
     string,
     {
@@ -288,10 +290,12 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
     sessionId: session.id,
     program: session.program,
     workout: session.workout,
-    startedAt: session.startedAt.toISOString(),
-    finishedAt: session.finishedAt?.toISOString() ?? null,
+    date: (session.historicalDate ?? session.startedAt).toISOString().slice(0, 10),
+    timePrecision: session.timePrecision,
+    startedAt: isDateOnly ? null : session.startedAt.toISOString(),
+    finishedAt: isDateOnly ? null : session.finishedAt?.toISOString() ?? null,
     durationMin:
-      session.finishedAt == null
+      isDateOnly || session.finishedAt == null
         ? null
         : round((session.finishedAt.getTime() - session.startedAt.getTime()) / 60000, 1),
     sessionRpe: session.sessionRpe,
@@ -314,13 +318,15 @@ export function serializeTrainingSession(session: McpHistorySessionRow) {
       sets: exercise.sets.map((set) => ({
         setNumber: set.setNumber,
         weight: set.weight,
-        reps: set.reps,
+        reps: set.repsKnown ? set.reps : null,
+        repsKnown: set.repsKnown,
+        loadBasis: set.loadBasis,
         rir: set.rir,
         isWarmup: set.isWarmup,
         isDropSet: set.isDropSet,
         recoverySec: set.recoverySec,
         notes: set.notes,
-        completedAt: set.completedAt.toISOString(),
+        completedAt: isDateOnly ? null : set.completedAt.toISOString(),
       })),
     })),
   };
@@ -366,10 +372,12 @@ function summarizePeriod(sessions: McpHistorySessionRow[]): PeriodSummary {
   let dropSets = 0;
   let setsWithRir = 0;
   let setsAtRir0To4 = 0;
+  let unknownRepSets = 0;
   for (const session of sessions) {
     for (const set of session.sets) {
       if (set.isWarmup || set.exercise.category === 'CARDIO') continue;
       workingSets += 1;
+      if (!set.repsKnown) unknownRepSets += 1;
       if (set.isDropSet) {
         dropSets += 1;
       } else {
@@ -392,6 +400,7 @@ function summarizePeriod(sessions: McpHistorySessionRow[]): PeriodSummary {
     setsAtRir0To4,
     rirCoveragePct:
       regularWorkingSets > 0 ? round((setsWithRir / regularWorkingSets) * 100, 1) : null,
+    unknownRepSets,
     directSetsByPrimaryMuscle,
     loadByMuscle: load.muscles,
     loadProfileMetadata: {

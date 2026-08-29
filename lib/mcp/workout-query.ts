@@ -98,7 +98,7 @@ export async function getMcpWorkouts(userId: string, input: GetWorkoutsInput) {
       dates: input.dates ?? [],
       dateInterpretation:
         dateRanges.length > 0
-          ? 'UTC calendar dates for existing timestamps. Date-only historical import will use explicit precision metadata in the follow-up API.'
+          ? 'Calendar dates. DATE_ONLY historical sessions are returned with explicit precision metadata and no fabricated clock time.'
           : null,
       from: input.from ?? null,
       to: input.to ?? null,
@@ -112,11 +112,14 @@ export async function getMcpWorkouts(userId: string, input: GetWorkoutsInput) {
 }
 
 export function serializeWorkout(row: McpWorkoutRow, now = new Date()) {
+  const isDateOnly = row.timePrecision === 'DATE_ONLY';
   const durationMs = row.finishedAt
     ? row.finishedAt.getTime() - row.startedAt.getTime()
     : now.getTime() - row.startedAt.getTime();
   const durationHours = Math.max(0, durationMs / HOUR_MS);
-  const stale = classifyStaleSession(row.startedAt, row.finishedAt, now);
+  const stale = isDateOnly
+    ? { isStale: false, classification: 'DATE_ONLY_COMPLETED' as const, reason: null }
+    : classifyStaleSession(row.startedAt, row.finishedAt, now);
   const grouped = new Map<
     string,
     {
@@ -142,9 +145,11 @@ export function serializeWorkout(row: McpWorkoutRow, now = new Date()) {
     gym: row.gym,
     program: row.program,
     workout: row.workout,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt?.toISOString() ?? null,
-    durationMin: Math.round(durationHours * 60 * 10) / 10,
+    date: (row.historicalDate ?? row.startedAt).toISOString().slice(0, 10),
+    timePrecision: row.timePrecision,
+    startedAt: isDateOnly ? null : row.startedAt.toISOString(),
+    finishedAt: isDateOnly ? null : row.finishedAt?.toISOString() ?? null,
+    durationMin: isDateOnly ? null : Math.round(durationHours * 60 * 10) / 10,
     sessionRpe: row.sessionRpe,
     notes: row.notes,
     exerciseCount: row.exerciseMemberships.length || grouped.size,
@@ -171,13 +176,15 @@ export function serializeWorkout(row: McpWorkoutRow, now = new Date()) {
         setId: set.id,
         setNumber: set.setNumber,
         weightKg: set.weight,
-        reps: set.reps,
+        reps: set.repsKnown ? set.reps : null,
+        repsKnown: set.repsKnown,
+        loadBasis: set.loadBasis,
         rir: set.rir,
         isWarmup: set.isWarmup,
         isDropSet: set.isDropSet,
         recoverySec: set.recoverySec,
         notes: set.notes,
-        completedAt: set.completedAt.toISOString(),
+        completedAt: isDateOnly ? null : set.completedAt.toISOString(),
         equipment: set.gymEquipment
           ? { id: set.gymEquipment.id, name: set.gymEquipment.name }
           : set.equipmentNameSnapshot

@@ -33,6 +33,7 @@ export async function resolveMcpEntities(userId: string, input: ResolveEntitiesI
         muscleGroup: true,
         category: true,
         equipmentType: true,
+        aliases: { select: { alias: true } },
       },
     }),
     db.set.findMany({
@@ -87,6 +88,7 @@ export async function resolveMcpEntities(userId: string, input: ResolveEntitiesI
               modelName: true,
               equipmentType: true,
               loadType: true,
+              aliases: { select: { alias: true } },
               exerciseLinks: { select: { exerciseId: true } },
             },
           },
@@ -137,7 +139,12 @@ export async function resolveMcpEntities(userId: string, input: ResolveEntitiesI
       id: exercise.id,
       canonicalName: exercise.name,
       displayName: russian,
-      aliases: [exercise.name, russian, english].filter((value): value is string => Boolean(value)),
+      aliases: [
+        exercise.name,
+        russian,
+        english,
+        ...exercise.aliases.map((row) => row.alias),
+      ].filter((value): value is string => Boolean(value)),
       contextBonus,
       reasons,
       metadata: {
@@ -156,6 +163,7 @@ export async function resolveMcpEntities(userId: string, input: ResolveEntitiesI
       equipment.manufacturer,
       equipment.modelName,
       [equipment.manufacturer, equipment.modelName].filter(Boolean).join(' '),
+      ...equipment.aliases.map((row) => row.alias),
     ].filter((value): value is string => Boolean(value)),
     contextBonus: preferredEquipmentIds.has(equipment.id) ? 0.04 : 0,
     reasons: preferredEquipmentIds.has(equipment.id) ? ['preferred-equipment'] : [],
