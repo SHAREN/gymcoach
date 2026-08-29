@@ -33,11 +33,16 @@ describe('GymCoach MCP server', () => {
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
     expect(tools.tools.length).toBeGreaterThan(10);
     expect(byName.has('list_gyms')).toBe(true);
+    expect(byName.has('create_gym')).toBe(true);
+    expect(byName.has('set_active_gym')).toBe(true);
     expect(byName.has('get_gym_inventory')).toBe(true);
     expect(byName.has('get_gym_equipment_image')).toBe(true);
+    expect(byName.has('set_gym_inventory_mode')).toBe(true);
     expect(byName.has('update_gym_free_weights')).toBe(true);
     expect(byName.has('upsert_gym_equipment')).toBe(true);
+    expect(byName.has('delete_gym_equipment')).toBe(true);
     expect(byName.has('upsert_gym_plate_pool')).toBe(true);
+    expect(byName.has('delete_gym_plate_pool')).toBe(true);
     expect(byName.has('set_gym_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_training_history')).toBe(true);
@@ -71,6 +76,14 @@ describe('GymCoach MCP server', () => {
     expect(byName.get('get_gym_inventory')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_gym_equipment_image')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('set_gym_equipment_image')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('delete_gym_equipment')?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get('delete_gym_plate_pool')?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get('create_gym')?.inputSchema.required).toEqual(
+      expect.arrayContaining(['confirmed', 'name']),
+    );
+    expect(byName.get('upsert_gym_equipment')?.inputSchema.properties).toHaveProperty(
+      'preferredExerciseIds',
+    );
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_training_history')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);

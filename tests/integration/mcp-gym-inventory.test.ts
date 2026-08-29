@@ -110,7 +110,28 @@ describe('GymCoach MCP gym inventory', () => {
         equipmentType: 'DUMBBELL',
       },
     });
-    const gym = await db.gym.create({ data: { userId: user.id, name: 'Olymp' } });
+    const client = await connect(user.id, true);
+    const created = await client.callTool({
+      name: 'create_gym',
+      arguments: { confirmed: true, name: 'Olymp', makeActive: true },
+    });
+    expect(created.isError).not.toBe(true);
+    const createdData = created.structuredContent as { gym: { id: string; isActive: boolean } };
+    expect(createdData.gym.isActive).toBe(true);
+    const gym = await db.gym.findUniqueOrThrow({ where: { id: createdData.gym.id } });
+    expect(gym.inventoryMode).toBe('EQUIPMENT_FIRST');
+
+    const legacyMode = await client.callTool({
+      name: 'set_gym_inventory_mode',
+      arguments: { confirmed: true, gymId: gym.id, inventoryMode: 'LEGACY' },
+    });
+    expect(legacyMode.isError).not.toBe(true);
+    const equipmentFirstMode = await client.callTool({
+      name: 'set_gym_inventory_mode',
+      arguments: { confirmed: true, gymId: gym.id, inventoryMode: 'EQUIPMENT_FIRST' },
+    });
+    expect(equipmentFirstMode.isError).not.toBe(true);
+
     await db.gymExerciseConfig.create({
       data: {
         gymId: gym.id,
@@ -120,8 +141,6 @@ describe('GymCoach MCP gym inventory', () => {
         isEquipmentMirror: false,
       },
     });
-    await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
-    const client = await connect(user.id, true);
 
     const weights = await client.callTool({
       name: 'update_gym_free_weights',
@@ -193,6 +212,7 @@ describe('GymCoach MCP gym inventory', () => {
         weightOptions: [10, 20, 30, 40],
         selectedLoadMultiplier: 0.5,
         exerciseIds: [exercise.id],
+        preferredExerciseIds: [exercise.id],
       },
     });
     expect(upserted.isError).not.toBe(true);
@@ -216,6 +236,7 @@ describe('GymCoach MCP gym inventory', () => {
       isAvailable: false,
       weightOptions: [99],
       isEquipmentMirror: false,
+      preferredEquipmentId: savedEquipment.id,
     });
 
     const updatedStack = await client.callTool({
@@ -323,6 +344,90 @@ describe('GymCoach MCP gym inventory', () => {
         }),
       ]),
     );
+
+    const cloned = await client.callTool({
+      name: 'create_gym',
+      arguments: {
+        confirmed: true,
+        name: 'Olymp clone',
+        sourceGymId: gym.id,
+        makeActive: false,
+      },
+    });
+    expect(cloned.isError).not.toBe(true);
+    const clonedData = cloned.structuredContent as {
+      gym: { id: string; isActive: boolean };
+      clonedFromGym: { id: string; name: string } | null;
+    };
+    expect(clonedData.gym.id).not.toBe(gym.id);
+    expect(clonedData.gym.isActive).toBe(false);
+    expect(clonedData.clonedFromGym).toEqual({ id: gym.id, name: 'Olymp' });
+
+    const clonedGym = await db.gym.findUniqueOrThrow({
+      where: { id: clonedData.gym.id },
+      include: {
+        platePools: { include: { plates: true } },
+        equipment: { include: { exerciseLinks: true } },
+        exerciseConfigs: true,
+      },
+    });
+    expect(clonedGym.inventoryMode).toBe('EQUIPMENT_FIRST');
+    expect(clonedGym.dumbbellWeights).toEqual([12.5, 20]);
+    expect(clonedGym.platePools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ compatibilityKey: 'olympic_50mm' }),
+        expect.objectContaining({ systemBarbellFamily: 'LARGE' }),
+        expect.objectContaining({ systemBarbellFamily: 'SMALL' }),
+      ]),
+    );
+    const clonedEquipment = clonedGym.equipment.find((item) => item.name === savedEquipment.name);
+    expect(clonedEquipment).toBeDefined();
+    expect(clonedEquipment!.id).not.toBe(savedEquipment.id);
+    expect(clonedEquipment).toMatchObject({
+      loadType: 'SELECTORIZED',
+      selectedLoadMultiplier: 0.5,
+      weightOptions: [15, 25, 35, 45],
+      imageMimeType: 'image/png',
+    });
+    expect(Buffer.from(clonedEquipment!.imageData ?? [])).toEqual(PNG);
+    expect(clonedEquipment!.exerciseLinks).toEqual([
+      expect.objectContaining({ exerciseId: exercise.id, mirrorsLegacyConfig: false }),
+    ]);
+    expect(
+      clonedGym.exerciseConfigs.find((config) => config.exerciseId === exercise.id),
+    ).toMatchObject({
+      preferredEquipmentId: clonedEquipment!.id,
+      weightOptions: [99],
+      isAvailable: false,
+    });
+
+    const activatedClone = await client.callTool({
+      name: 'set_active_gym',
+      arguments: { confirmed: true, gymId: clonedGym.id },
+    });
+    expect(activatedClone.isError).not.toBe(true);
+    expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).activeGymId).toBe(
+      clonedGym.id,
+    );
+    await client.callTool({
+      name: 'set_active_gym',
+      arguments: { confirmed: true, gymId: gym.id },
+    });
+
+    const deletedCloneEquipment = await client.callTool({
+      name: 'delete_gym_equipment',
+      arguments: { confirmed: true, equipmentId: clonedEquipment!.id },
+    });
+    expect(deletedCloneEquipment.isError).not.toBe(true);
+    const clonedCustomPool = clonedGym.platePools.find(
+      (pool) => pool.compatibilityKey === 'olympic_50mm',
+    );
+    expect(clonedCustomPool).toBeDefined();
+    const deletedClonePool = await client.callTool({
+      name: 'delete_gym_plate_pool',
+      arguments: { confirmed: true, poolId: clonedCustomPool!.id },
+    });
+    expect(deletedClonePool.isError).not.toBe(true);
 
     const cleared = await client.callTool({
       name: 'set_gym_equipment_image',

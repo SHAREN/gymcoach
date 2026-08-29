@@ -19,6 +19,12 @@ export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image
 export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[number];
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
+interface CreateOwnedGymInput {
+  name: string;
+  sourceGymId?: string;
+  makeActive?: boolean;
+}
+
 export async function setPreferredExerciseEquipment(
   tx: Prisma.TransactionClient,
   userId: string,
@@ -171,6 +177,170 @@ export async function listOwnedGyms(userId: string) {
     activeGymId: user?.activeGymId ?? null,
     gyms: gyms.map((gym) => ({ ...gym, isActive: gym.id === user?.activeGymId })),
   };
+}
+
+export async function setOwnedActiveGym(userId: string, gymId: string) {
+  const gym = await db.gym.findFirst({
+    where: { id: gymId, userId },
+    select: { id: true, name: true },
+  });
+  if (!gym) throw new ApiError(404, 'Gym not found.');
+  await db.user.update({ where: { id: userId }, data: { activeGymId: gym.id } });
+  return { activeGymId: gym.id, gym };
+}
+
+export async function createOwnedGym(userId: string, input: CreateOwnedGymInput) {
+  return db.$transaction(async (tx) => {
+    const source = input.sourceGymId
+      ? await tx.gym.findFirst({
+          where: { id: input.sourceGymId, userId },
+          select: {
+            id: true,
+            name: true,
+            inventoryMode: true,
+            dumbbellWeights: true,
+            plateWeights: true,
+            barWeights: true,
+            platePools: {
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              include: { plates: { orderBy: { weightKg: 'asc' } } },
+            },
+            equipment: {
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              include: {
+                exerciseLinks: true,
+              },
+            },
+            exerciseConfigs: true,
+          },
+        })
+      : null;
+    if (input.sourceGymId && !source) throw new ApiError(404, 'Source gym not found.');
+
+    const gym = await tx.gym.create({
+      data: {
+        userId,
+        name: input.name,
+        inventoryMode: source?.inventoryMode ?? 'EQUIPMENT_FIRST',
+        dumbbellWeights: source?.dumbbellWeights ?? [],
+        plateWeights: source?.plateWeights ?? [],
+        barWeights: source?.barWeights ?? [],
+      },
+      select: { id: true },
+    });
+
+    const platePoolIdBySourceId = new Map<string, string>();
+    for (const sourcePool of source?.platePools ?? []) {
+      const pool = await tx.gymPlatePool.create({
+        data: {
+          gymId: gym.id,
+          name: sourcePool.name,
+          compatibilityKey: sourcePool.compatibilityKey,
+          systemBarbellFamily: sourcePool.systemBarbellFamily,
+          ...(sourcePool.plates.length > 0
+            ? {
+                plates: {
+                  createMany: {
+                    data: sourcePool.plates.map((plate) => ({
+                      weightKg: plate.weightKg,
+                      quantity: plate.quantity,
+                    })),
+                  },
+                },
+              }
+            : {}),
+        },
+        select: { id: true },
+      });
+      platePoolIdBySourceId.set(sourcePool.id, pool.id);
+    }
+
+    const equipmentIdBySourceId = new Map<string, string>();
+    for (const sourceEquipment of source?.equipment ?? []) {
+      const equipment = await tx.gymEquipment.create({
+        data: {
+          gymId: gym.id,
+          name: sourceEquipment.name,
+          equipmentType: sourceEquipment.equipmentType,
+          description: sourceEquipment.description,
+          manufacturer: sourceEquipment.manufacturer,
+          modelName: sourceEquipment.modelName,
+          quantity: sourceEquipment.quantity,
+          loadType: sourceEquipment.loadType,
+          weightOptions: sourceEquipment.weightOptions,
+          selectedLoadMultiplier: sourceEquipment.selectedLoadMultiplier,
+          baseLoadKg: sourceEquipment.baseLoadKg,
+          platePoolId: sourceEquipment.platePoolId
+            ? (platePoolIdBySourceId.get(sourceEquipment.platePoolId) ?? null)
+            : null,
+          loadingSides: sourceEquipment.loadingSides,
+          systemBarbellFamily: sourceEquipment.systemBarbellFamily,
+          imageUrl: sourceEquipment.imageUrl,
+          imageData: sourceEquipment.imageData,
+          imageMimeType: sourceEquipment.imageMimeType,
+        },
+        select: { id: true },
+      });
+      equipmentIdBySourceId.set(sourceEquipment.id, equipment.id);
+      if (sourceEquipment.exerciseLinks.length > 0) {
+        await tx.gymEquipmentExercise.createMany({
+          data: sourceEquipment.exerciseLinks.map((link) => ({
+            equipmentId: equipment.id,
+            exerciseId: link.exerciseId,
+            mirrorsLegacyConfig: link.mirrorsLegacyConfig,
+          })),
+        });
+      }
+    }
+
+    if ((source?.exerciseConfigs.length ?? 0) > 0) {
+      await tx.gymExerciseConfig.createMany({
+        data: source!.exerciseConfigs.map((config) => ({
+          gymId: gym.id,
+          exerciseId: config.exerciseId,
+          isAvailable: config.isAvailable,
+          weightOptions: config.weightOptions,
+          dumbbellWeights: config.dumbbellWeights,
+          plateWeights: config.plateWeights,
+          barWeights: config.barWeights,
+          isEquipmentMirror: config.isEquipmentMirror,
+          systemProfileSupported: config.systemProfileSupported,
+          preferredEquipmentId: config.preferredEquipmentId
+            ? (equipmentIdBySourceId.get(config.preferredEquipmentId) ?? null)
+            : null,
+        })),
+      });
+    }
+
+    // A newly created gym must always satisfy the modern equipment-first
+    // invariants. On a clone this is normally a no-op, but it also upgrades a
+    // legacy source that predates the permanent Dumbbells/Barbell profiles.
+    await ensureGymSystemProfiles(tx, userId, gym.id);
+
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { activeGymId: true },
+    });
+    const isActive = input.makeActive === true || !user?.activeGymId;
+    if (isActive) {
+      await tx.user.update({ where: { id: userId }, data: { activeGymId: gym.id } });
+    }
+
+    const saved = await tx.gym.findUniqueOrThrow({
+      where: { id: gym.id },
+      select: {
+        id: true,
+        name: true,
+        inventoryMode: true,
+        updatedAt: true,
+        _count: { select: { equipment: true, exerciseConfigs: true, sessions: true } },
+      },
+    });
+    return {
+      gym: { ...saved, isActive },
+      clonedFromGym: source ? { id: source.id, name: source.name } : null,
+    };
+  });
 }
 
 export async function getOwnedGymInventory(userId: string, baseUrl: string, gymId?: string) {
@@ -393,6 +563,22 @@ export async function updateOwnedGymFreeWeights(
         barWeights: true,
         updatedAt: true,
       },
+    });
+  });
+}
+
+export async function setOwnedGymInventoryMode(
+  userId: string,
+  gymId: string | undefined,
+  inventoryMode: 'LEGACY' | 'EQUIPMENT_FIRST',
+) {
+  const gym = await resolveOwnedGym(userId, gymId);
+  return db.$transaction(async (tx) => {
+    await ensureGymSystemProfiles(tx, userId, gym.id);
+    return tx.gym.update({
+      where: { id: gym.id },
+      data: { inventoryMode },
+      select: { id: true, name: true, inventoryMode: true, updatedAt: true },
     });
   });
 }

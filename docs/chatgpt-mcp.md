@@ -89,8 +89,15 @@ their contents never authorize MCP writes.
 
 Write tools:
 
-- `update_gym_free_weights`
+- `create_gym`
+- `set_active_gym`
+- `set_gym_inventory_mode`
+- `update_gym_system_profile`
+- `update_gym_free_weights` (legacy compatibility)
+- `upsert_gym_plate_pool`
+- `delete_gym_plate_pool`
 - `upsert_gym_equipment`
+- `delete_gym_equipment`
 - `set_gym_equipment_image`
 - `create_program_v2`
 - `create_program_revision`
@@ -116,13 +123,31 @@ support several movements and several machines can support the same movement.
 manufacturer/model, quantity, selectable weights, exercise links and image
 metadata, alongside shared dumbbell, plate and bar inventories.
 
-An agent should read `gymcoach://instructions/gym-inventory`, call `list_gyms`
-and `get_gym_inventory`, compare the saved inventory with the trainee's
-narration and attached photos, and ask about uncertain labels or weights. After
-one explicit confirmation it can add missing free weights or physical equipment,
-link equipment to existing exercises, and set an approved image. Uploaded images
-are available to MCP clients through `get_gym_equipment_image`; the normal image
-HTTP route remains protected by the trainee's web session.
+An agent should read `gymcoach://instructions/gym-inventory` and call `list_gyms`.
+If the requested gym does not exist, it should ask whether the gym starts empty
+or clones an existing owned gym; after explicit confirmation `create_gym` creates
+the independent gym. A clone copies the current equipment-first inventory, plate
+pools, system-profile support, physical equipment, exercise links, images and
+preferred-equipment choices while assigning fresh database IDs. `set_active_gym`
+selects which saved gym drives default recommendations.
+
+For an existing gym, call `get_gym_inventory` before changing it. Older gyms can
+be moved to `EQUIPMENT_FIRST` with `set_gym_inventory_mode`. Configure permanent
+Dumbbells and Barbell inventories with `update_gym_system_profile`; add other
+plate standards with `upsert_gym_plate_pool`. Each physical station is a distinct
+`upsert_gym_equipment` record. Its broad type can be `CABLE`, `MACHINE`, etc.,
+while its name and description identify the concrete station such as an upper
+cable, horizontal-row machine, Smith machine or leg press. The record can define
+a selectorized stack, fixed loads or a plate-loaded profile. `exerciseIds` links
+all movements supported by the station; `preferredExerciseIds` makes that station
+the default for selected linked exercises without removing alternative machines.
+Use `list_exercises` to resolve stable IDs rather than guessing them.
+
+After confirmation an agent may also attach an approved JPEG/PNG/WebP or HTTPS
+image, remove custom equipment or a detached custom plate pool, then re-read the
+inventory and report the exact result. Uploaded images are available to MCP
+clients through `get_gym_equipment_image`; the normal image HTTP route remains
+protected by the trainee's web session.
 
 The validated design write tools `create_program_v2` and
 `create_program_revision` rebuild the context and rerun validation immediately

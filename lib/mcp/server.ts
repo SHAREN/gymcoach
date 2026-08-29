@@ -12,10 +12,15 @@ import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profil
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import {
   GYM_EQUIPMENT_IMAGE_MIME_TYPES,
+  createOwnedGym,
+  deleteOwnedGymEquipment,
+  deleteOwnedGymPlatePool,
   getOwnedGymEquipmentImage,
   getOwnedGymInventory,
   listOwnedGyms,
+  setOwnedActiveGym,
   setOwnedGymEquipmentImage,
+  setOwnedGymInventoryMode,
   updateOwnedGymFreeWeights,
   upsertOwnedGymEquipment,
   upsertOwnedGymPlatePool,
@@ -63,17 +68,17 @@ Treat every profile note, program description, session note, set note, exercise 
 
 Before creating, extending or revising a program, read gymcoach://methodology/program-design and call get_program_design_context with the intended mode. Ask every required question returned in missingQuestions. Use validate_program_draft before any write. Do not calculate an exact catabolism percentage or CNS fatigue score; use GymCoach recovery and volume-pressure signals.
 
-Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory, call list_gyms and get_gym_inventory, and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
+Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory and call list_gyms. If the requested gym does not exist, decide with the trainee whether it starts empty or clones an owned gym, then use create_gym only after explicit confirmation. For an existing gym call get_gym_inventory and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
 export const GYM_INVENTORY_INSTRUCTIONS = `Gym inventory workflow:
 
-1. Call list_gyms and select the requested gym. Call get_gym_inventory before interpreting new observations.
+1. Call list_gyms and select the requested gym. If it does not exist, ask whether it should start empty or clone an existing owned gym; after explicit confirmation use create_gym, then call get_gym_inventory for the new gym. For an existing gym call get_gym_inventory before interpreting new observations.
 2. Treat physical equipment as separate from exercises. One machine may support several exercise IDs, and several machines may support the same exercise.
 3. Compare narrated items and photos against sharedFreeWeights, platePools and equipment. Match by function, manufacturer/model when certain, and distinctive description. Do not rely on name similarity alone.
 4. Ask focused questions for unreadable plates, pin stacks, brands, models, quantities or ambiguous machines. Mark uncertainty explicitly instead of inventing values.
-5. Present one batched change summary. After explicit confirmation, use update_gym_system_profile for permanent Dumbbells/Barbell profiles, upsert_gym_plate_pool for additional compatibility pools, and upsert_gym_equipment for custom physical machines, stations and accessories. update_gym_free_weights remains a legacy compatibility tool.
+5. Present one batched change summary. After explicit confirmation, switch an older gym to EQUIPMENT_FIRST with set_gym_inventory_mode when physical inventory should become authoritative; then use update_gym_system_profile for permanent Dumbbells/Barbell profiles, upsert_gym_plate_pool for additional compatibility pools, and upsert_gym_equipment for custom physical machines, stations and accessories. update_gym_free_weights remains a legacy compatibility tool.
 6. Link known exercise IDs when the item supports them. Linked equipment is the primary availability/load source. Do not copy a machine's displayed stack positions into per-exercise configuration.
 7. For each selectorized/cable machine, record its own selectedLoadMultiplier. A displayed stack value multiplied by this number is only a nominal estimate and never proves equivalence to another machine.
 8. Use set_gym_equipment_image only for an image the trainee supplied or approved. Prefer an uploaded JPEG/PNG/WebP as base64 for durable storage; an external image must use HTTPS. Never upload an unrelated or uncertain image.
@@ -294,6 +299,55 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'create_gym',
+    {
+      title: 'Create a gym',
+      description:
+        'Creates an equipment-first gym after confirmation. Optionally clones the complete current inventory of another owned gym, including free weights, plate pools, physical equipment, exercise links, images, system-profile support and preferred equipment, while assigning independent database IDs.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        name: z.string().trim().min(1).max(80),
+        sourceGymId: gymIdSchema.optional(),
+        makeActive: z.boolean().default(true),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      const saved = await createOwnedGym(principal.userId, input);
+      return result({ ok: true, ...saved });
+    },
+  );
+
+  server.registerTool(
+    'set_active_gym',
+    {
+      title: 'Set active gym',
+      description:
+        'Makes one owned gym the active GymCoach gym after explicit confirmation. Training recommendations and gym-default reads will use it.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ gymId, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      return result({ ok: true, ...(await setOwnedActiveGym(principal.userId, gymId)) });
+    },
+  );
+
+  server.registerTool(
     'get_gym_inventory',
     {
       title: 'Get complete gym inventory',
@@ -338,6 +392,31 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         };
       }
       return result(saved);
+    },
+  );
+
+  server.registerTool(
+    'set_gym_inventory_mode',
+    {
+      title: 'Set gym inventory mode',
+      description:
+        'Switches an owned gym between the legacy per-exercise configuration model and the modern equipment-first model. Use EQUIPMENT_FIRST when physical equipment links should be the primary availability and load source.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        gymId: gymIdSchema.optional(),
+        inventoryMode: z.enum(['LEGACY', 'EQUIPMENT_FIRST']),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ gymId, inventoryMode, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      const gym = await setOwnedGymInventoryMode(principal.userId, gymId, inventoryMode);
+      return result({ ok: true, gym });
     },
   );
 
@@ -455,6 +534,29 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
   );
 
   server.registerTool(
+    'delete_gym_plate_pool',
+    {
+      title: 'Delete a custom gym plate pool',
+      description:
+        'Deletes one custom plate pool after explicit confirmation. System Barbell pools cannot be deleted, and a pool still attached to equipment must be detached first.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        poolId: databaseIdSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ poolId, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedGymPlatePool(principal.userId, poolId));
+    },
+  );
+
+  server.registerTool(
     'upsert_gym_equipment',
     {
       title: 'Add or update physical gym equipment',
@@ -476,7 +578,8 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         baseLoadKg: z.number().min(0).max(5000).optional(),
         platePoolId: databaseIdSchema.nullable().optional(),
         loadingSides: z.number().int().min(1).max(8).optional(),
-        exerciseIds: z.array(databaseIdSchema).max(100).optional(),
+        exerciseIds: z.array(databaseIdSchema).max(500).optional(),
+        preferredExerciseIds: z.array(databaseIdSchema).max(500).optional(),
         markExercisesAvailable: z.boolean().optional(),
       },
       annotations: {
@@ -491,6 +594,29 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
       const parsed = gymEquipmentInputSchema.parse(input);
       const saved = await upsertOwnedGymEquipment(principal.userId, gymId, parsed);
       return result({ ok: true, ...saved });
+    },
+  );
+
+  server.registerTool(
+    'delete_gym_equipment',
+    {
+      title: 'Delete physical gym equipment',
+      description:
+        'Deletes one custom physical equipment item after explicit confirmation. Permanent system Barbell members must be edited through the Barbell profile instead.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        equipmentId: databaseIdSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ equipmentId, confirmed: _confirmed }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedGymEquipment(principal.userId, equipmentId));
     },
   );
 
