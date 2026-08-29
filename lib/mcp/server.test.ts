@@ -44,6 +44,15 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('upsert_gym_plate_pool')).toBe(true);
     expect(byName.has('delete_gym_plate_pool')).toBe(true);
     expect(byName.has('set_gym_equipment_image')).toBe(true);
+    expect(byName.has('list_equipment_templates')).toBe(true);
+    expect(byName.has('upsert_equipment_template')).toBe(true);
+    expect(byName.has('delete_equipment_template')).toBe(true);
+    expect(byName.has('set_gym_equipment_template')).toBe(true);
+    expect(byName.has('list_equipment_images')).toBe(true);
+    expect(byName.has('get_equipment_image')).toBe(true);
+    expect(byName.has('add_equipment_image')).toBe(true);
+    expect(byName.has('set_primary_equipment_image')).toBe(true);
+    expect(byName.has('delete_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_training_history')).toBe(true);
     expect(byName.has('resolve_entities')).toBe(true);
@@ -84,6 +93,12 @@ describe('GymCoach MCP server', () => {
     expect(byName.get('get_gym_inventory')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_gym_equipment_image')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('set_gym_equipment_image')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('list_equipment_templates')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('list_equipment_images')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('get_equipment_image')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('add_equipment_image')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('delete_equipment_template')?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get('delete_equipment_image')?.annotations?.destructiveHint).toBe(true);
     expect(byName.get('delete_gym_equipment')?.annotations?.destructiveHint).toBe(true);
     expect(byName.get('delete_gym_plate_pool')?.annotations?.destructiveHint).toBe(true);
     expect(byName.get('create_gym')?.inputSchema.required).toEqual(

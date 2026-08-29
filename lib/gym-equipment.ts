@@ -1066,17 +1066,31 @@ export async function setOwnedGymEquipmentImage(
             imageMimeType: decoded.mimeType,
           };
         })();
-  return db.gymEquipment.update({
-    where: { id: equipment.id },
-    data,
-    select: {
-      id: true,
-      gymId: true,
-      name: true,
-      imageUrl: true,
-      imageMimeType: true,
-      updatedAt: true,
-    },
+  return db.$transaction(async (tx) => {
+    const updated = await tx.gymEquipment.update({
+      where: { id: equipment.id },
+      data,
+      select: {
+        id: true,
+        gymId: true,
+        name: true,
+        imageUrl: true,
+        imageMimeType: true,
+        updatedAt: true,
+      },
+    });
+    await tx.gymEquipmentImage.deleteMany({ where: { equipmentId: equipment.id } });
+    if (!input.clear) {
+      await tx.gymEquipmentImage.create({
+        data: {
+          equipmentId: equipment.id,
+          ...data,
+          isPrimary: true,
+          sourceMeta: { origin: 'legacy-single-image-api' },
+        },
+      });
+    }
+    return updated;
   });
 }
 

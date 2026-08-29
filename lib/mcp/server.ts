@@ -15,7 +15,6 @@ import {
   createOwnedGym,
   deleteOwnedGymEquipment,
   deleteOwnedGymPlatePool,
-  getOwnedGymEquipmentImage,
   getOwnedGymInventory,
   listOwnedGyms,
   setOwnedActiveGym,
@@ -26,6 +25,18 @@ import {
   upsertOwnedGymPlatePool,
 } from '@/lib/gym-equipment';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
+import {
+  addOwnedEquipmentImage,
+  deleteOwnedEquipmentImage,
+  deleteOwnedEquipmentTemplate,
+  getEffectiveOwnedGymEquipmentImage,
+  getOwnedEquipmentImage,
+  listOwnedEquipmentImages,
+  listOwnedEquipmentTemplates,
+  setOwnedGymEquipmentTemplate,
+  setPrimaryOwnedEquipmentImage,
+  upsertOwnedEquipmentTemplate,
+} from '@/lib/equipment-image-gallery';
 import {
   gymBarbellSystemProfileInputSchema,
   gymDumbbellsSystemProfileInputSchema,
@@ -139,6 +150,12 @@ const httpsImageUrl = z
   .url()
   .max(2048)
   .refine((value) => value.startsWith('https://'), 'Equipment image URL must use HTTPS.');
+
+const equipmentImageScopeSchema = z.enum(['GYM_EQUIPMENT', 'TEMPLATE']);
+const equipmentImageTargetSchema = {
+  scope: equipmentImageScopeSchema,
+  targetId: databaseIdSchema,
+};
 
 function result(data: Record<string, unknown>) {
   return {
@@ -537,8 +554,8 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     },
     async ({ equipmentId }) => {
-      const saved = await getOwnedGymEquipmentImage(principal.userId, equipmentId);
-      if (saved.image.kind === 'uploaded') {
+      const saved = await getEffectiveOwnedGymEquipmentImage(principal.userId, equipmentId);
+      if (saved.image?.kind === 'uploaded') {
         const metadata = {
           equipment: saved.equipment,
           image: {
@@ -556,6 +573,188 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         };
       }
       return result(saved);
+    },
+  );
+
+  server.registerTool(
+    'list_equipment_templates',
+    {
+      title: 'List canonical equipment templates',
+      description:
+        'Lists trainee-owned canonical equipment type/model templates and their image galleries. Concrete gym equipment may reference one template while keeping independent gym-specific images.',
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async () => result({ templates: await listOwnedEquipmentTemplates(principal.userId) }),
+  );
+
+  server.registerTool(
+    'upsert_equipment_template',
+    {
+      title: 'Create or update an equipment template',
+      description:
+        'Creates or updates a trainee-owned canonical equipment type/model template. This never modifies images attached to concrete equipment in a gym.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        templateId: databaseIdSchema.optional(),
+        name: z.string().trim().min(1).max(120),
+        equipmentType: z.nativeEnum(EquipmentType),
+        description: z.string().trim().max(4000).nullable().optional(),
+        manufacturer: z.string().trim().max(120).nullable().optional(),
+        modelName: z.string().trim().max(120).nullable().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      return result({ ok: true, template: await upsertOwnedEquipmentTemplate(principal.userId, input) });
+    },
+  );
+
+  server.registerTool(
+    'delete_equipment_template',
+    {
+      title: 'Delete an equipment template',
+      description:
+        'Deletes one trainee-owned canonical equipment template and its template gallery. Concrete gym equipment is preserved and merely loses the template fallback.',
+      inputSchema: { confirmed: explicitConfirmation, templateId: databaseIdSchema },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, templateId }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedEquipmentTemplate(principal.userId, templateId));
+    },
+  );
+
+  server.registerTool(
+    'set_gym_equipment_template',
+    {
+      title: 'Set canonical template for gym equipment',
+      description:
+        'Links or unlinks concrete gym equipment to a trainee-owned canonical template of the same equipment type. Gym-specific gallery images remain independent overrides.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        equipmentId: databaseIdSchema,
+        templateId: databaseIdSchema.nullable(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, equipmentId, templateId }) => {
+      requireWrite(principal);
+      return result({
+        ok: true,
+        equipment: await setOwnedGymEquipmentTemplate(principal.userId, equipmentId, templateId),
+      });
+    },
+  );
+
+  server.registerTool(
+    'list_equipment_images',
+    {
+      title: 'List an equipment image gallery',
+      description:
+        'Lists gym-specific or canonical-template images without returning uploaded binary data. Primary images are returned first.',
+      inputSchema: equipmentImageTargetSchema,
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async (target) => result(await listOwnedEquipmentImages(principal.userId, target)),
+  );
+
+  server.registerTool(
+    'get_equipment_image',
+    {
+      title: 'Get one equipment gallery image',
+      description:
+        'Returns one owned gym-specific or canonical-template image. Uploaded images are returned as MCP image content; external sources remain HTTPS URLs.',
+      inputSchema: { ...equipmentImageTargetSchema, imageId: databaseIdSchema },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ scope, targetId, imageId }) => {
+      const saved = await getOwnedEquipmentImage(principal.userId, { scope, targetId }, imageId);
+      if (saved.image.kind === 'uploaded') {
+        const metadata = {
+          target: saved.target,
+          image: {
+            id: saved.image.id,
+            kind: saved.image.kind,
+            mimeType: saved.image.mimeType,
+            isPrimary: saved.image.isPrimary,
+            sourceMeta: saved.image.sourceMeta,
+            createdAt: saved.image.createdAt,
+            updatedAt: saved.image.updatedAt,
+          },
+        };
+        return {
+          content: [
+            { type: 'text' as const, text: JSON.stringify(metadata, null, 2) },
+            { type: 'image' as const, data: saved.image.data, mimeType: saved.image.mimeType },
+          ],
+          structuredContent: metadata,
+        };
+      }
+      return result(saved);
+    },
+  );
+
+  server.registerTool(
+    'add_equipment_image',
+    {
+      title: 'Add an equipment gallery image',
+      description:
+        'Adds one durable gym-specific or canonical-template image. The first image becomes primary automatically unless makePrimary is specified. Original uploaded bytes are preserved; optional sourceNote remains reversible source metadata.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        ...equipmentImageTargetSchema,
+        imageUrl: httpsImageUrl.optional(),
+        imageBase64: z.string().max(7_100_000).optional(),
+        mimeType: z.enum(GYM_EQUIPMENT_IMAGE_MIME_TYPES).optional(),
+        makePrimary: z.boolean().optional(),
+        sourceNote: z.string().trim().max(500).nullable().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, scope, targetId, ...input }) => {
+      requireWrite(principal);
+      return result(await addOwnedEquipmentImage(principal.userId, { scope, targetId }, input));
+    },
+  );
+
+  server.registerTool(
+    'set_primary_equipment_image',
+    {
+      title: 'Set primary equipment image',
+      description:
+        'Makes an existing owned gallery image primary. Concrete gym equipment and canonical templates have separate primary images.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        ...equipmentImageTargetSchema,
+        imageId: databaseIdSchema,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, scope, targetId, imageId }) => {
+      requireWrite(principal);
+      return result(
+        await setPrimaryOwnedEquipmentImage(principal.userId, { scope, targetId }, imageId),
+      );
+    },
+  );
+
+  server.registerTool(
+    'delete_equipment_image',
+    {
+      title: 'Delete equipment gallery image',
+      description:
+        'Deletes one owned gallery image. If it was primary, the oldest remaining image becomes primary. Deleting a gym-specific primary never modifies the canonical template gallery.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        ...equipmentImageTargetSchema,
+        imageId: databaseIdSchema,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ confirmed: _confirmed, scope, targetId, imageId }) => {
+      requireWrite(principal);
+      return result(await deleteOwnedEquipmentImage(principal.userId, { scope, targetId }, imageId));
     },
   );
 

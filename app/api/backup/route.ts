@@ -75,7 +75,7 @@ import { normalizeEntityName } from '@/lib/mcp/entity-match';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 15;
+const VERSION = 16;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -100,6 +100,7 @@ export async function GET(req: Request) {
       gyms,
       exerciseAliases,
       equipmentAliases,
+      equipmentTemplates,
     ] = await Promise.all([
       db.user.findUnique({
         where: { id: userId },
@@ -174,6 +175,8 @@ export async function GET(req: Request) {
             orderBy: { name: 'asc' },
             include: {
               platePool: true,
+              template: { select: { name: true } },
+              images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
               exerciseLinks: { include: { exercise: { select: { name: true } } } },
             },
           },
@@ -201,6 +204,11 @@ export async function GET(req: Request) {
           gym: { select: { name: true } },
           equipment: { select: { name: true } },
         },
+      }),
+      db.equipmentTemplate.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+        include: { images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] } },
       }),
     ]);
 
@@ -247,6 +255,20 @@ export async function GET(req: Request) {
         equipmentName: row.equipment.name,
         alias: row.alias,
       })),
+      equipmentTemplates: equipmentTemplates.map((template) => ({
+        name: template.name,
+        equipmentType: template.equipmentType,
+        description: template.description,
+        manufacturer: template.manufacturer,
+        modelName: template.modelName,
+        images: template.images.map((image) => ({
+          imageUrl: image.imageUrl,
+          imageMimeType: image.imageMimeType,
+          imageBase64: image.imageData ? Buffer.from(image.imageData).toString('base64') : null,
+          isPrimary: image.isPrimary,
+          sourceMeta: image.sourceMeta,
+        })),
+      })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
         inventoryMode: gym.inventoryMode,
@@ -276,9 +298,34 @@ export async function GET(req: Request) {
           platePoolCompatibilityKey: item.platePool?.compatibilityKey ?? null,
           loadingSides: item.loadingSides,
           systemBarbellFamily: item.systemBarbellFamily,
+          templateName: item.template?.name ?? null,
           imageUrl: item.imageUrl,
           imageMimeType: item.imageMimeType,
           imageBase64: item.imageData ? Buffer.from(item.imageData).toString('base64') : null,
+          images:
+            item.images.length > 0
+              ? item.images.map((image) => ({
+                  imageUrl: image.imageUrl,
+                  imageMimeType: image.imageMimeType,
+                  imageBase64: image.imageData
+                    ? Buffer.from(image.imageData).toString('base64')
+                    : null,
+                  isPrimary: image.isPrimary,
+                  sourceMeta: image.sourceMeta,
+                }))
+              : item.imageUrl || (item.imageData && item.imageMimeType)
+                ? [
+                    {
+                      imageUrl: item.imageUrl,
+                      imageMimeType: item.imageMimeType,
+                      imageBase64: item.imageData
+                        ? Buffer.from(item.imageData).toString('base64')
+                        : null,
+                      isPrimary: true,
+                      sourceMeta: { origin: 'legacy-backup-image' },
+                    },
+                  ]
+                : [],
           exerciseNames: item.exerciseLinks.map((link) => link.exercise.name),
           legacyMirrorExerciseNames: item.exerciseLinks
             .filter((link) => link.mirrorsLegacyConfig)
@@ -446,6 +493,33 @@ const dateString = z
     { message: 'Invalid or out-of-range date' },
   );
 
+const equipmentGalleryImageBackupSchema = z
+  .object({
+    imageUrl: z
+      .string()
+      .url()
+      .max(2048)
+      .nullable()
+      .optional()
+      .refine((value) => value == null || value.startsWith('https://'), {
+        message: 'Equipment image URL must use HTTPS.',
+      }),
+    imageMimeType: z.enum(GYM_EQUIPMENT_IMAGE_MIME_TYPES).nullable().optional(),
+    imageBase64: z.string().max(7_100_000).nullable().optional(),
+    isPrimary: z.boolean().default(false),
+    sourceMeta: z.unknown().nullable().optional(),
+  })
+  .superRefine((image, ctx) => {
+    const hasUrl = image.imageUrl != null;
+    const hasBytes = image.imageBase64 != null;
+    if (Number(hasUrl) + Number(hasBytes) !== 1) {
+      ctx.addIssue({ code: 'custom', message: 'Equipment gallery image requires exactly one source.' });
+    }
+    if (hasBytes && image.imageMimeType == null) {
+      ctx.addIssue({ code: 'custom', message: 'Uploaded equipment gallery images require a MIME type.' });
+    }
+  });
+
 const importSchema = z.object({
   version: z.number().int().min(1).max(VERSION),
   exercises: z
@@ -490,6 +564,19 @@ const importSchema = z.object({
       }),
     )
     .max(5000)
+    .optional(),
+  equipmentTemplates: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(120),
+        equipmentType: z.nativeEnum(EquipmentType),
+        description: z.string().max(4000).nullable().optional(),
+        manufacturer: z.string().max(120).nullable().optional(),
+        modelName: z.string().max(120).nullable().optional(),
+        images: z.array(equipmentGalleryImageBackupSchema).max(50).optional(),
+      }),
+    )
+    .max(1000)
     .optional(),
   programs: z
     .array(
@@ -673,6 +760,7 @@ const importSchema = z.object({
               platePoolCompatibilityKey: z.string().max(80).nullable().optional(),
               loadingSides: z.number().int().min(1).max(8).optional(),
               systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
+              templateName: z.string().trim().min(1).max(120).nullable().optional(),
               imageUrl: z
                 .string()
                 .url()
@@ -684,6 +772,7 @@ const importSchema = z.object({
                 }),
               imageMimeType: z.enum(GYM_EQUIPMENT_IMAGE_MIME_TYPES).nullable().optional(),
               imageBase64: z.string().max(7_100_000).nullable().optional(),
+              images: z.array(equipmentGalleryImageBackupSchema).max(50).optional(),
               exerciseNames: z.array(z.string().max(120)).max(100),
               legacyMirrorExerciseNames: z.array(z.string().max(120)).max(100).optional(),
             }),
@@ -920,6 +1009,7 @@ export async function POST(req: Request) {
         await tx.set.deleteMany({ where: { session: { userId } } });
         await tx.session.deleteMany({ where: { userId } });
         await tx.gym.deleteMany({ where: { userId } });
+        await tx.equipmentTemplate.deleteMany({ where: { userId } });
         await tx.coachSession.deleteMany({ where: { userId } });
         await tx.exerciseGoal.deleteMany({ where: { userId } });
         await tx.bodyweightEntry.deleteMany({ where: { userId } });
@@ -991,8 +1081,49 @@ export async function POST(req: Request) {
           exerciseIdByName.set(e.name, created.id);
         }
 
-        // 4. Saved gyms are recreated after exercises so per-exercise
-        // availability can be linked by exercise name.
+        // 4. Canonical equipment templates are user-owned and independent of
+        // concrete gyms. Restore them first so gym equipment can safely relink
+        // by template name while all row IDs remain fresh.
+        const equipmentTemplateIdByName = new Map<string, string>();
+        const equipmentTemplateTypeByName = new Map<string, EquipmentType>();
+        for (const template of payload.equipmentTemplates ?? []) {
+          if (equipmentTemplateIdByName.has(template.name)) continue;
+          const createdTemplate = await tx.equipmentTemplate.create({
+            data: {
+              userId,
+              name: template.name,
+              equipmentType: template.equipmentType,
+              description: template.description ?? null,
+              manufacturer: template.manufacturer ?? null,
+              modelName: template.modelName ?? null,
+            },
+          });
+          equipmentTemplateIdByName.set(template.name, createdTemplate.id);
+          equipmentTemplateTypeByName.set(template.name, template.equipmentType);
+          let primaryAssigned = false;
+          for (let index = 0; index < (template.images ?? []).length; index += 1) {
+            const image = template.images![index]!;
+            const decoded = image.imageBase64
+              ? decodeGymEquipmentImage(image.imageBase64, image.imageMimeType ?? undefined)
+              : null;
+            const isPrimary = !primaryAssigned && (image.isPrimary || index === 0);
+            if (isPrimary) primaryAssigned = true;
+            await tx.equipmentTemplateImage.create({
+              data: {
+                templateId: createdTemplate.id,
+                imageUrl: decoded ? null : (image.imageUrl ?? null),
+                imageData: decoded?.bytes,
+                imageMimeType: decoded?.mimeType ?? null,
+                isPrimary,
+                sourceMeta:
+                  image.sourceMeta == null ? undefined : (image.sourceMeta as Prisma.InputJsonValue),
+              },
+            });
+          }
+        }
+
+        // 5. Saved gyms are recreated after exercises/templates so per-exercise
+        // availability and canonical equipment media can be relinked by name.
         const gymIdByName = new Map<string, string>();
         const equipmentIdByGymAndName = new Map<string, string>();
         for (const gym of payload.gyms ?? []) {
@@ -1064,9 +1195,30 @@ export async function POST(req: Request) {
             poolIdByCompatibilityKey.set(pool.compatibilityKey, savedPool.id);
           }
           for (const item of gym.equipment ?? []) {
-            const decoded = item.imageBase64
+            const templateId = item.templateName
+              ? equipmentTemplateIdByName.get(item.templateName)
+              : undefined;
+            if (item.templateName && !templateId) {
+              throw new ApiError(400, 'Equipment template could not be restored.');
+            }
+            if (
+              item.templateName &&
+              equipmentTemplateTypeByName.get(item.templateName) !== item.equipmentType
+            ) {
+              throw new ApiError(400, 'Equipment template type does not match concrete equipment.');
+            }
+            const decodedLegacy = item.imageBase64
               ? decodeGymEquipmentImage(item.imageBase64, item.imageMimeType ?? undefined)
               : null;
+            const galleryImages = (item.images ?? []).map((image, index) => {
+              const decoded = image.imageBase64
+                ? decodeGymEquipmentImage(image.imageBase64, image.imageMimeType ?? undefined)
+                : null;
+              return { image, decoded, index };
+            });
+            const explicitPrimaryIndex = galleryImages.findIndex(({ image }) => image.isPrimary);
+            const primaryGallery =
+              galleryImages[explicitPrimaryIndex >= 0 ? explicitPrimaryIndex : 0] ?? null;
             const equipment = await tx.gymEquipment.create({
               data: {
                 gymId: created.id,
@@ -1090,11 +1242,52 @@ export async function POST(req: Request) {
                   : null,
                 loadingSides: item.loadingSides ?? 2,
                 systemBarbellFamily: item.systemBarbellFamily ?? null,
-                imageUrl: decoded ? null : (item.imageUrl ?? null),
-                imageData: decoded?.bytes,
-                imageMimeType: decoded?.mimeType ?? null,
+                templateId: templateId ?? null,
+                imageUrl: primaryGallery
+                  ? primaryGallery.decoded
+                    ? null
+                    : (primaryGallery.image.imageUrl ?? null)
+                  : decodedLegacy
+                    ? null
+                    : (item.imageUrl ?? null),
+                imageData: primaryGallery?.decoded?.bytes ?? decodedLegacy?.bytes,
+                imageMimeType:
+                  primaryGallery?.decoded?.mimeType ?? decodedLegacy?.mimeType ?? null,
               },
             });
+            if (galleryImages.length > 0) {
+              let primaryAssigned = false;
+              for (const { image, decoded, index } of galleryImages) {
+                const isPrimary =
+                  !primaryAssigned &&
+                  (image.isPrimary || (explicitPrimaryIndex < 0 && index === 0));
+                if (isPrimary) primaryAssigned = true;
+                await tx.gymEquipmentImage.create({
+                  data: {
+                    equipmentId: equipment.id,
+                    imageUrl: decoded ? null : (image.imageUrl ?? null),
+                    imageData: decoded?.bytes,
+                    imageMimeType: decoded?.mimeType ?? null,
+                    isPrimary,
+                    sourceMeta:
+                      image.sourceMeta == null
+                        ? undefined
+                        : (image.sourceMeta as Prisma.InputJsonValue),
+                  },
+                });
+              }
+            } else if (decodedLegacy || item.imageUrl) {
+              await tx.gymEquipmentImage.create({
+                data: {
+                  equipmentId: equipment.id,
+                  imageUrl: decodedLegacy ? null : (item.imageUrl ?? null),
+                  imageData: decodedLegacy?.bytes,
+                  imageMimeType: decodedLegacy?.mimeType ?? null,
+                  isPrimary: true,
+                  sourceMeta: { origin: 'legacy-backup-image' },
+                },
+              });
+            }
             equipmentIdByGymAndName.set(`${gym.name}\u0000${item.name}`, equipment.id);
             const exerciseIds = [
               ...new Set(

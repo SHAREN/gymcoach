@@ -62,6 +62,7 @@ model User {
   mobileMutations          MobileMutation[]
   exerciseAliases          ExerciseAlias[]
   equipmentAliases         GymEquipmentAlias[]
+  equipmentTemplates       EquipmentTemplate[]
   mcpOperationAudits       McpOperationAudit[]
   activeGymId              String?
   activeGym                Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
@@ -509,6 +510,11 @@ model GymEquipment {
   // Concrete bars managed by the non-removable Barbell aggregate. Other
   // equipment, including custom plate-loaded stations, remains null.
   systemBarbellFamily    BarbellDiameterFamily?
+  // Optional canonical/template equipment identity reused across concrete gyms.
+  templateId              String?
+  template                EquipmentTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  // Legacy single-image fields remain for backward compatibility while the
+  // gallery model becomes authoritative for MCP-first media management.
   // An external HTTPS image may be stored without fetching it server-side.
   imageUrl               String?
   // Uploaded images are stored in Postgres so Docker rebuilds do not lose them.
@@ -520,11 +526,61 @@ model GymEquipment {
   preferredForConfigs    GymExerciseConfig[]    @relation("PreferredGymEquipment")
   performedSets          Set[]
   aliases                GymEquipmentAlias[]
+  images                 GymEquipmentImage[]
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
   @@index([gymId, systemBarbellFamily])
   @@index([platePoolId])
+  @@index([templateId])
+}
+
+model EquipmentTemplate {
+  id            String                   @id @default(cuid())
+  userId        String
+  user          User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  equipmentType EquipmentType
+  description   String?
+  manufacturer  String?
+  modelName     String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  equipment     GymEquipment[]
+  images        EquipmentTemplateImage[]
+
+  @@unique([userId, name])
+  @@index([userId, equipmentType])
+}
+
+model EquipmentTemplateImage {
+  id            String            @id @default(cuid())
+  templateId    String
+  template      EquipmentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  imageUrl      String?
+  imageData     Bytes?
+  imageMimeType String?
+  isPrimary     Boolean           @default(false)
+  sourceMeta    Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([templateId, isPrimary, createdAt])
+}
+
+model GymEquipmentImage {
+  id            String       @id @default(cuid())
+  equipmentId   String
+  equipment     GymEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  imageUrl      String?
+  imageData     Bytes?
+  imageMimeType String?
+  isPrimary     Boolean      @default(false)
+  sourceMeta    Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([equipmentId, isPrimary, createdAt])
 }
 
 model GymEquipmentAlias {
