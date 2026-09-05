@@ -48,6 +48,7 @@ import { SetInput } from '@/components/session/set-input';
 import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
+import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -330,15 +331,19 @@ export function SessionRunner({
     return out;
   }, [lastPerformances]);
 
-  const completedExerciseCount = useMemo(() => {
-    let count = 0;
+  const completedExerciseIds = useMemo(() => {
+    const completed = new Set<string>();
     for (const pe of effectiveProgramExercises) {
       const done = setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0;
-      if (done >= pe.targetSets) count += 1;
+      if (done >= pe.targetSets) completed.add(pe.exerciseId);
     }
-    return count;
+    return completed;
   }, [effectiveProgramExercises, setsByExercise]);
 
+  const completedExerciseCount = effectiveProgramExercises.filter((pe) => {
+    const done = setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0;
+    return done >= pe.targetSets;
+  }).length;
   const progressPct =
     programExercises.length === 0
       ? 0
@@ -559,6 +564,16 @@ export function SessionRunner({
           </Button>
         </div>
         <Progress value={progressPct} className="mt-2 h-1.5" />
+        <SessionExerciseStrip
+          exercises={programExercises}
+          currentIndex={currentIdx}
+          completedExerciseIds={completedExerciseIds}
+          disabled={mode.kind !== 'input'}
+          onSelect={(index) => {
+            setCurrentIdx(index);
+            setMode({ kind: 'input' });
+          }}
+        />
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
