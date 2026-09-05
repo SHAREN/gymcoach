@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 // Ratchet for issues #317 and #323: every API route that addresses a resource
 // the caller does not own by construction must be referenced by an
@@ -32,6 +32,8 @@ const COVERED_ELSEWHERE: Record<string, string> = {
   'app/api/gyms/[id]/equipment/route.ts': 'tests/integration/gym-equipment-api.test.ts',
   'app/api/progress-photos/[id]/route.ts': 'tests/integration/progress-photos-route.test.ts',
   'app/api/progress-photos/[id]/image/route.ts': 'tests/integration/progress-photos-route.test.ts',
+  'app/api/sessions/[id]/historical-sets/route.ts':
+    'tests/integration/history-set-editor.test.ts',
   'app/api/goals/route.ts': 'tests/integration/goals-route.test.ts',
 };
 
@@ -56,7 +58,7 @@ function findParameterizedRoutes(dir: string): string[] {
     if (entry.isDirectory()) {
       out.push(...findParameterizedRoutes(full));
     } else if (entry.name === 'route.ts' && /\[[^\]]+\]/.test(relative(ROOT, full))) {
-      out.push(relative(ROOT, full));
+      out.push(relative(ROOT, full).split(sep).join('/'));
     }
   }
   return out;
