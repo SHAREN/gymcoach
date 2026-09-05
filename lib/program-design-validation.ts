@@ -1,5 +1,11 @@
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
 import type { ProgramDesignContext } from '@/lib/program-design-context';
+import {
+  aggregateTrainingLoad,
+  type TrainingLoadAggregation,
+  type TrainingLoadSetInput,
+} from '@/lib/training-load-aggregation';
+import { unclassifiedExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 export const PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES = {
   perSessionSoftCapSets: 10,
@@ -17,10 +23,20 @@ export interface ProgramDesignValidation {
   valid: boolean;
   issues: ProgramDesignIssue[];
   weeklySetsByMuscle: Record<string, number>;
+  weeklyLoadByMuscle: TrainingLoadAggregation['muscles'];
+  loadProfileMetadata: Pick<
+    TrainingLoadAggregation,
+    | 'version'
+    | 'algorithmVersion'
+    | 'confidence'
+    | 'unclassifiedSetCount'
+    | 'unknownSecondaryParticipationSetCount'
+    | 'equivalentSetsHeuristic'
+  >;
   frequencyByMuscle: Record<string, number>;
   estimatedSessionMinutes: Array<{ workoutName: string; minutes: number }>;
   accounting: {
-    mode: 'PRIMARY_MUSCLE_ONLY';
+    mode: 'MULTI_MUSCLE_V1';
     note: string;
   };
 }
@@ -32,6 +48,7 @@ export function validateProgramDesign(
   const issues: ProgramDesignIssue[] = [];
   const weeklySetsByMuscle: Record<string, number> = {};
   const frequencyByMuscle: Record<string, number> = {};
+  const plannedLoadInputs: TrainingLoadSetInput[] = [];
   const exerciseByName = new Map(
     context.availableExercises.map((exercise) => [exercise.name.toLocaleLowerCase(), exercise]),
   );
@@ -59,8 +76,7 @@ export function validateProgramDesign(
   }
 
   for (const [workoutIndex, workout] of program.workouts.entries()) {
-    const sessionSets: Record<string, number> = {};
-    const seenMuscles = new Set<string>();
+    const sessionLoadInputs: TrainingLoadSetInput[] = [];
     let seconds = 0;
 
     if (allowedDays.size > 0 && workout.dayOfWeek == null) {
@@ -91,18 +107,29 @@ export function validateProgramDesign(
       const known = exerciseByName.get(exercise.name.toLocaleLowerCase());
       const muscleGroup = known?.muscleGroup ?? exercise.muscleGroup;
       const category = known?.category ?? exercise.category;
-      const sets = exercise.targetSets;
+      const loadProfile = known?.loadProfile ?? unclassifiedExerciseLoadProfile();
 
-      weeklySetsByMuscle[muscleGroup] = (weeklySetsByMuscle[muscleGroup] ?? 0) + sets;
-      sessionSets[muscleGroup] = (sessionSets[muscleGroup] ?? 0) + sets;
-      seenMuscles.add(muscleGroup);
-      seconds += sets * (exercise.restSec + 45);
+      for (let setIndex = 0; setIndex < exercise.targetSets; setIndex += 1) {
+        const loadInput: TrainingLoadSetInput = {
+          setId: ['draft', workoutIndex, exerciseIndex, setIndex].join(':'),
+          exerciseId: known?.id ?? ['draft', exercise.name].join(':'),
+          legacyMuscleGroup: muscleGroup,
+          loadProfile,
+          isWarmup: false,
+          isDropSet: false,
+          rir: exercise.targetRIR,
+          historyReliability: 'UNKNOWN',
+        };
+        sessionLoadInputs.push(loadInput);
+        plannedLoadInputs.push(loadInput);
+      }
+      seconds += exercise.targetSets * (exercise.restSec + 45);
 
       if (!known) {
         issues.push({
           code: 'new-exercise',
           severity: 'warning',
-          message: `${exercise.name} is not in the current exercise catalog and would be created as a new exercise.`,
+          message: `${exercise.name} is not in the current exercise catalog and would be created as an unclassified exercise until a trusted load profile exists.`,
           path: `workouts.${workoutIndex}.exercises.${exerciseIndex}.name`,
         });
       } else if (
@@ -164,15 +191,14 @@ export function validateProgramDesign(
       }
     }
 
-    for (const muscle of seenMuscles) {
+    const sessionLoad = aggregateTrainingLoad(sessionLoadInputs);
+    for (const [muscle, row] of Object.entries(sessionLoad.muscles)) {
       frequencyByMuscle[muscle] = (frequencyByMuscle[muscle] ?? 0) + 1;
-    }
-    for (const [muscle, sets] of Object.entries(sessionSets)) {
-      if (sets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.perSessionSoftCapSets) {
+      if (row.equivalentSets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.perSessionSoftCapSets) {
         issues.push({
           code: 'session-volume-soft-cap',
           severity: 'warning',
-          message: `${workout.name} has ${sets} primary-muscle sets for ${muscle}; this exceeds the current soft session-volume rule.`,
+          message: `${workout.name} has ${row.directSets} direct and ${row.indirectSets} indirect sets for ${muscle} (${row.equivalentSets} equivalent sets under ${sessionLoad.equivalentSetsHeuristic.version}).`,
           path: `workouts.${workoutIndex}`,
         });
       }
@@ -190,24 +216,34 @@ export function validateProgramDesign(
     }
   }
 
-  for (const [muscle, sets] of Object.entries(weeklySetsByMuscle)) {
-    if (sets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.weeklyStartingRangeMaxSets) {
+  const weeklyLoad = aggregateTrainingLoad(plannedLoadInputs);
+  for (const [muscle, row] of Object.entries(weeklyLoad.muscles)) {
+    weeklySetsByMuscle[muscle] = row.directSets;
+    if (row.equivalentSets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.weeklyStartingRangeMaxSets) {
       issues.push({
         code: 'high-weekly-volume',
         severity: 'warning',
-        message: `${muscle} has ${sets} primary-muscle sets per week; this exceeds the current starting-range rule.`,
+        message: `${muscle} has ${row.directSets} direct and ${row.indirectSets} indirect sets (${row.equivalentSets} equivalent sets under ${weeklyLoad.equivalentSetsHeuristic.version}).`,
       });
     }
     if (
-      sets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.perSessionSoftCapSets &&
+      row.equivalentSets > PROGRAM_DESIGN_PRIMARY_MUSCLE_RULES.perSessionSoftCapSets &&
       (frequencyByMuscle[muscle] ?? 0) < 2
     ) {
       issues.push({
         code: 'volume-not-distributed',
         severity: 'warning',
-        message: `${muscle} has ${sets} weekly primary-muscle sets in only one workout.`,
+        message: `${muscle} has high overlap-adjusted weekly load in only one workout.`,
       });
     }
+  }
+
+  if (weeklyLoad.unclassifiedSetCount > 0 || weeklyLoad.unknownSecondaryParticipationSetCount > 0) {
+    issues.push({
+      code: 'load-profile-incomplete',
+      severity: 'warning',
+      message: `${weeklyLoad.unclassifiedSetCount} planned set(s) are unclassified and ${weeklyLoad.unknownSecondaryParticipationSetCount} set(s) have unknown secondary-muscle participation. Unknown participation receives no equivalent-set coefficient.`,
+    });
   }
 
   if (
@@ -242,11 +278,20 @@ export function validateProgramDesign(
     valid: !issues.some((issue) => issue.severity === 'error'),
     issues,
     weeklySetsByMuscle,
+    weeklyLoadByMuscle: weeklyLoad.muscles,
+    loadProfileMetadata: {
+      version: weeklyLoad.version,
+      algorithmVersion: weeklyLoad.algorithmVersion,
+      confidence: weeklyLoad.confidence,
+      unclassifiedSetCount: weeklyLoad.unclassifiedSetCount,
+      unknownSecondaryParticipationSetCount: weeklyLoad.unknownSecondaryParticipationSetCount,
+      equivalentSetsHeuristic: weeklyLoad.equivalentSetsHeuristic,
+    },
     frequencyByMuscle,
     estimatedSessionMinutes,
     accounting: {
-      mode: 'PRIMARY_MUSCLE_ONLY',
-      note: 'M12 validates only the current upstream primary-muscle model. Multi-muscle/equivalent-set accounting is intentionally deferred to M13.',
+      mode: 'MULTI_MUSCLE_V1',
+      note: 'Direct and indirect sets remain separate. Equivalent sets are a visible versioned engineering heuristic; unknown participation is not imputed.',
     },
   };
 }

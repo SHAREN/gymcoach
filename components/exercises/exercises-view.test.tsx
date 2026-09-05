@@ -38,6 +38,8 @@ function exercise(over: Partial<Exercise>): Exercise {
     equipmentType: over.equipmentType ?? 'OTHER',
     createdAt: new Date('2026-01-01T00:00:00Z'),
     ...over,
+    catalogOrigin: over.catalogOrigin ?? null,
+    loadProfile: over.loadProfile ?? {},
   };
 }
 
@@ -177,7 +179,9 @@ describe('ExercisesView catalog card at mobile width (issue #330)', () => {
         ]}
       />,
     );
-    const withMedia = screen.getByRole('button', { name: 'View technique for Barbell Bench Press' });
+    const withMedia = screen.getByRole('button', {
+      name: 'View technique for Barbell Bench Press',
+    });
     const withoutMedia = screen.getByRole('button', {
       name: 'View technique for Future custom movement',
     });

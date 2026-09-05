@@ -15,6 +15,8 @@ const exo: Exercise = {
   notes: null,
   usesBodyweight: false,
   equipmentType: 'BARBELL',
+  catalogOrigin: null,
+  loadProfile: {},
   createdAt: new Date(),
 };
 
@@ -91,7 +93,13 @@ describe('SetsList', () => {
 
   it('edits an existing strength row without changing its identity', async () => {
     const user = userEvent.setup();
-    const set = pendingSet({ localId: 'row-1', serverId: 'server-1', weight: 100, reps: 5, rir: 2 });
+    const set = pendingSet({
+      localId: 'row-1',
+      serverId: 'server-1',
+      weight: 100,
+      reps: 5,
+      rir: 2,
+    });
     const onEditSet = vi.fn().mockResolvedValue(undefined);
     render(
       <SetsList
