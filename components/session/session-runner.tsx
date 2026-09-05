@@ -40,7 +40,7 @@ import {
   SUPERSET_TRANSITION_REST_SEC,
 } from '@/lib/supersets';
 import { isReadinessAutoRegulationEnabled } from '@/lib/preferences';
-import { bindAutoSync, flushPendingSets, onEquipmentDropped, queueSet } from '@/lib/sync';
+import { bindAutoSync, flushPendingSets, onEquipmentDropped, queueSet, queueSetCorrection } from '@/lib/sync';
 import { hydrateFromServerSets } from '@/lib/sync-hydration';
 import { ExerciseCard } from '@/components/session/exercise-card';
 import { SetsList } from '@/components/session/sets-list';
@@ -412,6 +412,19 @@ export function SessionRunner({
     });
   }
 
+  async function handleEditSet(
+    set: PendingSet,
+    values: { weight: number; reps: number; rir: number | null },
+  ) {
+    try {
+      await queueSetCorrection(set.localId, values);
+      toast.success(t('setUpdated'));
+    } catch (error) {
+      toast.error(t('setUpdateError'));
+      throw error;
+    }
+  }
+
   async function handleDeleteSet(set: PendingSet) {
     const db = getDB();
     // If already synced: API DELETE call, then local removal.
@@ -596,6 +609,8 @@ export function SessionRunner({
           programExercise={currentTarget}
           sets={currentSets}
           isInputActive={mode.kind === 'input'}
+          unit={unit}
+          onEditSet={handleEditSet}
           onDeleteSet={handleDeleteSet}
           priorSets={lastPerf?.sets}
         />

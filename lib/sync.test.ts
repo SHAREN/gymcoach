@@ -8,7 +8,7 @@ vi.mock('@/lib/indexeddb', async (importOriginal) => {
   return { ...actual, getDB: mockGetDB };
 });
 
-import { flushPendingSets, onEquipmentDropped } from '@/lib/sync';
+import { flushPendingSets, onEquipmentDropped, queueSetCorrection } from '@/lib/sync';
 
 function pendingSet(overrides: Partial<PendingSet> = {}): PendingSet {
   return {
@@ -41,6 +41,7 @@ function fakeTable(item: PendingSet) {
         count: vi.fn(async () => (item.status === 'synced' ? 0 : 1)),
       })),
     })),
+    get: vi.fn(async (id: string) => (id === item.localId ? item : undefined)),
     update: vi.fn(async (_id: string, patch: Partial<PendingSet>) => {
       Object.assign(item, patch);
       return 1;
@@ -208,5 +209,57 @@ describe('offline set sync', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ id: 'local-1' });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ id: 'local-1' });
+  });
+
+  it('replays a correction as PATCH and never sends frozen equipment metadata', async () => {
+    const item = pendingSet({
+      status: 'pending',
+      serverId: 'local-1',
+      weight: 90,
+      reps: 6,
+      rir: 1,
+      gymEquipmentId: 'machine-1',
+    });
+    mockGetDB.mockReturnValue({ pendingSets: fakeTable(item) });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'local-1', weight: 90, reps: 6, rir: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await flushPendingSets();
+
+    expect(result.flushed).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sets/local-1');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('PATCH');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      weight: 90,
+      reps: 6,
+      rir: 1,
+    });
+    expect(item.status).toBe('synced');
+    expect(item.serverId).toBe('local-1');
+    expect(item.gymEquipmentId).toBe('machine-1');
+  });
+
+  it('queues an offline value correction without losing the existing server identity', async () => {
+    const item = pendingSet({ status: 'synced', serverId: 'local-1', weight: 80, reps: 8, rir: 2 });
+    const table = fakeTable(item);
+    mockGetDB.mockReturnValue({ pendingSets: table });
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+
+    await queueSetCorrection('local-1', { weight: 85, reps: 7, rir: 1 });
+
+    expect(item).toMatchObject({
+      weight: 85,
+      reps: 7,
+      rir: 1,
+      status: 'pending',
+      serverId: 'local-1',
+      attempts: 0,
+      lastError: null,
+    });
   });
 });
