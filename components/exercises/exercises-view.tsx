@@ -3,15 +3,17 @@
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Plus, Pencil, Search } from 'lucide-react';
-import type { Exercise, MuscleGroup } from '@/lib/prisma-client';
+import type { EquipmentType, Exercise, MuscleGroup } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ExerciseFormDialog } from '@/components/exercises/exercise-form-dialog';
+import { ExerciseFilters } from '@/components/exercises/exercise-filters';
 import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
 import { DeleteExerciseButton } from '@/components/exercises/delete-exercise-button';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { filterExercises } from '@/lib/exercise-filters';
 import {
   equipmentTypeMessageKeys,
   exerciseCategoryMessageKeys,
@@ -29,19 +31,28 @@ export function ExercisesView({ exercises }: ExercisesViewProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Exercise | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedMuscleGroup, setSelectedMuscleGroup] = useState<MuscleGroup | null>(null);
+  const [selectedEquipmentType, setSelectedEquipmentType] = useState<EquipmentType | null>(null);
 
-  // Case-insensitive substring match on the exercise name. The query only
-  // narrows the already-loaded list (no API call); an empty query shows
-  // everything, preserving the original behaviour.
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return exercises;
-    return exercises.filter(
-      (ex) => ex.name.toLowerCase().includes(q) || exerciseName(ex.name).toLowerCase().includes(q),
-    );
-  }, [exerciseName, exercises, query]);
+  // Search and categorical filters compose locally over the already-loaded
+  // catalog. Keeping this logic in the shared helper lets later session
+  // replacement pickers reuse the same semantics without another API shape.
+  const filtered = useMemo(
+    () =>
+      filterExercises(
+        exercises,
+        {
+          query,
+          muscleGroup: selectedMuscleGroup,
+          equipmentType: selectedEquipmentType,
+        },
+        exerciseName,
+      ),
+    [exerciseName, exercises, query, selectedEquipmentType, selectedMuscleGroup],
+  );
 
   const grouped = useMemo(() => groupByMuscle(filtered), [filtered]);
+  const hasCategoryFilter = selectedMuscleGroup !== null || selectedEquipmentType !== null;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -59,16 +70,28 @@ export function ExercisesView({ exercises }: ExercisesViewProps) {
       </div>
 
       {exercises.length > 0 && (
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('search')}
-            aria-label={t('search')}
-            className="pl-9"
+        <div className="space-y-3">
+          <ExerciseFilters
+            muscleGroup={selectedMuscleGroup}
+            equipmentType={selectedEquipmentType}
+            onMuscleGroupChange={setSelectedMuscleGroup}
+            onEquipmentTypeChange={setSelectedEquipmentType}
+            onReset={() => {
+              setSelectedMuscleGroup(null);
+              setSelectedEquipmentType(null);
+            }}
           />
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('search')}
+              aria-label={t('search')}
+              className="pl-9"
+            />
+          </div>
         </div>
       )}
 
@@ -83,7 +106,11 @@ export function ExercisesView({ exercises }: ExercisesViewProps) {
         <Card>
           <CardHeader>
             <CardTitle>{t('noMatchTitle')}</CardTitle>
-            <CardDescription>{t('noMatchDescription', { query: query.trim() })}</CardDescription>
+            <CardDescription>
+              {hasCategoryFilter
+                ? t('noFilteredDescription')
+                : t('noMatchDescription', { query: query.trim() })}
+            </CardDescription>
           </CardHeader>
         </Card>
       ) : (

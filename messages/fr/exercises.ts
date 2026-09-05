@@ -6,11 +6,18 @@ export const exercises = {
   savedCount:
     '{count, plural, =0 {Aucun exercice enregistré.} one {# exercice enregistré.} other {# exercices enregistrés.}}',
   search: 'Rechercher un exercice par nom',
+  muscleFilter: 'Groupe musculaire',
+  allMuscles: 'Tous les muscles',
+  equipmentFilter: 'Type de matériel',
+  allEquipment: 'Tout le matériel',
+  resetFilters: 'Réinitialiser les filtres',
   emptyTitle: 'Aucun exercice',
   emptyDescription:
     'Le catalogue est vide. Ajoutez votre premier exercice pour pouvoir l’utiliser dans un programme.',
   noMatchTitle: 'Aucun exercice trouvé',
   noMatchDescription: 'Aucun nom d’exercice ne correspond à « {query} ». Essayez une autre recherche.',
+  noFilteredDescription:
+    'Aucun exercice ne correspond à la recherche et aux filtres actuels. Modifiez-les ou réinitialisez-les.',
   restSeconds: 'repos {seconds} s',
   editTitle: 'Modifier l’exercice',
   addTitle: 'Ajouter un exercice',
