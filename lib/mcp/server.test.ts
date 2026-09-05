@@ -61,5 +61,8 @@ describe('GymCoach MCP server', () => {
 
     const instructions = await client.readResource({ uri: 'gymcoach://instructions/agent' });
     expect(instructions.contents[0]).toMatchObject({ text: GYMCOACH_MCP_INSTRUCTIONS });
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toContain(
+      'UNKNOWN means no fact is known and must never be interpreted as healthy/cleared/absent',
+    );
   });
 });

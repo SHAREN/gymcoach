@@ -8,6 +8,8 @@ import { ProfileSection } from '@/components/settings/profile-section';
 import { ImportSection } from '@/components/settings/import-section';
 import { GymProfilesSection } from '@/components/settings/gym-profiles-section';
 import { McpSection } from '@/components/settings/mcp-section';
+import { CoachingProfileSection } from '@/components/settings/coaching-profile-section';
+import { normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
 
 export default async function SettingsPage() {
   const t = await getTranslations('settings');
@@ -23,6 +25,8 @@ export default async function SettingsPage() {
         heightCm: true,
         goal: true,
         weeklyFrequency: true,
+        coachingProfile: true,
+        coachingProfileUpdatedAt: true,
         unit: true,
         activeGymId: true,
       },
@@ -80,6 +84,10 @@ export default async function SettingsPage() {
             weeklyFrequency: user?.weeklyFrequency ?? null,
             unit: user?.unit ?? 'KG',
           }}
+        />
+
+        <CoachingProfileSection
+          initial={normalizeCoachingProfile(user?.coachingProfile, user?.coachingProfileUpdatedAt)}
         />
 
         <GymProfilesSection

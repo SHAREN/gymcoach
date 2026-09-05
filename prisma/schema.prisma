@@ -39,6 +39,10 @@ model User {
   // only and correctable by the user. Null = no note (backward-safe additive
   // column); the set/clear route bounds it to 500 chars.
   coachNote         String?
+  // Versioned self-reported coaching profile. Missing legacy data stays
+  // explicit UNKNOWN after normalization; it is never interpreted as healthy.
+  coachingProfile          Json?
+  coachingProfileUpdatedAt DateTime?
   createdAt         DateTime           @default(now())
   programs          Program[]
   sessions          Session[]

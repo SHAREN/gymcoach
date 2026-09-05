@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CoachPayload } from '@/lib/coach';
+import { emptyCoachingProfile } from '@/lib/schemas/coaching-profile';
 import { summarizeCoachPayload } from './coach-context';
 
 // summarizeCoachPayload only reshapes the payload buildCoachPayload already
@@ -17,6 +18,7 @@ function emptyPayload(): CoachPayload {
       goal: null,
       weeklyFrequency: null,
       coachNote: null,
+      coachingProfile: emptyCoachingProfile(),
     },
     weekCurrent: { weekStart: '2026-06-08T00:00:00.000Z', sessions: [] },
     weekPrevious: null,
