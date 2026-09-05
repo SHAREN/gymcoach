@@ -16,6 +16,7 @@ export interface UpsertGymEquipmentInput {
   manufacturer?: string | null;
   modelName?: string | null;
   quantity?: number;
+  loadConfigurationKnown?: boolean;
   weightOptions?: number[];
   exerciseIds?: string[];
   markExercisesAvailable?: boolean;
@@ -37,6 +38,7 @@ const equipmentSelection = {
   manufacturer: true,
   modelName: true,
   quantity: true,
+  loadConfigurationKnown: true,
   weightOptions: true,
   imageUrl: true,
   imageMimeType: true,
@@ -150,6 +152,7 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity,
+            loadConfigurationKnown: input.loadConfigurationKnown,
             weightOptions: input.weightOptions,
           },
         })
@@ -162,6 +165,7 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity ?? 1,
+            loadConfigurationKnown: input.loadConfigurationKnown ?? true,
             weightOptions: input.weightOptions ?? [],
           },
         });

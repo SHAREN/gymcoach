@@ -52,6 +52,7 @@ model User {
   progressPhotos    ProgressPhoto[]
   gyms              Gym[]              @relation("GymOwner")
   mcpAccessTokens   McpAccessToken[]
+  mcpMutations      McpMutation[]
   activeGymId       String?
   activeGym         Gym?               @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
@@ -70,6 +71,21 @@ model McpAccessToken {
   lastUsedAt  DateTime?
   revokedAt   DateTime?
 
+  @@index([userId, createdAt])
+}
+
+model McpMutation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenId     String
+  operationId String
+  type        String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, operationId])
   @@index([userId, createdAt])
 }
 
@@ -311,8 +327,9 @@ model GymEquipment {
   description   String?
   manufacturer  String?
   modelName     String?
-  quantity      Int                    @default(1)
-  weightOptions Float[]                @default([])
+  quantity               Int                    @default(1)
+  loadConfigurationKnown Boolean                @default(true)
+  weightOptions          Float[]                @default([])
   imageUrl      String?
   imageData     Bytes?
   imageMimeType String?

@@ -13,6 +13,7 @@ export const gymEquipmentUpsertSchema = z.object({
   manufacturer: z.string().trim().max(120).nullable().optional(),
   modelName: z.string().trim().max(120).nullable().optional(),
   quantity: z.number().int().min(1).max(100).optional(),
+  loadConfigurationKnown: z.boolean().optional(),
   weightOptions: gymWeightListSchema.optional(),
   exerciseIds: z.array(databaseIdSchema).max(100).optional(),
   markExercisesAvailable: z.boolean().optional(),
