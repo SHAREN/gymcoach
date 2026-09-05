@@ -220,8 +220,19 @@ model Program {
   endDate     DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  // Optional lineage for an inactive next/revised program. This preserves the
+  // source program and its completed-session history instead of mutating it.
+  parentProgramId    String?
+  parentProgram      Program?  @relation("ProgramRevisions", fields: [parentProgramId], references: [id], onDelete: SetNull)
+  revisions          Program[] @relation("ProgramRevisions")
+  // Historical name retained for schema compatibility. The value records the
+  // deterministic program-design contract/version used at validation time; it
+  // does not identify or imply an embedded LLM.
+  methodologyVersion String?
   workouts    Workout[]
   sessions    Session[]
+
+  @@index([parentProgramId])
 }
 
 model Workout {

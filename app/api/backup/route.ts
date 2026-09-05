@@ -63,7 +63,7 @@ import {
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 6;
+const VERSION = 7;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -239,6 +239,10 @@ export async function GET() {
         isActive: p.isActive,
         startDate: p.startDate.toISOString(),
         endDate: p.endDate?.toISOString() ?? null,
+        parentProgramIndex: p.parentProgramId
+          ? programs.findIndex((candidate) => candidate.id === p.parentProgramId)
+          : null,
+        methodologyVersion: p.methodologyVersion,
         workouts: p.workouts.map((w) => ({
           name: w.name,
           dayOfWeek: w.dayOfWeek,
@@ -399,6 +403,9 @@ const importSchema = z.object({
         isActive: z.boolean(),
         startDate: dateString,
         endDate: dateString.nullable().optional(),
+        // v7: positional lineage reference so duplicate program names remain safe.
+        parentProgramIndex: z.number().int().min(0).max(199).nullable().optional(),
+        methodologyVersion: z.string().trim().max(200).nullable().optional(),
         workouts: z
           .array(
             z.object({
@@ -794,7 +801,9 @@ export async function POST(req: Request) {
           await tx.user.update({ where: { id: userId }, data: { activeGymId } });
         }
 
-        // 5. Recreate programs / workouts / programExercises.
+        // 5. Recreate programs / workouts / programExercises. Lineage is
+        // restored in a second pass because every program receives a fresh id.
+        const restoredProgramIds: string[] = [];
         for (const p of payload.programs) {
           const program = await tx.program.create({
             data: {
@@ -805,8 +814,10 @@ export async function POST(req: Request) {
               isActive: p.isActive,
               startDate: new Date(p.startDate),
               endDate: p.endDate ? new Date(p.endDate) : null,
+              methodologyVersion: p.methodologyVersion ?? null,
             },
           });
+          restoredProgramIds.push(program.id);
           for (const w of p.workouts) {
             const workout = await tx.workout.create({
               data: {
@@ -839,6 +850,17 @@ export async function POST(req: Request) {
               });
             }
           }
+        }
+
+        for (const [programIndex, p] of payload.programs.entries()) {
+          if (p.parentProgramIndex == null) continue;
+          const programId = restoredProgramIds[programIndex];
+          const parentProgramId = restoredProgramIds[p.parentProgramIndex];
+          if (!programId || !parentProgramId || programId === parentProgramId) continue;
+          await tx.program.update({
+            where: { id: programId },
+            data: { parentProgramId },
+          });
         }
 
         // 6. Sessions + sets: we try to link to the program/workout by name,
