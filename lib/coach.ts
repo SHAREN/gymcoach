@@ -24,6 +24,7 @@ import {
 import { COACH_SYSTEM_PROMPT } from '@/lib/prompts/coach-system-prompt';
 import { exerciseRecords, type ExerciseRecord } from '@/lib/records';
 import { getLlmProvider } from '@/lib/llm';
+import { normalizeCoachingProfile, type CoachingProfile } from '@/lib/schemas/coaching-profile';
 
 // ============================================================
 // Structured payload sent to the coach
@@ -48,6 +49,7 @@ export interface CoachPayload {
     // Input signal only; the output contract (the <adjustments> block) is
     // unchanged.
     coachNote: string | null;
+    coachingProfile: CoachingProfile;
   };
   weekCurrent: WeekSummary;
   weekPrevious: WeekSummary | null;
@@ -292,6 +294,8 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
       goal: true,
       weeklyFrequency: true,
       coachNote: true,
+      coachingProfile: true,
+      coachingProfileUpdatedAt: true,
       deloadUntil: true,
     },
   });
@@ -455,6 +459,10 @@ export async function buildCoachPayload(userId: string): Promise<CoachPayload> {
       goal: user?.goal ?? null,
       weeklyFrequency: user?.weeklyFrequency ?? null,
       coachNote: user?.coachNote ?? null,
+      coachingProfile: normalizeCoachingProfile(
+        user?.coachingProfile,
+        user?.coachingProfileUpdatedAt,
+      ),
     },
     weekCurrent: currentWeek,
     weekPrevious: previousWeek.sessions.length === 0 ? null : previousWeek,

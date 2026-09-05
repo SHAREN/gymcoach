@@ -32,7 +32,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M08 | Equipment-aware return-to-training | DONE | Added exact per-gym/per-equipment return history while preserving the upstream generic API; live selection switches return ceilings without mixing physical machines or deleted-equipment snapshots. |
 | M09 | Session exercise strip/navigation | DONE | Added a web-only horizontal exercise strip with direct in-session navigation, completion markers and superset grouping; switching is locked during rest. |
 | M10 | Set value picker and editable set table | DONE | M10a adds the saved-value/keypad picker; M10b edits existing strength rows through the same durable IndexedDB queue, using POST before server acknowledgement and narrow PATCH after it while preserving frozen equipment history. |
-| M11 | Structured coaching profile | TODO | Re-evaluate schema against current upstream before migration. |
+| M11 | Structured coaching profile | DONE | Added versioned UNKNOWN/KNOWN/NOT_APPLICABLE coaching facts with atomic partial profile writes, web settings UI, backup/restore and bounded MCP/coach context; no program-design policy is applied here. |
 | M12 | Program revisions/design context/validation | TODO | Prefer neutral provenance/validation infrastructure. |
 | M13 | Multi-muscle exercise load profile | TODO | Port only after compatibility review. |
 | M14 | Permanent free-weight system profiles | TODO | Re-check against current upstream equipment UX first. |

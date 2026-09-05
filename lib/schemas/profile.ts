@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Sex, TrainingGoal, WeightUnit } from '@/lib/prisma-client';
+import { coachingProfilePatchSchema } from '@/lib/schemas/coaching-profile';
 
 // Max length of the free-text note to the coach (issue #188). Shared between
 // the profile API's Zod bound and the coach-page UI's character counter so the
@@ -27,6 +28,9 @@ export const profileUpdateSchema = z.object({
     .max(COACH_NOTE_MAX_LEN, `Keep it under ${COACH_NOTE_MAX_LEN} characters`)
     .nullable()
     .optional(),
+  // Structured self-reported coaching context. Partial updates are merged
+  // server-side so changing one section never resets unrelated fields.
+  coachingProfile: coachingProfilePatchSchema.optional(),
   // Preferred weight unit (display + input only; data stays in kg).
   unit: z.nativeEnum(WeightUnit).optional(),
 });
