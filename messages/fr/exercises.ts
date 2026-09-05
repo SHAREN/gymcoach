@@ -39,6 +39,24 @@ export const exercises = {
   deleteDescription:
     '{name} sera retiré du catalogue. Il ne peut pas être supprimé tant qu’il est utilisé dans un programme ou dans l’historique.',
   deleting: 'Suppression...',
+  detail: {
+    back: 'Retour aux exercices',
+    equipmentTitle: 'Matériel par salle',
+    equipmentDescription:
+      'Associez le matériel physique permettant cet exercice. Vous pouvez choisir un élément préféré par salle pour le sélectionner par défaut.',
+    noGyms: 'Aucune salle n’est encore configurée.',
+    noPhysicalEquipment: 'Aucun matériel physique n’a encore été ajouté aux salles.',
+    gymHasNoEquipment: 'Cette salle ne contient encore aucun matériel physique.',
+    incompatible: 'Incompatible',
+    linkEquipmentAria: 'Utiliser {equipment} pour cet exercice dans {gym}',
+    preferredEquipmentAria: 'Définir {equipment} comme matériel préféré dans {gym}',
+    preferred: 'Préféré',
+    makePreferred: 'Préférer',
+    equipmentSaved: 'Matériel de l’exercice mis à jour.',
+    equipmentSaveError: 'Impossible d’enregistrer le matériel de l’exercice.',
+    savingEquipment: 'Enregistrement...',
+    saveEquipment: 'Enregistrer le matériel',
+  },
   media: {
     button: 'Technique',
     open: 'Voir la technique pour {name}',

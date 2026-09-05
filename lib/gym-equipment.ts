@@ -231,6 +231,79 @@ export async function upsertOwnedGymEquipment(
 }
 
 
+export async function setOwnedExerciseEquipmentSelection(
+  userId: string,
+  exerciseId: string,
+  selections: Array<{ gymId: string; equipmentIds: string[]; preferredEquipmentId: string | null }>,
+) {
+  const exercise = await db.exercise.findFirst({
+    where: { id: exerciseId, userId },
+    select: { id: true, equipmentType: true },
+  });
+  if (!exercise) throw new ApiError(404, 'Exercise not found.');
+  if (new Set(selections.map((selection) => selection.gymId)).size !== selections.length) {
+    throw new ApiError(400, 'Each gym may appear only once.');
+  }
+
+  const gymIds = selections.map((selection) => selection.gymId);
+  const gyms = await db.gym.findMany({ where: { userId, id: { in: gymIds } }, select: { id: true } });
+  if (gyms.length !== gymIds.length) throw new ApiError(400, 'One or more gyms do not belong to the trainee.');
+
+  const requestedIds = [...new Set(selections.flatMap((selection) => selection.equipmentIds))];
+  const equipment = requestedIds.length
+    ? await db.gymEquipment.findMany({
+        where: { id: { in: requestedIds }, gym: { userId } },
+        select: { id: true, gymId: true, equipmentType: true },
+      })
+    : [];
+  if (equipment.length !== requestedIds.length) throw new ApiError(400, 'One or more equipment IDs do not belong to the trainee.');
+  const byId = new Map(equipment.map((item) => [item.id, item]));
+
+  for (const selection of selections) {
+    if (new Set(selection.equipmentIds).size !== selection.equipmentIds.length) {
+      throw new ApiError(400, 'Equipment IDs must be unique within a gym.');
+    }
+    for (const equipmentId of selection.equipmentIds) {
+      const item = byId.get(equipmentId);
+      if (!item || item.gymId !== selection.gymId) throw new ApiError(400, 'Equipment must belong to the selected gym.');
+      if (exercise.equipmentType !== 'OTHER' && item.equipmentType !== 'OTHER' && exercise.equipmentType !== item.equipmentType) {
+        throw new ApiError(400, 'Exercise and equipment types are incompatible.');
+      }
+    }
+    if (selection.preferredEquipmentId && !selection.equipmentIds.includes(selection.preferredEquipmentId)) {
+      throw new ApiError(400, 'Preferred equipment must remain linked to the exercise.');
+    }
+  }
+
+  await db.$transaction(async (tx) => {
+    for (const selection of selections) {
+      await tx.gymEquipmentExercise.deleteMany({
+        where: { exerciseId, equipment: { gymId: selection.gymId } },
+      });
+      if (selection.equipmentIds.length) {
+        await tx.gymEquipmentExercise.createMany({
+          data: selection.equipmentIds.map((equipmentId) => ({ equipmentId, exerciseId })),
+        });
+      }
+      await tx.gymExerciseConfig.upsert({
+        where: { gymId_exerciseId: { gymId: selection.gymId, exerciseId } },
+        create: {
+          gymId: selection.gymId,
+          exerciseId,
+          isAvailable: true,
+          preferredEquipmentId: selection.preferredEquipmentId,
+        },
+        update: {
+          isAvailable: true,
+          preferredEquipmentId: selection.preferredEquipmentId,
+        },
+      });
+    }
+  });
+
+  return { exerciseId, gyms: selections };
+}
+
 export async function setOwnedPreferredGymEquipment(
   userId: string,
   gymId: string,

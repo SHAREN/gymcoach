@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Plus, Pencil, Search } from 'lucide-react';
@@ -164,7 +165,12 @@ function ExerciseRow({ exercise, onEdit }: { exercise: Exercise; onEdit: () => v
           compact
         />
         <div className="min-w-0 flex-1 basis-40 py-0.5">
-          <p className="line-clamp-2 text-sm font-medium leading-snug">{displayName}</p>
+          <Link
+            href={`/exercises/${exercise.id}`}
+            className="line-clamp-2 text-sm font-medium leading-snug hover:underline"
+          >
+            {displayName}
+          </Link>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <Badge variant="secondary">
               {t(`categories.${exerciseCategoryMessageKeys[exercise.category]}`)}
