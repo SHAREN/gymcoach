@@ -458,6 +458,37 @@ describe('SetInput AI parse', () => {
     expect(screen.getByRole('combobox')).toHaveValue('machine-1');
   });
 
+  it('reports a controlled equipment change before logging the set', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onEquipmentChange = vi.fn();
+    render(
+      <SetInput
+        programExercise={pe}
+        existingSets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        equipmentOptions={[
+          { id: 'machine-1', name: 'Hammer Strength Squat' },
+          { id: 'machine-2', name: 'Plate-loaded Squat' },
+        ]}
+        selectedEquipmentId="machine-1"
+        onEquipmentChange={onEquipmentChange}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByRole('combobox')).toHaveValue('machine-1');
+    await user.selectOptions(screen.getByRole('combobox'), 'machine-2');
+    expect(onEquipmentChange).toHaveBeenCalledWith('machine-2');
+    expect(screen.getByRole('combobox')).toHaveValue('machine-2');
+
+    await user.click(screen.getByRole('button', { name: /log the set/i }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ gymEquipmentId: 'machine-2' }));
+  });
+
   it('clears a selected machine the gym no longer offers (issue #326)', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
