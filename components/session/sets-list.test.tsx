@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
 import { SetsList } from './sets-list';
@@ -58,13 +59,14 @@ function pendingSet(over: Partial<PendingSet>): PendingSet {
   };
 }
 
-describe('SetsList PR badge', () => {
+describe('SetsList', () => {
   it('shows a weight PR badge when a logged set beats the prior best load', () => {
     render(
       <SetsList
         programExercise={pe}
         sets={[pendingSet({ localId: 'a', setNumber: 1, weight: 110, reps: 5 })]}
         isInputActive={false}
+        unit="KG"
         onDeleteSet={() => {}}
         priorSets={[{ weight: 100, reps: 5 }]}
       />,
@@ -78,11 +80,37 @@ describe('SetsList PR badge', () => {
         programExercise={pe}
         sets={[pendingSet({ localId: 'a', setNumber: 1, weight: 100, reps: 5 })]}
         isInputActive={false}
+        unit="KG"
         onDeleteSet={() => {}}
         priorSets={[{ weight: 100, reps: 5 }]}
       />,
     );
     expect(screen.queryByText('Weight PR')).toBeNull();
     expect(screen.queryByText('e1RM PR')).toBeNull();
+  });
+
+  it('edits an existing strength row without changing its identity', async () => {
+    const user = userEvent.setup();
+    const set = pendingSet({ localId: 'row-1', serverId: 'server-1', weight: 100, reps: 5, rir: 2 });
+    const onEditSet = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[set]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+        onEditSet={onEditSet}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit the set' }));
+    await user.click(screen.getByRole('button', { name: '5' }));
+    await user.click(screen.getByRole('button', { name: '8 reps' }));
+    await user.click(screen.getByRole('button', { name: 'Apply value' }));
+    await user.selectOptions(screen.getByRole('combobox'), '1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onEditSet).toHaveBeenCalledWith(set, { weight: 100, reps: 8, rir: 1 });
   });
 });

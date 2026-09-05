@@ -107,6 +107,15 @@ async function seed() {
     data: {
       sessionId: active.id,
       exerciseId: exercise.id,
+      gymEquipmentId: equipment.id,
+      equipmentNameSnapshot: 'Cable station active',
+      equipmentLoadSnapshot: {
+        version: 1,
+        equipmentType: 'CABLE',
+        manufacturer: 'HistoryCo',
+        modelName: 'Frozen-1',
+        weightOptions: [10, 20, 30],
+      },
       setNumber: 1,
       weight: 10,
       reps: 12,
@@ -155,15 +164,31 @@ describe('completed workout strength set editor API', () => {
     expect(after.completedAt.getTime()).toBe(before.completedAt.getTime());
   });
 
-  it('PATCH rejects active, cardio, foreign, and metadata-changing historical writes', async () => {
-    const { user, stranger, historical, activeSet, cardioSet } = await seed();
+  it('PATCH accepts active strength corrections while preserving frozen equipment', async () => {
+    const { user, activeSet } = await seed();
     mockUserId.mockResolvedValue(user.id);
+    const before = await db.set.findUniqueOrThrow({ where: { id: activeSet.id } });
 
     const active = await patchSet(
       jsonRequest('PATCH', { weight: 15, reps: 10, rir: 2 }),
       params(activeSet.id),
     );
-    expect(active.status).toBe(400);
+    expect(active.status).toBe(200);
+    const after = await db.set.findUniqueOrThrow({ where: { id: activeSet.id } });
+    expect(after).toMatchObject({
+      weight: 15,
+      reps: 10,
+      rir: 2,
+      gymEquipmentId: before.gymEquipmentId,
+      equipmentNameSnapshot: before.equipmentNameSnapshot,
+      equipmentLoadSnapshot: before.equipmentLoadSnapshot,
+    });
+    expect(after.completedAt.getTime()).toBe(before.completedAt.getTime());
+  });
+
+  it('PATCH rejects cardio, foreign, and metadata-changing writes', async () => {
+    const { user, stranger, historical, cardioSet } = await seed();
+    mockUserId.mockResolvedValue(user.id);
 
     const cardio = await patchSet(
       jsonRequest('PATCH', { weight: 0, reps: 1, rir: null }),

@@ -80,6 +80,42 @@ async function doFlush(): Promise<FlushResult> {
     await db.pendingSets.update(item.localId, { status: 'syncing' });
 
     try {
+      if (item.serverId) {
+        const res = await fetch(`/api/sets/${item.serverId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weight: item.weight, reps: item.reps, rir: item.rir }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string } | null;
+          const fatal = res.status === 400 || res.status === 404 || res.status === 409;
+          await db.pendingSets.update(item.localId, {
+            status: fatal ? 'failed' : 'pending',
+            attempts: (item.attempts ?? 0) + 1,
+            lastError: data?.error ?? `HTTP ${res.status}`,
+          });
+          failed += 1;
+          continue;
+        }
+        const updated = (await res.json()) as { id: string };
+        if (updated.id !== item.serverId) {
+          await db.pendingSets.update(item.localId, {
+            status: 'failed',
+            attempts: (item.attempts ?? 0) + 1,
+            lastError: 'Server acknowledgement did not match the synced set ID.',
+          });
+          failed += 1;
+          continue;
+        }
+        await db.pendingSets.update(item.localId, {
+          status: 'synced',
+          syncedAt: Date.now(),
+          lastError: null,
+        });
+        flushed += 1;
+        continue;
+      }
+
       const payload = {
         id: item.localId,
         exerciseId: item.exerciseId,
@@ -167,6 +203,27 @@ async function doFlush(): Promise<FlushResult> {
     for (const listener of droppedEquipmentListeners) listener(droppedEquipment);
   }
   return { flushed, failed, pending: remaining, droppedEquipment };
+}
+
+export async function queueSetCorrection(
+  localId: string,
+  values: Pick<PendingSet, 'weight' | 'reps' | 'rir'>,
+): Promise<void> {
+  // Do not race a correction with an in-flight POST/PATCH. Once the active
+  // pass settles, re-read the durable row and enqueue the correction against
+  // its final serverId.
+  if (inFlight) await inFlight;
+  const db = getDB();
+  const current = await db.pendingSets.get(localId);
+  if (!current) throw new Error('Set is no longer available for editing.');
+  if (current.durationSec != null) throw new Error('Cardio sets are not editable here.');
+  await db.pendingSets.update(localId, {
+    ...values,
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+  });
+  void flushPendingSets();
 }
 
 export async function queueSet(

@@ -8,9 +8,9 @@ interface Params {
   params: Promise<{ id: string }>;
 }
 
-// PATCH /api/sets/[id]: corrects values on a completed strength set without
+// PATCH /api/sets/[id]: corrects values on an owned strength set without
 // changing its exercise, set number, completion timestamp, or frozen equipment
-// history. Active-session editing continues to use the normal session sync path.
+// history. Active-session corrections use the same narrow contract as history edits.
 export async function PATCH(req: Request, props: Params) {
   const params = await props.params;
   try {
@@ -24,9 +24,6 @@ export async function PATCH(req: Request, props: Params) {
     });
     if (!set) {
       throw new ApiError(404, 'Set not found.');
-    }
-    if (!set.session.finishedAt) {
-      throw new ApiError(400, 'Historical set edits require a finished session.');
     }
     if (set.exercise.category === 'CARDIO') {
       throw new ApiError(400, 'Historical cardio rows are read-only.');
