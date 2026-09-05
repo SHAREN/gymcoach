@@ -1,5 +1,7 @@
 import { db } from '@/lib/db';
 import type { Prisma } from '@/lib/prisma-client';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
+import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 
 const historySessionInclude = {
   program: { select: { id: true, name: true } },
@@ -20,6 +22,7 @@ const historySessionInclude = {
           category: true,
           equipmentType: true,
           usesBodyweight: true,
+          loadProfile: true,
         },
       },
       gymEquipment: {
@@ -120,6 +123,7 @@ export function serializeMcpTrainingSession(session: McpTrainingHistorySession) 
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       muscleGroup: exercise.muscleGroup,
+      loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
       category: exercise.category,
       equipmentType: exercise.equipmentType,
       usesBodyweight: exercise.usesBodyweight,
@@ -157,6 +161,23 @@ function summarizeReturnedSessions(sessions: McpTrainingHistorySession[]) {
   let cardioSets = 0;
   let setsWithRir = 0;
 
+  const load = aggregateTrainingLoad(
+    sessions.flatMap((session) =>
+      session.sets
+        .filter((set) => set.exercise.category !== 'CARDIO')
+        .map((set) => ({
+          setId: set.id,
+          exerciseId: set.exerciseId,
+          legacyMuscleGroup: set.exercise.muscleGroup,
+          loadProfile: set.exercise.loadProfile,
+          isWarmup: set.isWarmup,
+          isDropSet: set.isDropSet,
+          rir: set.rir,
+          historyReliability: 'UNKNOWN' as const,
+        })),
+    ),
+  );
+
   for (const session of sessions) {
     for (const set of session.sets) {
       if (set.exercise.category === 'CARDIO') {
@@ -176,6 +197,17 @@ function summarizeReturnedSessions(sessions: McpTrainingHistorySession[]) {
     setsWithRir,
     rirCoveragePct:
       strengthWorkingSets > 0 ? round((setsWithRir / strengthWorkingSets) * 100, 1) : null,
+    loadByMuscle: load.muscles,
+    loadProfileMetadata: {
+      version: load.version,
+      algorithmVersion: load.algorithmVersion,
+      confidence: load.confidence,
+      qualifyingSetCount: load.qualifyingSetCount,
+      deduplicatedSetCount: load.deduplicatedSetCount,
+      unclassifiedSetCount: load.unclassifiedSetCount,
+      unknownSecondaryParticipationSetCount: load.unknownSecondaryParticipationSetCount,
+      equivalentSetsHeuristic: load.equivalentSetsHeuristic,
+    },
   };
 }
 

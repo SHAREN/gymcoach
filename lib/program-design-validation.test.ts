@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ProgramDesignContext } from './program-design-context';
 import { validateProgramDesign } from './program-design-validation';
+import {
+  legacyPrimaryExerciseLoadProfile,
+  reviewedExerciseLoadProfile,
+} from './schemas/exercise-load-profile';
 import type { GeneratedProgram } from './schemas/program-generation';
 
 function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignContext {
@@ -43,12 +47,21 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
     recent: {} as ProgramDesignContext['recent'],
     sourceProgram: null,
     targetVolumeByMuscle: {},
-    gym: { id: 'gym-1', name: 'Gym', dumbbellWeights: [], plateWeights: [], barWeights: [], exerciseConfigs: [], equipment: [] },
+    gym: {
+      id: 'gym-1',
+      name: 'Gym',
+      dumbbellWeights: [],
+      plateWeights: [],
+      barWeights: [],
+      exerciseConfigs: [],
+      equipment: [],
+    },
     availableExercises: [
       {
         id: 'bench',
         name: 'Bench Press',
         muscleGroup: 'CHEST',
+        loadProfile: legacyPrimaryExerciseLoadProfile('CHEST'),
         category: 'COMPOUND',
         equipmentType: 'BARBELL',
         usesBodyweight: false,
@@ -63,7 +76,12 @@ function context(overrides: Partial<ProgramDesignContext> = {}): ProgramDesignCo
     ],
     exerciseConstraints: [],
     returnToTraining: [],
-    dataQuality: { sessionsInTwoWeeks: 4, exercisesWithRecentProgress: 1, historyWeeks: 4, confidence: 'medium' },
+    dataQuality: {
+      sessionsInTwoWeeks: 4,
+      exercisesWithRecentProgress: 1,
+      historyWeeks: 4,
+      confidence: 'medium',
+    },
     ...overrides,
   };
 }
@@ -184,9 +202,31 @@ describe('validateProgramDesign', () => {
     );
   });
 
-  it('labels M12 accounting explicitly as primary-muscle-only', () => {
+  it('labels M13 accounting as multi-muscle and preserves direct counts', () => {
     const result = validateProgramDesign(program(), context());
-    expect(result.accounting.mode).toBe('PRIMARY_MUSCLE_ONLY');
+    expect(result.accounting.mode).toBe('MULTI_MUSCLE_V1');
+    expect(result.weeklyLoadByMuscle.CHEST).toMatchObject({ directSets: 3, indirectSets: 0 });
     expect(result.valid).toBe(true);
+  });
+
+  it('counts explicit secondary muscles separately and exposes the heuristic', () => {
+    const multi = context();
+    multi.availableExercises[0] = {
+      ...multi.availableExercises[0]!,
+      loadProfile: reviewedExerciseLoadProfile({
+        primaryMuscles: ['CHEST'],
+        secondaryMuscles: ['TRICEPS', 'SHOULDERS_FRONT'],
+        movementPatterns: ['HORIZONTAL_PUSH'],
+        fatigueTags: ['SYSTEMIC_COMPOUND'],
+        jointStress: ['SHOULDER', 'ELBOW'],
+      }),
+    };
+    const result = validateProgramDesign(program(), multi);
+    expect(result.weeklyLoadByMuscle.TRICEPS).toMatchObject({
+      directSets: 0,
+      indirectSets: 3,
+      equivalentSets: 1.5,
+    });
+    expect(result.loadProfileMetadata.equivalentSetsHeuristic.coefficients.secondary).toBe(0.5);
   });
 });

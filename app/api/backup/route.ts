@@ -24,6 +24,12 @@ import {
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { sorenessSchema } from '@/lib/schemas/readiness';
 import { coachingProfileSchema, normalizeCoachingProfile } from '@/lib/schemas/coaching-profile';
+import {
+  exerciseLoadProfileSchema,
+  normalizeExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
+import { deriveBackupExerciseClassification } from '@/lib/exercise-classification';
+import { SYSTEM_EXERCISE_CATALOG_ORIGIN } from '@/lib/exercise-catalog';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
 import {
   GYM_EQUIPMENT_IMAGE_MIME_TYPES,
@@ -63,7 +69,7 @@ import {
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 7;
+const VERSION = 8;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -207,6 +213,8 @@ export async function GET() {
         notes: e.notes,
         usesBodyweight: e.usesBodyweight,
         equipmentType: e.equipmentType,
+        catalogOrigin: e.catalogOrigin,
+        loadProfile: normalizeExerciseLoadProfile(e.loadProfile, e.muscleGroup),
       })),
       gyms: gyms.map((gym) => ({
         name: gym.name,
@@ -391,6 +399,9 @@ const importSchema = z.object({
         usesBodyweight: z.boolean().optional(),
         // v3; absent in older backups.
         equipmentType: z.nativeEnum(EquipmentType).optional(),
+        // v8: server-owned catalog provenance and versioned load profile.
+        catalogOrigin: z.literal(SYSTEM_EXERCISE_CATALOG_ORIGIN).nullable().optional(),
+        loadProfile: exerciseLoadProfileSchema.optional(),
       }),
     )
     .max(2000),
@@ -707,6 +718,19 @@ export async function POST(req: Request) {
         // 3. Recreate the exercises; we keep a name -> id index to link them.
         const exerciseIdByName = new Map<string, string>();
         for (const e of payload.exercises) {
+          const notes = e.notes ?? null;
+          const usesBodyweight = e.usesBodyweight ?? false;
+          const equipmentType = e.equipmentType ?? EquipmentType.OTHER;
+          const classification = deriveBackupExerciseClassification({
+            name: e.name,
+            muscleGroup: e.muscleGroup,
+            category: e.category,
+            defaultRestSec: e.defaultRestSec,
+            notes,
+            usesBodyweight,
+            equipmentType,
+            loadProfile: e.loadProfile,
+          });
           const created = await tx.exercise.create({
             data: {
               userId,
@@ -714,9 +738,10 @@ export async function POST(req: Request) {
               muscleGroup: e.muscleGroup,
               category: e.category,
               defaultRestSec: e.defaultRestSec,
-              notes: e.notes ?? null,
-              usesBodyweight: e.usesBodyweight ?? false,
-              equipmentType: e.equipmentType ?? 'OTHER',
+              notes,
+              usesBodyweight,
+              equipmentType,
+              ...classification,
             },
           });
           exerciseIdByName.set(e.name, created.id);

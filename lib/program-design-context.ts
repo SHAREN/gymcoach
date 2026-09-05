@@ -14,6 +14,12 @@ import type {
   TrainingExperience,
 } from '@/lib/schemas/program-design';
 import type { Prisma } from '@/prisma/generated/client';
+import type { MuscleGroup } from '@/lib/prisma-client';
+import {
+  normalizeExerciseLoadProfile,
+  type ExerciseLoadProfile,
+} from '@/lib/schemas/exercise-load-profile';
+import { aggregateTrainingLoad } from '@/lib/training-load-aggregation';
 
 export const PROGRAM_DESIGN_CONTRACT_VERSION = '2026-09-05.external-mcp-v1';
 
@@ -108,12 +114,25 @@ export interface ProgramDesignContext {
     | 'recentProgress'
   >;
   sourceProgram: ReturnType<typeof mapSourceProgram> | null;
-  targetVolumeByMuscle: Record<string, { weeklySets: number; frequency: number; maxSetsInOneWorkout: number }>;
+  targetVolumeByMuscle: Record<
+    string,
+    {
+      weeklySets: number;
+      directSets: number;
+      indirectSets: number;
+      equivalentSets: number;
+      frequency: number;
+      maxSetsInOneWorkout: number;
+      maxEquivalentSetsInOneWorkout: number;
+      confidence: string;
+    }
+  >;
   gym: ReturnType<typeof mapGym> | null;
   availableExercises: Array<{
     id: string;
     name: string;
-    muscleGroup: string;
+    muscleGroup: MuscleGroup;
+    loadProfile: ExerciseLoadProfile;
     category: string;
     equipmentType: string;
     usesBodyweight: boolean;
@@ -187,6 +206,7 @@ export async function buildProgramDesignContext({
         usesBodyweight: true,
         defaultRestSec: true,
         notes: true,
+        loadProfile: true,
       },
     }),
   ]);
@@ -202,23 +222,24 @@ export async function buildProgramDesignContext({
 
   const requestLimitationsProvided =
     answers.excludedExercises !== undefined || nonEmpty(answers.limitations) != null;
-  const exerciseConstraints: ProgramDesignContext['exerciseConstraints'] = requestLimitationsProvided
-    ? (answers.excludedExercises ?? []).map((exerciseName) => ({
-        source: 'request' as const,
-        kind: 'REQUEST_EXCLUSION',
-        label: 'Excluded for this program request',
-        affectedExerciseNames: [exerciseName],
-        details: nonEmpty(answers.limitations),
-      }))
-    : coachingProfile.limitations.state === 'KNOWN'
-      ? coachingProfile.limitations.value.entries.map((entry) => ({
-          source: 'profile' as const,
-          kind: entry.kind,
-          label: entry.label,
-          affectedExerciseNames: entry.affectedExerciseNames,
-          details: entry.details ?? null,
+  const exerciseConstraints: ProgramDesignContext['exerciseConstraints'] =
+    requestLimitationsProvided
+      ? (answers.excludedExercises ?? []).map((exerciseName) => ({
+          source: 'request' as const,
+          kind: 'REQUEST_EXCLUSION',
+          label: 'Excluded for this program request',
+          affectedExerciseNames: [exerciseName],
+          details: nonEmpty(answers.limitations),
         }))
-      : [];
+      : coachingProfile.limitations.state === 'KNOWN'
+        ? coachingProfile.limitations.value.entries.map((entry) => ({
+            source: 'profile' as const,
+            kind: entry.kind,
+            label: entry.label,
+            affectedExerciseNames: entry.affectedExerciseNames,
+            details: entry.details ?? null,
+          }))
+        : [];
 
   const reasonsByExercise = new Map<string, string[]>();
   for (const constraint of exerciseConstraints) {
@@ -247,6 +268,7 @@ export async function buildProgramDesignContext({
     const limitationReasons = reasonsByExercise.get(exercise.name.toLocaleLowerCase()) ?? [];
     return {
       ...exercise,
+      loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
       isAvailableInActiveGym: activeGym ? (config?.isAvailable ?? true) : null,
       preferredEquipmentId: config?.preferredEquipmentId ?? null,
       linkedEquipmentIds: equipmentByExercise.get(exercise.id) ?? [],
@@ -306,7 +328,8 @@ export async function buildProgramDesignContext({
     activeGym,
     bodyweight: coach.userProfile.bodyweight,
   });
-  const sessionsInTwoWeeks = coach.weekCurrent.sessions.length + (coach.weekPrevious?.sessions.length ?? 0);
+  const sessionsInTwoWeeks =
+    coach.weekCurrent.sessions.length + (coach.weekPrevious?.sessions.length ?? 0);
   const historyWeeks = distinctHistoryWeeks(coach.recentProgress);
 
   return {
@@ -327,8 +350,10 @@ export async function buildProgramDesignContext({
       equipmentAccess: resolvedEquipmentAccess,
       preferences: nonEmpty(answers.preferences) ?? summarizeExercisePreferences(coachingProfile),
       recentTrainingBackground: nonEmpty(answers.recentTrainingBackground),
-      goalPriorities: nonEmpty(answers.goalPriorities) ?? summarizeProfilePriorities(coachingProfile),
-      concurrentTraining: nonEmpty(answers.concurrentTraining) ?? summarizeOutsideActivities(coachingProfile),
+      goalPriorities:
+        nonEmpty(answers.goalPriorities) ?? summarizeProfilePriorities(coachingProfile),
+      concurrentTraining:
+        nonEmpty(answers.concurrentTraining) ?? summarizeOutsideActivities(coachingProfile),
       changesSinceLastProgram: nonEmpty(answers.changesSinceLastProgram),
       postBlockAssessment: answers.postBlockAssessment ?? null,
     },
@@ -352,8 +377,16 @@ export async function buildProgramDesignContext({
           ? 'profile'
           : 'unknown',
       healthStatus: answers.healthStatus ? 'request' : profileHealthStatus ? 'profile' : 'unknown',
-      availableDays: answers.availableDays ? 'request' : profileAvailableDays ? 'profile' : 'unknown',
-      limitations: requestLimitationsProvided ? 'request' : limitationsKnown ? 'profile' : 'unknown',
+      availableDays: answers.availableDays
+        ? 'request'
+        : profileAvailableDays
+          ? 'profile'
+          : 'unknown',
+      limitations: requestLimitationsProvided
+        ? 'request'
+        : limitationsKnown
+          ? 'profile'
+          : 'unknown',
       equipmentAccess: resolvedEquipmentAccess ? 'request' : activeGym ? 'active-gym' : 'unknown',
     },
     missingQuestions,
@@ -407,6 +440,7 @@ function mapSourceProgram(program: SourceProgramRow) {
         exerciseId: pe.exerciseId,
         exerciseName: pe.exercise.name,
         muscleGroup: pe.exercise.muscleGroup,
+        loadProfile: normalizeExerciseLoadProfile(pe.exercise.loadProfile, pe.exercise.muscleGroup),
         category: pe.exercise.category,
         equipmentType: pe.exercise.equipmentType,
         usesBodyweight: pe.exercise.usesBodyweight,
@@ -452,18 +486,64 @@ function mapGym(gym: ActiveGymRow) {
 
 function targetVolume(source: NonNullable<ProgramDesignContext['sourceProgram']>) {
   const result: ProgramDesignContext['targetVolumeByMuscle'] = {};
-  for (const workout of source.workouts) {
-    const perWorkout: Record<string, number> = {};
-    for (const exercise of workout.exercises) {
-      perWorkout[exercise.muscleGroup] = (perWorkout[exercise.muscleGroup] ?? 0) + exercise.targetSets;
+  const weeklyInputs = [];
+  for (const [workoutIndex, workout] of source.workouts.entries()) {
+    const workoutInputs = [];
+    for (const [exerciseIndex, exercise] of workout.exercises.entries()) {
+      for (let setIndex = 0; setIndex < exercise.targetSets; setIndex += 1) {
+        const input = {
+          setId: ['target', workoutIndex, exerciseIndex, setIndex].join(':'),
+          exerciseId: exercise.exerciseId,
+          legacyMuscleGroup: exercise.muscleGroup,
+          loadProfile: exercise.loadProfile,
+          isWarmup: false,
+          isDropSet: false,
+          rir: exercise.targetRIR,
+          historyReliability: 'UNKNOWN' as const,
+        };
+        workoutInputs.push(input);
+        weeklyInputs.push(input);
+      }
     }
-    for (const [muscle, sets] of Object.entries(perWorkout)) {
-      const row = result[muscle] ?? { weeklySets: 0, frequency: 0, maxSetsInOneWorkout: 0 };
-      row.weeklySets += sets;
+    const workoutLoad = aggregateTrainingLoad(workoutInputs);
+    for (const [muscle, load] of Object.entries(workoutLoad.muscles)) {
+      const row = result[muscle] ?? {
+        weeklySets: 0,
+        directSets: 0,
+        indirectSets: 0,
+        equivalentSets: 0,
+        frequency: 0,
+        maxSetsInOneWorkout: 0,
+        maxEquivalentSetsInOneWorkout: 0,
+        confidence: load.confidence,
+      };
       row.frequency += 1;
-      row.maxSetsInOneWorkout = Math.max(row.maxSetsInOneWorkout, sets);
+      row.maxSetsInOneWorkout = Math.max(row.maxSetsInOneWorkout, load.directSets);
+      row.maxEquivalentSetsInOneWorkout = Math.max(
+        row.maxEquivalentSetsInOneWorkout,
+        load.equivalentSets,
+      );
       result[muscle] = row;
     }
+  }
+  const weeklyLoad = aggregateTrainingLoad(weeklyInputs);
+  for (const [muscle, load] of Object.entries(weeklyLoad.muscles)) {
+    const row = result[muscle] ?? {
+      weeklySets: 0,
+      directSets: 0,
+      indirectSets: 0,
+      equivalentSets: 0,
+      frequency: 0,
+      maxSetsInOneWorkout: 0,
+      maxEquivalentSetsInOneWorkout: 0,
+      confidence: load.confidence,
+    };
+    row.weeklySets = load.directSets;
+    row.directSets = load.directSets;
+    row.indirectSets = load.indirectSets;
+    row.equivalentSets = load.equivalentSets;
+    row.confidence = load.confidence;
+    result[muscle] = row;
   }
   return result;
 }

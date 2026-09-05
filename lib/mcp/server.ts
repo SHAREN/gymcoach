@@ -8,10 +8,14 @@ import {
   PROGRAM_DESIGN_CONTRACT_VERSION,
   type ProgramDesignContext,
 } from '@/lib/program-design-context';
-import { validateProgramDesign, type ProgramDesignValidation } from '@/lib/program-design-validation';
+import {
+  validateProgramDesign,
+  type ProgramDesignValidation,
+} from '@/lib/program-design-validation';
 import { generatedExerciseSchema, generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { programInputSchema } from '@/lib/schemas/program';
 import { programDesignAnswersSchema, programDesignModeSchema } from '@/lib/schemas/program-design';
+import { normalizeExerciseLoadProfile } from '@/lib/schemas/exercise-load-profile';
 import {
   EquipmentType,
   ExerciseCategory,
@@ -26,11 +30,7 @@ import {
 } from '@/lib/gym-equipment';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
 import { databaseIdSchema, gymEquipmentUpsertSchema } from '@/lib/schemas/gym-equipment';
-import {
-  getMcpGymInventory,
-  listMcpGyms,
-  updateMcpGymFreeWeights,
-} from '@/lib/mcp/gym-inventory';
+import { getMcpGymInventory, listMcpGyms, updateMcpGymFreeWeights } from '@/lib/mcp/gym-inventory';
 import { getMcpTrainingHistory } from '@/lib/mcp/training-history';
 import { registerExternalAiWorkflowTools } from '@/lib/mcp/external-ai-workflow';
 
@@ -43,6 +43,8 @@ Use list_gyms and get_gym_inventory before reasoning about a specific gym's phys
 Inventory write tools change saved gym data. Re-read the gym first, present the exact proposed free-weight/equipment/image changes, and call a write tool only after the trainee explicitly confirms them. Do not invent manufacturer, model, weights, exercise links or image identity when the source is ambiguous.
 
 For free-form workout import, exercise naming, photos and gym-inventory interpretation, the external MCP agent is the semantic layer. GymCoach only returns bounded user-scoped facts and deterministic validated writes. Ask the trainee when facts are ambiguous; do not invent manufacturer, model or load characteristics.
+
+Multi-muscle load accounting keeps direct and indirect sets separate. Equivalent sets are a visible versioned engineering heuristic; never treat unknown secondary participation as zero or invent a coefficient.
 
 Program design reasoning belongs to the external MCP agent. Before creating or revising a program, call get_program_design_context, ask every required missing question, and call validate_program_draft on the exact final draft. GymCoach performs deterministic validation only; it does not silently fill UNKNOWN facts or choose substitutions.
 
@@ -77,12 +79,22 @@ const mcpEquipmentImageFields = {
 };
 
 const mcpEquipmentImageSchema = z.object(mcpEquipmentImageFields).superRefine((value, ctx) => {
-  const modes = Number(value.clear === true) + Number(value.imageUrl != null) + Number(value.imageBase64 != null);
+  const modes =
+    Number(value.clear === true) +
+    Number(value.imageUrl != null) +
+    Number(value.imageBase64 != null);
   if (modes !== 1) {
-    ctx.addIssue({ code: 'custom', message: 'Choose exactly one image action: clear, imageUrl, or imageBase64.' });
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Choose exactly one image action: clear, imageUrl, or imageBase64.',
+    });
   }
   if (value.imageBase64 != null && value.mimeType == null) {
-    ctx.addIssue({ code: 'custom', path: ['mimeType'], message: 'Uploaded images require a MIME type.' });
+    ctx.addIssue({
+      code: 'custom',
+      path: ['mimeType'],
+      message: 'Uploaded images require a MIME type.',
+    });
   }
 });
 
@@ -274,7 +286,8 @@ Call get_program_design_context with mode NEW_PROGRAM. Ask every required missin
     'list_gyms',
     {
       title: 'List gyms',
-      description: 'Lists saved gyms, identifies the active gym and reports inventory/config counts.',
+      description:
+        'Lists saved gyms, identifies the active gym and reports inventory/config counts.',
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     },
     async () => result(await listMcpGyms(principal.userId)),
@@ -438,9 +451,16 @@ Call get_program_design_context with mode NEW_PROGRAM. Ask every required missin
           usesBodyweight: true,
           defaultRestSec: true,
           notes: true,
+          catalogOrigin: true,
+          loadProfile: true,
         },
       });
-      return result({ exercises });
+      return result({
+        exercises: exercises.map((exercise) => ({
+          ...exercise,
+          loadProfile: normalizeExerciseLoadProfile(exercise.loadProfile, exercise.muscleGroup),
+        })),
+      });
     },
   );
 

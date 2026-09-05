@@ -157,6 +157,12 @@ model Exercise {
   usesBodyweight    Boolean                @default(false)
   // Determines which saved-gym inventory constrains suggested loads.
   equipmentType     EquipmentType          @default(OTHER)
+  // Server-owned proof that this row came from the built-in exercise catalog.
+  // Null means custom/imported/unproven; matching a name alone is never provenance.
+  catalogOrigin     String?                @db.VarChar(64)
+  // Versioned multi-muscle/movement/fatigue/joint classification. Missing data
+  // remains explicit UNKNOWN/UNCLASSIFIED rather than silently becoming zero load.
+  loadProfile       Json                   @default("{\"version\":1,\"algorithmVersion\":\"2026-07-18-multi-muscle-v1\",\"classification\":\"UNCLASSIFIED\",\"provenance\":\"UNCLASSIFIED\",\"confidence\":\"UNKNOWN\",\"primaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"secondaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"movementPatterns\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"fatigueTags\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"jointStress\":{\"state\":\"UNKNOWN\",\"entries\":[]}}")
   createdAt         DateTime               @default(now())
   programExercises  ProgramExercise[]
   sets              Set[]
