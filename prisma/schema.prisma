@@ -313,8 +313,11 @@ model GymExerciseConfig {
   // Optional explicit machine/cable pin stack or other exercise-specific
   // loads. Empty means use the normal category increment.
   weightOptions Float[]  @default([])
+  preferredEquipmentId String?
+  preferredEquipment GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
 
   @@unique([gymId, exerciseId])
+  @@index([preferredEquipmentId])
   @@index([exerciseId])
 }
 
@@ -337,6 +340,7 @@ model GymEquipment {
   updatedAt     DateTime               @updatedAt
   exerciseLinks GymEquipmentExercise[]
   performedSets Set[]
+  preferredForExerciseConfigs GymExerciseConfig[] @relation("PreferredGymEquipment")
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])

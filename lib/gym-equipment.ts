@@ -230,6 +230,45 @@ export async function upsertOwnedGymEquipment(
   return { equipment: saved, mismatchedExercises, created };
 }
 
+
+export async function setOwnedPreferredGymEquipment(
+  userId: string,
+  gymId: string,
+  exerciseId: string,
+  equipmentId: string | null,
+) {
+  const [gym, exercise] = await Promise.all([
+    db.gym.findFirst({ where: { id: gymId, userId }, select: { id: true } }),
+    db.exercise.findFirst({ where: { id: exerciseId, userId }, select: { id: true, equipmentType: true } }),
+  ]);
+  if (!gym) throw new ApiError(404, 'Gym not found.');
+  if (!exercise) throw new ApiError(404, 'Exercise not found.');
+
+  if (equipmentId == null) {
+    await db.gymExerciseConfig.updateMany({
+      where: { gymId, exerciseId },
+      data: { preferredEquipmentId: null },
+    });
+    return { gymId, exerciseId, preferredEquipmentId: null };
+  }
+
+  const equipment = await db.gymEquipment.findFirst({
+    where: { id: equipmentId, gymId, gym: { userId }, exerciseLinks: { some: { exerciseId } } },
+    select: { id: true, equipmentType: true },
+  });
+  if (!equipment) throw new ApiError(400, 'Preferred equipment must be linked to this exercise in the selected gym.');
+  if (exercise.equipmentType !== 'OTHER' && equipment.equipmentType !== 'OTHER' && exercise.equipmentType !== equipment.equipmentType) {
+    throw new ApiError(400, 'Preferred equipment type must match the exercise type.');
+  }
+
+  await db.gymExerciseConfig.upsert({
+    where: { gymId_exerciseId: { gymId, exerciseId } },
+    create: { gymId, exerciseId, isAvailable: true, preferredEquipmentId: equipment.id },
+    update: { isAvailable: true, preferredEquipmentId: equipment.id },
+  });
+  return { gymId, exerciseId, preferredEquipmentId: equipment.id };
+}
+
 export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
   const equipment = await requireOwnedEquipment(userId, equipmentId);
   await db.gymEquipment.delete({ where: { id: equipment.id } });

@@ -106,6 +106,7 @@ export async function getMcpGymInventory(userId: string, baseUrl: string, reques
             exerciseId: true,
             isAvailable: true,
             weightOptions: true,
+            preferredEquipmentId: true,
             exercise: {
               select: {
                 id: true,
@@ -166,6 +167,7 @@ export async function getMcpGymInventory(userId: string, baseUrl: string, reques
         ...exercise,
         isAvailable: config?.isAvailable ?? true,
         configuredWeightOptionsKg: config?.weightOptions ?? [],
+        preferredEquipmentId: config?.preferredEquipmentId ?? null,
         explicitlyConfigured: config != null,
       };
     }),
