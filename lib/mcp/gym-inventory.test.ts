@@ -72,6 +72,7 @@ describe('MCP gym inventory reads', () => {
           exerciseId: 'exercise-1',
           isAvailable: false,
           weightOptions: [25, 30],
+          preferredEquipmentId: 'equipment-1',
           exercise: {
             id: 'exercise-1',
             name: 'Cable Row',
@@ -111,6 +112,7 @@ describe('MCP gym inventory reads', () => {
       id: 'exercise-1',
       isAvailable: false,
       configuredWeightOptionsKg: [25, 30],
+      preferredEquipmentId: 'equipment-1',
       explicitlyConfigured: true,
     });
   });

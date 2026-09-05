@@ -24,7 +24,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M02 | MCP read tools: gyms, inventory, training history | DONE | Read-only tools ported against current upstream Gym/GymEquipment/Set models with ownership checks and exact history facts. |
 | M03 | MCP equipment write operations | DONE | Added confirmed write tools for current-upstream free weights, physical equipment and equipment images; ownership delegated to/checked by server domain helpers. |
 | M04 | Completed workout/history set editor | DONE | Completed strength rows can be corrected/appended without mutating frozen exercise/equipment history; focused unit/component/API tests cover ownership and finished-session guards. |
-| M05 | Preferred equipment per exercise/gym | TODO | Add domain first, then UI. |
+| M05 | Preferred equipment per exercise/gym | DONE | Domain/schema, ownership/link/type validation, delete-safe FK and MCP inventory context are implemented; UI follows in M06. |
 | M06 | Exercise detail/equipment editor | TODO | Depends on M05. |
 | M07 | Durable web set acknowledgement/replay | TODO | Port only behavior not already present upstream. |
 | M08 | Equipment-aware return-to-training | TODO | Extend upstream return-to-training, do not replace it. |
