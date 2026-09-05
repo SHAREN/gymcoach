@@ -3,8 +3,15 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { buildCoachPayload } from '@/lib/coach';
 import { buildProgramFromGenerated } from '@/lib/program-generation';
+import {
+  buildProgramDesignContext,
+  PROGRAM_DESIGN_CONTRACT_VERSION,
+  type ProgramDesignContext,
+} from '@/lib/program-design-context';
+import { validateProgramDesign, type ProgramDesignValidation } from '@/lib/program-design-validation';
 import { generatedExerciseSchema, generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { programInputSchema } from '@/lib/schemas/program';
+import { programDesignAnswersSchema, programDesignModeSchema } from '@/lib/schemas/program-design';
 import {
   EquipmentType,
   ExerciseCategory,
@@ -36,6 +43,8 @@ Use list_gyms and get_gym_inventory before reasoning about a specific gym's phys
 Inventory write tools change saved gym data. Re-read the gym first, present the exact proposed free-weight/equipment/image changes, and call a write tool only after the trainee explicitly confirms them. Do not invent manufacturer, model, weights, exercise links or image identity when the source is ambiguous.
 
 For free-form workout import, exercise naming, photos and gym-inventory interpretation, the external MCP agent is the semantic layer. GymCoach only returns bounded user-scoped facts and deterministic validated writes. Ask the trainee when facts are ambiguous; do not invent manufacturer, model or load characteristics.
+
+Program design reasoning belongs to the external MCP agent. Before creating or revising a program, call get_program_design_context, ask every required missing question, and call validate_program_draft on the exact final draft. GymCoach performs deterministic validation only; it does not silently fill UNKNOWN facts or choose substitutions.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
@@ -92,6 +101,19 @@ function requireWrite(principal: McpPrincipal) {
   }
 }
 
+function assertProgramDesignReady(
+  context: ProgramDesignContext,
+  validation: ProgramDesignValidation,
+) {
+  if (context.missingQuestions.length > 0) {
+    throw new Error('Answer every required program-design question before saving.');
+  }
+  const errors = validation.issues.filter((issue) => issue.severity === 'error');
+  if (errors.length > 0) {
+    throw new Error(errors.map((issue) => issue.message).join(' '));
+  }
+}
+
 async function getOwnedProgram(userId: string, programId?: string) {
   const program = programId
     ? await db.program.findFirst({ where: { id: programId, userId }, select: { id: true } })
@@ -142,7 +164,9 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
           role: 'user',
           content: {
             type: 'text',
-            text: `Goal: ${goal}\n\nFirst call get_training_context and list_exercises. Design a realistic program that respects the saved gym and equipment. Explain the draft, ask for confirmation, then call create_program.`,
+            text: `Goal: ${goal}
+
+Call get_program_design_context with mode NEW_PROGRAM. Ask every required missing question. Build the draft only from returned trainee facts, then call validate_program_draft on the exact draft. Explain any errors or warnings and revise if needed. After explicit confirmation of the final valid draft, call create_program with the same goal and answers.`,
           },
         },
       ],
@@ -184,6 +208,64 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         unit: user?.unit ?? 'KG',
         activeGym: user?.activeGym ?? null,
         coach,
+      });
+    },
+  );
+
+  server.registerTool(
+    'get_program_design_context',
+    {
+      title: 'Get deterministic program-design context',
+      description:
+        'Returns bounded user-scoped profile, source-program, recent-training, exercise, gym and safety facts plus required missing questions for an external AI agent. It never generates or writes a program.',
+      inputSchema: {
+        goal: z.string().trim().max(2000).default(''),
+        mode: programDesignModeSchema.default('NEW_PROGRAM'),
+        sourceProgramId: databaseIdSchema.optional(),
+        answers: programDesignAnswersSchema.optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ goal, mode, sourceProgramId, answers }) => {
+      const context = await buildProgramDesignContext({
+        userId: principal.userId,
+        goal,
+        mode,
+        sourceProgramId,
+        answers,
+      });
+      return result({ context });
+    },
+  );
+
+  server.registerTool(
+    'validate_program_draft',
+    {
+      title: 'Validate a program draft',
+      description:
+        'Rebuilds deterministic user-scoped design context and validates the exact draft against required answers, safety, schedule, active-gym availability, exact exercise constraints, return-to-training ceilings and current primary-muscle rules. It never writes data.',
+      inputSchema: {
+        goal: z.string().trim().max(2000).default(''),
+        mode: programDesignModeSchema.default('NEW_PROGRAM'),
+        sourceProgramId: databaseIdSchema.optional(),
+        answers: programDesignAnswersSchema.optional(),
+        program: generatedProgramSchema,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ goal, mode, sourceProgramId, answers, program }) => {
+      const context = await buildProgramDesignContext({
+        userId: principal.userId,
+        goal,
+        mode,
+        sourceProgramId,
+        answers,
+      });
+      const validation = validateProgramDesign(program, context);
+      return result({
+        designContractVersion: PROGRAM_DESIGN_CONTRACT_VERSION,
+        validation,
+        missingQuestions: context.missingQuestions,
       });
     },
   );
@@ -379,6 +461,8 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
           phase: true,
           description: true,
           isActive: true,
+          parentProgramId: true,
+          methodologyVersion: true,
           updatedAt: true,
           _count: { select: { workouts: true, sessions: true } },
         },
@@ -422,8 +506,13 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
     {
       title: 'Create training program',
       description:
-        'Creates a complete inactive GymCoach program. Explain the draft and obtain user confirmation before calling.',
-      inputSchema: { confirmed: explicitConfirmation, program: generatedProgramSchema },
+        'Creates a complete inactive GymCoach program. Pass goal/answers to re-run deterministic design validation at save time; legacy callers remain supported. Explain the final draft and obtain explicit confirmation before calling.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        program: generatedProgramSchema,
+        goal: z.string().trim().max(2000).optional(),
+        answers: programDesignAnswersSchema.optional(),
+      },
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -431,10 +520,77 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         openWorldHint: false,
       },
     },
-    async ({ program }) => {
+    async ({ program, goal, answers }) => {
       requireWrite(principal);
-      const id = await buildProgramFromGenerated(principal.userId, program);
-      return result({ ok: true, programId: id, active: false });
+      let validation: ProgramDesignValidation | null = null;
+      if (goal !== undefined || answers !== undefined) {
+        const context = await buildProgramDesignContext({
+          userId: principal.userId,
+          goal: goal ?? '',
+          mode: 'NEW_PROGRAM',
+          answers,
+        });
+        validation = validateProgramDesign(program, context);
+        assertProgramDesignReady(context, validation);
+      }
+      const id = await buildProgramFromGenerated(
+        principal.userId,
+        program,
+        validation ? { methodologyVersion: PROGRAM_DESIGN_CONTRACT_VERSION } : {},
+      );
+      return result({
+        ok: true,
+        programId: id,
+        active: false,
+        designContractVersion: validation ? PROGRAM_DESIGN_CONTRACT_VERSION : null,
+        validation,
+      });
+    },
+  );
+
+  server.registerTool(
+    'create_program_revision',
+    {
+      title: 'Create an inactive program revision',
+      description:
+        'Creates a new inactive program linked to an owned source program after rebuilding deterministic design context and validating the exact confirmed draft. The source program is preserved.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        goal: z.string().trim().max(2000).default(''),
+        sourceProgramId: databaseIdSchema,
+        answers: programDesignAnswersSchema,
+        program: generatedProgramSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ goal, sourceProgramId, answers, program }) => {
+      requireWrite(principal);
+      const context = await buildProgramDesignContext({
+        userId: principal.userId,
+        goal,
+        mode: 'NEXT_MESOCYCLE',
+        sourceProgramId,
+        answers,
+      });
+      const validation = validateProgramDesign(program, context);
+      assertProgramDesignReady(context, validation);
+      const id = await buildProgramFromGenerated(principal.userId, program, {
+        sourceProgramId: context.sourceProgramId,
+        methodologyVersion: PROGRAM_DESIGN_CONTRACT_VERSION,
+      });
+      return result({
+        ok: true,
+        programId: id,
+        sourceProgramId: context.sourceProgramId,
+        active: false,
+        designContractVersion: PROGRAM_DESIGN_CONTRACT_VERSION,
+        validation,
+      });
     },
   );
 

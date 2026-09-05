@@ -59,8 +59,22 @@ export async function generateProgram(userId: string, goal: string): Promise<Gen
 export async function buildProgramFromGenerated(
   userId: string,
   program: GeneratedProgram,
+  options: {
+    sourceProgramId?: string | null;
+    methodologyVersion?: string | null;
+  } = {},
 ): Promise<string> {
   return db.$transaction(async (tx) => {
+    const sourceProgram = options.sourceProgramId
+      ? await tx.program.findFirst({
+          where: { id: options.sourceProgramId, userId },
+          select: { id: true },
+        })
+      : null;
+    if (options.sourceProgramId && !sourceProgram) {
+      throw new Error('Source program not found.');
+    }
+
     const created = await tx.program.create({
       data: {
         userId,
@@ -68,6 +82,8 @@ export async function buildProgramFromGenerated(
         description: program.description ?? null,
         phase: program.phase,
         isActive: false,
+        parentProgramId: sourceProgram?.id ?? null,
+        methodologyVersion: options.methodologyVersion ?? null,
       },
     });
 
