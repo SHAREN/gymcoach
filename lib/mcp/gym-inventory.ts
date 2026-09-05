@@ -33,6 +33,54 @@ export async function listMcpGyms(userId: string) {
   };
 }
 
+async function resolveOwnedGymId(userId: string, requestedGymId?: string) {
+  if (requestedGymId) {
+    const gym = await db.gym.findFirst({
+      where: { id: requestedGymId, userId },
+      select: { id: true },
+    });
+    if (!gym) throw new Error('Gym not found.');
+    return gym.id;
+  }
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { activeGymId: true },
+  });
+  if (!user?.activeGymId) throw new Error('No gym selected and no active gym is configured.');
+
+  const gym = await db.gym.findFirst({
+    where: { id: user.activeGymId, userId },
+    select: { id: true },
+  });
+  if (!gym) throw new Error('Gym not found.');
+  return gym.id;
+}
+
+export async function updateMcpGymFreeWeights(
+  userId: string,
+  requestedGymId: string | undefined,
+  patch: {
+    dumbbellWeights?: number[];
+    plateWeights?: number[];
+    barWeights?: number[];
+  },
+) {
+  const gymId = await resolveOwnedGymId(userId, requestedGymId);
+  return db.gym.update({
+    where: { id: gymId },
+    data: patch,
+    select: {
+      id: true,
+      name: true,
+      dumbbellWeights: true,
+      plateWeights: true,
+      barWeights: true,
+      updatedAt: true,
+    },
+  });
+}
+
 export async function getMcpGymInventory(userId: string, baseUrl: string, requestedGymId?: string) {
   const user = await db.user.findUnique({
     where: { id: userId },
