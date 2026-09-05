@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@/prisma/generated/client';
 import type { Exercise, Set } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
 import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
@@ -11,14 +12,14 @@ interface Params {
   params: Promise<{ id: string }>;
 }
 
-// POST /api/sessions/[id]/sets: records a set in a session.
+// POST /api/sessions/[id]/sets: records a set in a session. A web/offline
+// caller may provide a stable client ID; replaying the exact same mutation then
+// returns the original row instead of creating a duplicate.
 export async function POST(req: Request, props: Params) {
   const params = await props.params;
   try {
     const userId = await requireApiUserId();
 
-    // Scoped reads (issue #317): ownership is part of each query, not a
-    // separate comparison that a later edit could drop.
     const session = await db.session.findFirst({ where: { id: params.id, userId } });
     if (!session) {
       throw new ApiError(404, 'Session not found.');
@@ -28,8 +29,6 @@ export async function POST(req: Request, props: Params) {
     }
 
     const data = await parseJsonBody(req, setInputSchema);
-
-    // Validation: the exercise must belong to the user.
     const exercise = await db.exercise.findFirst({
       where: { id: data.exerciseId, userId },
     });
@@ -37,47 +36,94 @@ export async function POST(req: Request, props: Params) {
       throw new ApiError(400, 'Invalid exercise.');
     }
 
-    // Cardio cross-field rule (issue #133): duration/distance only on CARDIO
-    // exercises, and a cardio set requires a duration.
     const categoryError = validateSetForCategory(exercise.category, data);
     if (categoryError) {
       throw new ApiError(400, categoryError);
     }
     const isCardio = exercise.category === 'CARDIO';
+    const requested = {
+      sessionId: params.id,
+      exerciseId: data.exerciseId,
+      setNumber: data.setNumber,
+      weight: isCardio ? 0 : data.weight,
+      reps: isCardio ? 1 : data.reps,
+      rir: isCardio ? null : (data.rir ?? null),
+      durationSec: isCardio ? (data.durationSec ?? null) : null,
+      distanceM: isCardio ? (data.distanceM ?? null) : null,
+      avgHr: isCardio ? (data.avgHr ?? null) : null,
+      maxHr: isCardio ? (data.maxHr ?? null) : null,
+      notes: data.notes ?? null,
+      isWarmup: data.isWarmup ?? false,
+      isDropSet: data.isDropSet ?? false,
+      gymEquipmentId: data.gymEquipmentId ?? null,
+    };
 
-    const created = await db.$transaction(async (tx) => {
-      const canonicalWeight = isCardio ? 0 : data.weight;
-      const equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
-        userId,
-        sessionGymId: session.gymId,
-        exerciseId: data.exerciseId,
-        gymEquipmentId: data.gymEquipmentId,
-      });
-      return tx.set.create({
-        data: {
-          sessionId: params.id,
+    const replayEquipmentSnapshot = data.id
+      ? await resolveSetEquipmentSnapshot(db, {
+          userId,
+          sessionGymId: session.gymId,
           exerciseId: data.exerciseId,
-          ...equipmentSnapshot,
-          setNumber: data.setNumber,
-          // Cardio sets store weight = 0 / reps = 1 by convention (the columns
-          // are NOT NULL); the UI never shows them for CARDIO exercises.
-          weight: canonicalWeight,
-          reps: isCardio ? 1 : data.reps,
-          rir: isCardio ? null : (data.rir ?? null),
-          durationSec: isCardio ? data.durationSec : null,
-          distanceM: isCardio ? (data.distanceM ?? null) : null,
-          avgHr: isCardio ? (data.avgHr ?? null) : null,
-          maxHr: isCardio ? (data.maxHr ?? null) : null,
-          notes: data.notes ?? null,
-          isWarmup: data.isWarmup ?? false,
-          isDropSet: data.isDropSet ?? false,
-        },
+          gymEquipmentId: data.gymEquipmentId,
+        })
+      : null;
+
+    if (data.id) {
+      const existing = await db.set.findFirst({
+        where: { id: data.id, session: { userId } },
       });
-    });
-    // Best-effort: the set is already committed, so a failure here must never
-    // fail the request (a 500 would make the offline sync retry the POST and
-    // duplicate the set). An unstamped goal self-heals on the next achieving
-    // set or on goal re-creation, which re-derives achievedAt from history.
+      if (existing) {
+        assertIdempotentReplay(
+          existing,
+          requested,
+          data.gymEquipmentId ?? null,
+          replayEquipmentSnapshot?.gymEquipmentId ?? null,
+        );
+        return NextResponse.json(existing);
+      }
+    }
+
+    let created: Set;
+    try {
+      created = await db.$transaction(async (tx) => {
+        const equipmentSnapshot = await resolveSetEquipmentSnapshot(tx, {
+          userId,
+          sessionGymId: session.gymId,
+          exerciseId: data.exerciseId,
+          gymEquipmentId: data.gymEquipmentId,
+        });
+        return tx.set.create({
+          data: {
+            ...(data.id ? { id: data.id } : {}),
+            ...requested,
+            ...equipmentSnapshot,
+          },
+        });
+      });
+    } catch (error) {
+      // Two replay requests can race between the existence check and create.
+      // The stable primary key remains the source of truth: on a uniqueness
+      // race, re-read and validate the exact mutation before acknowledging it.
+      if (
+        data.id &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await db.set.findFirst({
+          where: { id: data.id, session: { userId } },
+        });
+        if (existing) {
+          assertIdempotentReplay(
+            existing,
+            requested,
+            data.gymEquipmentId ?? null,
+            replayEquipmentSnapshot?.gymEquipmentId ?? null,
+          );
+          return NextResponse.json(existing);
+        }
+      }
+      throw error;
+    }
+
     try {
       await stampGoalIfAchieved(userId, exercise, created);
     } catch (stampErr) {
@@ -90,11 +136,80 @@ export async function POST(req: Request, props: Params) {
   }
 }
 
+function assertIdempotentReplay(
+  existing: Pick<
+    Set,
+    | 'sessionId'
+    | 'exerciseId'
+    | 'setNumber'
+    | 'weight'
+    | 'reps'
+    | 'rir'
+    | 'durationSec'
+    | 'distanceM'
+    | 'avgHr'
+    | 'maxHr'
+    | 'notes'
+    | 'isWarmup'
+    | 'isDropSet'
+    | 'gymEquipmentId'
+    | 'equipmentLoadSnapshot'
+  >,
+  expected: {
+    sessionId: string;
+    exerciseId: string;
+    setNumber: number;
+    weight: number;
+    reps: number;
+    rir: number | null;
+    durationSec: number | null;
+    distanceM: number | null;
+    avgHr: number | null;
+    maxHr: number | null;
+    notes: string | null;
+    isWarmup: boolean;
+    isDropSet: boolean;
+    gymEquipmentId: string | null;
+  },
+  requestedEquipmentId: string | null,
+  currentlyResolvableEquipmentId: string | null,
+) {
+  const existingEquipmentId = originalEquipmentId(existing);
+  const equipmentMatches =
+    existingEquipmentId === currentlyResolvableEquipmentId ||
+    (existingEquipmentId !== null && existingEquipmentId === requestedEquipmentId);
+  const matches =
+    existing.sessionId === expected.sessionId &&
+    existing.exerciseId === expected.exerciseId &&
+    existing.setNumber === expected.setNumber &&
+    existing.weight === expected.weight &&
+    existing.reps === expected.reps &&
+    existing.rir === expected.rir &&
+    existing.durationSec === expected.durationSec &&
+    existing.distanceM === expected.distanceM &&
+    existing.avgHr === expected.avgHr &&
+    existing.maxHr === expected.maxHr &&
+    existing.notes === expected.notes &&
+    existing.isWarmup === expected.isWarmup &&
+    existing.isDropSet === expected.isDropSet &&
+    equipmentMatches;
+
+  if (!matches) {
+    throw new ApiError(409, 'Set ID was already used with different data.');
+  }
+}
+
+function originalEquipmentId(
+  existing: Pick<Set, 'gymEquipmentId' | 'equipmentLoadSnapshot'>,
+): string | null {
+  if (existing.gymEquipmentId) return existing.gymEquipmentId;
+  const snapshot = existing.equipmentLoadSnapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof snapshot.gymEquipmentId === 'string' ? snapshot.gymEquipmentId : null;
+}
+
 // Per-exercise goal (issue #90): when a freshly logged working set meets an
-// unachieved goal's target, stamp achievedAt with the set's completedAt
-// (deterministic - the same instant the goal-creation path would derive).
-// Comparison runs on the effective load (bodyweight + added load for
-// bodyweight exercises), consistent with lib/stats.
+// unachieved goal's target, stamp achievedAt with the set's completedAt.
 async function stampGoalIfAchieved(userId: string, exercise: Exercise, set: Set): Promise<void> {
   if (set.isWarmup) return;
   const goal = await db.exerciseGoal.findUnique({

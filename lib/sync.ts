@@ -2,14 +2,12 @@
 // Sync queue: flush the pending sets to the API
 // ============================================================
 // Strategy:
-// 1. When a set is validated locally, we write it to IndexedDB
-//    (status='pending') and trigger a flush.
-// 2. flushPendingSets() takes each pending one in order, attempts the POST
-//    and marks it according to the result.
-// 3. On app startup + on the 'online' event, we call flushPendingSets().
-// 4. No aggressive retry: we wait for the next trigger (online, validation,
-//    startup). If you cut the wifi in the middle, the app will retry when
-//    the network comes back. No background timer, to save battery.
+// 1. A validated set is written to IndexedDB first.
+// 2. The server receives the stable localId as Set.id, making POST replay
+//    idempotent even when the original response was lost.
+// 3. Startup/online/new-set triggers flush the durable queue.
+// 4. A trigger that arrives during an active flush schedules another pass, so
+//    a row added after the first pass snapshotted the queue cannot be stranded.
 
 import { getDB, type PendingSet } from '@/lib/indexeddb';
 
@@ -17,9 +15,6 @@ export interface FlushResult {
   flushed: number;
   failed: number;
   pending: number;
-  // Sets the server recorded WITHOUT the equipment reference that was sent
-  // (issue #326): the item was deleted, unlinked, belongs to another gym or
-  // another user. The set itself is saved; only the decoration was dropped.
   droppedEquipment: DroppedEquipment[];
 }
 
@@ -33,10 +28,6 @@ type DroppedEquipmentListener = (dropped: DroppedEquipment[]) => void;
 
 const droppedEquipmentListeners = new Set<DroppedEquipmentListener>();
 
-// Subscribe to equipment references the server dropped while flushing. The
-// flush runs in the background (queueSet does not await it), so the session
-// UI cannot read the result directly; it listens here instead. Returns the
-// unsubscribe function.
 export function onEquipmentDropped(listener: DroppedEquipmentListener): () => void {
   droppedEquipmentListeners.add(listener);
   return () => {
@@ -45,16 +36,32 @@ export function onEquipmentDropped(listener: DroppedEquipmentListener): () => vo
 }
 
 let inFlight: Promise<FlushResult> | null = null;
+let rerunRequested = false;
 
 export async function flushPendingSets(): Promise<FlushResult> {
-  // Re-entrancy: if a flush is already running, we return its promise.
-  if (inFlight) return inFlight;
-  inFlight = doFlush();
+  if (inFlight) {
+    rerunRequested = true;
+    return inFlight;
+  }
+  inFlight = drainFlushes();
   try {
     return await inFlight;
   } finally {
     inFlight = null;
   }
+}
+
+async function drainFlushes(): Promise<FlushResult> {
+  const aggregate: FlushResult = { flushed: 0, failed: 0, pending: 0, droppedEquipment: [] };
+  do {
+    rerunRequested = false;
+    const result = await doFlush();
+    aggregate.flushed += result.flushed;
+    aggregate.failed += result.failed;
+    aggregate.pending = result.pending;
+    aggregate.droppedEquipment.push(...result.droppedEquipment);
+  } while (rerunRequested);
+  return aggregate;
 }
 
 async function doFlush(): Promise<FlushResult> {
@@ -69,14 +76,12 @@ async function doFlush(): Promise<FlushResult> {
   const droppedEquipment: DroppedEquipment[] = [];
 
   for (const item of pending) {
-    if (!navigator.onLine) {
-      // No point trying if we know we are offline.
-      break;
-    }
+    if (!navigator.onLine) break;
     await db.pendingSets.update(item.localId, { status: 'syncing' });
 
     try {
       const payload = {
+        id: item.localId,
         exerciseId: item.exerciseId,
         gymEquipmentId: item.gymEquipmentId ?? null,
         setNumber: item.setNumber,
@@ -97,19 +102,13 @@ async function doFlush(): Promise<FlushResult> {
         });
 
       let res = await post(payload.gymEquipmentId);
-      // Equipment is optional metadata. If a server version rejects a stale
-      // reference with 400, retry once without it so the actual queued set is
-      // never stranded by an inventory decoration.
       if (res.status === 400 && payload.gymEquipmentId) {
         res = await post(null);
       }
 
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        // If the session is closed or the exercise invalid, retrying is
-        // pointless: we mark it failed so we do not loop. The user can manually
-        // purge the queue later if needed.
-        const fatal = res.status === 400 || res.status === 404;
+        const fatal = res.status === 400 || res.status === 404 || res.status === 409;
         await db.pendingSets.update(item.localId, {
           status: fatal ? 'failed' : 'pending',
           attempts: (item.attempts ?? 0) + 1,
@@ -120,10 +119,19 @@ async function doFlush(): Promise<FlushResult> {
       }
 
       const created = (await res.json()) as { id: string; gymEquipmentId?: string | null };
-      // The server degrades a stale/foreign equipment reference to null rather
-      // than rejecting the set (issue #313). Mirror that on the local record so
-      // the next set does not pre-select a machine that was never attached, and
-      // report it so the UI can tell the user (issue #326).
+      // The stable client ID is the acknowledgement. A different server ID is
+      // not success: retaining the row as failed is safer than silently losing
+      // the only durable local copy and later creating a duplicate.
+      if (created.id !== item.localId) {
+        await db.pendingSets.update(item.localId, {
+          status: 'failed',
+          attempts: (item.attempts ?? 0) + 1,
+          lastError: 'Server acknowledgement did not match the local set ID.',
+        });
+        failed += 1;
+        continue;
+      }
+
       const sentEquipmentId = payload.gymEquipmentId;
       const equipmentDropped = sentEquipmentId !== null && !created.gymEquipmentId;
       await db.pendingSets.update(item.localId, {
@@ -142,7 +150,9 @@ async function doFlush(): Promise<FlushResult> {
       }
       flushed += 1;
     } catch (err) {
-      // Network error (offline, timeout): we keep 'pending' to retry later.
+      // Unknown outcome is deliberately retryable. If the POST actually
+      // committed before the connection failed, replaying the same localId is
+      // acknowledged by the server instead of inserting another row.
       await db.pendingSets.update(item.localId, {
         status: 'pending',
         attempts: (item.attempts ?? 0) + 1,
@@ -154,14 +164,11 @@ async function doFlush(): Promise<FlushResult> {
 
   const remaining = await db.pendingSets.where('status').anyOf(['pending', 'failed']).count();
   if (droppedEquipment.length > 0) {
-    for (const listener of droppedEquipmentListeners) {
-      listener(droppedEquipment);
-    }
+    for (const listener of droppedEquipmentListeners) listener(droppedEquipment);
   }
   return { flushed, failed, pending: remaining, droppedEquipment };
 }
 
-// Helper: adds a set to the queue (status pending) and triggers a flush.
 export async function queueSet(
   set: Omit<
     PendingSet,
@@ -179,12 +186,10 @@ export async function queueSet(
     lastError: null,
   };
   await db.pendingSets.add(record);
-  // Kick off the flush in the background (not awaited so as not to block the UI).
   void flushPendingSets();
   return record;
 }
 
-// Deletes synced sets older than `maxAgeMs` to keep Dexie lightweight.
 export async function pruneSyncedSets(maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
   const db = getDB();
   const cutoff = Date.now() - maxAgeMs;
@@ -195,16 +200,12 @@ export async function pruneSyncedSets(maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promi
     .delete();
 }
 
-// Hook event listener to start/stop the auto-sync on online/offline.
 export function bindAutoSync(): () => void {
   if (typeof window === 'undefined') return () => {};
   const onOnline = () => {
     void flushPendingSets();
   };
   window.addEventListener('online', onOnline);
-  // First flush on mount (in case some sets remain from the previous session).
-  if (navigator.onLine) {
-    void flushPendingSets();
-  }
+  if (navigator.onLine) void flushPendingSets();
   return () => window.removeEventListener('online', onOnline);
 }

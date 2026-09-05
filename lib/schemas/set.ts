@@ -10,6 +10,9 @@ import {
 } from '@/lib/cardio';
 
 export const setInputSchema = z.object({
+  // Optional client-generated ID makes web/offline POST replay idempotent. The
+  // server still generates its normal ID for callers that omit it.
+  id: z.string().trim().min(1).max(191).optional(),
   exerciseId: z.string().min(1),
   gymEquipmentId: z.string().min(1).nullable().optional(),
   setNumber: z.coerce.number().int().min(1).max(50),
