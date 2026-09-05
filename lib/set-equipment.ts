@@ -44,6 +44,10 @@ export async function resolveSetEquipmentSnapshot(
 
   const snapshot = {
     version: 1,
+    // Keep the original identity in the immutable snapshot too. The nullable
+    // FK may later be cleared by ON DELETE SET NULL; replay can still prove
+    // which physical item the original write referenced.
+    gymEquipmentId: equipment.id,
     equipmentType: equipment.equipmentType,
     manufacturer: equipment.manufacturer,
     modelName: equipment.modelName,

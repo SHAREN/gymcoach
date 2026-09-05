@@ -10,7 +10,7 @@ vi.mock('@/lib/indexeddb', async (importOriginal) => {
 
 import { flushPendingSets, onEquipmentDropped } from '@/lib/sync';
 
-function pendingSet(): PendingSet {
+function pendingSet(overrides: Partial<PendingSet> = {}): PendingSet {
   return {
     localId: 'local-1',
     sessionId: 'session-1',
@@ -29,10 +29,10 @@ function pendingSet(): PendingSet {
     syncedAt: null,
     attempts: 0,
     lastError: null,
+    ...overrides,
   };
 }
 
-// Minimal Dexie table stand-in: one queued item, patched in place by update().
 function fakeTable(item: PendingSet) {
   return {
     where: vi.fn(() => ({
@@ -81,7 +81,7 @@ describe('offline set sync', () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: 'server-set-1' }), {
+        new Response(JSON.stringify({ id: 'local-1' }), {
           status: 201,
           headers: { 'Content-Type': 'application/json' },
         }),
@@ -93,22 +93,22 @@ describe('offline set sync', () => {
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     const retryBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(firstBody).toMatchObject({
+      id: 'local-1',
       gymEquipmentId: 'stale-equipment',
       weight: 82.5,
       reps: 7,
       rir: 2,
     });
     expect(retryBody).toMatchObject({
+      id: 'local-1',
       gymEquipmentId: null,
       weight: 82.5,
       reps: 7,
       rir: 2,
     });
     expect(item.status).toBe('synced');
-    expect(item.serverId).toBe('server-set-1');
-    expect(updates.at(-1)).toMatchObject({ status: 'synced', serverId: 'server-set-1' });
-    // The retry recorded the set without its equipment: that is a dropped
-    // reference like any other, so it is cleared locally and reported.
+    expect(item.serverId).toBe('local-1');
+    expect(updates.at(-1)).toMatchObject({ status: 'synced', serverId: 'local-1' });
     expect(item.gymEquipmentId).toBeNull();
     expect(result).toEqual({
       flushed: 1,
@@ -124,7 +124,7 @@ describe('offline set sync', () => {
     const item = pendingSet();
     mockGetDB.mockReturnValue({ pendingSets: fakeTable(item) });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'server-set-2', gymEquipmentId: null }), {
+      new Response(JSON.stringify({ id: 'local-1', gymEquipmentId: null }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -148,7 +148,7 @@ describe('offline set sync', () => {
     const item = pendingSet();
     mockGetDB.mockReturnValue({ pendingSets: fakeTable(item) });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'server-set-3', gymEquipmentId: 'stale-equipment' }), {
+      new Response(JSON.stringify({ id: 'local-1', gymEquipmentId: 'stale-equipment' }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -165,10 +165,10 @@ describe('offline set sync', () => {
   });
 
   it('does not report a set that never carried an equipment reference', async () => {
-    const item = { ...pendingSet(), gymEquipmentId: null };
+    const item = pendingSet({ gymEquipmentId: null });
     mockGetDB.mockReturnValue({ pendingSets: fakeTable(item) });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'server-set-4', gymEquipmentId: null }), {
+      new Response(JSON.stringify({ id: 'local-1', gymEquipmentId: null }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -181,5 +181,32 @@ describe('offline set sync', () => {
 
     expect(result.droppedEquipment).toEqual([]);
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unknown-outcome POST pending and acknowledges the same client ID on replay', async () => {
+    const item = pendingSet({ gymEquipmentId: null });
+    mockGetDB.mockReturnValue({ pendingSets: fakeTable(item) });
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('connection reset after send'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'local-1', gymEquipmentId: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    const first = await flushPendingSets();
+    expect(first.failed).toBe(1);
+    expect(item.status).toBe('pending');
+    expect(item.serverId).toBeNull();
+
+    const second = await flushPendingSets();
+    expect(second.flushed).toBe(1);
+    expect(item.status).toBe('synced');
+    expect(item.serverId).toBe('local-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ id: 'local-1' });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ id: 'local-1' });
   });
 });
