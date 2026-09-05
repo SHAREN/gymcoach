@@ -51,7 +51,7 @@ describe('CoachingProfileSection', () => {
 
     expect(
       screen.getByText(
-        /Automatic program generation stays blocked until an appropriate qualified professional/u,
+        /Treat this as a hard safety flag until an appropriate qualified professional clears ordinary training/u,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/GymCoach does not diagnose/u)).toBeInTheDocument();
