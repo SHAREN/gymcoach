@@ -264,7 +264,7 @@ export async function setOwnedPreferredGymEquipment(
   await db.gymExerciseConfig.upsert({
     where: { gymId_exerciseId: { gymId, exerciseId } },
     create: { gymId, exerciseId, isAvailable: true, preferredEquipmentId: equipment.id },
-    update: { isAvailable: true, preferredEquipmentId: equipment.id },
+    update: { preferredEquipmentId: equipment.id },
   });
   return { gymId, exerciseId, preferredEquipmentId: equipment.id };
 }

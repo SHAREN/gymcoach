@@ -87,6 +87,21 @@ describe('preferred equipment per exercise/gym', () => {
     ).rejects.toThrow(/type/i);
   });
 
+  it('does not change exercise availability when setting a preference on an existing config', async () => {
+    const { user, gym, exercise, cable } = await seed();
+    await db.gymExerciseConfig.create({
+      data: { gymId: gym.id, exerciseId: exercise.id, isAvailable: false },
+    });
+
+    await setOwnedPreferredGymEquipment(user.id, gym.id, exercise.id, cable.id);
+
+    expect(
+      await db.gymExerciseConfig.findUniqueOrThrow({
+        where: { gymId_exerciseId: { gymId: gym.id, exerciseId: exercise.id } },
+      }),
+    ).toMatchObject({ preferredEquipmentId: cable.id, isAvailable: false });
+  });
+
   it('clears the preference automatically when preferred equipment is deleted', async () => {
     const { user, gym, exercise, cable } = await seed();
     await setOwnedPreferredGymEquipment(user.id, gym.id, exercise.id, cable.id);
