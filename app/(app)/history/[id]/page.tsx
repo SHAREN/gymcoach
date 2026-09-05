@@ -21,6 +21,7 @@ import { formatWeight } from '@/lib/units';
 import { DeleteSessionButton } from '@/components/history/delete-session-button';
 import { ActivityTrackChart } from '@/components/history/activity-track-chart';
 import { TrackDecoupling } from '@/components/history/track-decoupling';
+import { HistoryStrengthSetEditor } from '@/components/history/history-strength-set-editor';
 import { getExerciseDisplayName } from '@/i18n/exercise-names';
 import { getTrainingDisplayName } from '@/i18n/training-names';
 
@@ -43,6 +44,17 @@ export default async function HistorySessionPage(props: Params) {
       include: {
         workout: { select: { name: true } },
         program: { select: { name: true } },
+        gym: {
+          select: {
+            equipment: {
+              select: {
+                id: true,
+                name: true,
+                exerciseLinks: { select: { exerciseId: true } },
+              },
+            },
+          },
+        },
         sets: {
           orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }],
           include: {
@@ -326,7 +338,33 @@ export default async function HistorySessionPage(props: Params) {
                             </div>
                           );
                         })}
-                      {!isCardio && (
+                      {!isCardio && session.finishedAt && (
+                        <HistoryStrengthSetEditor
+                          sessionId={session.id}
+                          exerciseId={entry.exercise.id}
+                          exerciseName={getExerciseDisplayName(entry.exercise.name, locale)}
+                          sets={entry.sets.map((set) => ({
+                            id: set.id,
+                            setNumber: set.setNumber,
+                            weight: set.weight,
+                            reps: set.reps,
+                            rir: set.rir,
+                            isWarmup: set.isWarmup,
+                            isDropSet: set.isDropSet,
+                            equipmentNameSnapshot: set.equipmentNameSnapshot,
+                            gymEquipmentId: set.gymEquipmentId,
+                          }))}
+                          unit={unit}
+                          equipmentOptions={(session.gym?.equipment ?? [])
+                            .filter((equipment) =>
+                              equipment.exerciseLinks.some(
+                                (link) => link.exerciseId === entry.exercise.id,
+                              ),
+                            )
+                            .map((equipment) => ({ id: equipment.id, name: equipment.name }))}
+                        />
+                      )}
+                      {!isCardio && !session.finishedAt && (
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
