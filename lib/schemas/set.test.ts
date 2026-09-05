@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { setInputSchema, validateSetForCategory } from './set';
+import { historicalSetInputSchema, setInputSchema, setUpdateSchema, validateSetForCategory } from './set';
 
 describe('setInputSchema', () => {
   const valid = { exerciseId: 'ex1', setNumber: 1, weight: 60, reps: 10 };
@@ -103,5 +103,51 @@ describe('validateSetForCategory', () => {
   it('accepts a cardio set with a duration (distance optional)', () => {
     expect(validateSetForCategory('CARDIO', { durationSec: 750 })).toBeNull();
     expect(validateSetForCategory('CARDIO', { durationSec: 750, distanceM: 2500 })).toBeNull();
+  });
+});
+
+
+describe('historical set correction schemas', () => {
+  it('accepts only value fields when correcting an existing set', () => {
+    expect(setUpdateSchema.parse({ weight: '82.5', reps: '8', rir: '1' })).toEqual({
+      weight: 82.5,
+      reps: 8,
+      rir: 1,
+    });
+    expect(
+      setUpdateSchema.safeParse({
+        weight: 82.5,
+        reps: 8,
+        rir: 1,
+        gymEquipmentId: 'must-not-change-history',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('lets a new historical row name its exercise/equipment but rejects replay metadata', () => {
+    expect(
+      historicalSetInputSchema.parse({
+        exerciseId: 'exercise-1',
+        gymEquipmentId: 'equipment-1',
+        weight: 40,
+        reps: 10,
+        rir: null,
+      }),
+    ).toEqual({
+      exerciseId: 'exercise-1',
+      gymEquipmentId: 'equipment-1',
+      weight: 40,
+      reps: 10,
+      rir: null,
+    });
+    expect(
+      historicalSetInputSchema.safeParse({
+        exerciseId: 'exercise-1',
+        weight: 40,
+        reps: 10,
+        setNumber: 99,
+        completedAt: '2026-09-01T00:00:00Z',
+      }).success,
+    ).toBe(false);
   });
 });

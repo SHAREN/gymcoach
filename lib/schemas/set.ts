@@ -47,6 +47,32 @@ export const setInputSchema = z.object({
 
 export type SetInput = z.infer<typeof setInputSchema>;
 
+// Historical strength corrections intentionally use narrower contracts than
+// the active-session writer. They cannot change exercise/order/completion
+// metadata on an existing set, and newly appended historical rows let the
+// server derive ordering and completedAt from the finished session.
+export const setUpdateSchema = z
+  .object({
+    weight: z.coerce.number().min(0).max(500),
+    reps: z.coerce.number().int().min(1).max(100),
+    rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+  })
+  .strict();
+
+export type SetUpdateInput = z.infer<typeof setUpdateSchema>;
+
+export const historicalSetInputSchema = z
+  .object({
+    exerciseId: z.string().min(1),
+    gymEquipmentId: z.string().min(1).nullable().optional(),
+    weight: z.coerce.number().min(0).max(500),
+    reps: z.coerce.number().int().min(1).max(100),
+    rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+  })
+  .strict();
+
+export type HistoricalSetInput = z.infer<typeof historicalSetInputSchema>;
+
 // Cross-field rule the schema alone cannot express: duration/distance are
 // accepted only on CARDIO exercises (so strength data stays clean), and a
 // cardio set requires a duration. Returns an error message or null when valid.
