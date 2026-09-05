@@ -52,6 +52,7 @@ import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
+import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-history';
 
 export interface SerializedLastPerformance {
   sessionStartedAt: string;
@@ -68,6 +69,9 @@ type ProgramExerciseWithExercise = ProgramExercise & { exercise: Exercise };
 type SessionGymEquipment = {
   id: string;
   name: string;
+  equipmentType: Exercise['equipmentType'];
+  loadConfigurationKnown: boolean;
+  weightOptions: number[];
   exerciseLinks: { exerciseId: string }[];
 };
 
@@ -83,7 +87,7 @@ type SessionRunnerProps = {
     gym: (Gym & { exerciseConfigs: GymExerciseConfig[]; equipment: SessionGymEquipment[] }) | null;
   };
   lastPerformances: Record<string, SerializedLastPerformance>;
-  returnRecommendations: Record<string, ReturnRecommendation>;
+  returnRecommendations: Record<string, EquipmentReturnRecommendation[]>;
   // Latest in-window readiness check-in (or null). Drives whether the load
   // suggestion is held/reduced and the matching explainer in the UI.
   readiness: ReadinessSignal | null;
@@ -97,6 +101,13 @@ type Mode =
   | { kind: 'input' }
   | { kind: 'rest'; endsAt: number; totalSec: number; nextExerciseIdx: number | null }
   | { kind: 'summary' };
+
+function selectReturnRecommendationForEquipment(
+  recommendations: EquipmentReturnRecommendation[] | undefined,
+  gymEquipmentId: string | null,
+): ReturnRecommendation | undefined {
+  return recommendations?.find((item) => item.gymEquipmentId === gymEquipmentId)?.recommendation;
+}
 
 export function SessionRunner({
   session,
@@ -116,11 +127,24 @@ export function SessionRunner({
   // workout without supersets this is exactly the stored order.
   const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
   const programExercises = supersetView.ordered;
+  const [selectedEquipmentByExercise, setSelectedEquipmentByExercise] = useState<
+    Record<string, string | null>
+  >(() => initialEquipmentSelections(session, programExercises));
+
+  function returnRecommendationFor(pe: ProgramExerciseWithExercise): ReturnRecommendation | undefined {
+    return selectReturnRecommendationForEquipment(
+      returnRecommendations[pe.id],
+      selectedEquipmentByExercise[pe.exerciseId] ?? null,
+    );
+  }
 
   const effectiveProgramExercises = useMemo<ProgramExerciseWithExercise[]>(
     () =>
       programExercises.map((pe) => {
-        const recommendation = returnRecommendations[pe.id];
+        const recommendation = selectReturnRecommendationForEquipment(
+          returnRecommendations[pe.id],
+          selectedEquipmentByExercise[pe.exerciseId] ?? null,
+        );
         if (!recommendation || recommendation.mode === 'normal') return pe;
         return {
           ...pe,
@@ -128,7 +152,7 @@ export function SessionRunner({
           targetRIR: recommendation.targetRIR,
         };
       }),
-    [programExercises, returnRecommendations],
+    [programExercises, returnRecommendations, selectedEquipmentByExercise],
   );
   const effectiveProgramExerciseById = useMemo(
     () => new Map(effectiveProgramExercises.map((pe) => [pe.id, pe])),
@@ -172,9 +196,16 @@ export function SessionRunner({
     const cleanupDropped = onEquipmentDropped((dropped) => {
       const mine = dropped.filter((entry) => entry.sessionId === session.id);
       if (mine.length === 0) return;
-      setDroppedEquipmentIds((prev) => [
-        ...new Set([...prev, ...mine.map((entry) => entry.gymEquipmentId)]),
-      ]);
+      const droppedIds = mine.map((entry) => entry.gymEquipmentId);
+      setDroppedEquipmentIds((prev) => [...new Set([...prev, ...droppedIds])]);
+      setSelectedEquipmentByExercise((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([exerciseId, equipmentId]) => [
+            exerciseId,
+            equipmentId && droppedIds.includes(equipmentId) ? null : equipmentId,
+          ]),
+        ),
+      );
       toast.warning(t('equipmentDropped'));
     });
     return () => {
@@ -257,7 +288,7 @@ export function SessionRunner({
       recoverySec: Math.max(0, (atMs - lastWorkingSet.createdAt) / 1000),
       sameMuscleSuperset,
       allowLoadIncrease,
-      maxWeight: returnRecommendations[pe.id]?.weightCeiling ?? null,
+      maxWeight: returnRecommendationFor(pe)?.weightCeiling ?? null,
       loadConstraints: loadConstraintsFor(pe),
     });
   }
@@ -265,13 +296,27 @@ export function SessionRunner({
   function loadConstraintsFor(pe: ProgramExerciseWithExercise): GymLoadConstraints | null {
     if (!session.gym) return null;
     const config = session.gym.exerciseConfigs.find((item) => item.exerciseId === pe.exerciseId);
+    const selectedEquipmentId = selectedEquipmentByExercise[pe.exerciseId] ?? null;
+    const equipment = selectedEquipmentId
+      ? session.gym.equipment.find(
+          (item) =>
+            item.id === selectedEquipmentId &&
+            item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId),
+        )
+      : null;
+    const usesEquipmentWeights = ['MACHINE', 'CABLE', 'OTHER'].includes(pe.exercise.equipmentType);
     return {
       equipmentType: pe.exercise.equipmentType,
       isAvailable: config?.isAvailable ?? true,
       dumbbellWeights: session.gym.dumbbellWeights,
       plateWeights: session.gym.plateWeights,
       barWeights: session.gym.barWeights,
-      weightOptions: config?.weightOptions ?? [],
+      weightOptions:
+        equipment && usesEquipmentWeights
+          ? equipment.loadConfigurationKnown
+            ? equipment.weightOptions
+            : []
+          : config?.weightOptions ?? [],
     };
   }
 
@@ -463,7 +508,7 @@ export function SessionRunner({
 
   const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
-  const currentReturnRecommendation = returnRecommendations[currentPE.id];
+  const currentReturnRecommendation = returnRecommendationFor(currentPE);
   const currentRecommendation = recommendationFor(currentTarget, Date.now());
   const restNextPe =
     mode.kind === 'rest'
@@ -556,6 +601,13 @@ export function SessionRunner({
                 !droppedEquipmentIds.includes(item.id) &&
                 item.exerciseLinks.some((link) => link.exerciseId === currentPE.exerciseId),
             )}
+            selectedEquipmentId={selectedEquipmentByExercise[currentPE.exerciseId] ?? null}
+            onEquipmentChange={(equipmentId) =>
+              setSelectedEquipmentByExercise((current) => ({
+                ...current,
+                [currentPE.exerciseId]: equipmentId,
+              }))
+            }
             onSubmit={handleValidate}
           />
         ) : (
@@ -617,4 +669,42 @@ export function SessionRunner({
       </div>
     </main>
   );
+}
+
+function initialEquipmentSelections(
+  session: SessionRunnerProps['session'],
+  programExercises: ProgramExerciseWithExercise[],
+): Record<string, string | null> {
+  const selections: Record<string, string | null> = {};
+  if (!session.gym) return selections;
+
+  for (const pe of programExercises) {
+    const linked = session.gym.equipment.filter((item) =>
+      item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId),
+    );
+    const linkedIds = new Set(linked.map((item) => item.id));
+    const logged = [...session.sets]
+      .reverse()
+      .find(
+        (set) =>
+          set.exerciseId === pe.exerciseId &&
+          set.gymEquipmentId != null &&
+          linkedIds.has(set.gymEquipmentId),
+      );
+    if (logged?.gymEquipmentId) {
+      selections[pe.exerciseId] = logged.gymEquipmentId;
+      continue;
+    }
+
+    const preferredId = session.gym.exerciseConfigs.find(
+      (item) => item.exerciseId === pe.exerciseId,
+    )?.preferredEquipmentId;
+    if (preferredId && linkedIds.has(preferredId)) {
+      selections[pe.exerciseId] = preferredId;
+      continue;
+    }
+
+    selections[pe.exerciseId] = linked.length === 1 ? linked[0]!.id : null;
+  }
+  return selections;
 }

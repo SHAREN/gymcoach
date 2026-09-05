@@ -4,7 +4,7 @@ import { requireSession } from '@/lib/auth';
 import { getLastPerformances, type LastPerformance } from '@/lib/last-performance';
 import { READINESS_RECENCY_HOURS, type ReadinessSignal } from '@/lib/progression';
 import { isDeloadActive } from '@/lib/deload';
-import { getReturnToTrainingRecommendations } from '@/lib/return-to-training-history';
+import { getReturnToTrainingRecommendationsByEquipment } from '@/lib/return-to-training-history';
 import { SessionRunner, type SerializedLastPerformance } from '@/components/session/session-runner';
 import { liveSessionGymInclude } from '@/lib/session-gym-selection';
 
@@ -54,7 +54,7 @@ export default async function SessionRunPage(props: Props) {
       orderBy: { createdAt: 'desc' },
     }),
     userPromise.then((resolvedUser) =>
-      getReturnToTrainingRecommendations({
+      getReturnToTrainingRecommendationsByEquipment({
         userId: auth.userId,
         programExercises: session.workout!.exercises,
         excludeSessionId: session.id,

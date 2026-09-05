@@ -45,6 +45,8 @@ interface Props {
   returnRecommendation?: ReturnRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
   equipmentOptions?: { id: string; name: string }[];
+  selectedEquipmentId?: string | null;
+  onEquipmentChange?: (equipmentId: string | null) => void;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -88,6 +90,8 @@ export function SetInput({
   returnRecommendation = null,
   loadConstraints = null,
   equipmentOptions = [],
+  selectedEquipmentId,
+  onEquipmentChange,
   onSubmit,
 }: Props) {
   const t = useTranslations('session.input');
@@ -134,21 +138,33 @@ export function SetInput({
     setAiText('');
     setAiHint(null);
     const recentEquipmentId = existingSets.at(-1)?.gymEquipmentId ?? '';
+    const requestedEquipmentId =
+      selectedEquipmentId !== undefined ? selectedEquipmentId ?? '' : recentEquipmentId;
     setGymEquipmentId(
-      equipmentOptions.some((equipment) => equipment.id === recentEquipmentId)
-        ? recentEquipmentId
+      equipmentOptions.some((equipment) => equipment.id === requestedEquipmentId)
+        ? requestedEquipmentId
         : '',
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programExercise.id, existingSets.length]);
+
+  useEffect(() => {
+    if (selectedEquipmentId === undefined) return;
+    const next =
+      selectedEquipmentId && equipmentOptions.some((equipment) => equipment.id === selectedEquipmentId)
+        ? selectedEquipmentId
+        : '';
+    setGymEquipmentId(next);
+  }, [equipmentOptions, selectedEquipmentId]);
 
   // A selected machine the gym no longer offers (issue #326: the server dropped
   // it from a saved set and the runner withdrew it) must not be resent.
   useEffect(() => {
     if (gymEquipmentId && !equipmentOptions.some((equipment) => equipment.id === gymEquipmentId)) {
       setGymEquipmentId('');
+      onEquipmentChange?.(null);
     }
-  }, [equipmentOptions, gymEquipmentId]);
+  }, [equipmentOptions, gymEquipmentId, onEquipmentChange]);
 
   const incrementKg = weightIncrement(programExercise.exercise.category);
   // Increment shown in the user's unit (clean plate jumps), applied to the
@@ -373,7 +389,11 @@ export function SetInput({
             <select
               id="gym-equipment"
               value={gymEquipmentId}
-              onChange={(event) => setGymEquipmentId(event.target.value)}
+              onChange={(event) => {
+                const next = event.target.value;
+                setGymEquipmentId(next);
+                onEquipmentChange?.(next || null);
+              }}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">{t('equipmentNone')}</option>

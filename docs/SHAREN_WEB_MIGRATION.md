@@ -29,7 +29,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M05 | Preferred equipment per exercise/gym | DONE | Domain/schema, ownership/link/type validation, delete-safe FK and MCP inventory context are implemented; UI follows in M06. |
 | M06 | Exercise detail/equipment editor | DONE | Added exercise detail page plus per-gym physical-equipment linking/preference editor with transactional ownership, gym-scope and compatibility validation. |
 | M07 | Durable web set acknowledgement/replay | DONE | Web queue posts stable client IDs; server exact replays are idempotent/conflicting replays are 409; hydration reconciles client IDs without synthetic duplicates and keeps unknown outcomes durable. |
-| M08 | Equipment-aware return-to-training | TODO | Extend upstream return-to-training, do not replace it. |
+| M08 | Equipment-aware return-to-training | DONE | Added exact per-gym/per-equipment return history while preserving the upstream generic API; live selection switches return ceilings without mixing physical machines or deleted-equipment snapshots. |
 | M09 | Session exercise strip/navigation | TODO | Web-only UI. |
 | M10 | Set value picker and editable set table | TODO | Split if the combined diff gets too large. |
 | M11 | Structured coaching profile | TODO | Re-evaluate schema against current upstream before migration. |

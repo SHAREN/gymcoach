@@ -25,7 +25,20 @@ type ProgramExerciseForReturn = Pick<
 };
 
 type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'> & {
-  exerciseConfigs: Pick<GymExerciseConfig, 'exerciseId' | 'isAvailable' | 'weightOptions'>[];
+  id?: Gym['id'];
+  exerciseConfigs: Array<
+    Pick<GymExerciseConfig, 'exerciseId' | 'isAvailable' | 'weightOptions'> & {
+      preferredEquipmentId?: string | null;
+    }
+  >;
+  equipment?: Array<{
+    id: string;
+    name: string;
+    equipmentType: Exercise['equipmentType'];
+    loadConfigurationKnown: boolean;
+    weightOptions: number[];
+    exerciseLinks: Array<{ exerciseId: string }>;
+  }>;
 };
 
 interface ReturnRecommendationQuery {
@@ -40,6 +53,17 @@ interface ReturnRecommendationQuery {
 interface BoundedExerciseHistory {
   lastPerformedAt: Date | null;
   sessions: ReturnHistorySession[];
+}
+
+export interface EquipmentReturnRecommendation {
+  gymId: string | null;
+  gymEquipmentId: string | null;
+  recommendation: ReturnRecommendation;
+}
+
+interface EquipmentTarget {
+  gymId: string | null;
+  gymEquipmentId: string | null;
 }
 
 // Detailed load anchors older than ten years are intentionally ignored. The
@@ -212,6 +236,227 @@ export async function getReturnToTrainingRecommendations({
       }),
     ]),
   );
+}
+
+export async function getReturnToTrainingRecommendationsByEquipment({
+  userId,
+  programExercises,
+  excludeSessionId,
+  now,
+  bodyweight = null,
+  gym = null,
+}: ReturnRecommendationQuery): Promise<Record<string, EquipmentReturnRecommendation[]>> {
+  if (programExercises.length === 0) return {};
+
+  const muscleGroups = [...new Set(programExercises.map((item) => item.exercise.muscleGroup))];
+  const excludedSession = excludeSessionId ? { id: { not: excludeSessionId } } : {};
+  const historyStart = new Date(now.getTime() - RETURN_HISTORY_LOOKBACK_DAYS * 86_400_000);
+  const baselineStart = new Date(
+    now.getTime() - (RECENT_MUSCLE_VOLUME_DAYS + BASELINE_MUSCLE_VOLUME_DAYS) * 86_400_000,
+  );
+  const recentStart = new Date(now.getTime() - RECENT_MUSCLE_VOLUME_DAYS * 86_400_000);
+
+  const [muscleLatestEntries, volumeRows] = await Promise.all([
+    Promise.all(
+      muscleGroups.map(async (muscleGroup) => {
+        const row = await db.set.findFirst({
+          where: {
+            isWarmup: false,
+            isDropSet: false,
+            reps: { gt: 0 },
+            completedAt: { lt: now },
+            session: { userId, finishedAt: { not: null }, ...excludedSession },
+            exercise: { muscleGroup, category: { not: 'CARDIO' } },
+          },
+          orderBy: { completedAt: 'desc' },
+          select: { session: { select: { startedAt: true } } },
+        });
+        return [muscleGroup, row?.session.startedAt ?? null] as const;
+      }),
+    ),
+    db.set.findMany({
+      where: {
+        isWarmup: false,
+        isDropSet: false,
+        reps: { gt: 0 },
+        completedAt: { gte: baselineStart, lt: now },
+        session: { userId, finishedAt: { not: null }, ...excludedSession },
+        exercise: {
+          muscleGroup: { in: muscleGroups },
+          category: { not: 'CARDIO' },
+        },
+      },
+      select: {
+        completedAt: true,
+        exercise: { select: { muscleGroup: true } },
+      },
+    }),
+  ]);
+
+  const latestByMuscle = new Map<MuscleGroup, Date | null>(muscleLatestEntries);
+  const recentSetsByMuscle = new Map<MuscleGroup, number>();
+  const baselineSetsByMuscle = new Map<MuscleGroup, number>();
+  for (const row of volumeRows) {
+    const target = row.completedAt >= recentStart ? recentSetsByMuscle : baselineSetsByMuscle;
+    const group = row.exercise.muscleGroup;
+    target.set(group, (target.get(group) ?? 0) + 1);
+  }
+
+  const entries = await Promise.all(
+    programExercises.map(async (pe) => {
+      const workingSetFilter = {
+        exerciseId: pe.exerciseId,
+        isWarmup: false,
+        isDropSet: false,
+        reps: { gt: 0 },
+        weight: { gte: 0 },
+        completedAt: { lt: now },
+      } as const;
+      const targets = equipmentTargetsFor(pe, gym);
+      const recentExerciseSessions = await db.session.findMany({
+        where: {
+          userId,
+          finishedAt: { not: null },
+          ...excludedSession,
+          startedAt: { gte: historyStart, lt: now },
+          sets: { some: workingSetFilter },
+        },
+        orderBy: { startedAt: 'desc' },
+        take: RETURN_LONG_TERM_ANCHOR_SESSION_LIMIT,
+        select: { id: true },
+      });
+      const recentExerciseSessionIds = new Set(recentExerciseSessions.map((item) => item.id));
+      const baselineSets = baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
+
+      const recommendations = await Promise.all(
+        targets.map(async (target) => {
+          const equipmentFilter = comparableEquipmentFilter(target.gymEquipmentId);
+          const targetSessionFilter = {
+            userId,
+            gymId: target.gymId,
+            finishedAt: { not: null },
+            ...excludedSession,
+          } as const;
+          const [latestSet, sessions] = await Promise.all([
+            db.set.findFirst({
+              where: {
+                ...workingSetFilter,
+                ...equipmentFilter,
+                session: targetSessionFilter,
+              },
+              orderBy: { completedAt: 'desc' },
+              select: { session: { select: { startedAt: true } } },
+            }),
+            db.session.findMany({
+              where: {
+                ...targetSessionFilter,
+                startedAt: { gte: historyStart, lt: now },
+                sets: { some: { ...workingSetFilter, ...equipmentFilter } },
+              },
+              orderBy: { startedAt: 'desc' },
+              take: RETURN_LONG_TERM_ANCHOR_SESSION_LIMIT,
+              select: {
+                id: true,
+                startedAt: true,
+                sets: {
+                  where: { ...workingSetFilter, ...equipmentFilter },
+                  orderBy: { setNumber: 'asc' },
+                  select: {
+                    weight: true,
+                    reps: true,
+                    rir: true,
+                    isDropSet: true,
+                  },
+                },
+              },
+            }),
+          ]);
+          const comparableIds = new Set(sessions.map((session) => session.id));
+          const nonComparableExerciseSessions = [...recentExerciseSessionIds].filter(
+            (sessionId) => !comparableIds.has(sessionId),
+          ).length;
+          const history: ReturnTrainingHistory = {
+            exerciseLastPerformedAt: latestSet?.session.startedAt ?? null,
+            muscleLastPerformedAt: latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
+            recentMuscleSets: recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
+            baselineMuscleSetsPer28Days:
+              baselineSets * (RECENT_MUSCLE_VOLUME_DAYS / BASELINE_MUSCLE_VOLUME_DAYS),
+            exerciseSessions: sessions.map((session) => ({
+              sessionId: session.id,
+              performedAt: session.startedAt,
+              sets: session.sets.map(({ weight, reps, rir, isDropSet }) => ({
+                weight,
+                reps,
+                rir,
+                isDropSet,
+              })),
+            })),
+            nonComparableExerciseSessions,
+          };
+          return {
+            gymId: target.gymId,
+            gymEquipmentId: target.gymEquipmentId,
+            recommendation: calculateReturnRecommendation({
+              programExercise: pe,
+              history,
+              now,
+              bodyweight,
+              loadConstraints: loadConstraintsForEquipment(pe, gym, target.gymEquipmentId),
+            }),
+          } satisfies EquipmentReturnRecommendation;
+        }),
+      );
+      return [pe.id, recommendations] as const;
+    }),
+  );
+
+  return Object.fromEntries(entries);
+}
+
+function comparableEquipmentFilter(gymEquipmentId: string | null) {
+  return gymEquipmentId
+    ? { gymEquipmentId }
+    : { gymEquipmentId: null, equipmentNameSnapshot: null };
+}
+
+function equipmentTargetsFor(
+  pe: ProgramExerciseForReturn,
+  gym: GymForReturn | null,
+): EquipmentTarget[] {
+  const gymId = gym?.id ?? null;
+  const equipmentIds = (gym?.equipment ?? [])
+    .filter((item) => item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId))
+    .map((item) => item.id);
+  // Gym equipment is optional in the clean upstream model. Keep an explicit
+  // manual/no-equipment target even when physical items are linked.
+  return [
+    { gymId, gymEquipmentId: null },
+    ...equipmentIds.map((gymEquipmentId) => ({ gymId, gymEquipmentId })),
+  ];
+}
+
+function loadConstraintsForEquipment(
+  pe: ProgramExerciseForReturn,
+  gym: GymForReturn | null,
+  gymEquipmentId: string | null,
+): GymLoadConstraints | null {
+  const base = loadConstraintsFor(pe, gym);
+  if (!base || !gymEquipmentId || !gym) return base;
+  const equipment = (gym.equipment ?? []).find(
+    (item) =>
+      item.id === gymEquipmentId &&
+      item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId),
+  );
+  if (!equipment) return base;
+  return {
+    ...base,
+    equipmentType: pe.exercise.equipmentType,
+    weightOptions: ['MACHINE', 'CABLE', 'OTHER'].includes(pe.exercise.equipmentType)
+      ? equipment.loadConfigurationKnown
+        ? equipment.weightOptions
+        : []
+      : base.weightOptions,
+  };
 }
 
 function loadConstraintsFor(
