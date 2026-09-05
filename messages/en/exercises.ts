@@ -34,6 +34,24 @@ export const exercises = {
   deleteDescription:
     '{name} will be removed from the catalog. It cannot be deleted while used in a program or training history.',
   deleting: 'Deleting...',
+  detail: {
+    back: 'Back to exercises',
+    equipmentTitle: 'Equipment by gym',
+    equipmentDescription:
+      'Link the physical equipment that can perform this exercise. Choose one preferred item per gym when you want it selected by default.',
+    noGyms: 'No gyms are configured yet.',
+    noPhysicalEquipment: 'No physical equipment has been added to your gyms yet.',
+    gymHasNoEquipment: 'This gym has no physical equipment yet.',
+    incompatible: 'Incompatible',
+    linkEquipmentAria: 'Use {equipment} for this exercise in {gym}',
+    preferredEquipmentAria: 'Set {equipment} as preferred in {gym}',
+    preferred: 'Preferred',
+    makePreferred: 'Prefer',
+    equipmentSaved: 'Exercise equipment updated.',
+    equipmentSaveError: 'Could not save exercise equipment.',
+    savingEquipment: 'Saving...',
+    saveEquipment: 'Save equipment',
+  },
   media: {
     button: 'Technique',
     open: 'View technique for {name}',

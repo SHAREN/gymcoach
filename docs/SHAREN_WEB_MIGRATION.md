@@ -9,6 +9,8 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 - Do not reintroduce the rejected embedded web AI proposal/review flow. External AI (ChatGPT/agent) is the semantic layer; MCP exposes bounded context and safe deterministic operations.
 - Before porting a SHAREN feature, compare it with current upstream and skip it if upstream already has equivalent behavior.
 - Port in small logical batches. Each completed batch gets focused tests and its own commit.
+- Mutual exclusion: before any mutation, commit, migration, or DB-resetting test, check `D:\codexpro_workspace\.gymcoach-interactive-chat.lock`. While that file is owned by `interactive-chat` and its filesystem mtime is younger than 90 minutes, an hourly watchdog may inspect/report only and must not mutate the worktree or test DB. If the lock is stale, first verify that no matching GymCoach write/test process is active before taking over.
+- All migration work is performed through Home-PC/CodexPro directly. Do not launch Codex Threads or the local Codex CLI for this project.
 - Do not deploy this migration branch until the complete migration passes the full gate and is explicitly approved for deployment.
 
 ## Source snapshots
@@ -25,7 +27,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M03 | MCP equipment write operations | DONE | Added confirmed write tools for current-upstream free weights, physical equipment and equipment images; ownership delegated to/checked by server domain helpers. |
 | M04 | Completed workout/history set editor | DONE | Completed strength rows can be corrected/appended without mutating frozen exercise/equipment history; focused unit/component/API tests cover ownership and finished-session guards. |
 | M05 | Preferred equipment per exercise/gym | DONE | Domain/schema, ownership/link/type validation, delete-safe FK and MCP inventory context are implemented; UI follows in M06. |
-| M06 | Exercise detail/equipment editor | TODO | Depends on M05. |
+| M06 | Exercise detail/equipment editor | DONE | Added exercise detail page plus per-gym physical-equipment linking/preference editor with transactional ownership, gym-scope and compatibility validation. |
 | M07 | Durable web set acknowledgement/replay | TODO | Port only behavior not already present upstream. |
 | M08 | Equipment-aware return-to-training | TODO | Extend upstream return-to-training, do not replace it. |
 | M09 | Session exercise strip/navigation | TODO | Web-only UI. |
