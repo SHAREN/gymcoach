@@ -28,9 +28,15 @@ describe('GymCoach MCP server', () => {
     const tools = await client.listTools();
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
     expect(byName.has('get_training_context')).toBe(true);
+    expect(byName.has('list_gyms')).toBe(true);
+    expect(byName.has('get_gym_inventory')).toBe(true);
+    expect(byName.has('get_training_history')).toBe(true);
     expect(byName.has('create_program')).toBe(true);
     expect(byName.has('update_program_exercise')).toBe(true);
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('list_gyms')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('get_gym_inventory')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('get_training_history')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);
 
     const resources = await client.listResources();
