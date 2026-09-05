@@ -34,6 +34,11 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('update_gym_free_weights')).toBe(true);
     expect(byName.has('upsert_gym_equipment')).toBe(true);
     expect(byName.has('set_gym_equipment_image')).toBe(true);
+    expect(byName.has('get_workout_import_context')).toBe(true);
+    expect(byName.has('reuse_or_create_exercise')).toBe(true);
+    expect(byName.has('reuse_or_create_gym_equipment')).toBe(true);
+    expect(byName.has('bind_exercise_equipment')).toBe(true);
+    expect(byName.has('import_or_update_workout')).toBe(true);
     expect(byName.has('create_program')).toBe(true);
     expect(byName.has('update_program_exercise')).toBe(true);
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
@@ -43,6 +48,8 @@ describe('GymCoach MCP server', () => {
     expect(byName.get('update_gym_free_weights')?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get('upsert_gym_equipment')?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get('set_gym_equipment_image')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('get_workout_import_context')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('import_or_update_workout')?.annotations?.idempotentHint).toBe(true);
     expect(byName.get('remove_program_exercise')?.annotations?.destructiveHint).toBe(true);
 
     const resources = await client.listResources();
