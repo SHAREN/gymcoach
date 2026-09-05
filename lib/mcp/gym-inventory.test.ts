@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/db', () => ({
   db: {
     user: { findUnique: vi.fn() },
-    gym: { findMany: vi.fn(), findFirst: vi.fn() },
+    gym: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     exercise: { findMany: vi.fn() },
   },
 }));
@@ -14,11 +14,12 @@ vi.mock('@/lib/gym-equipment', () => ({
 
 import { db } from '@/lib/db';
 import { listOwnedGymEquipment } from '@/lib/gym-equipment';
-import { getMcpGymInventory, listMcpGyms } from './gym-inventory';
+import { getMcpGymInventory, listMcpGyms, updateMcpGymFreeWeights } from './gym-inventory';
 
 const findUser = vi.mocked(db.user.findUnique);
 const findGyms = vi.mocked(db.gym.findMany);
 const findGym = vi.mocked(db.gym.findFirst);
+const updateGym = vi.mocked(db.gym.update);
 const findExercises = vi.mocked(db.exercise.findMany);
 const listEquipment = vi.mocked(listOwnedGymEquipment);
 
@@ -124,5 +125,39 @@ describe('MCP gym inventory reads', () => {
     );
     expect(findGym).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'other-gym', userId: 'user-1' } }));
     expect(listEquipment).not.toHaveBeenCalled();
+  });
+
+  it('updates free weights only after resolving an owned gym', async () => {
+    findGym.mockResolvedValue({ id: 'gym-1' } as never);
+    updateGym.mockResolvedValue({
+      id: 'gym-1',
+      name: 'X-Fit',
+      dumbbellWeights: [10, 12],
+      plateWeights: [5, 10],
+      barWeights: [20],
+      updatedAt: new Date('2026-09-05T00:00:00Z'),
+    } as never);
+
+    await updateMcpGymFreeWeights('user-1', 'gym-1', { dumbbellWeights: [10, 12] });
+
+    expect(findGym).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'gym-1', userId: 'user-1' } }),
+    );
+    expect(updateGym).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'gym-1' },
+        data: { dumbbellWeights: [10, 12] },
+      }),
+    );
+  });
+
+  it('does not update free weights when the requested gym is foreign', async () => {
+    findGym.mockResolvedValue(null);
+
+    await expect(
+      updateMcpGymFreeWeights('user-1', 'other-gym', { plateWeights: [5, 10] }),
+    ).rejects.toThrow('Gym not found.');
+
+    expect(updateGym).not.toHaveBeenCalled();
   });
 });
