@@ -60,6 +60,20 @@ Write tools:
 - `remove_program_exercise`
 - `activate_program`
 
+## Responsibility boundary: external AI vs GymCoach
+
+For free-form workout import and gym-inventory interpretation, semantic reasoning belongs to the external MCP-capable AI agent (for example, ChatGPT), not to a duplicate LLM workflow embedded in the GymCoach web UI.
+
+The intended architecture is: User -> ChatGPT / external AI agent -> GymCoach MCP -> validated GymCoach data.
+
+The external agent is responsible for understanding natural-language exercise names, photos and context, comparing them with the exercise catalog, recent history, the current program and the selected gym inventory, and deciding which existing records are the best semantic match. When there is a real ambiguity, the external agent asks the user in chat instead of inventing an answer.
+
+GymCoach MCP is responsible for exposing bounded, user-scoped context and safe, deterministic operations. It should let the external agent read exercises, program/history context and gym inventory; reuse or create canonical exercises and physical equipment; bind compatible exercise/equipment records; and import or update training data. Server-side validation must still enforce ownership, gym scope, compatibility, idempotency, confirmation and other data-integrity constraints.
+
+Do not add a dedicated web AI-proposal/review interface or an embedded LLM proposal pipeline for this workflow unless the owner explicitly requests such a product feature. Ordinary manual editing remains separate from semantic reasoning performed by the MCP agent.
+
+Example: if the user writes “Хаммер верхняя тяга 25 кг”, ChatGPT should inspect the selected gym inventory and exercise catalog through MCP, recognize the intended plate-loaded upper-pulldown movement, and reuse or create appropriate canonical exercise/equipment records without inventing a manufacturer, model or unknown loading characteristics. If two physical machines are genuinely plausible, ChatGPT asks the user which one was used.
+
 ## Health check
 
 `GET /mcp/health` returns `401` without a token and `200` for an active token.
