@@ -24,12 +24,14 @@ import type { SetParseResult } from '@/lib/schemas/set-parse';
 import { PlateCalculator } from '@/components/session/plate-calculator';
 import { WarmupCalculator } from '@/components/session/warmup-calculator';
 import type { PendingSet } from '@/lib/indexeddb';
+import { SetValuePicker } from '@/components/session/set-value-picker';
 import type { SerializedLastPerformance } from './session-runner';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
+  gymWeightOptions,
   type GymLoadConstraints,
 } from '@/lib/gym-loads';
 
@@ -119,6 +121,7 @@ export function SetInput({
   const [aiParsing, setAiParsing] = useState(false);
   const [aiHint, setAiHint] = useState<string | null>(null);
   const [gymEquipmentId, setGymEquipmentId] = useState('');
+  const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
 
   // Re-init when the exercise changes or a set changes.
   useEffect(() => {
@@ -175,6 +178,20 @@ export function SetInput({
   // (unchanged behavior); LB shows a rounded conversion.
   const displayWeight =
     unit === 'LB' ? roundWeight(toDisplayWeight(form.weight, unit), 1) : form.weight;
+  const weightPickerOptions = [
+    ...new Set([
+      ...gymWeightOptions(loadConstraints, form.weight).map((weight) =>
+        roundWeight(toDisplayWeight(weight, unit), 2),
+      ),
+      ...(displayWeight > 0 ? [displayWeight] : []),
+    ]),
+  ].sort((a, b) => a - b);
+  const repPickerOptions = [
+    ...new Set([
+      ...Array.from({ length: 30 }, (_, index) => index + 1),
+      ...(form.reps > 0 ? [form.reps] : []),
+    ]),
+  ].sort((a, b) => a - b);
 
   function adjustWeight(delta: number) {
     setForm((f) => ({
@@ -513,19 +530,16 @@ export function SetInput({
                 >
                   <Minus className="size-5" />
                 </Button>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  value={displayWeight}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      weight: fromDisplayWeight(parseFloat(e.target.value) || 0, unit),
-                    }))
-                  }
-                  className="h-14 text-center text-2xl font-semibold"
-                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPicker('weight')}
+                  aria-label={t('load', { unit: unitLabel(unit) })}
+                  aria-haspopup="dialog"
+                  className="h-14 flex-1 text-center text-2xl font-semibold tabular-nums"
+                >
+                  {displayWeight}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -555,15 +569,16 @@ export function SetInput({
                 >
                   <Minus className="size-5" />
                 </Button>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  value={form.reps}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, reps: parseInt(e.target.value, 10) || 0 }))
-                  }
-                  className="h-14 text-center text-2xl font-semibold"
-                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPicker('reps')}
+                  aria-label={t('reps')}
+                  aria-haspopup="dialog"
+                  className="h-14 flex-1 text-center text-2xl font-semibold tabular-nums"
+                >
+                  {form.reps}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -645,6 +660,26 @@ export function SetInput({
           <span className="ml-2">{submitting ? common('actions.saving') : t('logSet')}</span>
         </Button>
       </CardContent>
+      {!isCardio && (
+        <SetValuePicker
+          open={picker != null}
+          kind={picker ?? 'weight'}
+          value={picker === 'reps' ? form.reps : displayWeight}
+          options={picker === 'reps' ? repPickerOptions : weightPickerOptions}
+          unit={unit}
+          loadConstraints={loadConstraints}
+          onClose={() => setPicker(null)}
+          onChoose={(value) => {
+            setForm((current) => ({
+              ...current,
+              ...(picker === 'reps'
+                ? { reps: Math.max(1, Math.round(value)) }
+                : { weight: fromDisplayWeight(value, unit) }),
+            }));
+            setPicker(null);
+          }}
+        />
+      )}
     </Card>
   );
 }
