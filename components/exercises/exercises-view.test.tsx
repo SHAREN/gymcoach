@@ -10,6 +10,21 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
+// Radix Select uses pointer-capture and scrolling APIs that jsdom does not
+// implement. Provide the browser methods so the tests exercise the real menu.
+Element.prototype.hasPointerCapture = vi.fn(() => false);
+Element.prototype.setPointerCapture = vi.fn();
+Element.prototype.releasePointerCapture = vi.fn();
+Element.prototype.scrollIntoView = vi.fn();
+vi.stubGlobal(
+  'ResizeObserver',
+  class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
 function exercise(over: Partial<Exercise>): Exercise {
   return {
     id: over.id ?? 'e1',
@@ -27,9 +42,19 @@ function exercise(over: Partial<Exercise>): Exercise {
 }
 
 const exercises: Exercise[] = [
-  exercise({ id: 'e1', name: 'Barbell Bench Press', muscleGroup: 'CHEST' }),
-  exercise({ id: 'e2', name: 'Back Squat', muscleGroup: 'QUADS' }),
-  exercise({ id: 'e3', name: 'Romanian Deadlift', muscleGroup: 'HAMSTRINGS' }),
+  exercise({
+    id: 'e1',
+    name: 'Barbell Bench Press',
+    muscleGroup: 'CHEST',
+    equipmentType: 'BARBELL',
+  }),
+  exercise({ id: 'e2', name: 'Back Squat', muscleGroup: 'QUADS', equipmentType: 'BARBELL' }),
+  exercise({
+    id: 'e3',
+    name: 'Romanian Deadlift',
+    muscleGroup: 'HAMSTRINGS',
+    equipmentType: 'DUMBBELL',
+  }),
 ];
 
 describe('ExercisesView search (issue #238)', () => {
@@ -72,6 +97,53 @@ describe('ExercisesView search (issue #238)', () => {
     render(<ExercisesView exercises={[]} />);
     expect(screen.getByText('No exercises')).toBeInTheDocument();
     expect(screen.queryByLabelText('Search exercises by name')).not.toBeInTheDocument();
+  });
+});
+
+describe('ExercisesView shared exercise filters', () => {
+  it('starts with all muscles and all equipment', () => {
+    render(<ExercisesView exercises={exercises} />);
+
+    expect(screen.getByRole('combobox', { name: 'Muscle group' })).toHaveTextContent('All muscles');
+    expect(screen.getByRole('combobox', { name: 'Equipment type' })).toHaveTextContent(
+      'All equipment',
+    );
+  });
+
+  it('composes muscle, equipment and name search', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<ExercisesView exercises={exercises} />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'Hamstrings' }));
+    await user.click(screen.getByRole('combobox', { name: 'Equipment type' }));
+    await user.click(screen.getByRole('option', { name: 'Dumbbells' }));
+    await user.type(screen.getByLabelText('Search exercises by name'), 'romanian');
+
+    expect(screen.getByText('Romanian Deadlift')).toBeInTheDocument();
+    expect(screen.queryByText('Barbell Bench Press')).not.toBeInTheDocument();
+    expect(screen.queryByText('Back Squat')).not.toBeInTheDocument();
+  });
+
+  it('resets muscle and equipment together and shows a clear filtered empty state', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<ExercisesView exercises={exercises} />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Muscle group' }));
+    await user.click(screen.getByRole('option', { name: 'Chest' }));
+    await user.click(screen.getByRole('combobox', { name: 'Equipment type' }));
+    await user.click(screen.getByRole('option', { name: 'Dumbbells' }));
+
+    expect(screen.getByText('No exercises match')).toBeInTheDocument();
+    expect(
+      screen.getByText('No exercises match the current search and filters. Change or reset them.'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+
+    expect(screen.getByText('Barbell Bench Press')).toBeInTheDocument();
+    expect(screen.getByText('Back Squat')).toBeInTheDocument();
+    expect(screen.getByText('Romanian Deadlift')).toBeInTheDocument();
   });
 });
 
