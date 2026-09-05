@@ -32,6 +32,21 @@ export const session = {
   finishError: 'Impossible de terminer la séance.',
   equipmentDropped:
     'Série enregistrée, mais le matériel n’a pas été associé : il n’est plus disponible dans cette salle.',
+  valuePicker: {
+    chooseWeight: 'Choisir le poids ({unit})',
+    chooseReps: 'Choisir les répétitions',
+    applyValue: 'Appliquer la valeur',
+    repsShort: 'rép.',
+    cancel: 'Annuler',
+    manualWeight: 'Poids manuel',
+    manualReps: 'Répétitions manuelles',
+    keypad: 'Pavé numérique',
+    backspace: 'Effacer le dernier chiffre',
+    platesPerSide: 'Disques sur un côté de la barre',
+    barWeight: 'Barre {weight} {unit}',
+    plateRemainder: 'Charge obtenue {weight} {unit}',
+    description: 'Choisissez une valeur enregistrée ou saisissez-la avec le pavé à l’écran.',
+  },
   rest: {
     title: 'Repos',
     seconds: 's',

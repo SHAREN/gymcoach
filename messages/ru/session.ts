@@ -32,6 +32,21 @@ export const session = {
   finishError: 'Не удалось завершить тренировку.',
   equipmentDropped:
     'Подход сохранён, но тренажёр не привязан: он больше недоступен в этом зале.',
+  valuePicker: {
+    chooseWeight: 'Выберите вес ({unit})',
+    chooseReps: 'Выберите повторения',
+    applyValue: 'Применить значение',
+    repsShort: 'повт.',
+    cancel: 'Отмена',
+    manualWeight: 'Ввод веса',
+    manualReps: 'Ввод повторений',
+    keypad: 'Цифровая клавиатура',
+    backspace: 'Удалить последнюю цифру',
+    platesPerSide: 'Блины на одной стороне штанги',
+    barWeight: 'Гриф {weight} {unit}',
+    plateRemainder: 'Собирается {weight} {unit}',
+    description: 'Выберите сохранённое значение или введите его экранной клавиатурой.',
+  },
   rest: {
     title: 'Отдых',
     seconds: 'с',

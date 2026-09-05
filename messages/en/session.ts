@@ -29,6 +29,21 @@ export const session = {
   finishError: 'Could not finish the session.',
   equipmentDropped:
     'Set saved, but the equipment was not attached: it is no longer available in this gym.',
+  valuePicker: {
+    chooseWeight: 'Choose weight ({unit})',
+    chooseReps: 'Choose repetitions',
+    applyValue: 'Apply value',
+    repsShort: 'reps',
+    cancel: 'Cancel',
+    manualWeight: 'Manual weight',
+    manualReps: 'Manual repetitions',
+    keypad: 'Numeric keypad',
+    backspace: 'Delete last digit',
+    platesPerSide: 'Plates on one side of the bar',
+    barWeight: 'Bar {weight} {unit}',
+    plateRemainder: 'Loads to {weight} {unit}',
+    description: 'Select a saved value or enter one with the on-screen keypad.',
+  },
   rest: {
     title: 'Rest',
     seconds: 's',
