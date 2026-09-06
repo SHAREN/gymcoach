@@ -19,7 +19,7 @@ function isPrescriptionOnly(line: string): boolean {
 
   const residue = line
     .replace(PRESCRIPTION_WORDS, '')
-    .replace(/[\d\s.,;:x×/@%()+\-[\]–—]+/gu, '')
+    .replace(/[\d\s.,;:x×/@%()+\-[\]\u2013\u2014]+/gu, '')
     .trim();
   return residue.length === 0;
 }

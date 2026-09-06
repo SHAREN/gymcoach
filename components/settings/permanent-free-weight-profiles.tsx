@@ -321,7 +321,7 @@ function ExerciseSupportList({
     <div className="space-y-2">
       <Label>{title}</Label>
       {exercises.length === 0 ? (
-        <p className="text-xs text-muted-foreground">—</p>
+        <p className="text-xs text-muted-foreground">-</p>
       ) : (
         <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
           {exercises.map((exercise) => (

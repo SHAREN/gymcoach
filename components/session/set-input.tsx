@@ -461,7 +461,7 @@ export function SetInput({
               }
               className="h-11 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-base font-semibold"
             >
-              <option value="">–</option>
+              <option value="">-</option>
               {RIR_OPTIONS.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -504,7 +504,7 @@ export function SetInput({
                         locale,
                         withUnit: false,
                       })
-                    : '–'}
+                    : '-'}
                 </span>
               );
             })}
@@ -977,7 +977,7 @@ export function SetInput({
                               locale,
                               withUnit: false,
                             })
-                          : '–'}
+                          : '-'}
                       </p>
                     </div>
                   );

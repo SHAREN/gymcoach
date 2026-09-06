@@ -61,7 +61,7 @@ export function PreviousSessionSets({ performance, exerciseId, unit }: Props) {
                   {formatWeight(set.weight, unit, { decimals: 2, group: false, locale })}
                 </td>
                 <td className="px-2 py-2.5 font-medium">{set.reps}</td>
-                <td className="px-2 py-2.5 font-medium">{set.rir ?? '–'}</td>
+                <td className="px-2 py-2.5 font-medium">{set.rir ?? '-'}</td>
               </tr>
             ))}
           </tbody>

@@ -76,7 +76,7 @@ function formatSetMetric(
 ): string {
   const value =
     metric === 'VOLUME' ? weight * reps : estimateRepMax(weight, reps, metric === '10RM' ? 10 : 1);
-  if (value <= 0) return '–';
+  if (value <= 0) return '-';
   return formatWeight(value, unit, { decimals: 1, group: false, locale, withUnit: false });
 }
 
@@ -392,7 +392,7 @@ function RowDone({
               }
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             >
-              <option value="">—</option>
+              <option value="">-</option>
               {[0, 1, 2, 3, 4, 5].map((rir) => (
                 <option key={rir} value={rir}>
                   {rir}

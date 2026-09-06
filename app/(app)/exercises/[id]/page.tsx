@@ -169,7 +169,7 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
                           <div key={set.id} className="flex justify-between gap-3">
                             <span className="text-muted-foreground">{index + 1}</span>
                             <span className="font-medium">
-                              {set.durationSec != null ? formatDuration(set.durationSec) : '–'}
+                              {set.durationSec != null ? formatDuration(set.durationSec) : '-'}
                               {set.distanceM != null && set.distanceM > 0
                                 ? ' · ' + formatDistance(set.distanceM)
                                 : ''}
@@ -204,9 +204,9 @@ export default async function ExerciseDetailPage({ params, searchParams }: Props
                                   })}
                                 </td>
                                 <td className="py-1.5 font-medium">{set.reps}</td>
-                                <td className="py-1.5 font-medium">{set.rir ?? '–'}</td>
+                                <td className="py-1.5 font-medium">{set.rir ?? '-'}</td>
                                 <td className="truncate py-1.5 text-muted-foreground">
-                                  {set.equipmentNameSnapshot ?? '–'}
+                                  {set.equipmentNameSnapshot ?? '-'}
                                 </td>
                               </tr>
                             ))}
