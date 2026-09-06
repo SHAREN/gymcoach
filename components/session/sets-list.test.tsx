@@ -91,6 +91,32 @@ describe('SetsList', () => {
     expect(screen.queryByText('e1RM PR')).toBeNull();
   });
 
+  it('switches between 1RM and 10RM while keeping volume independently selectable', async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[pendingSet({ localId: 'metric', setNumber: 1, weight: 100, reps: 10 })]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId('set-metric-selection')).toHaveTextContent('1RM');
+    expect(screen.getByTestId('completed-set-1-metric-1RM')).toHaveTextContent('133.3');
+
+    await user.click(screen.getByRole('button', { name: 'Choose set metrics' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Volume' }));
+    expect(screen.getByTestId('completed-set-1-metric-VOLUME')).toHaveTextContent('1000');
+
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Estimated 10RM' }));
+    expect(screen.queryByTestId('completed-set-1-metric-1RM')).not.toBeInTheDocument();
+    expect(screen.getByTestId('completed-set-1-metric-10RM')).toHaveTextContent('100');
+    expect(screen.getByTestId('completed-set-1-metric-VOLUME')).toHaveTextContent('1000');
+  });
+
   it('edits an existing strength row without changing its identity', async () => {
     const user = userEvent.setup();
     const set = pendingSet({

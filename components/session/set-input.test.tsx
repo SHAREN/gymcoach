@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import { SetInput } from './set-input';
+import { DEFAULT_PREFERENCES, savePreferences } from '@/lib/preferences';
 
 const exo: Exercise = {
   id: 'e1',
@@ -82,6 +83,30 @@ describe('SetInput first working set', () => {
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ weight: 100, reps: 8, rir: 2, isDropSet: false }),
     );
+  });
+
+  it('shows the selected set metrics for the active strength draft', () => {
+    window.localStorage.clear();
+    savePreferences({
+      ...DEFAULT_PREFERENCES,
+      rmDisplay: '10RM',
+      setTableMetrics: ['10RM', 'VOLUME'],
+    });
+    render(
+      <SetInput
+        programExercise={pe}
+        existingSets={[]}
+        lastPerformance={lastPerformance}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.queryByTestId('active-set-metric-1RM')).not.toBeInTheDocument();
+    expect(screen.getByTestId('active-set-metric-10RM')).toHaveTextContent('95');
+    expect(screen.getByTestId('active-set-metric-VOLUME')).toHaveTextContent('800');
   });
 
   it('uses the conservative return start and RIR instead of ordinary progression after a long break', async () => {
