@@ -694,34 +694,42 @@ export function SessionRunner({
           onEditSet={handleEditSet}
           onDeleteSet={handleDeleteSet}
           priorSets={lastPerf?.sets}
+          onUndoLastSet={async () => {
+            const lastSet = currentSets.at(-1);
+            if (lastSet) await handleDeleteSet(lastSet);
+          }}
+          currentInput={
+            !hydrated || mode.kind !== 'input' ? null : (
+              <SetInput
+                embedded
+                programExercise={currentTarget}
+                existingSets={currentEquipmentSets}
+                lastPerformance={lastPerf}
+                readiness={effectiveReadiness}
+                deloadActive={deloadActive}
+                unit={unit}
+                recommendation={currentRecommendation}
+                returnRecommendation={currentReturnRecommendation}
+                loadConstraints={loadConstraintsFor(currentTarget)}
+                equipmentOptions={(session.gym?.equipment ?? []).filter(
+                  (item) =>
+                    !droppedEquipmentIds.includes(item.id) &&
+                    item.exerciseLinks.some((link) => link.exerciseId === currentPE.exerciseId),
+                )}
+                selectedEquipmentId={selectedEquipmentByExercise[currentPE.exerciseId] ?? null}
+                onEquipmentChange={(equipmentId) =>
+                  setSelectedEquipmentByExercise((current) => ({
+                    ...current,
+                    [currentPE.exerciseId]: equipmentId,
+                  }))
+                }
+                onSubmit={handleValidate}
+              />
+            )
+          }
         />
 
-        {!hydrated ? null : mode.kind === 'input' ? (
-          <SetInput
-            programExercise={currentTarget}
-            existingSets={currentEquipmentSets}
-            lastPerformance={lastPerf}
-            readiness={effectiveReadiness}
-            deloadActive={deloadActive}
-            unit={unit}
-            recommendation={currentRecommendation}
-            returnRecommendation={currentReturnRecommendation}
-            loadConstraints={loadConstraintsFor(currentTarget)}
-            equipmentOptions={(session.gym?.equipment ?? []).filter(
-              (item) =>
-                !droppedEquipmentIds.includes(item.id) &&
-                item.exerciseLinks.some((link) => link.exerciseId === currentPE.exerciseId),
-            )}
-            selectedEquipmentId={selectedEquipmentByExercise[currentPE.exerciseId] ?? null}
-            onEquipmentChange={(equipmentId) =>
-              setSelectedEquipmentByExercise((current) => ({
-                ...current,
-                [currentPE.exerciseId]: equipmentId,
-              }))
-            }
-            onSubmit={handleValidate}
-          />
-        ) : (
+        {mode.kind === 'rest' && (
           <RestTimer
             endsAt={mode.endsAt}
             totalSec={mode.totalSec}

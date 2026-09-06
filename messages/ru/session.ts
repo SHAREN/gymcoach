@@ -211,6 +211,7 @@ export const session = {
     note: 'заметка',
     delete: 'Удалить подход',
     edit: 'Изменить подход',
+    undoLast: 'Отменить последний подход',
     editWeight: 'Вес ({unit})',
     editReps: 'Повторы',
     editRir: 'RIR',

@@ -52,6 +52,7 @@ interface Props {
   equipmentOptions?: { id: string; name: string }[];
   selectedEquipmentId?: string | null;
   onEquipmentChange?: (equipmentId: string | null) => void;
+  embedded?: boolean;
   onSubmit: (values: {
     weight: number;
     reps: number;
@@ -97,6 +98,7 @@ export function SetInput({
   equipmentOptions = [],
   selectedEquipmentId,
   onEquipmentChange,
+  embedded = false,
   onSubmit,
 }: Props) {
   const t = useTranslations('session.input');
@@ -366,8 +368,10 @@ export function SetInput({
   }
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-4 pt-6">
+    <Card className={embedded ? 'rounded-none border-0 shadow-none' : undefined}>
+      <CardContent
+        className={embedded ? 'flex flex-col gap-4 px-3 pb-3 pt-2' : 'flex flex-col gap-4 pt-6'}
+      >
         {recommendation && !isCardio && (
           <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
             <p className="text-xs font-medium uppercase text-muted-foreground">
