@@ -158,6 +158,7 @@ export const session = {
     warmup: 'Échauffement',
     note: 'Note rapide (facultatif)',
     notePlaceholder: 'ex. douleur au poignet, charge réduite en cours de série, facile',
+    moreOptions: 'Options supplémentaires de la série',
     logSet: 'Enregistrer la série',
   },
   summary: {

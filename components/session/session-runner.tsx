@@ -15,6 +15,7 @@ import type {
   Workout,
   Gym,
   GymExerciseConfig,
+  EquipmentLoadType,
 } from '@/lib/prisma-client';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
@@ -59,7 +60,7 @@ import { SessionExerciseActions } from '@/components/session/session-exercise-ac
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
-import type { GymLoadConstraints } from '@/lib/gym-loads';
+import { resolveEquipmentLoadProfile, type GymLoadConstraints } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-history';
 import { initialSessionExerciseIndex } from '@/lib/session-navigation';
@@ -85,6 +86,16 @@ type SessionGymEquipment = {
   equipmentType: Exercise['equipmentType'];
   loadConfigurationKnown: boolean;
   weightOptions: number[];
+  loadType: EquipmentLoadType;
+  selectedLoadMultiplier: number;
+  baseLoadKg: number;
+  platePoolId: string | null;
+  loadingSides: number;
+  platePool: {
+    id: string;
+    name: string;
+    plates: { weightKg: number; quantity: number | null }[];
+  } | null;
   exerciseLinks: { exerciseId: string }[];
 };
 
@@ -353,19 +364,31 @@ export function SessionRunner({
             item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId),
         )
       : null;
-    const usesEquipmentWeights = ['MACHINE', 'CABLE', 'OTHER'].includes(pe.exercise.equipmentType);
+    const resolvedEquipment = equipment
+      ? resolveEquipmentLoadProfile({
+          equipmentId: equipment.id,
+          equipmentName: equipment.name,
+          equipmentType: equipment.equipmentType,
+          loadConfigurationKnown: equipment.loadConfigurationKnown,
+          loadType: equipment.loadType,
+          weightOptions: equipment.weightOptions,
+          selectedLoadMultiplier: equipment.selectedLoadMultiplier,
+          baseLoadKg: equipment.baseLoadKg,
+          loadingSides: equipment.loadingSides,
+          platePoolId: equipment.platePoolId,
+          platePoolName: equipment.platePool?.name ?? null,
+          plates: equipment.platePool?.plates ?? [],
+        })
+      : null;
     return {
       equipmentType: pe.exercise.equipmentType,
       isAvailable: config?.isAvailable ?? true,
       dumbbellWeights: session.gym.dumbbellWeights,
       plateWeights: session.gym.plateWeights,
       barWeights: session.gym.barWeights,
-      weightOptions:
-        equipment && usesEquipmentWeights
-          ? equipment.loadConfigurationKnown
-            ? equipment.weightOptions
-            : []
-          : (config?.weightOptions ?? []),
+      weightOptions: resolvedEquipment?.attainableLoads ?? config?.weightOptions ?? [],
+      equipmentId: resolvedEquipment?.equipmentId ?? null,
+      equipmentOptions: resolvedEquipment ? [resolvedEquipment] : undefined,
     };
   }
 

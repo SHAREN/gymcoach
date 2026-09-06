@@ -69,8 +69,13 @@ test('recommendation is explicit and reusable while the live card stays compact'
   await page.goto('/session/' + sessionId);
 
   const currentRow = page.getByTestId('current-set-row');
+  const activeControls = currentRow.getByTestId('active-set-controls');
+  await expect(activeControls.getByRole('button', { name: 'Load (kg)' })).toBeVisible();
+  await expect(activeControls.getByRole('button', { name: 'Reps' })).toBeVisible();
+  await expect(activeControls.getByRole('combobox', { name: /RIR/ })).toBeVisible();
+  await expect(activeControls.getByRole('button', { name: /log the set/i })).toBeVisible();
+  await currentRow.getByText('More set options').click();
   await expect(currentRow.getByLabel('Quick entry')).toBeVisible();
-  await expect(currentRow.getByRole('button', { name: /log the set/i })).toBeVisible();
 
   await expect(page.getByText('Technique cue belongs on exercise detail only')).toHaveCount(0);
   await expect(page.getByText('Quadriceps')).toHaveCount(0);
@@ -93,7 +98,10 @@ test('recommendation is explicit and reusable while the live card stays compact'
   const recommendedReps = await page.getByRole('button', { name: 'Reps' }).textContent();
   expect(recommendedReps).not.toBe('12');
 
-  await page.getByRole('button', { name: '+1 rep' }).click();
+  const currentReps = Number(recommendedReps);
+  await page.getByRole('button', { name: 'Reps' }).click();
+  await page.getByRole('button', { name: String(currentReps + 1) + ' reps' }).click();
+  await page.getByRole('button', { name: 'Apply value' }).click();
   await expect(apply).toBeEnabled();
   await apply.click();
   await expect(apply).toBeDisabled();
