@@ -47,13 +47,15 @@ async function seedLoggedSet(page: Page) {
 }
 
 test('a lifter can set, track, achieve, and remove an exercise goal', async ({ page }) => {
-  // Sign up (fresh user each run).
-  await page.goto('/signup');
-  await page.getByLabel('Name').fill('Goal E2E');
-  await page.getByLabel('Email').fill(`e2e-goals-${Date.now()}@test.dev`);
-  await page.getByLabel('Password').fill('supersecret');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+  // Register through the API; auth.spec.ts owns the UI signup flow.
+  const registerRes = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Goal E2E',
+      email: 'e2e-goals-' + Date.now() + '@test.dev',
+      password: 'supersecret',
+    },
+  });
+  expect(registerRes.ok()).toBeTruthy();
 
   await seedLoggedSet(page);
 

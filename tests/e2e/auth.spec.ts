@@ -16,7 +16,7 @@ test('a new user can sign up, log out and sign back in', async ({ page }) => {
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+  await expect(page).toHaveURL('/', { timeout: 15_000 });
 
   // Log out (the logout control lives in the app shell)
   await page.getByRole('button', { name: /log ?out|sign ?out/i }).click();

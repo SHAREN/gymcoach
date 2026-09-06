@@ -15,25 +15,25 @@ const STRONG_CSV = [
 ].join('\n');
 
 test('a lifter can preview and confirm a Strong CSV import', async ({ page }) => {
-  // Sign up (fresh user each run).
-  await page.goto('/signup');
-  await page.getByLabel('Name').fill('Import E2E');
-  await page.getByLabel('Email').fill(`e2e-import-${Date.now()}@test.dev`);
-  await page.getByLabel('Password').fill('supersecret');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+  // Register through the API; auth.spec.ts owns the UI signup flow.
+  const registerRes = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Import E2E',
+      email: 'e2e-import-' + Date.now() + '@test.dev',
+      password: 'supersecret',
+    },
+  });
+  expect(registerRes.ok()).toBeTruthy();
 
   await page.goto('/settings');
   await expect(page.getByText('Import from Strong')).toBeVisible();
 
   // Upload the file: the dry-run preview appears, nothing imported yet.
-  await page
-    .locator('input[type="file"][accept=".csv,text/csv"]')
-    .setInputFiles({
-      name: 'strong.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from(STRONG_CSV, 'utf-8'),
-    });
+  await page.locator('input[type="file"][accept=".csv,text/csv"]').setInputFiles({
+    name: 'strong.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(STRONG_CSV, 'utf-8'),
+  });
 
   const preview = page.getByTestId('import-preview');
   await expect(preview).toBeVisible();

@@ -1,5 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 
+async function openMoreSetOptions(page: Page) {
+  await page.getByText('More set options', { exact: true }).click();
+}
+
 // Supersets slice 1 (issue #146): pair two exercises in the program builder
 // (A1/A2 labels), then run the workout - the session runner presents the pair
 // consecutively with the superset badge, auto-advances A1 -> A2 after a set,
@@ -57,9 +61,7 @@ async function seedPairableWorkout(
   return { programId: program.id, workoutId: workout.id };
 }
 
-test('a lifter can pair two exercises as a superset and run the A1/A2 flow', async ({
-  page,
-}) => {
+test('a lifter can pair two exercises as a superset and run the A1/A2 flow', async ({ page }) => {
   // Sign up through the API (fresh user; the cookie lands in the context). A
   // unique X-Forwarded-For keeps this spec in its own register rate-limit
   // bucket.
@@ -100,6 +102,7 @@ test('a lifter can pair two exercises as a superset and run the A1/A2 flow', asy
 
   // Log a working set on A1; after the rest, the runner auto-advances to A2
   // (the alternating superset flow), not to a second bench set.
+  await openMoreSetOptions(page);
   await page.getByLabel('Quick entry').fill('60x8@2');
   await page.getByRole('button', { name: /log the set/i }).click();
   await page.getByRole('button', { name: /skip/i }).click();
@@ -153,6 +156,7 @@ test('a superset gives a short rest between members and a full rest after the gr
   // the FULL per-exercise rest (here 90s, > 20) run before the group repeats.
 
   // A1 set 1 -> transition (A2 still owes sets).
+  await openMoreSetOptions(page);
   await page.getByLabel('Quick entry').fill('60x8@2');
   await page.getByRole('button', { name: /log the set/i }).click();
   await expect(restValue).toBeVisible();
@@ -161,6 +165,7 @@ test('a superset gives a short rest between members and a full rest after the gr
   await expect(page.getByText('Superset A2')).toBeVisible();
 
   // A2 set 1 -> transition (A1 still owes its 2nd set).
+  await openMoreSetOptions(page);
   await page.getByLabel('Quick entry').fill('50x10@2');
   await page.getByRole('button', { name: /log the set/i }).click();
   await expect(restValue).toBeVisible();
@@ -169,6 +174,7 @@ test('a superset gives a short rest between members and a full rest after the gr
   await expect(page.getByText('Superset A1')).toBeVisible();
 
   // A1 set 2 -> transition (A2 still owes its 2nd set).
+  await openMoreSetOptions(page);
   await page.getByLabel('Quick entry').fill('60x8@2');
   await page.getByRole('button', { name: /log the set/i }).click();
   await expect(restValue).toBeVisible();
@@ -177,6 +183,7 @@ test('a superset gives a short rest between members and a full rest after the gr
   await expect(page.getByText('Superset A2')).toBeVisible();
 
   // A2 set 2 -> group complete: the FULL rest runs (> 20s) before the repeat.
+  await openMoreSetOptions(page);
   await page.getByLabel('Quick entry').fill('50x10@2');
   await page.getByRole('button', { name: /log the set/i }).click();
   await expect(restValue).toBeVisible();

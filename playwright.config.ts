@@ -11,6 +11,9 @@ const TEST_DB =
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
+  // Ten Chromium workers overload the local production server during account seeding
+  // and create false navigation/DOM-detach flakes. Four keeps the full suite fast and stable.
+  workers: 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: 'list',

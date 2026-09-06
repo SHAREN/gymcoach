@@ -8,16 +8,16 @@ test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.111.1.2' } });
 // page, see it listed as the current value, then delete it. The card renders
 // even with no training data, so a fresh user is enough.
 
-test('a lifter can log and delete a bodyweight entry on the progress page', async ({
-  page,
-}) => {
-  // Sign up (fresh user each run).
-  await page.goto('/signup');
-  await page.getByLabel('Name').fill('Bodyweight E2E');
-  await page.getByLabel('Email').fill(`e2e-bodyweight-${Date.now()}@test.dev`);
-  await page.getByLabel('Password').fill('supersecret');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+test('a lifter can log and delete a bodyweight entry on the progress page', async ({ page }) => {
+  // Register through the API; auth.spec.ts owns the UI signup flow.
+  const registerRes = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Bodyweight E2E',
+      email: 'e2e-bodyweight-' + Date.now() + '@test.dev',
+      password: 'supersecret',
+    },
+  });
+  expect(registerRes.ok()).toBeTruthy();
 
   await page.goto('/progress');
   // Scope to the Bodyweight card (the page also has a Measurements card whose
