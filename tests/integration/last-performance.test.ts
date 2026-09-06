@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { db } from '@/lib/db';
-import { getLastPerformances } from '@/lib/last-performance';
+import {
+  getLastPerformances,
+  getLastPerformancesForEquipmentTargets,
+} from '@/lib/last-performance';
 
 async function makeUser(email: string) {
   return db.user.create({ data: { email, passwordHash: 'x' } });
@@ -27,7 +30,14 @@ describe('getLastPerformances', () => {
       data: { userId: user.id, startedAt: at(7) },
     });
     await db.set.create({
-      data: { sessionId: older.id, exerciseId: exo.id, setNumber: 1, weight: 80, reps: 8, completedAt: at(7) },
+      data: {
+        sessionId: older.id,
+        exerciseId: exo.id,
+        setNumber: 1,
+        weight: 80,
+        reps: 8,
+        completedAt: at(7),
+      },
     });
 
     // Newer session: a warmup (excluded), then working sets. Top load 100,
@@ -37,10 +47,39 @@ describe('getLastPerformances', () => {
     });
     await db.set.createMany({
       data: [
-        { sessionId: newer.id, exerciseId: exo.id, setNumber: 1, weight: 60, reps: 12, isWarmup: true, completedAt: at(1) },
-        { sessionId: newer.id, exerciseId: exo.id, setNumber: 2, weight: 90, reps: 8, completedAt: at(1) },
-        { sessionId: newer.id, exerciseId: exo.id, setNumber: 3, weight: 100, reps: 5, completedAt: at(1) },
-        { sessionId: newer.id, exerciseId: exo.id, setNumber: 4, weight: 100, reps: 6, completedAt: at(1) },
+        {
+          sessionId: newer.id,
+          exerciseId: exo.id,
+          setNumber: 1,
+          weight: 60,
+          reps: 12,
+          isWarmup: true,
+          completedAt: at(1),
+        },
+        {
+          sessionId: newer.id,
+          exerciseId: exo.id,
+          setNumber: 2,
+          weight: 90,
+          reps: 8,
+          completedAt: at(1),
+        },
+        {
+          sessionId: newer.id,
+          exerciseId: exo.id,
+          setNumber: 3,
+          weight: 100,
+          reps: 5,
+          completedAt: at(1),
+        },
+        {
+          sessionId: newer.id,
+          exerciseId: exo.id,
+          setNumber: 4,
+          weight: 100,
+          reps: 6,
+          completedAt: at(1),
+        },
       ],
     });
 
@@ -104,11 +143,25 @@ describe('getLastPerformances', () => {
 
     const previous = await db.session.create({ data: { userId: user.id, startedAt: at(5) } });
     await db.set.create({
-      data: { sessionId: previous.id, exerciseId: exo.id, setNumber: 1, weight: 70, reps: 10, completedAt: at(5) },
+      data: {
+        sessionId: previous.id,
+        exerciseId: exo.id,
+        setNumber: 1,
+        weight: 70,
+        reps: 10,
+        completedAt: at(5),
+      },
     });
     const current = await db.session.create({ data: { userId: user.id, startedAt: at(0) } });
     await db.set.create({
-      data: { sessionId: current.id, exerciseId: exo.id, setNumber: 1, weight: 110, reps: 3, completedAt: at(0) },
+      data: {
+        sessionId: current.id,
+        exerciseId: exo.id,
+        setNumber: 1,
+        weight: 110,
+        reps: 3,
+        completedAt: at(0),
+      },
     });
 
     // Excluding the current session, the last performance is the previous one.
@@ -125,7 +178,14 @@ describe('getLastPerformances', () => {
     const exo = await makeExercise(owner.id);
     const session = await db.session.create({ data: { userId: owner.id, startedAt: at(2) } });
     await db.set.create({
-      data: { sessionId: session.id, exerciseId: exo.id, setNumber: 1, weight: 120, reps: 5, completedAt: at(2) },
+      data: {
+        sessionId: session.id,
+        exerciseId: exo.id,
+        setNumber: 1,
+        weight: 120,
+        reps: 5,
+        completedAt: at(2),
+      },
     });
 
     const stranger = await makeUser('lp-stranger@test.dev');
@@ -140,5 +200,95 @@ describe('getLastPerformances', () => {
     const exo = await makeExercise(user.id);
     const map = await getLastPerformances(user.id, [exo.id], null);
     expect(map.size).toBe(0);
+  });
+
+  it('keeps machine history isolated by gym and equipment identity', async () => {
+    const user = await makeUser('lp-equipment@test.dev');
+    const exo = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Machine press',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'MACHINE',
+      },
+    });
+    const gym = await db.gym.create({ data: { userId: user.id, name: 'Main gym' } });
+    const otherGym = await db.gym.create({ data: { userId: user.id, name: 'Other gym' } });
+    const machineA = await db.gymEquipment.create({
+      data: { gymId: gym.id, name: 'Press A', equipmentType: 'MACHINE' },
+    });
+    const machineB = await db.gymEquipment.create({
+      data: { gymId: gym.id, name: 'Press B', equipmentType: 'MACHINE' },
+    });
+    await db.gymEquipmentExercise.createMany({
+      data: [
+        { equipmentId: machineA.id, exerciseId: exo.id },
+        { equipmentId: machineB.id, exerciseId: exo.id },
+      ],
+    });
+
+    const oldA = await db.session.create({
+      data: { userId: user.id, gymId: gym.id, startedAt: at(8) },
+    });
+    await db.set.create({
+      data: {
+        sessionId: oldA.id,
+        exerciseId: exo.id,
+        gymEquipmentId: machineA.id,
+        equipmentNameSnapshot: 'Press A',
+        setNumber: 1,
+        weight: 70,
+        reps: 10,
+        completedAt: at(8),
+      },
+    });
+    const recentB = await db.session.create({
+      data: { userId: user.id, gymId: gym.id, startedAt: at(2) },
+    });
+    await db.set.create({
+      data: {
+        sessionId: recentB.id,
+        exerciseId: exo.id,
+        gymEquipmentId: machineB.id,
+        equipmentNameSnapshot: 'Press B',
+        setNumber: 1,
+        weight: 110,
+        reps: 6,
+        completedAt: at(2),
+      },
+    });
+    const wrongGymSession = await db.session.create({
+      data: { userId: user.id, gymId: otherGym.id, startedAt: at(1) },
+    });
+    await db.set.create({
+      data: {
+        sessionId: wrongGymSession.id,
+        exerciseId: exo.id,
+        setNumber: 1,
+        weight: 999,
+        reps: 1,
+        completedAt: at(1),
+      },
+    });
+
+    const performances = await getLastPerformancesForEquipmentTargets(
+      user.id,
+      [
+        { exerciseId: exo.id, gymId: gym.id, gymEquipmentId: machineA.id },
+        { exerciseId: exo.id, gymId: gym.id, gymEquipmentId: machineB.id },
+      ],
+      null,
+    );
+
+    expect(performances).toHaveLength(2);
+    const a = performances.find((performance) => performance.gymEquipmentId === machineA.id);
+    const b = performances.find((performance) => performance.gymEquipmentId === machineB.id);
+    expect(a?.sessionId).toBe(oldA.id);
+    expect(a?.maxWeight).toBe(70);
+    expect(a?.equipmentName).toBe('Press A');
+    expect(b?.sessionId).toBe(recentB.id);
+    expect(b?.maxWeight).toBe(110);
+    expect(performances.some((performance) => performance.maxWeight === 999)).toBe(false);
   });
 });

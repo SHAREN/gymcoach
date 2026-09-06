@@ -40,7 +40,13 @@ import {
   SUPERSET_TRANSITION_REST_SEC,
 } from '@/lib/supersets';
 import { isReadinessAutoRegulationEnabled } from '@/lib/preferences';
-import { bindAutoSync, flushPendingSets, onEquipmentDropped, queueSet, queueSetCorrection } from '@/lib/sync';
+import {
+  bindAutoSync,
+  flushPendingSets,
+  onEquipmentDropped,
+  queueSet,
+  queueSetCorrection,
+} from '@/lib/sync';
 import { hydrateFromServerSets } from '@/lib/sync-hydration';
 import { ExerciseCard } from '@/components/session/exercise-card';
 import { SetsList } from '@/components/session/sets-list';
@@ -50,6 +56,7 @@ import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { SessionExerciseActions } from '@/components/session/session-exercise-actions';
+import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -58,7 +65,10 @@ import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-his
 import { initialSessionExerciseIndex } from '@/lib/session-navigation';
 
 export interface SerializedLastPerformance {
+  sessionId?: string;
   sessionStartedAt: string;
+  gymEquipmentId?: string | null;
+  equipmentName?: string | null;
   sets: { weight: number; reps: number; rir: number | null }[];
   maxWeight: number;
   repsAtMaxWeight: number;
@@ -89,7 +99,7 @@ type SessionRunnerProps = {
     sets: PrismaSet[];
     gym: (Gym & { exerciseConfigs: GymExerciseConfig[]; equipment: SessionGymEquipment[] }) | null;
   };
-  lastPerformances: Record<string, SerializedLastPerformance>;
+  lastPerformances: Record<string, SerializedLastPerformance[]>;
   returnRecommendations: Record<string, EquipmentReturnRecommendation[]>;
   // Latest in-window readiness check-in (or null). Drives whether the load
   // suggestion is held/reduced and the matching explainer in the UI.
@@ -107,11 +117,35 @@ type Mode =
   | { kind: 'rest'; endsAt: number; totalSec: number; nextExerciseIdx: number | null }
   | { kind: 'summary' };
 
+export function sameEquipmentIdentity(
+  first: string | null | undefined,
+  second: string | null | undefined,
+): boolean {
+  return (first ?? null) === (second ?? null);
+}
+
+export function filterSetsForEquipment(
+  sets: PendingSet[],
+  gymEquipmentId: string | null,
+): PendingSet[] {
+  return sets.filter((set) => sameEquipmentIdentity(set.gymEquipmentId, gymEquipmentId));
+}
+
+export function selectLastPerformanceForEquipment(
+  performances: SerializedLastPerformance[] | undefined,
+  gymEquipmentId: string | null,
+): SerializedLastPerformance | undefined {
+  return performances?.find((performance) =>
+    sameEquipmentIdentity(performance.gymEquipmentId, gymEquipmentId),
+  );
+}
+
 function selectReturnRecommendationForEquipment(
   recommendations: EquipmentReturnRecommendation[] | undefined,
   gymEquipmentId: string | null,
 ): ReturnRecommendation | undefined {
-  return recommendations?.find((item) => item.gymEquipmentId === gymEquipmentId)?.recommendation;
+  return recommendations?.find((item) => sameEquipmentIdentity(item.gymEquipmentId, gymEquipmentId))
+    ?.recommendation;
 }
 
 export function SessionRunner({
@@ -138,7 +172,9 @@ export function SessionRunner({
     Record<string, string | null>
   >(() => initialEquipmentSelections(session, programExercises));
 
-  function returnRecommendationFor(pe: ProgramExerciseWithExercise): ReturnRecommendation | undefined {
+  function returnRecommendationFor(
+    pe: ProgramExerciseWithExercise,
+  ): ReturnRecommendation | undefined {
     return selectReturnRecommendationForEquipment(
       returnRecommendations[pe.id],
       selectedEquipmentByExercise[pe.exerciseId] ?? null,
@@ -259,7 +295,11 @@ export function SessionRunner({
     pe: ProgramExerciseWithExercise,
     atMs: number,
   ): IntraSetRecommendation | null {
-    const completedSets = setsByExercise.get(pe.exerciseId) ?? [];
+    const selectedEquipmentId = selectedEquipmentByExercise[pe.exerciseId] ?? null;
+    const completedSets = filterSetsForEquipment(
+      setsByExercise.get(pe.exerciseId) ?? [],
+      selectedEquipmentId,
+    );
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
     if (!lastWorkingSet) return null;
 
@@ -325,7 +365,7 @@ export function SessionRunner({
           ? equipment.loadConfigurationKnown
             ? equipment.weightOptions
             : []
-          : config?.weightOptions ?? [],
+          : (config?.weightOptions ?? []),
     };
   }
 
@@ -333,11 +373,20 @@ export function SessionRunner({
   // summary (same source as the in-session badge: getLastPerformances).
   const priorSetsByExercise = useMemo(() => {
     const out: Record<string, { weight: number; reps: number }[]> = {};
-    for (const [exerciseId, perf] of Object.entries(lastPerformances)) {
-      out[exerciseId] = perf.sets.map((s) => ({ weight: s.weight, reps: s.reps }));
+    for (const pe of programExercises) {
+      const performance = selectLastPerformanceForEquipment(
+        lastPerformances[pe.exerciseId],
+        selectedEquipmentByExercise[pe.exerciseId] ?? null,
+      );
+      if (performance) {
+        out[pe.exerciseId] = performance.sets.map((set) => ({
+          weight: set.weight,
+          reps: set.reps,
+        }));
+      }
     }
     return out;
-  }, [lastPerformances]);
+  }, [lastPerformances, programExercises, selectedEquipmentByExercise]);
 
   const completedExerciseIds = useMemo(() => {
     const completed = new Set<string>();
@@ -500,7 +549,10 @@ export function SessionRunner({
   // superset group before advancing past it (issue #146).
   const remainingNow = (pe: ProgramExerciseWithExercise) => {
     const target = effectiveProgramExerciseById.get(pe.id) ?? pe;
-    return target.targetSets - (setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0);
+    return (
+      target.targetSets -
+      (setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0)
+    );
   };
   const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
   function goNext() {
@@ -532,8 +584,13 @@ export function SessionRunner({
     );
   }
 
-  const lastPerf = lastPerformances[currentPE.exerciseId];
   const currentSets = setsByExercise.get(currentPE.exerciseId) ?? [];
+  const currentSelectedEquipmentId = selectedEquipmentByExercise[currentPE.exerciseId] ?? null;
+  const currentEquipmentSets = filterSetsForEquipment(currentSets, currentSelectedEquipmentId);
+  const lastPerf = selectLastPerformanceForEquipment(
+    lastPerformances[currentPE.exerciseId],
+    currentSelectedEquipmentId,
+  );
   const currentReturnRecommendation = returnRecommendationFor(currentPE);
   const currentRecommendation = recommendationFor(currentTarget, Date.now());
   const restNextPe =
@@ -642,7 +699,7 @@ export function SessionRunner({
         {!hydrated ? null : mode.kind === 'input' ? (
           <SetInput
             programExercise={currentTarget}
-            existingSets={currentSets}
+            existingSets={currentEquipmentSets}
             lastPerformance={lastPerf}
             readiness={effectiveReadiness}
             deloadActive={deloadActive}
@@ -676,6 +733,8 @@ export function SessionRunner({
             onAdd30={handleAdd30s}
           />
         )}
+
+        <PreviousSessionSets performance={lastPerf} exerciseId={currentPE.exerciseId} unit={unit} />
 
         {/* In-session coach access (issue #111): opens the chat with this
             session attached so the advice is grounded in the live workout.

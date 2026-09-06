@@ -192,6 +192,13 @@ export const session = {
     warmupHelp:
       'Suggestions only. Log warm-ups with the Warmup toggle. Weights are rounded down to loadable plates.',
   },
+  previousSession: {
+    title: 'Previous workout · {date}',
+    equipment: 'Equipment: {name}',
+    reps: 'Reps',
+    history: 'Full workout',
+    progress: 'Progress chart',
+  },
   setsList: {
     noneDuringRest: 'No sets yet. After rest you can log set {number}.',
     set: 'Set {number}',
