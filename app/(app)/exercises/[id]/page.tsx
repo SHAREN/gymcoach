@@ -15,13 +15,17 @@ import { ExerciseEquipmentEditor } from '@/components/exercises/exercise-equipme
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { safeSessionReturnTo } from '@/lib/session-navigation';
 
 interface Props {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ returnTo?: string | string[] }>;
 }
 
-export default async function ExerciseDetailPage({ params }: Props) {
+export default async function ExerciseDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
+  const backHref = safeSessionReturnTo(query?.returnTo);
   const auth = await requireSession();
   const locale = await getLocale();
   const t = await getTranslations('exercises');
@@ -59,7 +63,7 @@ export default async function ExerciseDetailPage({ params }: Props) {
     <main className="flex-1 px-4 py-6">
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
         <Button asChild variant="ghost" size="sm" className="self-start">
-          <Link href="/exercises">
+          <Link href={backHref}>
             <ChevronLeft className="size-4" />
             <span className="ml-1">{detail('back')}</span>
           </Link>

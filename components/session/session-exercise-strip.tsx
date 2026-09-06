@@ -15,6 +15,7 @@ interface Props {
   currentIndex: number;
   completedExerciseIds: ReadonlySet<string>;
   onSelect: (index: number) => void;
+  onOpen: (programExercise: SessionExercise) => void;
   disabled?: boolean;
 }
 
@@ -34,6 +35,7 @@ export function SessionExerciseStrip({
   currentIndex,
   completedExerciseIds,
   onSelect,
+  onOpen,
   disabled = false,
 }: Props) {
   const exerciseName = useExerciseName();
@@ -68,9 +70,10 @@ export function SessionExerciseStrip({
               ref={isCurrent ? currentRef : undefined}
               type="button"
               onClick={() => {
-                if (!disabled && !isCurrent) onSelect(index);
+                if (isCurrent) onOpen(programExercise);
+                else if (!disabled) onSelect(index);
               }}
-              aria-disabled={disabled || undefined}
+              aria-disabled={(disabled && !isCurrent) || undefined}
               aria-label={`${index + 1}. ${displayName}`}
               aria-current={isCurrent ? 'step' : undefined}
               title={displayName}
