@@ -49,6 +49,7 @@ import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
+import { SessionExerciseActions } from '@/components/session/session-exercise-actions';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -98,6 +99,7 @@ type SessionRunnerProps = {
   deloadActive: boolean;
   unit: WeightUnit;
   initialProgramExerciseId?: string | null;
+  exerciseCatalog: Exercise[];
 };
 
 type Mode =
@@ -120,6 +122,7 @@ export function SessionRunner({
   deloadActive,
   unit,
   initialProgramExerciseId = null,
+  exerciseCatalog,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -601,6 +604,16 @@ export function SessionRunner({
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
+        {mode.kind === 'input' && (
+          <div className="flex justify-end">
+            <SessionExerciseActions
+              programExercise={currentPE}
+              programExercises={programExercises}
+              catalog={exerciseCatalog}
+              loggedSetCount={currentSets.length}
+            />
+          </div>
+        )}
         <ExerciseCard
           programExercise={currentPE}
           lastPerformance={lastPerf}
