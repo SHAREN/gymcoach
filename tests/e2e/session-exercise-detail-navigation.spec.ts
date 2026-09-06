@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function seedSession(page: Page): Promise<{ sessionId: string }> {
+async function seedSession(
+  page: Page,
+): Promise<{ sessionId: string; historicalSessionId: string; secondExerciseId: string }> {
   const firstExerciseRes = await page.request.post('/api/exercises', {
     data: { name: 'E2E Navigation Bench', muscleGroup: 'CHEST', category: 'COMPOUND' },
   });
@@ -39,12 +41,38 @@ async function seedSession(page: Page): Promise<{ sessionId: string }> {
     expect(response.ok()).toBeTruthy();
   }
 
+  const historicalRes = await page.request.post('/api/sessions', {
+    data: { workoutId: workout.id },
+  });
+  expect(historicalRes.ok()).toBeTruthy();
+  const historical = await historicalRes.json();
+  const historicalSet = await page.request.post('/api/sessions/' + historical.id + '/sets', {
+    data: {
+      exerciseId: secondExercise.id,
+      setNumber: 1,
+      weight: 60,
+      reps: 8,
+      rir: 2,
+      isWarmup: false,
+      isDropSet: false,
+    },
+  });
+  expect(historicalSet.ok()).toBeTruthy();
+  const finishHistorical = await page.request.put('/api/sessions/' + historical.id, {
+    data: { finish: true },
+  });
+  expect(finishHistorical.ok()).toBeTruthy();
+
   const sessionRes = await page.request.post('/api/sessions', {
     data: { workoutId: workout.id },
   });
   expect(sessionRes.ok()).toBeTruthy();
   const session = await sessionRes.json();
-  return { sessionId: session.id as string };
+  return {
+    sessionId: session.id as string,
+    historicalSessionId: historical.id as string,
+    secondExerciseId: secondExercise.id as string,
+  };
 }
 
 test('the current session thumbnail opens exercise detail and Back restores the same exercise', async ({
@@ -60,7 +88,7 @@ test('the current session thumbnail opens exercise detail and Back restores the 
   });
   expect(registerRes.ok()).toBeTruthy();
 
-  const { sessionId } = await seedSession(page);
+  const { sessionId, historicalSessionId, secondExerciseId } = await seedSession(page);
   await page.goto(`/session/${sessionId}`);
 
   const first = page.getByRole('button', { name: '1. E2E Navigation Bench' });
@@ -73,6 +101,19 @@ test('the current session thumbnail opens exercise detail and Back restores the 
   await second.click();
   await expect(page.getByRole('heading', { name: 'E2E Navigation Row', level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/\/exercises\/[^?]+\?returnTo=/u);
+
+  const history = page.getByTestId('exercise-history');
+  await expect(history.getByText('60 kg')).toBeVisible();
+  await expect(history.getByRole('cell', { name: '8', exact: true })).toBeVisible();
+  await expect(history.getByRole('cell', { name: '2', exact: true })).toBeVisible();
+  await expect(history.getByRole('link', { name: /Progress chart/ })).toHaveAttribute(
+    'href',
+    '/progress?exerciseId=' + secondExerciseId,
+  );
+  await expect(history.getByRole('link', { name: /Open workout/ })).toHaveAttribute(
+    'href',
+    '/history/' + historicalSessionId,
+  );
 
   const back = page.locator('main a').first();
   await back.click();

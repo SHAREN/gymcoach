@@ -51,6 +51,12 @@ export const exercises = {
     equipmentSaveError: 'Could not save exercise equipment.',
     savingEquipment: 'Saving...',
     saveEquipment: 'Save equipment',
+    history: 'Training history',
+    openChart: 'Progress chart',
+    noHistory: 'No completed sets for this exercise yet.',
+    openSession: 'Open workout',
+    reps: 'Reps',
+    equipmentShort: 'Equipment',
   },
   media: {
     button: 'Technique',
