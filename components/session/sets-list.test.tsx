@@ -181,4 +181,54 @@ describe('SetsList', () => {
     await user.click(screen.getByRole('button', { name: 'Undo last set' }));
     expect(onUndoLastSet).toHaveBeenCalledTimes(1);
   });
+  it('keeps all planned working rows when a warmup is present', () => {
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[pendingSet({ localId: 'warmup', setNumber: 1, isWarmup: true })]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+        currentInput={<button type="button">Working draft</button>}
+      />,
+    );
+
+    expect(screen.getByTestId('current-set-row')).toHaveTextContent('Set 1 · in progress');
+    expect(screen.getByText('Set 2 · upcoming')).toBeInTheDocument();
+    expect(screen.getByText('Set 3 · upcoming')).toBeInTheDocument();
+  });
+
+  it('does not create an extra active row after all planned working sets are complete', () => {
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[
+          pendingSet({ localId: 's1', setNumber: 1 }),
+          pendingSet({ localId: 's2', setNumber: 2 }),
+          pendingSet({ localId: 's3', setNumber: 3 }),
+        ]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+        currentInput={<button type="button">Should not render</button>}
+      />,
+    );
+
+    expect(screen.queryByTestId('current-set-row')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Should not render' })).not.toBeInTheDocument();
+  });
+
+  it('hides undo while the session is in rest mode', () => {
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[pendingSet({ localId: 'rest-set', setNumber: 1 })]}
+        isInputActive={false}
+        unit="KG"
+        onDeleteSet={() => {}}
+        onUndoLastSet={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Undo last set' })).not.toBeInTheDocument();
+  });
 });

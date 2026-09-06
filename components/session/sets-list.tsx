@@ -124,7 +124,7 @@ export function SetsList({
   }
 
   const completedNonWarmup = sets.filter((s) => !s.isWarmup);
-  const totalRows = Math.max(programExercise.targetSets, completedNonWarmup.length + 1);
+  const remainingPlannedRows = Math.max(0, programExercise.targetSets - completedNonWarmup.length);
   const currentSetNumber = completedNonWarmup.length + 1;
 
   // PR detection runs on read against a baseline of the previous session plus
@@ -179,7 +179,7 @@ export function SetsList({
           </DropdownMenu>
         </div>
       )}
-      {sets.length > 0 && onUndoLastSet && (
+      {isInputActive && sets.length > 0 && onUndoLastSet && (
         <div className="flex justify-end border-b border-border px-3 py-2">
           <Button type="button" variant="ghost" size="sm" onClick={() => void onUndoLastSet()}>
             <Undo2 className="size-4" />
@@ -200,7 +200,7 @@ export function SetsList({
         />
       ))}
 
-      {Array.from({ length: totalRows - sets.length }, (_, i) => {
+      {Array.from({ length: remainingPlannedRows }, (_, i) => {
         const setNum = completedNonWarmup.length + 1 + i;
         const isCurrent = i === 0 && isInputActive;
         if (isCurrent && currentInput) {

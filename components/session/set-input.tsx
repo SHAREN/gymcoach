@@ -27,7 +27,10 @@ import { WarmupCalculator } from '@/components/session/warmup-calculator';
 import type { PendingSet } from '@/lib/indexeddb';
 import { SetValuePicker } from '@/components/session/set-value-picker';
 import type { SerializedLastPerformance } from './session-runner';
-import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
+import type {
+  IntraSetRecommendation,
+  IntraSetRecommendationReason,
+} from '@/lib/intra-set-autoregulation';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import { estimateRepMax } from '@/lib/stats';
 import { loadPreferences, PREFERENCES_CHANGED_EVENT, type SetTableMetric } from '@/lib/preferences';
@@ -80,6 +83,20 @@ interface FormState {
 }
 
 const RIR_OPTIONS = [0, 1, 2, 3];
+const AUTOREGULATION_REASON_KEYS: Record<
+  IntraSetRecommendationReason,
+  | 'reasons.hold-load'
+  | 'reasons.adjust-reps'
+  | 'reasons.reduce-load'
+  | 'reasons.increase-load'
+  | 'reasons.bodyweight-adjust-reps'
+> = {
+  'hold-load': 'reasons.hold-load',
+  'adjust-reps': 'reasons.adjust-reps',
+  'reduce-load': 'reasons.reduce-load',
+  'increase-load': 'reasons.increase-load',
+  'bodyweight-adjust-reps': 'reasons.bodyweight-adjust-reps',
+};
 
 // The validated parse the API returns (issue #210). Re-using the schema's type
 // keeps the client's narrowing in lockstep with the server contract.
@@ -365,6 +382,300 @@ export function SetInput({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (embedded && !isCardio) {
+    return (
+      <div className="space-y-3 px-2 py-2">
+        {equipmentOptions.length > 0 && (
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+            <Label htmlFor="gym-equipment" className="text-xs text-muted-foreground">
+              {t('equipment')}
+            </Label>
+            <select
+              id="gym-equipment"
+              value={gymEquipmentId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setGymEquipmentId(next);
+                onEquipmentChange?.(next || null);
+              }}
+              className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="">{t('equipmentNone')}</option>
+              {equipmentOptions.map((equipment) => (
+                <option key={equipment.id} value={equipment.id}>
+                  {equipment.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div
+          data-testid="active-set-controls"
+          className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(0,0.7fr)_2.75rem] items-end gap-1.5"
+        >
+          <div className="min-w-0 space-y-1">
+            <Label className="block truncate text-center text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+              {t('load', { unit: unitLabel(unit) })}
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPicker('weight')}
+              aria-label={t('load', { unit: unitLabel(unit) })}
+              aria-haspopup="dialog"
+              className="h-11 w-full min-w-0 px-1 text-base font-semibold tabular-nums"
+            >
+              {displayWeight}
+            </Button>
+          </div>
+          <div className="min-w-0 space-y-1">
+            <Label className="block truncate text-center text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+              {t('reps')}
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPicker('reps')}
+              aria-label={t('reps')}
+              aria-haspopup="dialog"
+              className="h-11 w-full min-w-0 px-1 text-base font-semibold tabular-nums"
+            >
+              {form.reps}
+            </Button>
+          </div>
+          <label className="min-w-0 space-y-1">
+            <span className="block truncate text-center text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+              RIR
+            </span>
+            <select
+              aria-label={t('repsInReserve')}
+              value={form.rir ?? ''}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  rir: event.target.value === '' ? null : Number(event.target.value),
+                }))
+              }
+              className="h-11 w-full min-w-0 rounded-md border border-input bg-background px-0 text-center text-base font-semibold"
+            >
+              <option value="">–</option>
+              {RIR_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            type="button"
+            size="icon"
+            onClick={handleValidate}
+            disabled={submitting}
+            aria-label={t('logSet')}
+            className="size-11"
+          >
+            <Check className="size-5" />
+          </Button>
+        </div>
+
+        {metrics.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+            {metrics.map((metric) => {
+              const value =
+                metric === 'VOLUME'
+                  ? form.weight * form.reps
+                  : estimateRepMax(form.weight, form.reps, metric === '10RM' ? 10 : 1);
+              const label =
+                metric === '1RM'
+                  ? metricT('oneRmShort')
+                  : metric === '10RM'
+                    ? metricT('tenRmShort')
+                    : metricT('volumeShort');
+              return (
+                <span key={metric} data-testid={'active-set-metric-' + metric}>
+                  {label}{' '}
+                  {value > 0
+                    ? formatWeight(value, unit, {
+                        decimals: 1,
+                        group: false,
+                        locale,
+                        withUnit: false,
+                      })
+                    : '–'}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {recommendation && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <span className="font-medium">
+              {autoT('nextSet')}:{' '}
+              {unit === 'LB'
+                ? roundWeight(toDisplayWeight(recommendation.weight, unit), 1)
+                : recommendation.weight}{' '}
+              {unitLabel(unit)} × {recommendation.reps} · RIR {recommendation.rir}
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={applyRecommendation}
+              disabled={recommendationMatchesDraft}
+            >
+              {autoT('apply')}
+            </Button>
+            <span className="basis-full text-xs text-muted-foreground">
+              {autoT(AUTOREGULATION_REASON_KEYS[recommendation.reason])}
+            </span>
+          </div>
+        )}
+
+        <details className="rounded-md border border-border bg-muted/10 px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium">{t('moreOptions')}</summary>
+          <div className="mt-3 space-y-4">
+            <div className="space-y-1">
+              <Label
+                htmlFor="quick-entry"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                {t('quickEntry')}
+              </Label>
+              <Input
+                id="quick-entry"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                value={quickEntry}
+                onChange={(event) => handleQuickEntry(event.target.value)}
+                placeholder={t('quickEntryExample', { unit: unitLabel(unit) })}
+                aria-invalid={quickEntryInvalid}
+              />
+              {quickEntryInvalid && (
+                <p className="text-xs text-muted-foreground">{t('quickEntryError')}</p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label
+                htmlFor="ai-parse"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                {t('describe')}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="ai-parse"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  value={aiText}
+                  onChange={(event) => {
+                    setAiText(event.target.value);
+                    if (aiHint) setAiHint(null);
+                  }}
+                  placeholder={t('strengthExample')}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleAiParse}
+                  disabled={aiParsing || aiText.trim() === ''}
+                  className="shrink-0"
+                >
+                  {aiParsing ? t('parsing') : t('parse')}
+                </Button>
+              </div>
+              {aiHint ? (
+                <p className="text-xs text-muted-foreground">{aiHint}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t('parseHelp')}</p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <WarmupCalculator
+                  weightKg={form.weight}
+                  unit={unit}
+                  barWeightsKg={loadConstraints?.barWeights}
+                />
+                <PlateCalculator
+                  weightKg={form.weight}
+                  unit={unit}
+                  barWeightsKg={loadConstraints?.barWeights}
+                  plateWeightsKg={loadConstraints?.plateWeights}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-4 text-sm">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Switch
+                    checked={form.isDropSet}
+                    disabled={
+                      returnRecommendation != null && returnRecommendation.mode !== 'normal'
+                    }
+                    onCheckedChange={(value) =>
+                      setForm((current) => ({ ...current, isDropSet: value }))
+                    }
+                  />
+                  <span>{t('dropSet')}</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Switch
+                    checked={form.isWarmup}
+                    onCheckedChange={(value) =>
+                      setForm((current) => ({ ...current, isWarmup: value }))
+                    }
+                  />
+                  <span>{t('warmup')}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label
+                htmlFor="set-notes"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                {t('note')}
+              </Label>
+              <Textarea
+                id="set-notes"
+                rows={2}
+                value={form.notes}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, notes: event.target.value }))
+                }
+                placeholder={t('notePlaceholder')}
+              />
+            </div>
+          </div>
+        </details>
+
+        <SetValuePicker
+          open={picker != null}
+          kind={picker ?? 'weight'}
+          value={picker === 'reps' ? form.reps : displayWeight}
+          options={picker === 'reps' ? repPickerOptions : weightPickerOptions}
+          unit={unit}
+          loadConstraints={loadConstraints}
+          onClose={() => setPicker(null)}
+          onChoose={(value) => {
+            setForm((current) => ({
+              ...current,
+              ...(picker === 'reps'
+                ? { reps: Math.max(1, Math.round(value)) }
+                : { weight: fromDisplayWeight(value, unit) }),
+            }));
+            setPicker(null);
+          }}
+        />
+      </div>
+    );
   }
 
   return (

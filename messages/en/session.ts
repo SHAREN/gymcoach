@@ -149,6 +149,7 @@ export const session = {
     warmup: 'Warmup',
     note: 'Quick note (optional)',
     notePlaceholder: 'e.g. wrist pain, reduced weight mid-set, felt easy',
+    moreOptions: 'More set options',
     logSet: 'Log the set',
   },
   summary: {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import { SetInput } from './set-input';
@@ -152,6 +152,36 @@ describe('SetInput first working set', () => {
       expect.objectContaining({ weight: 80, reps: 6, rir: 3, isDropSet: false }),
     );
     expect(screen.getByRole('switch', { name: /drop set/i })).toBeDisabled();
+  });
+});
+
+describe('SetInput embedded working row', () => {
+  it('puts load, reps, RIR and the only confirmation control in one compact row', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SetInput
+        embedded
+        programExercise={pe}
+        existingSets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const controls = screen.getByTestId('active-set-controls');
+    expect(within(controls).getByRole('button', { name: 'Load (kg)' })).toBeInTheDocument();
+    expect(within(controls).getByRole('button', { name: 'Reps' })).toHaveTextContent('8');
+    expect(within(controls).getByRole('combobox', { name: /RIR/ })).toHaveValue('2');
+    expect(within(controls).getByRole('button', { name: 'Log the set' })).toBeInTheDocument();
+    expect(screen.getByText('More set options')).toBeInTheDocument();
+
+    await user.selectOptions(within(controls).getByRole('combobox', { name: /RIR/ }), '1');
+    await user.click(within(controls).getByRole('button', { name: 'Log the set' }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ weight: 0, reps: 8, rir: 1 }));
   });
 });
 
