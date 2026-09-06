@@ -202,6 +202,13 @@ export const session = {
     warmupHelp:
       'Suggestions uniquement. Enregistrez les échauffements avec l’option Échauffement. Les charges sont arrondies vers le bas aux disques chargeables.',
   },
+  previousSession: {
+    title: 'Séance précédente · {date}',
+    equipment: 'Équipement : {name}',
+    reps: 'Répétitions',
+    history: 'Séance complète',
+    progress: 'Courbe de progression',
+  },
   setsList: {
     noneDuringRest:
       'Aucune série pour l’instant. Après le repos vous pourrez enregistrer la série {number}.',

@@ -20,6 +20,9 @@ interface Row {
   completedAt: Date;
   startedAt: Date; // the owning session's startedAt, for the include
   userId: string;
+  gymId: string | null;
+  gymEquipmentId: string | null;
+  equipmentNameSnapshot: string | null;
 }
 
 // Mutable store the tests load before each call.
@@ -36,9 +39,16 @@ function matchesWhere(r: Row, where: Record<string, unknown> | undefined): boole
     }
   }
   if ('isWarmup' in where && r.isWarmup !== where.isWarmup) return false;
+  if ('gymEquipmentId' in where && (r.gymEquipmentId ?? null) !== (where.gymEquipmentId ?? null))
+    return false;
   if ('session' in where) {
-    const sess = where.session as { userId?: string };
+    const sess = where.session as { userId?: string; gymId?: string | null };
     if (sess?.userId && r.userId !== sess.userId) return false;
+    if (
+      Object.prototype.hasOwnProperty.call(sess ?? {}, 'gymId') &&
+      (r.gymId ?? null) !== (sess.gymId ?? null)
+    )
+      return false;
   }
   return true;
 }
@@ -65,30 +75,32 @@ vi.mock('@/lib/db', () => ({
           if (!first) return null;
           return {
             ...first,
-            session: { startedAt: first.startedAt, id: first.sessionId },
+            session: { startedAt: first.startedAt, id: first.sessionId, gymId: first.gymId },
           };
         },
       ),
-      findMany: vi.fn(
-        async ({ where }: { where: Record<string, unknown> }) => {
-          return rows
-            .filter((r) => matchesWhere(r, where))
-            .sort((a, b) => a.setNumber - b.setNumber)
-            .map(({ weight, reps, rir, durationSec, distanceM, avgHr }) => ({
-              weight,
-              reps,
-              rir,
-              durationSec,
-              distanceM,
-              avgHr,
-            }));
-        },
-      ),
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+        return rows
+          .filter((r) => matchesWhere(r, where))
+          .sort((a, b) => a.setNumber - b.setNumber)
+          .map(({ weight, reps, rir, durationSec, distanceM, avgHr }) => ({
+            weight,
+            reps,
+            rir,
+            durationSec,
+            distanceM,
+            avgHr,
+          }));
+      }),
     },
   },
 }));
 
-import { getLastPerformances } from './last-performance';
+import {
+  buildEquipmentPerformanceTargets,
+  getLastPerformances,
+  getLastPerformancesForEquipmentTargets,
+} from './last-performance';
 
 const USER = 'user-1';
 
@@ -105,6 +117,9 @@ function row(p: Partial<Row> & { sessionId: string; exerciseId: string; setNumbe
     completedAt: new Date('2026-01-10T12:00:00Z'),
     startedAt: new Date('2026-01-10T12:00:00Z'),
     userId: USER,
+    gymId: null,
+    gymEquipmentId: null,
+    equipmentNameSnapshot: null,
     ...p,
   };
 }
@@ -129,11 +144,46 @@ describe('getLastPerformances', () => {
     const at = (d: number) => new Date(`2026-01-${String(d).padStart(2, '0')}T12:00:00Z`);
     rows = [
       // Older session, must be ignored once a newer one exists.
-      row({ sessionId: 'old', exerciseId: 'bench', setNumber: 1, weight: 80, reps: 8, completedAt: at(3), startedAt: at(3) }),
+      row({
+        sessionId: 'old',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 80,
+        reps: 8,
+        completedAt: at(3),
+        startedAt: at(3),
+      }),
       // Newer session: top load 100, reached for 5 then 6 reps.
-      row({ sessionId: 'new', exerciseId: 'bench', setNumber: 1, weight: 90, reps: 8, rir: 2, completedAt: at(9), startedAt: at(9) }),
-      row({ sessionId: 'new', exerciseId: 'bench', setNumber: 2, weight: 100, reps: 5, rir: 1, completedAt: at(9), startedAt: at(9) }),
-      row({ sessionId: 'new', exerciseId: 'bench', setNumber: 3, weight: 100, reps: 6, rir: 0, completedAt: at(9), startedAt: at(9) }),
+      row({
+        sessionId: 'new',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 90,
+        reps: 8,
+        rir: 2,
+        completedAt: at(9),
+        startedAt: at(9),
+      }),
+      row({
+        sessionId: 'new',
+        exerciseId: 'bench',
+        setNumber: 2,
+        weight: 100,
+        reps: 5,
+        rir: 1,
+        completedAt: at(9),
+        startedAt: at(9),
+      }),
+      row({
+        sessionId: 'new',
+        exerciseId: 'bench',
+        setNumber: 3,
+        weight: 100,
+        reps: 6,
+        rir: 0,
+        completedAt: at(9),
+        startedAt: at(9),
+      }),
     ];
 
     const perf = (await getLastPerformances(USER, ['bench'], null)).get('bench');
@@ -152,7 +202,14 @@ describe('getLastPerformances', () => {
   it('excludes warmup sets from the derivation', async () => {
     rows = [
       // A heavy warmup must not become maxWeight nor appear in `sets`.
-      row({ sessionId: 's', exerciseId: 'bench', setNumber: 1, weight: 200, reps: 1, isWarmup: true }),
+      row({
+        sessionId: 's',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 200,
+        reps: 1,
+        isWarmup: true,
+      }),
       row({ sessionId: 's', exerciseId: 'bench', setNumber: 2, weight: 90, reps: 8 }),
       row({ sessionId: 's', exerciseId: 'bench', setNumber: 3, weight: 95, reps: 6 }),
     ];
@@ -166,8 +223,24 @@ describe('getLastPerformances', () => {
   it('excludes the current session when excludeSessionId is given', async () => {
     const at = (d: number) => new Date(`2026-01-${String(d).padStart(2, '0')}T12:00:00Z`);
     rows = [
-      row({ sessionId: 'prev', exerciseId: 'bench', setNumber: 1, weight: 70, reps: 10, completedAt: at(5), startedAt: at(5) }),
-      row({ sessionId: 'curr', exerciseId: 'bench', setNumber: 1, weight: 110, reps: 3, completedAt: at(8), startedAt: at(8) }),
+      row({
+        sessionId: 'prev',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 70,
+        reps: 10,
+        completedAt: at(5),
+        startedAt: at(5),
+      }),
+      row({
+        sessionId: 'curr',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 110,
+        reps: 3,
+        completedAt: at(8),
+        startedAt: at(8),
+      }),
     ];
 
     // Excluding the current session, the previous one is the reference.
@@ -182,9 +255,36 @@ describe('getLastPerformances', () => {
   it('sums cardio duration/distance and AVERAGES heart rate over only the rows with HR', async () => {
     rows = [
       // 20:00 / 3 km / 150 bpm, 10:00 / 2 km / 170 bpm, 5:00 / 1 km / no HR.
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 1, weight: 0, reps: 1, durationSec: 1200, distanceM: 3000, avgHr: 150 }),
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 2, weight: 0, reps: 1, durationSec: 600, distanceM: 2000, avgHr: 170 }),
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 3, weight: 0, reps: 1, durationSec: 300, distanceM: 1000, avgHr: null }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 1,
+        weight: 0,
+        reps: 1,
+        durationSec: 1200,
+        distanceM: 3000,
+        avgHr: 150,
+      }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 2,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: 2000,
+        avgHr: 170,
+      }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 3,
+        weight: 0,
+        reps: 1,
+        durationSec: 300,
+        distanceM: 1000,
+        avgHr: null,
+      }),
     ];
 
     const perf = (await getLastPerformances(USER, ['running'], null)).get('running');
@@ -195,18 +295,65 @@ describe('getLastPerformances', () => {
 
   it('rounds the averaged heart rate to the nearest integer', async () => {
     rows = [
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 1, weight: 0, reps: 1, durationSec: 600, distanceM: 1000, avgHr: 150 }),
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 2, weight: 0, reps: 1, durationSec: 600, distanceM: 1000, avgHr: 151 }),
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 3, weight: 0, reps: 1, durationSec: 600, distanceM: 1000, avgHr: 152 }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 1,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: 1000,
+        avgHr: 150,
+      }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 2,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: 1000,
+        avgHr: 151,
+      }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 3,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: 1000,
+        avgHr: 152,
+      }),
     ];
     // (150 + 151 + 152) / 3 = 151, exact here; but also covers the rounding path.
-    expect((await getLastPerformances(USER, ['running'], null)).get('running')!.cardio!.avgHr).toBe(151);
+    expect((await getLastPerformances(USER, ['running'], null)).get('running')!.cardio!.avgHr).toBe(
+      151,
+    );
   });
 
   it('reports null avgHr when cardio rows recorded no heart rate (no divide-by-zero)', async () => {
     rows = [
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 1, weight: 0, reps: 1, durationSec: 1200, distanceM: 3000, avgHr: null }),
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 2, weight: 0, reps: 1, durationSec: 600, distanceM: 2000, avgHr: null }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 1,
+        weight: 0,
+        reps: 1,
+        durationSec: 1200,
+        distanceM: 3000,
+        avgHr: null,
+      }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 2,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: 2000,
+        avgHr: null,
+      }),
     ];
     const perf = (await getLastPerformances(USER, ['running'], null)).get('running');
     expect(perf!.cardio).toEqual({ durationSec: 1800, distanceM: 5000, avgHr: null });
@@ -214,9 +361,27 @@ describe('getLastPerformances', () => {
 
   it('treats a missing distance as zero when summing cardio distance', async () => {
     rows = [
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 1, weight: 0, reps: 1, durationSec: 1200, distanceM: 3000, avgHr: 140 }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 1,
+        weight: 0,
+        reps: 1,
+        durationSec: 1200,
+        distanceM: 3000,
+        avgHr: 140,
+      }),
       // duration-only row (no distance recorded) must contribute 0 to distance.
-      row({ sessionId: 'run', exerciseId: 'running', setNumber: 2, weight: 0, reps: 1, durationSec: 600, distanceM: null, avgHr: 160 }),
+      row({
+        sessionId: 'run',
+        exerciseId: 'running',
+        setNumber: 2,
+        weight: 0,
+        reps: 1,
+        durationSec: 600,
+        distanceM: null,
+        avgHr: 160,
+      }),
     ];
     const perf = (await getLastPerformances(USER, ['running'], null)).get('running');
     expect(perf!.cardio).toEqual({ durationSec: 1800, distanceM: 3000, avgHr: 150 });
@@ -248,5 +413,75 @@ describe('getLastPerformances', () => {
     expect(map.get('bench')!.maxWeight).toBe(100);
     expect(map.get('squat')!.maxWeight).toBe(140);
     expect(map.has('deadlift')).toBe(false); // no history -> absent
+  });
+});
+
+describe('equipment-scoped last performance', () => {
+  beforeEach(() => {
+    rows = [];
+  });
+
+  it('builds one target per linked machine and a null target when no machine is linked', () => {
+    expect(
+      buildEquipmentPerformanceTargets(['bench', 'curl'], {
+        id: 'gym-1',
+        equipment: [
+          { id: 'machine-a', exerciseLinks: [{ exerciseId: 'bench' }] },
+          { id: 'machine-b', exerciseLinks: [{ exerciseId: 'bench' }] },
+        ],
+      }),
+    ).toEqual([
+      { exerciseId: 'bench', gymId: 'gym-1', gymEquipmentId: 'machine-a' },
+      { exerciseId: 'bench', gymId: 'gym-1', gymEquipmentId: 'machine-b' },
+      { exerciseId: 'curl', gymId: 'gym-1', gymEquipmentId: null },
+    ]);
+  });
+
+  it('keeps an older machine A performance visible when machine B was used more recently', async () => {
+    const old = new Date('2026-01-05T12:00:00Z');
+    const recent = new Date('2026-01-09T12:00:00Z');
+    rows = [
+      row({
+        sessionId: 'a-old',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 80,
+        reps: 8,
+        gymId: 'gym-1',
+        gymEquipmentId: 'machine-a',
+        equipmentNameSnapshot: 'Machine A',
+        completedAt: old,
+        startedAt: old,
+      }),
+      row({
+        sessionId: 'b-new',
+        exerciseId: 'bench',
+        setNumber: 1,
+        weight: 120,
+        reps: 5,
+        gymId: 'gym-1',
+        gymEquipmentId: 'machine-b',
+        equipmentNameSnapshot: 'Machine B',
+        completedAt: recent,
+        startedAt: recent,
+      }),
+    ];
+
+    const performances = await getLastPerformancesForEquipmentTargets(
+      USER,
+      [
+        { exerciseId: 'bench', gymId: 'gym-1', gymEquipmentId: 'machine-a' },
+        { exerciseId: 'bench', gymId: 'gym-1', gymEquipmentId: 'machine-b' },
+      ],
+      null,
+    );
+
+    const a = performances.find((performance) => performance.gymEquipmentId === 'machine-a');
+    const b = performances.find((performance) => performance.gymEquipmentId === 'machine-b');
+    expect(a?.sessionId).toBe('a-old');
+    expect(a?.maxWeight).toBe(80);
+    expect(a?.equipmentName).toBe('Machine A');
+    expect(b?.sessionId).toBe('b-new');
+    expect(b?.maxWeight).toBe(120);
   });
 });
