@@ -38,7 +38,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M12 | Program revisions/design context/validation | DONE | Added external-agent program-design context, deterministic primary-muscle validation, confirmed inactive revision lineage/provenance, and backup-safe lineage restore; no new embedded LLM methodology or generator path. |
 | M13 | Multi-muscle exercise load profile | DONE | Added server-owned versioned load profiles, collision-safe full-fingerprint provenance, direct/indirect/equivalent deterministic aggregation for MCP/history/program design, and backup v8 trust re-derivation; existing upstream progress/stats UI remains unchanged. |
 | M14 | Permanent free-weight system profiles | DONE | Permanent Dumbbells/Barbell profiles, plate pools, structured load facts, backup v9, MCP/REST/UI integration, and full green-gate verified. |
-| M15 | Final semantic diff audit + full gate | TODO | Confirm no approved non-Android product behavior was missed. |
+| M15 | Final semantic diff audit + full gate | DONE | Approved non-Android parity is exhausted; committed candidate passed unit/integration/E2E/typecheck/lint/build gates. |
 
 ## Already upstream / do not re-port
 
