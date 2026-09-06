@@ -106,103 +106,85 @@ describe('ExerciseCard readiness explainer', () => {
   });
 });
 
-// Issue #224: the exercise's own notes/cue is surfaced as an always-visible
-// muted line under the header (the form reminder while logging), distinct from
-// the per-set quick-note field and the collapsible program-notes block.
-describe('ExerciseCard exercise cue', () => {
-  const CUE = 'keep elbows tucked, pause 1s at the bottom';
-
-  function renderWithExoNotes(notes: string | null, category: Exercise['category'] = 'COMPOUND') {
-    const exoWithNotes: Exercise = { ...exo, notes, category };
-    const peWithNotes: ProgramExercise & { exercise: Exercise } = {
-      ...pe,
-      exercise: exoWithNotes,
+describe('ExerciseCard compact session presentation', () => {
+  it('does not duplicate exercise technique notes, muscle/category labels, or prior-history details', () => {
+    const compactExercise: Exercise = {
+      ...exo,
+      notes: 'Technique cue belongs on the exercise detail page',
     };
-    return render(
+    render(
       <ExerciseCard
-        programExercise={peWithNotes}
+        programExercise={{ ...pe, exercise: compactExercise }}
         lastPerformance={lastPerf}
         readiness={null}
         deloadActive={false}
         unit="KG"
       />,
     );
-  }
 
-  it('shows the cue line when the exercise has notes', () => {
-    renderWithExoNotes(CUE);
-    expect(screen.getByText(CUE)).toBeInTheDocument();
-  });
-
-  it('shows nothing (no empty element) when the exercise has no notes', () => {
-    renderWithExoNotes(null);
-    expect(screen.queryByText(CUE)).not.toBeInTheDocument();
-    // No collapsible notes block either when neither program nor exercise notes
-    // exist (this card's pe.notes is null).
-    expect(screen.queryByText(/Notes \/ mind-muscle cue/)).not.toBeInTheDocument();
-  });
-
-  it('shows the cue for a cardio exercise too', () => {
-    renderWithExoNotes(CUE, 'CARDIO');
-    expect(screen.getByText(CUE)).toBeInTheDocument();
-  });
-});
-
-// Issue #176: a cardio exercise with prior history shows a "Last session"
-// reference (duration / distance / avgHr) instead of a load. The strength
-// branch above pins that strength cards are unchanged.
-const cardioExo: Exercise = { ...exo, id: 'c1', name: 'Running', category: 'CARDIO' };
-const cardioPe: ProgramExercise & { exercise: Exercise } = {
-  ...pe,
-  exerciseId: 'c1',
-  exercise: cardioExo,
-};
-
-function renderCardioCard(cardio: SerializedLastPerformance['cardio'] | undefined) {
-  const lastPerformance: SerializedLastPerformance | undefined =
-    cardio === undefined
-      ? undefined
-      : {
-          sessionStartedAt: new Date().toISOString(),
-          sets: [{ weight: 0, reps: 1, rir: null }],
-          maxWeight: 0,
-          repsAtMaxWeight: 1,
-          cardio,
-        };
-  return render(
-    <ExerciseCard
-      programExercise={cardioPe}
-      lastPerformance={lastPerformance}
-      readiness={null}
-      deloadActive={false}
-      unit="KG"
-    />,
-  );
-}
-
-describe('ExerciseCard cardio last-performance', () => {
-  it('shows duration, distance and avgHr for a cardio exercise with history', () => {
-    renderCardioCard({ durationSec: 1800, distanceM: 5000, avgHr: 152 });
-    expect(screen.getByText(/Last session/)).toBeInTheDocument();
-    expect(screen.getByText('30:00 · 5 km · 152 bpm')).toBeInTheDocument();
-  });
-
-  it('omits distance and bpm for a duration-only cardio set', () => {
-    renderCardioCard({ durationSec: 1500, distanceM: 0, avgHr: null });
-    expect(screen.getByText('25:00')).toBeInTheDocument();
-    expect(screen.queryByText(/bpm/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/km/)).not.toBeInTheDocument();
-  });
-
-  it('shows nothing (no crash) for a cardio exercise with no prior history', () => {
-    renderCardioCard(undefined);
+    expect(screen.getByRole('heading', { name: 'Squat' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Technique cue belongs on the exercise detail page'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Quadriceps')).not.toBeInTheDocument();
+    expect(screen.queryByText('Compound')).not.toBeInTheDocument();
     expect(screen.queryByText(/Last session/)).not.toBeInTheDocument();
   });
 
-  it('shows nothing when the last session for the exercise had no cardio set', () => {
-    // Defensive: a strength record on a cardio-categorized card must not render
-    // a misleading load line; the cardio branch gates on the cardio totals.
-    renderCardioCard(null);
-    expect(screen.queryByText(/Last session/)).not.toBeInTheDocument();
+  it('shows only a meaningful program note and hides importer-only metadata', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup();
+    const meaningful = {
+      ...pe,
+      notes:
+        'Alpha prescription: 4 sets; 10 reps\nKeep elbows tucked and stop if the wrist hurts.\nAlpha metadata: Superset 2',
+    };
+    const view = render(
+      <ExerciseCard
+        programExercise={meaningful}
+        lastPerformance={lastPerf}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /notes/i }));
+    expect(screen.getByText('Keep elbows tucked and stop if the wrist hurts.')).toBeInTheDocument();
+    expect(screen.queryByText(/Alpha prescription/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Alpha metadata/)).not.toBeInTheDocument();
+
+    view.rerender(
+      <ExerciseCard
+        programExercise={{ ...pe, notes: '4 sets x 8 reps; RIR 2; rest 90' }}
+        lastPerformance={lastPerf}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /notes/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps gym context and unavailable state visible because they affect the live workout', () => {
+    render(
+      <ExerciseCard
+        programExercise={pe}
+        lastPerformance={lastPerf}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        gymName="Main gym"
+        loadConstraints={{
+          equipmentType: 'BARBELL',
+          isAvailable: false,
+          dumbbellWeights: [],
+          plateWeights: [],
+          barWeights: [],
+          weightOptions: [],
+        }}
+      />,
+    );
+    expect(screen.getByText('Main gym')).toBeInTheDocument();
+    expect(screen.getByText(/not available/i)).toBeInTheDocument();
   });
 });

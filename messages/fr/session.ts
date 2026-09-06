@@ -79,6 +79,7 @@ export const session = {
   },
   autoregulation: {
     nextSet: 'Série suivante automatique',
+    apply: 'Appliquer la recommandation',
     reasons: {
       'hold-load': 'La série précédente a atteint la cible ; gardez la même charge.',
       'adjust-reps': 'Gardez la charge et ajustez les répétitions pour préserver le RIR cible.',

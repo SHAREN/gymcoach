@@ -112,7 +112,6 @@ export function SetInput({
     lastPerformance,
     readiness,
     deloadActive,
-    recommendation,
     returnRecommendation,
     loadConstraints,
   );
@@ -145,7 +144,6 @@ export function SetInput({
         lastPerformance,
         readiness,
         deloadActive,
-        recommendation,
         returnRecommendation,
         loadConstraints,
       ),
@@ -206,6 +204,22 @@ export function SetInput({
       ...(form.reps > 0 ? [form.reps] : []),
     ]),
   ].sort((a, b) => a - b);
+
+  const recommendationMatchesDraft =
+    recommendation != null &&
+    form.weight === recommendation.weight &&
+    form.reps === recommendation.reps &&
+    form.rir === recommendation.rir;
+
+  function applyRecommendation() {
+    if (!recommendation) return;
+    setForm((current) => ({
+      ...current,
+      weight: recommendation.weight,
+      reps: recommendation.reps,
+      rir: recommendation.rir,
+    }));
+  }
 
   function adjustWeight(delta: number) {
     setForm((f) => ({
@@ -368,6 +382,16 @@ export function SetInput({
             <p className="text-xs text-muted-foreground">
               {autoT(`reasons.${recommendation.reason}`)}
             </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="mt-2"
+              onClick={applyRecommendation}
+              disabled={recommendationMatchesDraft}
+            >
+              {autoT('apply')}
+            </Button>
           </div>
         )}
         {/* Opt-in AI free-text parse (issue #210): fills the form below from a
@@ -744,7 +768,6 @@ function computeInitial(
   lastPerf: SerializedLastPerformance | undefined,
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
-  recommendation: IntraSetRecommendation | null = null,
   returnRecommendation: ReturnRecommendation | null = null,
   loadConstraints: GymLoadConstraints | null = null,
 ): FormState {
@@ -773,9 +796,9 @@ function computeInitial(
   const lastInSession = existingSets.filter((s) => !s.isWarmup).at(-1);
   if (lastInSession) {
     return {
-      weight: recommendation?.weight ?? lastInSession.weight,
-      reps: recommendation?.reps ?? lastInSession.reps,
-      rir: recommendation?.rir ?? lastInSession.rir,
+      weight: lastInSession.weight,
+      reps: lastInSession.reps,
+      rir: lastInSession.rir,
       durationInput: '',
       distanceInput: '',
       isWarmup: false,
