@@ -32,14 +32,16 @@ const exercises = [
 ] as never;
 
 describe('SessionExerciseStrip', () => {
-  it('shows current/completed exercises and directly switches inactive items', () => {
+  it('shows current/completed exercises, switches inactive items, and opens the active item', () => {
     const onSelect = vi.fn();
+    const onOpen = vi.fn();
     render(
       <SessionExerciseStrip
         exercises={exercises}
         currentIndex={0}
         completedExerciseIds={new Set(['exercise-1'])}
         onSelect={onSelect}
+        onOpen={onOpen}
       />,
     );
 
@@ -59,16 +61,19 @@ describe('SessionExerciseStrip', () => {
     expect(onSelect).toHaveBeenCalledWith(1);
     fireEvent.click(active);
     expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledWith(exercises[0]);
   });
 
-  it('blocks direct switching while disabled', () => {
+  it('blocks direct switching while disabled but still opens the active item', () => {
     const onSelect = vi.fn();
+    const onOpen = vi.fn();
     render(
       <SessionExerciseStrip
         exercises={exercises}
         currentIndex={0}
         completedExerciseIds={new Set()}
         onSelect={onSelect}
+        onOpen={onOpen}
         disabled
       />,
     );
@@ -77,6 +82,10 @@ describe('SessionExerciseStrip', () => {
     expect(inactive).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(inactive);
     expect(onSelect).not.toHaveBeenCalled();
+    const active = screen.getByRole('button', { name: '1. Squats · Barbell' });
+    expect(active).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(active);
+    expect(onOpen).toHaveBeenCalledWith(exercises[0]);
   });
 
   it('connects adjacent exercises in the same superset', () => {
@@ -86,6 +95,7 @@ describe('SessionExerciseStrip', () => {
         currentIndex={0}
         completedExerciseIds={new Set()}
         onSelect={vi.fn()}
+        onOpen={vi.fn()}
       />,
     );
 

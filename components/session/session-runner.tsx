@@ -54,6 +54,7 @@ import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
 import type { EquipmentReturnRecommendation } from '@/lib/return-to-training-history';
+import { initialSessionExerciseIndex } from '@/lib/session-navigation';
 
 export interface SerializedLastPerformance {
   sessionStartedAt: string;
@@ -96,6 +97,7 @@ type SessionRunnerProps = {
   // step down and the runner shows a "Deload week" badge.
   deloadActive: boolean;
   unit: WeightUnit;
+  initialProgramExerciseId?: string | null;
 };
 
 type Mode =
@@ -117,6 +119,7 @@ export function SessionRunner({
   readiness,
   deloadActive,
   unit,
+  initialProgramExerciseId = null,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -161,7 +164,9 @@ export function SessionRunner({
   );
 
   const [hydrated, setHydrated] = useState(false);
-  const [currentIdx, setCurrentIdx] = useState(0);
+  const [currentIdx, setCurrentIdx] = useState(() =>
+    initialSessionExerciseIndex(programExercises, initialProgramExerciseId),
+  );
   const [mode, setMode] = useState<Mode>({ kind: 'input' });
   const [closing, setClosing] = useState(false);
   // Readiness auto-regulation can be turned off in settings (issue #61). The
@@ -585,6 +590,12 @@ export function SessionRunner({
           onSelect={(index) => {
             setCurrentIdx(index);
             setMode({ kind: 'input' });
+          }}
+          onOpen={(programExercise) => {
+            const returnTo = `/session/${session.id}?programExerciseId=${encodeURIComponent(programExercise.id)}`;
+            router.push(
+              `/exercises/${programExercise.exerciseId}?returnTo=${encodeURIComponent(returnTo)}`,
+            );
           }}
         />
       </div>
