@@ -126,9 +126,12 @@ test('a long break activates a conservative first working set without replacing 
   const notice = page.getByTestId('return-to-training-notice');
   await expect(notice).toBeVisible();
   await expect(notice).toContainText('Sets today: 1. Target RIR: 4.');
-  await expect(notice).toContainText('Conservative starting load: 40 kg.');
+  // The old sets were recorded without a physical equipment id. Once M14
+  // materializes a managed bar, those loads are non-comparable: they may prove
+  // a long break, but they must not become a load anchor for this bar. Calibrate
+  // from the selected bar's safe floor instead.
+  await expect(notice).toContainText('Conservative starting load: 20 kg.');
 
-  const loadInput = page.locator('input[type="number"]').first();
-  await expect(loadInput).toHaveValue('40');
+  await expect(page.getByRole('button', { name: 'Load (kg)', exact: true })).toHaveText('20');
   await expect(page.getByRole('switch', { name: 'Drop set' })).toBeDisabled();
 });

@@ -33,6 +33,42 @@ export const settings = {
     dumbbells: 'Haltères (kg)',
     plates: 'Disques disponibles (kg, par côté)',
     bars: 'Poids des barres (kg)',
+    initialFreeWeightsHelp:
+      'Ces valeurs servent de point de départ aux profils permanents Haltères et Barre lors de la création de la salle.',
+    systemProfiles: {
+      title: 'Profils permanents de charges libres',
+      description:
+        'Les haltères et les barres sont gérés comme des systèmes permanents de la salle, pas comme des machines indépendantes.',
+      systemBadge: 'système',
+      loading: 'Chargement des profils permanents…',
+      loadError: 'Impossible de charger les profils permanents de charges libres.',
+      saved: 'Profil permanent enregistré.',
+      saveError: 'Impossible d’enregistrer ce profil. Vérifiez les charges et les quantités de disques.',
+      supportedExercises: 'Exercices pris en charge par ce système',
+      dumbbells: {
+        title: 'Haltères',
+        help: 'Saisissez toutes les charges d’haltères réellement disponibles dans cette salle.',
+        weights: 'Poids d’haltères disponibles (kg)',
+      },
+      barbell: {
+        title: 'Barre',
+        help: 'Les familles de grand et petit diamètre restent séparées afin de ne jamais mélanger des disques incompatibles.',
+        bars: 'Poids des barres (kg)',
+        plates: 'Disques et quantités physiques',
+        platesHelp: 'Format : 20x4, 10x2, 5x?. Utilisez ? si le diamètre est connu mais pas la quantité.',
+        loadingSides: 'Côtés chargés',
+      },
+      families: {
+        LARGE: {
+          title: 'Famille grand diamètre',
+          description: 'Barres olympiques/grands manchons et disques compatibles.',
+        },
+        SMALL: {
+          title: 'Famille petit diamètre',
+          description: 'Barres à petit manchon et ensemble séparé de disques compatibles.',
+        },
+      },
+    },
     exerciseAvailability: 'Exercices et machines',
     exerciseAvailabilityDescription:
       'Signalez le matériel manquant. Pour les machines et poulies, saisissez si vous voulez chaque charge sélectionnable.',

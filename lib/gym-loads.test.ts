@@ -3,6 +3,8 @@ import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
   constructibleBarbellWeights,
+  constructiblePlateLoadedWeights,
+  resolveEquipmentLoadProfile,
 } from '@/lib/gym-loads';
 
 describe('saved gym load constraints', () => {
@@ -57,5 +59,58 @@ describe('saved gym load constraints', () => {
 
   it('falls back to the calculated load when no inventory is configured', () => {
     expect(constrainGymWeight(17.5, 20, { equipmentType: 'DUMBBELL' })).toBe(17.5);
+  });
+});
+
+describe('structured equipment load profiles', () => {
+  it('never infers attainable loads when configuration is explicitly unknown', () => {
+    const resolved = resolveEquipmentLoadProfile({
+      equipmentId: 'hammer-1',
+      equipmentName: 'Hammer upper pulldown',
+      equipmentType: 'MACHINE',
+      loadConfigurationKnown: false,
+      loadType: 'NONE',
+      weightOptions: [],
+      selectedLoadMultiplier: 1,
+      baseLoadKg: 0,
+      loadingSides: 2,
+      platePoolId: null,
+    });
+
+    expect(resolved.attainableLoads).toEqual([]);
+    expect(resolved.inventoryPrecision).toBe('UNKNOWN_CONFIG');
+  });
+
+  it('honors finite plate counts instead of treating them as unlimited', () => {
+    const resolved = constructiblePlateLoadedWeights(
+      20,
+      2,
+      [
+        { weightKg: 5, quantity: 2 },
+        { weightKg: 10, quantity: 2 },
+      ],
+      80,
+    );
+
+    expect(resolved.inventoryPrecision).toBe('KNOWN');
+    expect(resolved.attainableLoads).toContain(20);
+    expect(resolved.attainableLoads).toContain(30);
+    expect(resolved.attainableLoads).toContain(40);
+    expect(resolved.attainableLoads).toContain(50);
+    expect(resolved.attainableLoads).not.toContain(60);
+  });
+
+  it('preserves unknown plate quantities as uncertainty without inventing a count', () => {
+    const resolved = constructiblePlateLoadedWeights(
+      20,
+      2,
+      [{ weightKg: 5, quantity: null }],
+      45,
+    );
+
+    expect(resolved.inventoryPrecision).toBe('UNKNOWN_QUANTITIES');
+    expect(resolved.attainableLoads).toContain(20);
+    expect(resolved.attainableLoads).toContain(30);
+    expect(resolved.attainableLoads).toContain(40);
   });
 });

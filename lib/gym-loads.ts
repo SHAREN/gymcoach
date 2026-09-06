@@ -1,4 +1,29 @@
-import type { EquipmentType } from '@/lib/prisma-client';
+import type { EquipmentLoadType, EquipmentType } from '@/lib/prisma-client';
+
+export interface PlateInventoryItem {
+  weightKg: number;
+  quantity: number | null;
+}
+
+export interface EquipmentLoadProfile {
+  equipmentId: string;
+  equipmentName: string;
+  equipmentType: EquipmentType;
+  loadConfigurationKnown: boolean;
+  loadType: EquipmentLoadType;
+  weightOptions: number[];
+  selectedLoadMultiplier: number;
+  baseLoadKg: number;
+  loadingSides: number;
+  platePoolId: string | null;
+  platePoolName?: string | null;
+  plates?: PlateInventoryItem[];
+}
+
+export interface ResolvedEquipmentLoadProfile extends EquipmentLoadProfile {
+  attainableLoads: number[];
+  inventoryPrecision: 'KNOWN' | 'UNKNOWN_QUANTITIES' | 'NOT_APPLICABLE' | 'UNKNOWN_CONFIG';
+}
 
 export interface GymLoadConstraints {
   equipmentType: EquipmentType;
@@ -7,6 +32,100 @@ export interface GymLoadConstraints {
   plateWeights?: number[];
   barWeights?: number[];
   weightOptions?: number[];
+  equipmentId?: string | null;
+  equipmentOptions?: ResolvedEquipmentLoadProfile[];
+}
+
+export function resolveEquipmentType(
+  equipmentType: EquipmentType,
+  _exerciseName: string,
+): EquipmentType {
+  // Do not infer a canonical equipment type from exercise names here. Name and
+  // free-text semantics belong to the external MCP agent; GymCoach consumes
+  // the explicit canonical field only.
+  return equipmentType;
+}
+
+export function resolveEquipmentLoadProfile(
+  profile: EquipmentLoadProfile,
+  targetCeiling = 500,
+): ResolvedEquipmentLoadProfile {
+  if (!profile.loadConfigurationKnown) {
+    return { ...profile, attainableLoads: [], inventoryPrecision: 'UNKNOWN_CONFIG' };
+  }
+  if (profile.loadType === 'FIXED' || profile.loadType === 'SELECTORIZED') {
+    return {
+      ...profile,
+      attainableLoads: uniquePositive(profile.weightOptions),
+      inventoryPrecision: 'NOT_APPLICABLE',
+    };
+  }
+  if (profile.loadType === 'PLATE_LOADED') {
+    const resolved = constructiblePlateLoadedWeights(
+      profile.baseLoadKg,
+      profile.loadingSides,
+      profile.plates ?? [],
+      targetCeiling,
+    );
+    return { ...profile, ...resolved };
+  }
+  return { ...profile, attainableLoads: [], inventoryPrecision: 'NOT_APPLICABLE' };
+}
+
+export function constructiblePlateLoadedWeights(
+  baseLoadKg: number,
+  loadingSides: number,
+  plates: PlateInventoryItem[],
+  targetCeiling: number,
+): Pick<ResolvedEquipmentLoadProfile, 'attainableLoads' | 'inventoryPrecision'> {
+  const base = round(Math.max(0, baseLoadKg));
+  const sides = Number.isInteger(loadingSides) && loadingSides > 0 ? loadingSides : 2;
+  const normalized = [
+    ...new Map(
+      plates
+        .filter((item) => Number.isFinite(item.weightKg) && item.weightKg > 0)
+        .map((item) => [
+          round(item.weightKg),
+          { weightKg: round(item.weightKg), quantity: item.quantity },
+        ]),
+    ).values(),
+  ].sort((a, b) => a.weightKg - b.weightKg);
+  if (normalized.length === 0) {
+    return { attainableLoads: base > 0 ? [base] : [], inventoryPrecision: 'KNOWN' };
+  }
+
+  const hasUnknownQuantity = normalized.some((item) => item.quantity == null);
+  const maxPlate = normalized.at(-1)?.weightKg ?? 0;
+  const maxTotal = Math.min(5000, Math.max(base, targetCeiling + maxPlate * sides * 4 + 50));
+  const maxAddedUnits = Math.max(0, toUnits(maxTotal - base));
+  const reachable = new Uint8Array(maxAddedUnits + 1);
+  reachable[0] = 1;
+
+  for (const item of normalized) {
+    const increment = toUnits(item.weightKg * sides);
+    if (increment <= 0) continue;
+    if (item.quantity == null) {
+      for (let current = 0; current + increment <= maxAddedUnits; current += 1) {
+        if (reachable[current]) reachable[current + increment] = 1;
+      }
+      continue;
+    }
+    const usableGroups = Math.floor(Math.max(0, item.quantity) / sides);
+    for (let copy = 0; copy < usableGroups; copy += 1) {
+      for (let current = maxAddedUnits - increment; current >= 0; current -= 1) {
+        if (reachable[current]) reachable[current + increment] = 1;
+      }
+    }
+  }
+
+  const attainableLoads: number[] = [];
+  for (let added = 0; added <= maxAddedUnits; added += 1) {
+    if (reachable[added]) attainableLoads.push(round(base + added / 100));
+  }
+  return {
+    attainableLoads,
+    inventoryPrecision: hasUnknownQuantity ? 'UNKNOWN_QUANTITIES' : 'KNOWN',
+  };
 }
 
 export function gymWeightOptions(
@@ -14,6 +133,15 @@ export function gymWeightOptions(
   referenceWeight: number,
 ): number[] {
   if (!constraints || constraints.isAvailable === false) return [];
+
+  if (constraints.equipmentOptions?.length) {
+    const selected = constraints.equipmentId
+      ? constraints.equipmentOptions.find((item) => item.equipmentId === constraints.equipmentId)
+      : constraints.equipmentOptions.length === 1
+        ? constraints.equipmentOptions[0]
+        : null;
+    return selected?.attainableLoads ?? [];
+  }
 
   switch (constraints.equipmentType) {
     case 'DUMBBELL':
@@ -43,6 +171,12 @@ export function constrainGymWeight(
 ): number {
   if (!constraints || constraints.isAvailable === false || targetWeight <= 0) {
     return round(targetWeight);
+  }
+
+  if (constraints.equipmentOptions?.length) {
+    const normalized = gymWeightOptions(constraints, Math.max(targetWeight, referenceWeight));
+    if (normalized.length === 0) return round(targetWeight);
+    return selectDirectionalWeight(normalized, targetWeight, referenceWeight);
   }
 
   let options: number[] = [];

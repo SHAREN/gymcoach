@@ -63,6 +63,7 @@ async function seed() {
       equipmentType: 'CABLE',
       manufacturer: 'HistoryCo',
       modelName: 'Frozen-1',
+      loadType: 'SELECTORIZED',
       weightOptions: [10, 20, 30],
       exerciseLinks: { create: { exerciseId: exercise.id } },
     },
@@ -235,11 +236,20 @@ describe('completed workout strength set editor API', () => {
       gymEquipmentId: equipment.id,
       equipmentNameSnapshot: expect.stringContaining('Cable station'),
       equipmentLoadSnapshot: {
-        version: 1,
+        version: 2,
         equipmentType: 'CABLE',
         manufacturer: 'HistoryCo',
         modelName: 'Frozen-1',
-        weightOptions: [10, 20, 30],
+        loadConfigurationKnown: true,
+        loadFacts: {
+          state: 'KNOWN',
+          loadType: 'SELECTORIZED',
+          weightOptions: [10, 20, 30],
+          selectedLoadMultiplier: 1,
+          baseLoadKg: 0,
+          loadingSides: 2,
+          platePool: null,
+        },
       },
     });
     expect(new Date(created.completedAt).getTime()).toBe(finishedAt.getTime());

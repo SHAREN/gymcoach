@@ -41,6 +41,7 @@ async function seed() {
       equipmentType: 'CABLE',
       manufacturer: 'GymCo',
       modelName: 'Cable-1',
+      loadType: 'SELECTORIZED',
       weightOptions: [10, 20, 30],
       exerciseLinks: { create: { exerciseId: exercise.id } },
     },
@@ -92,11 +93,20 @@ describe('set equipment history', () => {
       gymEquipmentId: equipment.id,
       equipmentNameSnapshot: 'Cable station original',
       equipmentLoadSnapshot: {
-        version: 1,
+        version: 2,
         equipmentType: 'CABLE',
         manufacturer: 'GymCo',
         modelName: 'Cable-1',
-        weightOptions: [10, 20, 30],
+        loadConfigurationKnown: true,
+        loadFacts: {
+          state: 'KNOWN',
+          loadType: 'SELECTORIZED',
+          weightOptions: [10, 20, 30],
+          selectedLoadMultiplier: 1,
+          baseLoadKg: 0,
+          loadingSides: 2,
+          platePool: null,
+        },
       },
     });
 
@@ -113,10 +123,11 @@ describe('set equipment history', () => {
     expect(afterDelete.gymEquipmentId).toBeNull();
     expect(afterDelete.equipmentNameSnapshot).toBe('Cable station original');
     expect(afterDelete.equipmentLoadSnapshot).toMatchObject({
-      version: 1,
+      version: 2,
       equipmentType: 'CABLE',
       manufacturer: 'GymCo',
       modelName: 'Cable-1',
+      loadFacts: { state: 'KNOWN', loadType: 'SELECTORIZED' },
     });
   });
 

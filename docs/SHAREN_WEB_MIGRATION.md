@@ -1,5 +1,7 @@
 # SHAREN web migration
 
+Persistent implementation/handoff journal: [`SHAREN_WEB_MIGRATION_LOG.md`](SHAREN_WEB_MIGRATION_LOG.md). Read it first when continuing from another thread.
+
 Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julien-Au/gymcoach `main`, preserving useful SHAREN web/backend/MCP behavior while leaving Android/Huawei/mobile-client code out of this branch.
 
 ## Invariants
@@ -35,7 +37,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M11 | Structured coaching profile | DONE | Added versioned UNKNOWN/KNOWN/NOT_APPLICABLE coaching facts with atomic partial profile writes, web settings UI, backup/restore and bounded MCP/coach context; no program-design policy is applied here. |
 | M12 | Program revisions/design context/validation | DONE | Added external-agent program-design context, deterministic primary-muscle validation, confirmed inactive revision lineage/provenance, and backup-safe lineage restore; no new embedded LLM methodology or generator path. |
 | M13 | Multi-muscle exercise load profile | DONE | Added server-owned versioned load profiles, collision-safe full-fingerprint provenance, direct/indirect/equivalent deterministic aggregation for MCP/history/program design, and backup v8 trust re-derivation; existing upstream progress/stats UI remains unchanged. |
-| M14 | Permanent free-weight system profiles | TODO | Re-check against current upstream equipment UX first. |
+| M14 | Permanent free-weight system profiles | DONE | Permanent Dumbbells/Barbell profiles, plate pools, structured load facts, backup v9, MCP/REST/UI integration, and full green-gate verified. |
 | M15 | Final semantic diff audit + full gate | TODO | Confirm no approved non-Android product behavior was missed. |
 
 ## Already upstream / do not re-port

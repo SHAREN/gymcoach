@@ -32,7 +32,26 @@ export async function resolveSetEquipmentSnapshot(
       equipmentType: true,
       manufacturer: true,
       modelName: true,
+      loadConfigurationKnown: true,
+      loadType: true,
       weightOptions: true,
+      selectedLoadMultiplier: true,
+      baseLoadKg: true,
+      platePoolId: true,
+      loadingSides: true,
+      systemBarbellFamily: true,
+      platePool: {
+        select: {
+          id: true,
+          name: true,
+          compatibilityKey: true,
+          systemBarbellFamily: true,
+          plates: {
+            orderBy: { weightKg: 'asc' },
+            select: { weightKg: true, quantity: true },
+          },
+        },
+      },
     },
   });
   // Equipment is optional decoration on a training set. A stale/deleted,
@@ -42,8 +61,32 @@ export async function resolveSetEquipmentSnapshot(
     return emptySetEquipmentSnapshot();
   }
 
+  const loadFacts: Prisma.InputJsonObject = equipment.loadConfigurationKnown
+    ? {
+        state: 'KNOWN',
+        loadType: equipment.loadType,
+        weightOptions: equipment.weightOptions,
+        selectedLoadMultiplier: equipment.selectedLoadMultiplier,
+        baseLoadKg: equipment.baseLoadKg,
+        loadingSides: equipment.loadingSides,
+        platePool:
+          equipment.platePool == null
+            ? null
+            : {
+                id: equipment.platePool.id,
+                name: equipment.platePool.name,
+                compatibilityKey: equipment.platePool.compatibilityKey,
+                systemBarbellFamily: equipment.platePool.systemBarbellFamily,
+                plates: equipment.platePool.plates.map((plate) => ({
+                  weightKg: plate.weightKg,
+                  quantity: plate.quantity,
+                })),
+              },
+      }
+    : { state: 'UNKNOWN' };
+
   const snapshot = {
-    version: 1,
+    version: 2,
     // Keep the original identity in the immutable snapshot too. The nullable
     // FK may later be cleared by ON DELETE SET NULL; replay can still prove
     // which physical item the original write referenced.
@@ -51,7 +94,9 @@ export async function resolveSetEquipmentSnapshot(
     equipmentType: equipment.equipmentType,
     manufacturer: equipment.manufacturer,
     modelName: equipment.modelName,
-    weightOptions: equipment.weightOptions,
+    loadConfigurationKnown: equipment.loadConfigurationKnown,
+    systemBarbellFamily: equipment.systemBarbellFamily,
+    loadFacts,
   } satisfies Prisma.InputJsonObject;
 
   return {

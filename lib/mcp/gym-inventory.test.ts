@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/db', () => ({
   db: {
     user: { findUnique: vi.fn() },
-    gym: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    gym: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      findFirstOrThrow: vi.fn(),
+      update: vi.fn(),
+    },
     exercise: { findMany: vi.fn() },
   },
 }));
@@ -12,19 +17,94 @@ vi.mock('@/lib/gym-equipment', () => ({
   listOwnedGymEquipment: vi.fn(),
 }));
 
+vi.mock('@/lib/gym-plate-pools', () => ({
+  listOwnedGymPlatePools: vi.fn(),
+  upsertOwnedGymPlatePool: vi.fn(),
+}));
+
+vi.mock('@/lib/gym-system-profiles', () => ({
+  getOwnedGymSystemProfiles: vi.fn(),
+  saveOwnedBarbellSystemProfile: vi.fn(),
+  saveOwnedDumbbellsSystemProfile: vi.fn(),
+}));
+
 import { db } from '@/lib/db';
 import { listOwnedGymEquipment } from '@/lib/gym-equipment';
+import { listOwnedGymPlatePools } from '@/lib/gym-plate-pools';
+import {
+  getOwnedGymSystemProfiles,
+  saveOwnedBarbellSystemProfile,
+  saveOwnedDumbbellsSystemProfile,
+} from '@/lib/gym-system-profiles';
 import { getMcpGymInventory, listMcpGyms, updateMcpGymFreeWeights } from './gym-inventory';
 
 const findUser = vi.mocked(db.user.findUnique);
 const findGyms = vi.mocked(db.gym.findMany);
 const findGym = vi.mocked(db.gym.findFirst);
+const findFinalGym = vi.mocked(db.gym.findFirstOrThrow);
 const updateGym = vi.mocked(db.gym.update);
 const findExercises = vi.mocked(db.exercise.findMany);
 const listEquipment = vi.mocked(listOwnedGymEquipment);
+const listPools = vi.mocked(listOwnedGymPlatePools);
+const getProfiles = vi.mocked(getOwnedGymSystemProfiles);
+const saveDumbbells = vi.mocked(saveOwnedDumbbellsSystemProfile);
+const saveBarbell = vi.mocked(saveOwnedBarbellSystemProfile);
+
+const systemProfiles = {
+  gymId: 'gym-1',
+  gymName: 'X-Fit',
+  dumbbells: {
+    id: 'system-profile-dumbbells-gym-1',
+    kind: 'DUMBBELLS' as const,
+    weightsKg: [10, 12],
+    exerciseLinks: [{ id: 'dumbbell-exercise', name: 'Curl', equipmentType: 'DUMBBELL' }],
+  },
+  barbell: {
+    id: 'system-profile-barbell-gym-1',
+    kind: 'BARBELL' as const,
+    exerciseLinks: [{ id: 'barbell-exercise', name: 'Bench', equipmentType: 'BARBELL' }],
+    families: [
+      {
+        family: 'LARGE' as const,
+        loadingSides: 2,
+        pool: {
+          id: 'pool-large',
+          name: 'Large',
+          compatibilityKey: 'system_barbell_large',
+          systemBarbellFamily: 'LARGE' as const,
+          plates: [{ id: 'plate-5', weightKg: 5, quantity: null }],
+        },
+        bars: [
+          {
+            id: 'bar-20',
+            baseLoadKg: 20,
+            loadingSides: 2,
+            systemBarbellFamily: 'LARGE' as const,
+          },
+        ],
+      },
+      {
+        family: 'SMALL' as const,
+        loadingSides: 2,
+        pool: {
+          id: 'pool-small',
+          name: 'Small',
+          compatibilityKey: 'system_barbell_small',
+          systemBarbellFamily: 'SMALL' as const,
+          plates: [],
+        },
+        bars: [],
+      },
+    ],
+  },
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
+  listPools.mockResolvedValue([] as never);
+  getProfiles.mockResolvedValue(systemProfiles as never);
+  saveDumbbells.mockResolvedValue(systemProfiles as never);
+  saveBarbell.mockResolvedValue(systemProfiles as never);
 });
 
 describe('MCP gym inventory reads', () => {
@@ -57,7 +137,7 @@ describe('MCP gym inventory reads', () => {
     });
   });
 
-  it('returns owned inventory and turns uploaded image paths into absolute MCP URLs', async () => {
+  it('returns owned permanent inventory and turns uploaded image paths into absolute MCP URLs', async () => {
     findUser.mockResolvedValue({ activeGymId: 'gym-1' } as never);
     findGym.mockResolvedValue({
       id: 'gym-1',
@@ -73,6 +153,7 @@ describe('MCP gym inventory reads', () => {
           isAvailable: false,
           weightOptions: [25, 30],
           preferredEquipmentId: 'equipment-1',
+          systemProfileSupported: null,
           exercise: {
             id: 'exercise-1',
             name: 'Cable Row',
@@ -92,27 +173,58 @@ describe('MCP gym inventory reads', () => {
         equipmentType: 'CABLE',
       },
     ] as never);
+    listPools.mockResolvedValue([
+      {
+        id: 'pool-custom',
+        gymId: 'gym-1',
+        name: 'Hammer plates',
+        compatibilityKey: 'hammer_plates',
+        systemBarbellFamily: null,
+        plates: [{ id: 'p10', weightKg: 10, quantity: 4 }],
+      },
+    ] as never);
     listEquipment.mockResolvedValue([
       {
         id: 'equipment-1',
         gymId: 'gym-1',
         name: 'Cable tower',
-        image: { kind: 'uploaded', url: '/api/gym-equipment/equipment-1/image?v=1', mimeType: 'image/jpeg' },
+        loadConfigurationKnown: true,
+        loadType: 'SELECTORIZED',
+        selectedLoadMultiplier: 1,
+        baseLoadKg: 0,
+        loadingSides: 2,
+        platePoolId: null,
+        weightOptions: [25, 30],
+        image: {
+          kind: 'uploaded',
+          url: '/api/gym-equipment/equipment-1/image?v=1',
+          mimeType: 'image/jpeg',
+        },
         exerciseLinks: [],
       },
     ] as never);
 
     const result = await getMcpGymInventory('user-1', 'https://gymcoach.example', 'gym-1');
 
-    expect(findGym).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'gym-1', userId: 'user-1' } }));
+    expect(findGym).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'gym-1', userId: 'user-1' } }),
+    );
+    expect(result.systemProfiles).toEqual(systemProfiles);
+    expect(result.platePools[0]).toMatchObject({ id: 'pool-custom', compatibilityKey: 'hammer_plates' });
     expect(result.equipment[0]?.image?.url).toBe(
       'https://gymcoach.example/api/gym-equipment/equipment-1/image?v=1',
     );
+    expect(result.equipment[0]?.loadFacts).toMatchObject({
+      state: 'KNOWN',
+      loadType: 'SELECTORIZED',
+      weightOptionsKg: [25, 30],
+    });
     expect(result.exerciseAvailability[0]).toMatchObject({
       id: 'exercise-1',
       isAvailable: false,
       configuredWeightOptionsKg: [25, 30],
       preferredEquipmentId: 'equipment-1',
+      systemProfileSupported: null,
       explicitlyConfigured: true,
     });
   });
@@ -125,17 +237,20 @@ describe('MCP gym inventory reads', () => {
     await expect(getMcpGymInventory('user-1', 'https://gymcoach.example', 'other-gym')).rejects.toThrow(
       'Gym not found.',
     );
-    expect(findGym).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'other-gym', userId: 'user-1' } }));
+    expect(findGym).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'other-gym', userId: 'user-1' } }),
+    );
     expect(listEquipment).not.toHaveBeenCalled();
+    expect(getProfiles).not.toHaveBeenCalled();
   });
 
-  it('updates free weights only after resolving an owned gym', async () => {
+  it('updates legacy free-weight requests through permanent profile writers', async () => {
     findGym.mockResolvedValue({ id: 'gym-1' } as never);
-    updateGym.mockResolvedValue({
+    findFinalGym.mockResolvedValue({
       id: 'gym-1',
       name: 'X-Fit',
       dumbbellWeights: [10, 12],
-      plateWeights: [5, 10],
+      plateWeights: [5],
       barWeights: [20],
       updatedAt: new Date('2026-09-05T00:00:00Z'),
     } as never);
@@ -145,12 +260,12 @@ describe('MCP gym inventory reads', () => {
     expect(findGym).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'gym-1', userId: 'user-1' } }),
     );
-    expect(updateGym).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'gym-1' },
-        data: { dumbbellWeights: [10, 12] },
-      }),
-    );
+    expect(saveDumbbells).toHaveBeenCalledWith('user-1', 'gym-1', {
+      weightsKg: [10, 12],
+      exerciseIds: ['dumbbell-exercise'],
+    });
+    expect(saveBarbell).not.toHaveBeenCalled();
+    expect(updateGym).not.toHaveBeenCalled();
   });
 
   it('does not update free weights when the requested gym is foreign', async () => {
@@ -160,6 +275,8 @@ describe('MCP gym inventory reads', () => {
       updateMcpGymFreeWeights('user-1', 'other-gym', { plateWeights: [5, 10] }),
     ).rejects.toThrow('Gym not found.');
 
+    expect(saveDumbbells).not.toHaveBeenCalled();
+    expect(saveBarbell).not.toHaveBeenCalled();
     expect(updateGym).not.toHaveBeenCalled();
   });
 });

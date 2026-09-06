@@ -1,4 +1,6 @@
 import type {
+  BarbellDiameterFamily,
+  EquipmentLoadType,
   Exercise,
   Gym,
   GymExerciseConfig,
@@ -6,7 +8,10 @@ import type {
   ProgramExercise,
 } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
-import type { GymLoadConstraints } from '@/lib/gym-loads';
+import {
+  resolveEquipmentLoadProfile,
+  type GymLoadConstraints,
+} from '@/lib/gym-loads';
 import {
   BASELINE_MUSCLE_VOLUME_DAYS,
   calculateReturnRecommendation,
@@ -36,7 +41,18 @@ type GymForReturn = Pick<Gym, 'dumbbellWeights' | 'plateWeights' | 'barWeights'>
     name: string;
     equipmentType: Exercise['equipmentType'];
     loadConfigurationKnown: boolean;
+    loadType: EquipmentLoadType;
     weightOptions: number[];
+    selectedLoadMultiplier: number;
+    baseLoadKg: number;
+    platePoolId: string | null;
+    loadingSides: number;
+    systemBarbellFamily: BarbellDiameterFamily | null;
+    platePool: {
+      id: string;
+      name: string;
+      plates: Array<{ weightKg: number; quantity: number | null }>;
+    } | null;
     exerciseLinks: Array<{ exerciseId: string }>;
   }>;
 };
@@ -313,18 +329,35 @@ export async function getReturnToTrainingRecommendationsByEquipment({
         completedAt: { lt: now },
       } as const;
       const targets = equipmentTargetsFor(pe, gym);
-      const recentExerciseSessions = await db.session.findMany({
-        where: {
-          userId,
-          finishedAt: { not: null },
-          ...excludedSession,
-          startedAt: { gte: historyStart, lt: now },
-          sets: { some: workingSetFilter },
-        },
-        orderBy: { startedAt: 'desc' },
-        take: RETURN_LONG_TERM_ANCHOR_SESSION_LIMIT,
-        select: { id: true },
-      });
+      const historyGymId = gym?.id ?? null;
+      const [latestAnyEquipmentSet, recentExerciseSessions] = await Promise.all([
+        db.set.findFirst({
+          where: {
+            ...workingSetFilter,
+            session: {
+              userId,
+              gymId: historyGymId,
+              finishedAt: { not: null },
+              ...excludedSession,
+            },
+          },
+          orderBy: { completedAt: 'desc' },
+          select: { session: { select: { startedAt: true } } },
+        }),
+        db.session.findMany({
+          where: {
+            userId,
+            gymId: historyGymId,
+            finishedAt: { not: null },
+            ...excludedSession,
+            startedAt: { gte: historyStart, lt: now },
+            sets: { some: workingSetFilter },
+          },
+          orderBy: { startedAt: 'desc' },
+          take: RETURN_LONG_TERM_ANCHOR_SESSION_LIMIT,
+          select: { id: true },
+        }),
+      ]);
       const recentExerciseSessionIds = new Set(recentExerciseSessions.map((item) => item.id));
       const baselineSets = baselineSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0;
 
@@ -376,7 +409,8 @@ export async function getReturnToTrainingRecommendationsByEquipment({
             (sessionId) => !comparableIds.has(sessionId),
           ).length;
           const history: ReturnTrainingHistory = {
-            exerciseLastPerformedAt: latestSet?.session.startedAt ?? null,
+            exerciseLastPerformedAt:
+              latestSet?.session.startedAt ?? latestAnyEquipmentSet?.session.startedAt ?? null,
             muscleLastPerformedAt: latestByMuscle.get(pe.exercise.muscleGroup) ?? null,
             recentMuscleSets: recentSetsByMuscle.get(pe.exercise.muscleGroup) ?? 0,
             baselineMuscleSetsPer28Days:
@@ -448,14 +482,26 @@ function loadConstraintsForEquipment(
       item.exerciseLinks.some((link) => link.exerciseId === pe.exerciseId),
   );
   if (!equipment) return base;
+  const resolved = resolveEquipmentLoadProfile({
+    equipmentId: equipment.id,
+    equipmentName: equipment.name,
+    equipmentType: equipment.equipmentType,
+    loadConfigurationKnown: equipment.loadConfigurationKnown,
+    loadType: equipment.loadType,
+    weightOptions: equipment.weightOptions,
+    selectedLoadMultiplier: equipment.selectedLoadMultiplier,
+    baseLoadKg: equipment.baseLoadKg,
+    loadingSides: equipment.loadingSides,
+    platePoolId: equipment.platePoolId,
+    platePoolName: equipment.platePool?.name ?? null,
+    plates: equipment.platePool?.plates ?? [],
+  });
   return {
     ...base,
     equipmentType: pe.exercise.equipmentType,
-    weightOptions: ['MACHINE', 'CABLE', 'OTHER'].includes(pe.exercise.equipmentType)
-      ? equipment.loadConfigurationKnown
-        ? equipment.weightOptions
-        : []
-      : base.weightOptions,
+    equipmentId: equipment.id,
+    equipmentOptions: [resolved],
+    weightOptions: resolved.attainableLoads,
   };
 }
 

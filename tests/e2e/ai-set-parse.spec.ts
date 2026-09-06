@@ -68,9 +68,12 @@ test('a lifter can fill the set form from free text via Parse with AI', async ({
   await page.getByLabel(/describe the set/i).fill('100 kg for 8, 2 in the tank');
   await page.getByRole('button', { name: /parse with ai/i }).click();
 
-  // The form fills from the canned demo parse: load 100, reps 8.
-  const loadInput = page.locator('input[type="number"]').first();
-  await expect(loadInput).toHaveValue('100', { timeout: 15_000 });
+  // The form fills from the canned demo parse: load 100, reps 8. M10 renders
+  // these values as picker buttons rather than number inputs.
+  await expect(page.getByRole('button', { name: 'Load (kg)', exact: true })).toHaveText('100', {
+    timeout: 15_000,
+  });
+  await expect(page.getByRole('button', { name: 'Reps', exact: true })).toHaveText('8');
 
   // Nothing is logged until the lifter confirms; now confirm.
   await page.getByRole('button', { name: /log the set/i }).click();

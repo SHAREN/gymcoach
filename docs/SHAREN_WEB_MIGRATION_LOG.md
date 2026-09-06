@@ -1,0 +1,292 @@
+# SHAREN Web Migration — development / handoff log
+
+> **Purpose:** persistent continuation journal for the clean GymCoach web migration. A new ChatGPT thread or developer should read this file first, then `docs/SHAREN_WEB_MIGRATION.md`, `docs/SHAREN_WEB_MIGRATION_PLAN.md`, `docs/chatgpt-mcp.md`, and `docs/PROJECT_GOALS.md` before changing code.
+>
+> **Rule:** keep this file current after every meaningful implementation, verification, failure/root-cause finding, architectural decision, commit, or blocker. Do not rely on chat history as the only record.
+
+## Continuation contract
+
+- Canonical working tree: `D:\codexpro_workspace\gymcoach-web-migration`
+- Branch: `migration/web-upstream-clean`
+- Work directly through `@home-PC` / CodexPro workspace tools. Do **not** launch Codex or create Codex Threads for implementation; user explicitly stopped Codex-based development.
+- Never create a parallel writer while this working tree is safe to continue.
+- No Android or Huawei source may enter this clean web branch.
+- External-AI-over-MCP architecture is mandatory: semantic interpretation of free text, exercise names, photos and context belongs to the external MCP agent. Do not add a GymCoach embedded LLM proposal pipeline or web AI proposal/review screens for the migration workflow.
+- For MCP writes: ownership, selected gym scope, compatibility, idempotency where applicable, and explicit confirmation are mandatory.
+- Rejected implementation `599cb2df32714b51f7638c8961e5695b450bd3a2` must never return; it was reverted by `d687473`.
+- Work chain for each functional block: implementation -> focused tests/typecheck/build -> fixes -> independent verification when required -> guarded integration/final gate.
+- One functional block = separate commit. Do not blind cherry-pick legacy monorepo commits.
+
+## Current state snapshot
+
+### Git
+
+- Current immutable HEAD before the in-progress M14 work: `1d80feead6bdd2598a9824875c36170109bfe56f` (`1d80fee test: fix cross-platform and stale expectations`).
+- Branch is ahead of `origin/migration/web-upstream-clean` by 16 commits at this point.
+- Untracked local-only items that must not be committed: `.gymcoach-interactive-chat.lock`, `node_modules`.
+
+### Completed migration blocks
+
+- M01 exercise catalog/replacement filters — DONE.
+- M02 MCP read tools gyms/inventory/training history — DONE.
+- M03 MCP equipment write operations — DONE.
+- M04 completed workout/history set editor — DONE.
+- M05 preferred equipment per exercise/gym — DONE.
+- M06 exercise detail/equipment editor — DONE.
+- M07 durable web set acknowledgement/replay — DONE.
+- M08 equipment-aware return-to-training — DONE.
+- M09 session exercise strip/navigation — DONE.
+- M10 set value picker/editable set table — DONE.
+- M11 structured coaching profile — DONE, commit `393dc0e`.
+- M12 program revisions/design context/validation — DONE, commit `1c7a94d`.
+- M13 multi-muscle load accounting — DONE, commit `7354f81`.
+- Test cleanup after M13 — DONE, commit `1d80fee`.
+
+### Latest quality evidence before M14
+
+- Full unit suite after cleanup: **119 files / 1081 tests passed**.
+- `npm run typecheck`: green.
+- Focused cleanup tests: 24/24 green.
+- M13 production build was green; only the pre-existing `lib/import/gpx.ts` warning remained.
+- M13 integration evidence on correct container DB was green: 76/76 earlier, plus subsequent focused M13/backup checks; M13 commit remained isolated.
+
+## Important completed architecture decisions
+
+### M12
+
+- `get_program_design_context` and `validate_program_draft` are deterministic/read-only domain/MCP paths.
+- Program revisions are inactive by default and preserve lineage via `parentProgramId` + `methodologyVersion` (historical field name retained for schema compatibility; it records the deterministic program-design contract/version, not an embedded LLM).
+- The existing generator route was not expanded into a new internal AI methodology pipeline.
+
+### M13
+
+- Multi-muscle load profile is additive; existing upstream progress/stats UI remains unchanged.
+- Server-owned provenance is required for trusted reviewed load profiles.
+- A custom exercise is never upgraded to trusted/reviewed merely because its name matches a system exercise; full fingerprint/provenance hardening is used.
+- Backup restore re-derives trust and does not trust imported `REVIEWED` metadata blindly.
+- MCP/history/program-design use direct/indirect/equivalent deterministic aggregation.
+
+## 2026-09-05 — test cleanup after M13
+
+### Problem found
+
+Full unit suite after M13 had five failures unrelated to M13 behavior:
+
+1. Windows `progress-photo` expectations assumed POSIX permission bits.
+2. `photoRelativePath` returned a platform-native separator, causing a Windows path expectation mismatch.
+3. M11 coaching-profile test asserted old copy.
+4. M08/session gym selection test asserted the old smaller equipment select.
+
+### Fix
+
+- `photoRelativePath` now uses `path.posix.join` for the persisted relative key.
+- POSIX mode assertions run only off Windows; containment/security tests remain unchanged.
+- Coaching-profile assertion updated to the actual current safety copy.
+- Session gym selection expectation includes `equipmentType`, `loadConfigurationKnown`, and `weightOptions`.
+
+### Verification
+
+- Focused: 24/24 green.
+- Full `npm test`: **1081/1081 green**.
+- `npm run typecheck`: green.
+- `git diff --check`: green.
+- Commit: `1d80fee test: fix cross-platform and stale expectations`.
+
+## 2026-09-05 — M14 Permanent free-weight system profiles — IN PROGRESS
+
+### Upstream / legacy audit
+
+- Current upstream reference in this checkout is `f4cc2a9` (`docs: write up the 2026-09-04 wave...`).
+- Clean branch still has only legacy shared gym arrays (`dumbbellWeights`, `plateWeights`, `barWeights`) plus simplified physical equipment.
+- Legacy SHAREN final implementation has permanent `Dumbbells` and `Barbell` system profiles, two Barbell diameter families, named compatible plate pools, explicit equipment load mechanics, and protected system members.
+- Primary legacy M14 commit: `9b2a36a8 feat: add permanent free-weight system profiles` (~4k lines, mixed web/server + Android).
+- The old implementation depended on an earlier common `equipment-first load domain` (`ec80b3af`) plus hardening fixes. The clean branch intentionally did not port that entire layer.
+- Decision: **do not blind cherry-pick** `ec80b3af` or `9b2a36a8`. Implement the minimum common web/server domain required by M14 while preserving the already-integrated clean-branch MCP/Hammer safety model.
+
+### M14 architecture selected
+
+M14 is additive and fail-closed:
+
+1. Preserve existing `Gym.dumbbellWeights`, `Gym.plateWeights`, `Gym.barWeights` for compatibility.
+2. Preserve `GymEquipment.loadConfigurationKnown` as the explicit unknown/known boundary.
+3. Add confirmed structured load facts alongside it:
+   - `EquipmentLoadType`: `NONE | FIXED | SELECTORIZED | PLATE_LOADED`
+   - `selectedLoadMultiplier`
+   - `baseLoadKg`
+   - `loadingSides`
+   - optional `platePoolId`
+4. Add named `GymPlatePool` + `GymPlateInventoryItem`; nullable plate quantity means denomination known, physical count unknown.
+5. Add two permanent Barbell compatibility families: `LARGE`, `SMALL`.
+6. Add nullable `GymExerciseConfig.systemProfileSupported` for explicit Dumbbells/Barbell membership.
+7. Managed system bars get `systemBarbellFamily`; custom equipment stays `NULL` and remains editable through normal equipment APIs.
+8. Read-only MCP must not mutate data to initialize profiles. System pools/profiles are created by migration and gym creation/write paths instead.
+9. Unknown Hammer / unknown-load equipment must remain representable with `loadConfigurationKnown=false`. No load type, base load, manufacturer, model, plate mechanics, or selectable weights are inferred merely because an external agent recognized the equipment semantically.
+10. M14 system-profile APIs are deterministic data operations; semantic interpretation remains in the external MCP agent.
+
+### M14 implementation already made (UNCOMMITTED / IN PROGRESS)
+
+Dirty tracked/new files at the time this journal entry was created:
+
+- `M prisma/schema.prisma`
+- `?? prisma/migrations/20260905212000_add_permanent_free_weight_profiles/migration.sql`
+- `M lib/schemas/gym-equipment.ts`
+- `M lib/gym-loads.ts`
+
+#### `prisma/schema.prisma`
+
+Added:
+
+- `EquipmentLoadType` enum.
+- `BarbellDiameterFamily` enum.
+- `Gym.platePools` relation.
+- nullable `GymExerciseConfig.systemProfileSupported`.
+- `GymEquipment.loadType`, `selectedLoadMultiplier`, `baseLoadKg`, `platePoolId`, `loadingSides`, `systemBarbellFamily`; old `loadConfigurationKnown` stays.
+- `GymPlatePool` and `GymPlateInventoryItem`.
+- indexes for system family and plate pool.
+
+`npx prisma validate` and `npx prisma generate` were green immediately after this schema change.
+
+#### Migration `20260905212000_add_permanent_free_weight_profiles`
+
+Current migration intent:
+
+- Create new enums/tables/columns/indexes/FKs.
+- Create exactly two system plate pools per existing gym (`LARGE`, `SMALL`).
+- Copy existing `Gym.plateWeights` denominations only into the LARGE system pool with `quantity=NULL` (do not invent physical counts).
+- Materialize existing positive `Gym.barWeights` as LARGE managed system bars only; SMALL family intentionally starts with no bar rather than inventing one.
+- Existing explicit free-weight availability becomes initial system-profile membership.
+- Missing DUMBBELL/BARBELL configs are made explicitly supported to preserve old implicit availability semantics.
+- Managed bars are linked only to explicitly supported BARBELL exercises.
+- Existing physical equipment rows are **not** assigned structured load mechanics by the migration, so `loadConfigurationKnown=false` machines remain unknown.
+
+The migration has not yet been deployed/tested on the real test DB after creation. That is the next required DB gate after domain compilation is green.
+
+#### `lib/schemas/gym-equipment.ts`
+
+Reworked input validation for the new load facts and system profiles:
+
+- Plate compatibility key and plate pool schemas.
+- Equipment load facts.
+- Fail-closed rule: `loadConfigurationKnown=false` cannot be combined with confirmed non-default mechanics (non-NONE load type, weights, plate pool, non-zero base load, non-1 multiplier, non-default sides).
+- FIXED/SELECTORIZED require displayed loads.
+- PLATE_LOADED requires a plate pool; other types may not reference one.
+- Added strict inputs for Dumbbells system profile and two Barbell families.
+- The system family schema currently allows zero bars in a family so SMALL can remain honestly empty instead of inventing hardware.
+
+#### `lib/gym-loads.ts`
+
+Expanded the existing legacy load helper with an additive equipment profile domain:
+
+- `PlateInventoryItem`
+- `EquipmentLoadProfile`
+- `ResolvedEquipmentLoadProfile`
+- `resolveEquipmentType`
+- `resolveEquipmentLoadProfile`
+- `constructiblePlateLoadedWeights`
+- existing dumbbell/barbell legacy helpers retained.
+- `UNKNOWN_CONFIG` produces no attainable loads rather than guessing.
+- When equipment options exist, multiple physical machines are never unioned into one progression scale; an explicit equipment selection is required unless there is exactly one option.
+- Architecture correction made during M14: the legacy `resolveEquipmentType` name/regex inference was deliberately **not** kept. The helper now returns the explicit canonical `equipmentType` only. Exercise-name/free-text semantic classification belongs to the external MCP agent, per the project architecture.
+
+This file was written immediately before the user requested persistent journaling.
+
+### M14 focused gate update
+
+- Added focused tests for unknown Hammer/load configuration, finite vs unknown plate quantities, plate-loaded validation, LARGE/SMALL family completeness, and duplicate bar/plate rejection.
+- `npx vitest run lib/gym-loads.test.ts lib/schemas/gym-equipment.test.ts`: **15/15 passed**.
+- `git diff --check`: no whitespace errors reported before the typecheck failure.
+- `npm run typecheck` currently fails only in existing MCP schema-composition code because `gymEquipmentUpsertSchema` became a refined `ZodEffects` and the MCP code calls `.omit` / `.shape` on it. Reported locations: `lib/mcp/external-ai-workflow.ts` around line 50/269-287 and `lib/mcp/server.ts` around line 383/392. Root cause is schema composition/API shape, not the new load-domain tests.
+- Fix applied: exported strict `gymEquipmentUpsertObjectSchema` for MCP `.omit/.shape` composition while keeping `gymEquipmentUpsertSchema` as the refined write validator. Updated `lib/mcp/external-ai-workflow.ts` and `lib/mcp/server.ts` to use the object schema only for tool-schema composition.
+- Re-run after fix: `lib/gym-loads.test.ts` + `lib/schemas/gym-equipment.test.ts` + `lib/mcp/server.test.ts` = **16/16 passed**; `npm run typecheck` green; `git diff --check` green.
+- Added new `lib/gym-system-profiles.ts`. It keeps system-profile reads read-only, provides write-path initialization for missing LARGE/SMALL pools, saves Dumbbells and Barbell profiles with ownership/type checks, preserves nullable plate counts, blocks removing a managed bar selected by an active session, protects system bars/pools from generic mutation, links managed bars only to explicitly supported BARBELL exercises, and mirrors managed bar/large-family plate facts back to legacy arrays for compatibility. After adding it, typecheck + the same 16 focused tests remained green.
+- Hardened generic exercise-equipment editing: system-managed Barbell links are not deleted by the normal equipment editor; a system bar may be referenced/preferred only if the Barbell profile already linked it to that exercise. Generic create/update/delete/image mutation of managed bars is blocked.
+- Added `lib/gym-plate-pools.ts` plus REST routes for listing/creating/updating/deleting custom plate pools. System pools are protected; used pools cannot be deleted. First typecheck exposed two implementation-only issues: shell expansion had stripped `$transaction` once, and refined Zod pool schemas cannot `.omit`; both were fixed explicitly without weakening validation.
+- New gym creation now initializes system profiles inside the same DB transaction, so read-only inventory/MCP paths never need hidden initialization.
+- Legacy `PUT /api/gyms/:id` is hardened: it rejects direct free-weight-array changes (system-profile writers own those values) and preserves M05/M14 metadata on `GymExerciseConfig` instead of `deleteMany` + recreate. Typecheck remained green after this change.
+- Added REST system-profile read + Dumbbells/Barbell write routes. All are ownership-scoped and use the same domain writers.
+- MCP inventory now returns read-only `systemProfiles`, `platePools`, structured `loadFacts`, and `systemProfileSupported`; legacy `sharedFreeWeights` remains a compatibility projection only.
+- Legacy MCP `update_gym_free_weights` now edits permanent profiles, preserving existing exercise support, SMALL family, known plate quantities, and using `quantity=null` for newly introduced legacy denominations. It no longer does a direct `Gym.update`.
+- Added confirmed MCP tools `update_gym_system_profile` and `upsert_gym_plate_pool`. Both re-parse through strict domain schemas after MCP input validation. MCP instructions explicitly prohibit inventing plate counts/load mechanics and require keeping LARGE/SMALL families separate.
+- Updated focused MCP mocks to assert the new contract rather than the old direct-update behavior. MCP-focused gate: `lib/mcp/server.test.ts`, `lib/mcp/gym-inventory.test.ts`, `lib/gym-loads.test.ts`, `lib/schemas/gym-equipment.test.ts` = **21/21 passed**.
+- Added deterministic legacy bridge: pre-M14 MACHINE/CABLE/OTHER rows with `loadConfigurationKnown=true` and explicit `weightOptions` are backfilled to `SELECTORIZED`; UNKNOWN rows are never promoted. New writes apply the same deterministic mapping and persist the fully validated effective load state.
+- Frozen set equipment snapshot upgraded to version 2. It preserves equipment identity/type/manufacturer/model plus explicit UNKNOWN/KNOWN load facts; known facts include load type, displayed loads, multiplier, base load, sides, and an immutable plate-pool snapshot with nullable quantities. Deleting equipment can still clear the FK without erasing these facts.
+- Live-session lightweight equipment select now carries structured load facts + plate pool denominations/counts but still excludes image URL/blob fields. M12 program-design active-gym select was similarly narrowed to the needed structured fields rather than loading images.
+- Equipment-aware return-to-training now resolves the selected physical equipment through `resolveEquipmentLoadProfile`; plate-loaded equipment uses its exact pool/counts, and UNKNOWN config gets no invented attainable-load scale or ceiling.
+- Current combined focused gate after these integrations: session-gym selection + gym loads + return-to-training + MCP inventory/server + equipment schemas = **50/50 passed**; `npm run typecheck` green; `git diff --check` green.
+- Added the M14 web settings UI: existing gyms now edit Dumbbells/Barbell through permanent system-profile cards; new gyms still use legacy free-weight arrays only as initial seed data. Generic exercise availability no longer owns DUMBBELL/BARBELL after gym creation. EN/RU/FR strings added. Typecheck and the 50-test focused gate remained green.
+- Backup format bumped from v8 to **v9**. Export now includes plate pools/families, nullable plate quantities, structured equipment load facts, pool compatibility keys, system-profile support and preferred equipment. Restore regenerates IDs and relinks by gym/name/compatibility key; v1-v8 remain accepted and are upgraded through the deterministic system-profile initializer.
+- Version-9 restore validates duplicate pool names/keys/families, missing referenced pools, UNKNOWN equipment with claimed mechanics, and PLATE_LOADED equipment without a pool before the destructive replacement transaction begins.
+- Fresh-schema migration gate passed: all **31 migrations** applied sequentially with `ON_ERROR_STOP=1` to the isolated `gymcoach-web-migration-test-db` on port 5435.
+- First pre-M14→M14 backfill verification attempt failed before M14 ran because shell interpolation stripped SQL quotes around `\"User\"`, producing invalid seed SQL (`INSERT INTO User`). A second orchestration attempt also stopped before DB work because the Windows→WSL command layer expanded shell variables to empty values. Both were test-command transport issues only.
+- Backfill verification was then rerun with literal SQL files plus Python subprocess orchestration, eliminating shell interpolation. Result: **30 pre-M14 migrations + legacy seed + M14 migration passed**. Verified: exactly one LARGE and one SMALL pool; legacy plate denominations moved only to LARGE with `quantity=NULL`; legacy 20 kg bar became a managed LARGE `PLATE_LOADED` bar; known cable with `[10,20,30]` became `SELECTORIZED`; unknown Hammer remained `loadConfigurationKnown=false`, `loadType=NONE`, empty options; implicit BARBELL support was preserved and the managed bar link was created; an explicitly unavailable DUMBBELL config remained explicitly unsupported.
+- Current live worktree HEAD is still `1d80feead6bdd2598a9824875c36170109bfe56f`; all M14 changes remain intentionally uncommitted pending DB/integration/full gates.
+- Full unit/component gate after M14: `npm run typecheck` green and **119 test files / 1088 tests passed**. Only pre-existing jsdom accessibility/chart-size warnings were emitted.
+- Added dedicated real-DB `tests/integration/gym-system-profiles.test.ts`: read-only no-mutation, rollback on foreign/wrong-type exercise IDs, LARGE/SMALL isolation, nullable plate counts, generic system-member protection, active-session bar protection, and cross-user route ownership/zero-mutation. Current suite is **6/6 passed**.
+- The first full integration run reached 343 tests and exposed only stale M14 contract expectations plus the pre-existing Windows/NTFS Unix-mode assertion. M14 issues were fixed by updating backup consumers to v9, history append to snapshot v2, and adding real cross-user coverage for all five new routes; ownership ratchet then passed.
+- Progress-photo production code was not weakened: it still calls `writeFile(..., { mode: 0o600 })`. The integration assertion now checks Unix mode bits only on POSIX because Node/NTFS synthesizes `0o666` on Windows and cannot expose POSIX ownership bits. The progress-photo suite is **21/21 passed** on this Windows host.
+- Full real-Postgres integration gate is now **46 test files / 344 tests passed** against the isolated migration DB on port 5435. Expected Prisma 404-path logging and the deliberate progress-photo unlink failure test still print diagnostic stderr, but no tests fail.
+
+### Immediate next steps for M14
+
+1. Add focused unit tests for:
+   - unknown config produces no inferred attainable loads;
+   - finite plate counts limit constructible loads;
+   - nullable plate counts preserve uncertainty and usable denominations;
+   - load schema rejects `loadConfigurationKnown=false` with claimed mechanics;
+   - barbell system profile requires exactly LARGE+SMALL and rejects duplicate bar/plate facts.
+2. Run `npm run typecheck` + focused unit tests.
+3. Implement `lib/gym-system-profiles.ts` adapted to clean branch:
+   - ownership checks;
+   - no hidden initialization on read;
+   - save Dumbbells profile;
+   - save Barbell families/bars/plates;
+   - managed bars/pools cannot be mutated/deleted through generic equipment/pool operations;
+   - cross-gym/cross-user IDs rejected;
+   - active-session selected managed bar cannot be deleted.
+4. Extend `lib/gym-equipment.ts` minimally for structured load facts and plate-pool compatibility while preserving current M03/M05/M06 behavior.
+5. Add REST routes for system profiles and plate pools where needed.
+6. Update MCP inventory/read/write surface:
+   - expose system profiles + plate pools;
+   - add confirmed system-profile write tool(s);
+   - keep current external-AI semantic boundary;
+   - do not mutate during read;
+   - preserve unknown Hammer facts.
+7. Update settings UI with permanent Dumbbells/Barbell profiles. Do not import Android/mobile UI.
+8. Update backup/restore version to preserve M14 facts, with validation/trust boundaries.
+9. Apply migration to the correct container test DB and run integration tests covering ownership, family isolation, system-member protection, unknown config, migration preservation, MCP confirmation, and zero mutation on rejected writes.
+10. Typecheck, full unit suite, integration, production build, then independent semantic audit and separate M14 commit.
+11. Update `docs/SHAREN_WEB_MIGRATION.md` M14 to DONE only after all gates pass.
+12. Continue M15 final semantic diff/full gate; then the remaining plan sections for Android-specific backend cleanup, Android repo separation, final clean-web gate, main switch, deploy, production health and cleanup.
+
+## Journal maintenance rule for future runs
+
+At the start of every continuation:
+
+1. Read this file.
+2. Run `git rev-parse HEAD` + `git status --short` in the canonical worktree.
+3. Compare the snapshot here with reality; reality wins.
+4. Append/update this journal **before ending the turn**, including failures and unfinished work, not only successful commits.
+5. Never claim a test/build/verifier is running unless an actual process/log confirms it.
+
+## 2026-09-06 — M14 exact full-gate portability investigation
+
+- The first exact `scripts/verify.sh --full` attempt completed Prisma generate, lint, typecheck, unit **1088/1088**, and production build, then failed before integration because Windows Git Bash does not provide `flock`. The script treated `flock: command not found` as if another run held the lock, so the printed `still held after 60m` message was misleading; no 60-minute wait actually occurred in that attempt.
+- Read-only port/process verification found no listener on `:3031`; `:5434` was owned only by expected Docker Desktop / WSL relay processes. No stale Vitest/Next process was using the shared test infra.
+- `scripts/verify.sh` was hardened: use `flock` when available, otherwise use an atomic `mkdir` lock with `trap` cleanup. A historical `/tmp/gymcoach-test-infra.lock.d` directory from 2026-08-30 was discovered; it was not deleted. The new fallback therefore uses a versioned `/tmp/gymcoach-test-infra.lock.portable-v2.d` path so the old stale artifact cannot cause a false wait.
+- The first detached retry was invalid before Prisma because Git Bash was launched as a non-login shell from PowerShell and inherited a broken PATH (`dirname` missing, `npx` resolving incorrectly). A probe confirmed `bash.exe -lc` correctly exposes `/usr/bin/dirname`, Node v24.14.0, npm 11.9.0 and npx; the detached runner was changed to use login Git Bash.
+- The next valid exact gate reached integration after unit **1088/1088** and a green production build. Integration then failed before Vitest because Windows npm runs lifecycle scripts through `cmd.exe` by default, while `test:integration` begins with POSIX `DATABASE_URL=...` syntax.
+- A harmless `npm run env` probe proved that `npm_config_script_shell="D:/Program Files/Git/bin/bash.exe"` makes Windows npm use Git Bash correctly. `scripts/verify.sh` now applies that script-shell only to the full-tier integration/E2E npm invocations. No production code or package dependency was changed for this portability fix.
+- PID `27156` is an older detached verify process waiting only on the historical stale `.d` lock path; it is not using Postgres or port 3031. New valid full-gate runs use the versioned portable-v2 lock and do not depend on that stale artifact.
+- Immediate next step: rerun one exact `scripts/verify.sh --full` with the updated lock + npm-shell portability fixes; do not run parallel DB/E2E tests while that gate is active.
+
+## 2026-09-06 — M14 final green-gate and completion
+
+- Final exact `scripts/verify.sh --full` completed successfully with exit code 0 at 2026-09-06 12:19:48 +05:00.
+- Exact gate evidence on the committed candidate tree: unit/component **119 files / 1088 tests passed**, production build green, integration **46 files / 345 tests passed**, Playwright E2E **18/18 passed**. The only remaining lint warning is the pre-existing unused `extractBlocks` in `lib/import/gpx.ts`.
+- Windows full-gate portability was hardened without changing production behavior: `scripts/verify.sh` now falls back to an atomic portable lock when `flock` is unavailable and forces npm lifecycle scripts for integration/E2E through Git Bash; `playwright.config.ts` now passes webServer environment variables through Playwright `env` instead of POSIX inline assignments.
+- E2E exposed a real M08/M14 boundary: historical sets recorded without a physical `gymEquipmentId` must not become a load anchor for a newly materialized managed bar. `getReturnToTrainingRecommendationsByEquipment` now uses the latest same-gym exercise date only to establish that the movement has a long break when no comparable equipment history exists; the old non-comparable weights remain excluded. The selected equipment therefore calibrates from its own safe floor. Dedicated real-DB regression **2/2 passed**.
+- In the E2E return scenario, the managed 20 kg system bar now correctly produces a conservative 20 kg starting load instead of reusing the old unscoped 40 kg expectation. The AI-set-parse E2E was also updated for the M10 picker-button UI rather than stale numeric-input selectors.
+- Full standalone Playwright run after the fixes: **18/18 passed**.
+- Final semantic pre-commit audit: `git diff --check` green; no Android/Huawei paths in the working diff; no reintroduction of rejected `599cb2df32714b51f7638c8961e5695b450bd3a2` or dedicated AI proposal/review workflow terms in added lines.
+- `docs/SHAREN_WEB_MIGRATION.md` M14 status changed to **DONE** only after the exact full gate passed.
+- Next: create one isolated M14 commit containing product/tests/docs (including this persistent log), exclude `.ai-bridge`, `.gymcoach-interactive-chat.lock`, and `node_modules`, then begin M15 semantic diff audit against the approved migration plan and current upstream/legacy sources.

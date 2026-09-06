@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { gymCreateSchema } from '@/lib/schemas/gym';
 import { validateGymExerciseConfigs } from '@/lib/gym-data';
+import { initializeOwnedGymSystemProfiles } from '@/lib/gym-system-profiles';
 
 export async function GET() {
   try {
@@ -46,7 +47,11 @@ export async function POST(req: Request) {
       if (input.makeActive || !user?.activeGymId) {
         await tx.user.update({ where: { id: userId }, data: { activeGymId: gym.id } });
       }
-      return gym;
+      await initializeOwnedGymSystemProfiles(tx, userId, gym.id);
+      return tx.gym.findUniqueOrThrow({
+        where: { id: gym.id },
+        include: { exerciseConfigs: true },
+      });
     });
 
     return NextResponse.json(created, { status: 201 });

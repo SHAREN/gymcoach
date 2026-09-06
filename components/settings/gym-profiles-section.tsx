@@ -30,6 +30,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { PermanentFreeWeightProfiles } from '@/components/settings/permanent-free-weight-profiles';
 
 type GymWithConfigs = Gym & { exerciseConfigs: GymExerciseConfig[] };
 
@@ -63,12 +64,18 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
   const [saving, setSaving] = useState(false);
 
   const filteredExercises = useMemo(() => {
+    const genericExercises = draft.id
+      ? exercises.filter(
+          (exercise) =>
+            exercise.equipmentType !== 'DUMBBELL' && exercise.equipmentType !== 'BARBELL',
+        )
+      : exercises;
     const query = search.trim().toLocaleLowerCase();
-    if (!query) return exercises;
-    return exercises.filter((exercise) =>
+    if (!query) return genericExercises;
+    return genericExercises.filter((exercise) =>
       exerciseName(exercise.name).toLocaleLowerCase().includes(query),
     );
-  }, [exerciseName, exercises, search]);
+  }, [draft.id, exerciseName, exercises, search]);
 
   function selectGym(id: string) {
     setSelectedId(id);
@@ -93,9 +100,13 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
     try {
       const body = {
         name: draft.name.trim(),
-        dumbbellWeights: draft.dumbbellWeights,
-        plateWeights: draft.plateWeights,
-        barWeights: draft.barWeights,
+        ...(!draft.id
+          ? {
+              dumbbellWeights: draft.dumbbellWeights,
+              plateWeights: draft.plateWeights,
+              barWeights: draft.barWeights,
+            }
+          : {}),
         exerciseConfigs: [...draft.configs.entries()].flatMap(([exerciseId, config]) =>
           !config.isAvailable || config.weightOptions.length > 0 ? [{ exerciseId, ...config }] : [],
         ),
@@ -199,29 +210,44 @@ export function GymProfilesSection({ initialGyms, activeGymId: initialActive, ex
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <WeightListField
-            id="gym-dumbbells"
-            label={t('dumbbells')}
-            values={draft.dumbbellWeights}
-            placeholder="10, 12, 14, 15, 16, 19"
-            onChange={(values) => setDraft((current) => ({ ...current, dumbbellWeights: values }))}
+        {!draft.id ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">{t('initialFreeWeightsHelp')}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <WeightListField
+                id="gym-dumbbells"
+                label={t('dumbbells')}
+                values={draft.dumbbellWeights}
+                placeholder="10, 12, 14, 15, 16, 19"
+                onChange={(values) =>
+                  setDraft((current) => ({ ...current, dumbbellWeights: values }))
+                }
+              />
+              <WeightListField
+                id="gym-plates"
+                label={t('plates')}
+                values={draft.plateWeights}
+                placeholder="1.25, 2.5, 5, 10, 15, 20"
+                onChange={(values) =>
+                  setDraft((current) => ({ ...current, plateWeights: values }))
+                }
+              />
+              <WeightListField
+                id="gym-bars"
+                label={t('bars')}
+                values={draft.barWeights}
+                placeholder="20"
+                onChange={(values) => setDraft((current) => ({ ...current, barWeights: values }))}
+              />
+            </div>
+          </div>
+        ) : (
+          <PermanentFreeWeightProfiles
+            key={draft.id}
+            gymId={draft.id}
+            exercises={exercises.map(({ id, name, equipmentType }) => ({ id, name, equipmentType }))}
           />
-          <WeightListField
-            id="gym-plates"
-            label={t('plates')}
-            values={draft.plateWeights}
-            placeholder="1.25, 2.5, 5, 10, 15, 20"
-            onChange={(values) => setDraft((current) => ({ ...current, plateWeights: values }))}
-          />
-          <WeightListField
-            id="gym-bars"
-            label={t('bars')}
-            values={draft.barWeights}
-            placeholder="20"
-            onChange={(values) => setDraft((current) => ({ ...current, barWeights: values }))}
-          />
-        </div>
+        )}
 
         <div className="space-y-3 border-t pt-4">
           <div>

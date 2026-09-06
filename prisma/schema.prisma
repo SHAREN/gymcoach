@@ -183,6 +183,18 @@ enum EquipmentType {
   OTHER
 }
 
+enum EquipmentLoadType {
+  NONE
+  FIXED
+  SELECTORIZED
+  PLATE_LOADED
+}
+
+enum BarbellDiameterFamily {
+  LARGE
+  SMALL
+}
+
 enum MuscleGroup {
   CHEST
   BACK_WIDTH
@@ -319,6 +331,7 @@ model Gym {
   sessions        Session[]
   exerciseConfigs GymExerciseConfig[]
   equipment       GymEquipment[]
+  platePools      GymPlatePool[]
 
   @@unique([userId, name])
   @@index([userId, updatedAt])
@@ -334,6 +347,9 @@ model GymExerciseConfig {
   // Optional explicit machine/cable pin stack or other exercise-specific
   // loads. Empty means use the normal category increment.
   weightOptions Float[]  @default([])
+  // Null belongs to legacy rows. True/false is explicit membership in the
+  // permanent Dumbbells or Barbell profile for the matching exercise type.
+  systemProfileSupported Boolean?
   preferredEquipmentId String?
   preferredEquipment GymEquipment? @relation("PreferredGymEquipment", fields: [preferredEquipmentId], references: [id], onDelete: SetNull)
 
@@ -352,8 +368,19 @@ model GymEquipment {
   manufacturer  String?
   modelName     String?
   quantity               Int                    @default(1)
+  // False means the real load mechanics are still unknown. New structured
+  // fields below are facts only when explicitly confirmed.
   loadConfigurationKnown Boolean                @default(true)
+  loadType               EquipmentLoadType      @default(NONE)
   weightOptions          Float[]                @default([])
+  selectedLoadMultiplier Float                  @default(1)
+  baseLoadKg             Float                  @default(0)
+  platePoolId            String?
+  platePool              GymPlatePool?          @relation(fields: [platePoolId], references: [id], onDelete: SetNull)
+  loadingSides           Int                    @default(2)
+  // Concrete bars managed by the permanent Barbell profile. Custom equipment
+  // stays null and remains editable through the normal equipment API.
+  systemBarbellFamily    BarbellDiameterFamily?
   imageUrl      String?
   imageData     Bytes?
   imageMimeType String?
@@ -365,6 +392,39 @@ model GymEquipment {
 
   @@unique([gymId, name])
   @@index([gymId, equipmentType])
+  @@index([gymId, systemBarbellFamily])
+  @@index([platePoolId])
+}
+
+// Named compatibility pools keep different sleeve standards isolated. Null
+// plate quantities mean the denomination is known but the count is not.
+model GymPlatePool {
+  id                  String                  @id @default(cuid())
+  gymId               String
+  gym                 Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name                String
+  compatibilityKey    String
+  systemBarbellFamily BarbellDiameterFamily?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  plates              GymPlateInventoryItem[]
+  equipment           GymEquipment[]
+
+  @@unique([gymId, name])
+  @@unique([gymId, compatibilityKey])
+  @@unique([gymId, systemBarbellFamily])
+  @@index([gymId, updatedAt])
+}
+
+model GymPlateInventoryItem {
+  id       String       @id @default(cuid())
+  poolId   String
+  pool     GymPlatePool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  weightKg Float
+  quantity Int?
+
+  @@unique([poolId, weightKg])
+  @@index([poolId])
 }
 
 model GymEquipmentExercise {
