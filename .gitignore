@@ -6,3 +6,5 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+data/android-release/*
+!data/android-release/.gitkeep

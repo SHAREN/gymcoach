@@ -1,5 +1,3 @@
-import org.gradle.api.tasks.Exec
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -70,10 +68,10 @@ android {
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     sourceSets.getByName("test").resources.srcDir(
-        rootProject.projectDir.parentFile.resolve("shared-contracts/examples"),
+        rootProject.projectDir.resolve("shared-contracts/examples"),
     )
     sourceSets.getByName("test").resources.srcDir(
-        rootProject.projectDir.parentFile.resolve("shared-contracts/fixtures"),
+        rootProject.projectDir.resolve("shared-contracts/fixtures"),
     )
 }
 
@@ -119,40 +117,4 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-val repositoryRoot = rootProject.projectDir.parentFile
-val generateAndroidExerciseNames = tasks.register<Exec>("generateAndroidExerciseNames") {
-    group = "build setup"
-    description = "Generates the Android Russian exercise dictionary from the web dictionary."
-    workingDir(repositoryRoot)
-    commandLine(
-        "node",
-        repositoryRoot.resolve("scripts/generate-android-exercise-names.mjs").absolutePath,
-    )
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(generateAndroidExerciseNames)
-}
-
-val debugApk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")
-val publishDebugApk = tasks.register<Exec>("publishDebugApk") {
-    group = "distribution"
-    description = "Publishes the latest debug APK for the GymCoach web download endpoint."
-    dependsOn("packageDebug")
-    workingDir(repositoryRoot)
-    environment(
-        "ANDROID_RELEASE_DIR",
-        repositoryRoot.resolve("data/android-release").absolutePath,
-    )
-    commandLine(
-        "node",
-        repositoryRoot.resolve("scripts/publish-android-apk.mjs").absolutePath,
-        debugApk.get().asFile.absolutePath,
-    )
-}
-
-tasks.matching { it.name == "assembleDebug" }.configureEach {
-    dependsOn(publishDebugApk)
 }

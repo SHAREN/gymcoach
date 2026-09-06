@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputMetadataPath = path.join(
   root,
-  'android/app/build/outputs/apk/debug/output-metadata.json',
+  'app/build/outputs/apk/debug/output-metadata.json',
 );
 const outputMetadata = JSON.parse(await readFile(outputMetadataPath, 'utf8'));
 const output = outputMetadata.elements?.[0];

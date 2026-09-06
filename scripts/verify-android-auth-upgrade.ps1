@@ -1,7 +1,6 @@
 <#
-Build the dedicated test APK before running this harness:
-  cd android
-  .\gradlew.bat -I ..\scripts\android-auth-upgrade-runner.init.gradle :app:assembleDebugAndroidTest
+Build the dedicated test APK before running this harness from the repository root:
+  .\gradlew.bat -I .\scripts\android-auth-upgrade-runner.init.gradle :app:assembleDebugAndroidTest
 
 The init script substitutes a plain Application only for this cross-version storage test, so a
 synthetic sentinel is not sent to the production synchronization path. Revoked-session behavior
