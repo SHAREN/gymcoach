@@ -46,9 +46,7 @@ async function seedStrengthWorkout(page: Page): Promise<{ sessionId: string }> {
   return { sessionId: session.id };
 }
 
-test('a lifter can fill the set form from free text via Parse with AI', async ({
-  page,
-}) => {
+test('a lifter can fill the set form from free text via Parse with AI', async ({ page }) => {
   const registerRes = await page.request.post('/api/auth/register', {
     headers: { 'x-forwarded-for': '10.111.0.9' },
     data: {
@@ -62,6 +60,7 @@ test('a lifter can fill the set form from free text via Parse with AI', async ({
   const { sessionId } = await seedStrengthWorkout(page);
 
   await page.goto(`/session/${sessionId}`);
+  await page.getByText('More set options', { exact: true }).click();
   await expect(page.getByLabel(/describe the set/i)).toBeVisible();
 
   // Type free text and parse it with AI.

@@ -61,13 +61,17 @@ async function seedLowReadiness(page: Page) {
 test('a lifter can start a planned deload week from the banner and end it early', async ({
   page,
 }) => {
-  // Sign up (fresh user each run).
-  await page.goto('/signup');
-  await page.getByLabel('Name').fill('Deload E2E');
-  await page.getByLabel('Email').fill(`e2e-deload-${Date.now()}@test.dev`);
-  await page.getByLabel('Password').fill('supersecret');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL('/');
+  // Register through the authenticated API. Auth UI itself is covered by
+  // auth.spec.ts; this feature spec should not depend on signup rendering
+  // latency while many Chromium workers seed accounts in parallel.
+  const registerRes = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Deload E2E',
+      email: 'e2e-deload-' + Date.now() + '@test.dev',
+      password: 'supersecret',
+    },
+  });
+  expect(registerRes.ok()).toBeTruthy();
 
   await seedLoggedSet(page);
   await seedLowReadiness(page);

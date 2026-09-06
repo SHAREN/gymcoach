@@ -55,6 +55,7 @@ test('set metrics switch between 1RM and 10RM while volume stays selectable', as
 
   const sessionId = await seedSession(page);
   await page.goto('/session/' + sessionId);
+  await page.getByText('More set options', { exact: true }).click();
 
   await page.getByLabel('Quick entry').fill('100x10');
   await expect(page.getByTestId('active-set-metric-1RM')).toContainText('133.3');
