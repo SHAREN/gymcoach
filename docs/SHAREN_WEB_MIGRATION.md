@@ -46,7 +46,7 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | --- | --- | --- | --- |
 | S13 | Remove Android-specific backend from clean web | DONE | Audit found no tracked Android/Huawei/mobile API, APK runtime/data/scripts, mobile auth models or mobile mutation models. Neutral MCP tokens/mutations and frozen equipment snapshots are shared web/MCP domain and remain. |
 | S14 | Preserve Android/Huawei archive | PAUSED | Correct v2 history-preserving local extraction is stored at D:/codexpro_workspace/gymcoach-android-extract-v2 with ARCHIVE_STATUS.md. Per user request, do not publish/deploy it now; Android work does not block clean-web completion. |
-| S15 | Final clean-web verification | TODO | Recheck forbidden paths, migrations on production DB copy, full gates, MCP smoke and real web workflow. |
+| S15 | Final clean-web verification | DONE | Non-destructive legacy bridge verified on production DB copy; current Prisma runtime, real web workflow, MCP read/write smoke, forbidden-path audit, full unit/integration/E2E/typecheck/lint/build gates all green on exact cutover candidate. |
 | S16 | Integrate/switch main, deploy, production health, cleanup | TODO | Preserve old main before switching; no force-push without backup. |
 
 ## Already upstream / do not re-port
