@@ -15,7 +15,8 @@ export const exercises = {
   emptyDescription:
     'Le catalogue est vide. Ajoutez votre premier exercice pour pouvoir l’utiliser dans un programme.',
   noMatchTitle: 'Aucun exercice trouvé',
-  noMatchDescription: 'Aucun nom d’exercice ne correspond à « {query} ». Essayez une autre recherche.',
+  noMatchDescription:
+    'Aucun nom d’exercice ne correspond à « {query} ». Essayez une autre recherche.',
   noFilteredDescription:
     'Aucun exercice ne correspond à la recherche et aux filtres actuels. Modifiez-les ou réinitialisez-les.',
   restSeconds: 'repos {seconds} s',
@@ -56,6 +57,12 @@ export const exercises = {
     equipmentSaveError: 'Impossible d’enregistrer le matériel de l’exercice.',
     savingEquipment: 'Enregistrement...',
     saveEquipment: 'Enregistrer le matériel',
+    history: 'Historique des entraînements',
+    openChart: 'Courbe de progression',
+    noHistory: 'Aucune série terminée pour cet exercice pour le moment.',
+    openSession: 'Ouvrir la séance',
+    reps: 'Répétitions',
+    equipmentShort: 'Matériel',
   },
   media: {
     button: 'Technique',

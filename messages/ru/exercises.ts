@@ -15,7 +15,8 @@ export const exercises = {
   emptyDescription: 'Каталог пуст. Добавьте первое упражнение, чтобы использовать его в программе.',
   noMatchTitle: 'Ничего не найдено',
   noMatchDescription: 'Упражнений по запросу «{query}» нет. Измените запрос.',
-  noFilteredDescription: 'Нет упражнений, соответствующих текущему поиску и фильтрам. Измените или сбросьте их.',
+  noFilteredDescription:
+    'Нет упражнений, соответствующих текущему поиску и фильтрам. Измените или сбросьте их.',
   restSeconds: 'отдых {seconds} с',
   editTitle: 'Изменить упражнение',
   addTitle: 'Добавить упражнение',
@@ -54,6 +55,12 @@ export const exercises = {
     equipmentSaveError: 'Не удалось сохранить оборудование упражнения.',
     savingEquipment: 'Сохранение...',
     saveEquipment: 'Сохранить оборудование',
+    history: 'История тренировок',
+    openChart: 'График прогресса',
+    noHistory: 'Для этого упражнения пока нет выполненных подходов.',
+    openSession: 'Открыть тренировку',
+    reps: 'Повторы',
+    equipmentShort: 'Тренажёр',
   },
   media: {
     button: 'Техника',
