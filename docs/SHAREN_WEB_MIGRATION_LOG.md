@@ -449,3 +449,13 @@ At the start of every continuation:
 - The only remaining Android wording in normal product documentation describes the PWA as installable on Android/mobile-width web UX. That is web behavior, not Android-client backend/runtime, so it remains intentionally.
 - Stage 13 therefore requires no product-code deletion or Prisma migration on this clean-upstream-based branch. Marked S13 DONE in docs/SHAREN_WEB_MIGRATION.md and added explicit S14-S16 tracking so continuation threads cannot mistake the end of M15 for migration completion.
 - Exact next incomplete step: S14. Inspect the legacy SHAREN monorepo Android and Huawei path/history, verify git-filter-repo/equivalent tooling and GitHub target availability, identify shared contracts required by the mobile project, then extract history into SHAREN/gymcoach-android without secrets/local.properties/local paths. Verify the extracted repository before publishing or archiving it.
+
+
+## 2026-09-06 — Android archive paused; web becomes sole active priority
+
+- User explicitly changed priority: do not spend more time deploying, publishing or polishing the Android/Huawei repository now. Preserve it locally with a text handoff and return to the clean web/upstream work.
+- The first filter-repo extraction was discarded as an archive candidate after verification showed default degenerate-merge pruning moved the filtered branch ref to an older surviving merge and lost final-tree Android definitions. No remote was created or pushed from that extraction.
+- Correct extraction is , produced from legacy source commit  with degenerate merge preservation. Before standalone adjustments, Git tree hashes for the extracted Android app, Huawei companion and shared contracts matched the corresponding source trees exactly.
+-  inside that extraction records provenance, verification and resume instructions. Verified before pausing: Android  BUILD SUCCESSFUL on JDK 17; Android  BUILD SUCCESSFUL; shared contracts 15 schemas / 15 examples; Huawei bundle/format + 77/77 tests. No GitHub  repository was created and nothing was pushed.
+- A preliminary history secret scan on the earlier filtered extraction found no leaks; final v2 publication scan and the Huawei transitive dependency advisory are intentionally deferred until Android work resumes.
+- S14 is PAUSED rather than required for current web completion. Exact active priority is now PR-ready clean web: remain based directly on current upstream main, exclude migration-only docs/personal artifacts from upstream candidate branches, preserve green gates, and organize the product diff into reviewable upstream PR slices.
