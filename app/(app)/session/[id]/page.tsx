@@ -50,7 +50,7 @@ export default async function SessionRunPage(props: Props) {
     where: { id: auth.userId },
     select: { unit: true, deloadUntil: true, bodyweight: true },
   });
-  const [lastPerformances, user, latestCheckin, returnRecommendations] = await Promise.all([
+  const [lastPerformances, user, latestCheckin, returnRecommendations, exerciseCatalog] = await Promise.all([
     getLastPerformances(auth.userId, exerciseIds, session.id),
     userPromise,
     db.readinessCheckin.findFirst({
@@ -67,6 +67,10 @@ export default async function SessionRunPage(props: Props) {
         gym: session.gym,
       }),
     ),
+    db.exercise.findMany({
+      where: { userId: auth.userId },
+      orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
+    }),
   ]);
 
   const lastPerfRecord: Record<string, SerializedLastPerformance> = {};
@@ -81,6 +85,7 @@ export default async function SessionRunPage(props: Props) {
 
   return (
     <SessionRunner
+      key={`${session.id}:${session.workout.exercises.map((exercise) => exercise.id).join(',')}`}
       session={session}
       lastPerformances={lastPerfRecord}
       returnRecommendations={returnRecommendations}
@@ -88,6 +93,7 @@ export default async function SessionRunPage(props: Props) {
       deloadActive={deloadActive}
       unit={user?.unit ?? 'KG'}
       initialProgramExerciseId={requestedProgramExerciseId}
+      exerciseCatalog={exerciseCatalog}
     />
   );
 }

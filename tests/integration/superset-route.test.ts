@@ -12,6 +12,7 @@ const mockUserId = vi.mocked(getCurrentUserId);
 
 import { POST as postProgramExercise } from '@/app/api/workouts/[id]/program-exercises/route';
 import { PUT as putProgramExercise } from '@/app/api/program-exercises/[id]/route';
+import { POST as postSupersetAction } from '@/app/api/program-exercises/[id]/superset/route';
 
 function actAs(userId: string) {
   mockUserId.mockResolvedValue(userId);
@@ -138,4 +139,63 @@ describe('program-exercise routes - supersetGroup (issue #146)', () => {
     expect((await db.programExercise.findUnique({ where: { id: pe.id } }))?.supersetGroup).toBeNull();
     void user;
   });
+
+  it('links neighboring exercises atomically and dissolves the whole group', async () => {
+    const { user, bench, row, workout } = await seed('superset-action@test.dev');
+    actAs(user.id);
+    const first = await db.programExercise.create({
+      data: { workoutId: workout.id, exerciseId: bench.id, order: 1, ...targets },
+    });
+    const second = await db.programExercise.create({
+      data: { workoutId: workout.id, exerciseId: row.id, order: 2, ...targets },
+    });
+
+    const link = await postSupersetAction(
+      jsonReq('POST', { action: 'link', neighborId: second.id }),
+      { params: Promise.resolve({ id: first.id }) },
+    );
+    expect(link.status).toBe(200);
+    const linked = await db.programExercise.findMany({
+      where: { id: { in: [first.id, second.id] } },
+      orderBy: { order: 'asc' },
+    });
+    expect(linked[0]?.supersetGroup).not.toBeNull();
+    expect(linked[1]?.supersetGroup).toBe(linked[0]?.supersetGroup);
+
+    const dissolve = await postSupersetAction(
+      jsonReq('POST', { action: 'dissolve' }),
+      { params: Promise.resolve({ id: first.id }) },
+    );
+    expect(dissolve.status).toBe(200);
+    const dissolved = await db.programExercise.findMany({
+      where: { id: { in: [first.id, second.id] } },
+    });
+    expect(dissolved.every((item) => item.supersetGroup == null)).toBe(true);
+  });
+
+  it('rejects a foreign superset mutation without changing either exercise', async () => {
+    const { user, bench, row, workout } = await seed('superset-action-owner@test.dev');
+    const intruder = await db.user.create({
+      data: { email: 'superset-action-intruder@test.dev', passwordHash: 'x' },
+    });
+    const first = await db.programExercise.create({
+      data: { workoutId: workout.id, exerciseId: bench.id, order: 1, ...targets },
+    });
+    const second = await db.programExercise.create({
+      data: { workoutId: workout.id, exerciseId: row.id, order: 2, ...targets },
+    });
+
+    actAs(intruder.id);
+    const response = await postSupersetAction(
+      jsonReq('POST', { action: 'link', neighborId: second.id }),
+      { params: Promise.resolve({ id: first.id }) },
+    );
+    expect(response.status).toBe(404);
+    const rows = await db.programExercise.findMany({
+      where: { id: { in: [first.id, second.id] } },
+    });
+    expect(rows.every((item) => item.supersetGroup == null)).toBe(true);
+    void user;
+  });
+
 });
