@@ -156,7 +156,7 @@ describe('SetInput first working set', () => {
 });
 
 describe('SetInput quick entry', () => {
-  it('prefills the deterministic next-set recommendation after a completed set', async () => {
+  it('applies the deterministic next-set recommendation explicitly and restores the action after a manual edit', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const previousSet = {
@@ -201,6 +201,19 @@ describe('SetInput quick entry', () => {
     );
 
     expect(screen.getByText(/100 KG × 11 · RIR 2/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reps' })).toHaveTextContent('12');
+    const apply = screen.getByRole('button', { name: 'Apply recommendation' });
+    expect(apply).toBeEnabled();
+
+    await user.click(apply);
+    expect(screen.getByRole('button', { name: 'Reps' })).toHaveTextContent('11');
+    expect(apply).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '+1 rep' }));
+    expect(screen.getByRole('button', { name: 'Reps' })).toHaveTextContent('12');
+    expect(apply).toBeEnabled();
+
+    await user.click(apply);
     await user.click(screen.getByRole('button', { name: /log the set/i }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ weight: 100, reps: 11, rir: 2 }),

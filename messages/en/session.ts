@@ -76,6 +76,7 @@ export const session = {
   },
   autoregulation: {
     nextSet: 'Automatic next set',
+    apply: 'Apply recommendation',
     reasons: {
       'hold-load': 'The previous set matched the target; keep the same load.',
       'adjust-reps': 'Keep the load and adjust reps to preserve the target RIR.',

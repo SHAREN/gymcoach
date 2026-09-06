@@ -1,33 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import { useFormatter, useLocale, useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { ChevronDown, ChevronUp, HelpCircle, Lightbulb, TrendingUp } from 'lucide-react';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { exerciseCategoryMessageKeys, muscleGroupMessageKeys } from '@/i18n/enum-keys';
 import {
   suggestNextWeight,
   SORENESS_HOLD_AT_OR_ABOVE,
   type ReadinessSignal,
 } from '@/lib/progression';
 import { formatWeight } from '@/lib/units';
-import { formatCardioSet } from '@/lib/cardio';
 import type { SerializedLastPerformance } from './session-runner';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
-import { ExerciseMediaDialog } from '@/components/exercises/exercise-media-dialog';
-
-// Last-session reference line for a cardio exercise (issue #176): duration and
-// distance via the shared cardio formatter, with average heart rate appended
-// when the previous session recorded one. Distance and bpm are simply omitted
-// when absent, so a duration-only cardio set shows just the duration.
-function cardioLastLine(cardio: NonNullable<SerializedLastPerformance['cardio']>): string {
-  const base = formatCardioSet(cardio.durationSec, cardio.distanceM);
-  return cardio.avgHr != null ? `${base} · ${cardio.avgHr} bpm` : base;
-}
+import { meaningfulProgramNote } from '@/lib/program-notes';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -50,13 +39,12 @@ export function ExerciseCard({
   loadConstraints = null,
 }: Props) {
   const t = useTranslations('session.exerciseCard');
-  const exerciseT = useTranslations('exercises');
   const locale = useLocale();
   const exerciseName = useExerciseName();
-  const format = useFormatter();
   const [notesOpen, setNotesOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const exo = programExercise.exercise;
+  const note = meaningfulProgramNote(programExercise.notes);
   // Cardio exercises (issue #133) are duration/distance based: the weight x
   // reps targets, load suggestion and last-performance load make no sense for
   // them, so those blocks are hidden.
@@ -110,44 +98,22 @@ export function ExerciseCard({
             : t('help.hold', {
                 reps: suggestion.targetRepsMax ?? programExercise.targetRepsMax,
               });
-  const lastDate = lastPerformance
-    ? format.dateTime(new Date(lastPerformance.sessionStartedAt), {
-        day: '2-digit',
-        month: '2-digit',
-      })
-    : null;
 
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <h2 className="text-2xl font-bold tracking-tight">{exerciseName(exo.name)}</h2>
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          <Badge variant="secondary">
-            {exerciseT(`muscleGroups.${muscleGroupMessageKeys[exo.muscleGroup]}`)}
-          </Badge>
-          <Badge variant="outline">
-            {exerciseT(`categories.${exerciseCategoryMessageKeys[exo.category]}`)}
-          </Badge>
-          {gymName && <Badge variant="outline">{gymName}</Badge>}
-          {loadConstraints?.isAvailable === false && (
-            <Badge variant="destructive">{t('notAvailable')}</Badge>
-          )}
+      <CardHeader className="min-w-0 pb-3">
+        <div className="min-w-0 overflow-x-auto overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <h2 className="w-max min-w-full whitespace-nowrap text-xl font-bold sm:text-2xl">
+            {exerciseName(exo.name)}
+          </h2>
         </div>
-        <ExerciseMediaDialog
-          exerciseName={exo.name}
-          displayName={exerciseName(exo.name)}
-          equipmentType={exo.equipmentType}
-        />
-        {/* Exercise cue (issue #224): when the exercise carries a technique
-            note, surface it as an always-visible muted line right under the
-            header so the form reminder is there exactly while logging the set.
-            This is the exercise's own notes; the per-set quick-note field and
-            the collapsible program-notes block below are unchanged. */}
-        {exo.notes && (
-          <p className="mt-1.5 flex items-start gap-1.5 text-sm text-muted-foreground">
-            <Lightbulb className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            <span className="whitespace-pre-line">{exo.notes}</span>
-          </p>
+        {(gymName || loadConstraints?.isAvailable === false) && (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {gymName && <Badge variant="outline">{gymName}</Badge>}
+            {loadConstraints?.isAvailable === false && (
+              <Badge variant="destructive">{t('notAvailable')}</Badge>
+            )}
+          </div>
         )}
       </CardHeader>
 
@@ -172,28 +138,6 @@ export function ExerciseCard({
             </>
           )}
         </p>
-
-        {lastPerformance && (!isCardio || lastPerformance.cardio) && (
-          <div className="rounded-md bg-secondary/50 p-3 text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span className="text-xs">{t('lastSession', { date: lastDate ?? '' })}</span>
-            </div>
-            <p className="font-medium">
-              {isCardio && lastPerformance.cardio
-                ? cardioLastLine(lastPerformance.cardio)
-                : lastPerformance.maxWeight === 0
-                  ? t('bodyweightReps', { reps: lastPerformance.repsAtMaxWeight })
-                  : t('weightedReps', {
-                      weight: formatWeight(lastPerformance.maxWeight, unit, {
-                        decimals: 2,
-                        group: false,
-                        locale,
-                      }),
-                      reps: lastPerformance.repsAtMaxWeight,
-                    })}
-            </p>
-          </div>
-        )}
 
         {!isCardio && suggestion.weight != null && (
           <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
@@ -247,7 +191,7 @@ export function ExerciseCard({
           </div>
         )}
 
-        {programExercise.notes && (
+        {note && (
           <div>
             <Button
               variant="ghost"
@@ -260,12 +204,7 @@ export function ExerciseCard({
             </Button>
             {notesOpen && (
               <div className="mt-2 space-y-2 rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
-                {/* The exercise's own notes are the always-visible cue under the
-                    header; this block holds only the program-specific note so
-                    the same text is never shown twice. */}
-                {programExercise.notes && (
-                  <p className="whitespace-pre-line">{programExercise.notes}</p>
-                )}
+                <p className="whitespace-pre-line">{note}</p>
               </div>
             )}
           </div>
