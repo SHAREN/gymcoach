@@ -7,6 +7,8 @@ import {
   isRestTimerSoundEnabled,
   isReadinessAutoRegulationEnabled,
   plateConfigForUnit,
+  normalizeSetTableMetrics,
+  setTableMetricEnabled,
 } from './preferences';
 
 const STORAGE_KEY = 'gymcoach.prefs.v1';
@@ -79,5 +81,27 @@ describe('preferences', () => {
   it('reflects a customized plate config', () => {
     savePreferences({ ...DEFAULT_PREFERENCES, barWeightKg: 15, platesKg: [20, 10] });
     expect(plateConfigForUnit('KG')).toEqual({ barWeight: 15, plates: [20, 10] });
+  });
+
+  it('migrates the legacy rep-max preference into set-table metrics', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ rmDisplay: '10RM' }));
+    expect(loadPreferences().setTableMetrics).toEqual(['10RM']);
+  });
+
+  it('normalizes conflicting rep-max metrics to one view while preserving volume', () => {
+    expect(normalizeSetTableMetrics(['1RM', '10RM', 'VOLUME'])).toEqual(['10RM', 'VOLUME']);
+    expect(normalizeSetTableMetrics([], '10RM')).toEqual(['10RM']);
+  });
+
+  it('keeps 1RM and 10RM mutually exclusive while allowing volume', () => {
+    let metrics = normalizeSetTableMetrics(['1RM']);
+    metrics = setTableMetricEnabled(metrics, 'VOLUME', true);
+    expect(metrics).toEqual(['1RM', 'VOLUME']);
+    metrics = setTableMetricEnabled(metrics, '10RM', true);
+    expect(metrics).toEqual(['10RM', 'VOLUME']);
+    metrics = setTableMetricEnabled(metrics, 'VOLUME', false);
+    expect(metrics).toEqual(['10RM']);
+    metrics = setTableMetricEnabled(metrics, '10RM', false);
+    expect(metrics).toEqual(['10RM']);
   });
 });

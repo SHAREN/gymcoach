@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { Check, Minus, Plus } from 'lucide-react';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import {
   displayIncrement,
+  formatWeight,
   fromDisplayWeight,
   roundWeight,
   toDisplayWeight,
@@ -28,6 +29,8 @@ import { SetValuePicker } from '@/components/session/set-value-picker';
 import type { SerializedLastPerformance } from './session-runner';
 import type { IntraSetRecommendation } from '@/lib/intra-set-autoregulation';
 import type { ReturnRecommendation } from '@/lib/return-to-training';
+import { estimateRepMax } from '@/lib/stats';
+import { loadPreferences, PREFERENCES_CHANGED_EVENT, type SetTableMetric } from '@/lib/preferences';
 import {
   constrainGymWeight,
   constrainGymWeightAtOrBelow,
@@ -98,7 +101,9 @@ export function SetInput({
 }: Props) {
   const t = useTranslations('session.input');
   const autoT = useTranslations('session.autoregulation');
+  const metricT = useTranslations('session.setsList.metrics');
   const common = useTranslations('common');
+  const locale = useLocale();
   // Pre-fill: last set of this exercise in the current session,
   // otherwise the last performance, otherwise defaults.
   const initial = computeInitial(
@@ -122,6 +127,14 @@ export function SetInput({
   const [aiHint, setAiHint] = useState<string | null>(null);
   const [gymEquipmentId, setGymEquipmentId] = useState('');
   const [picker, setPicker] = useState<'weight' | 'reps' | null>(null);
+  const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
+
+  useEffect(() => {
+    const syncMetrics = () => setMetrics(loadPreferences().setTableMetrics);
+    syncMetrics();
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, syncMetrics);
+    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, syncMetrics);
+  }, []);
 
   // Re-init when the exercise changes or a set changes.
   useEffect(() => {
@@ -142,7 +155,7 @@ export function SetInput({
     setAiHint(null);
     const recentEquipmentId = existingSets.at(-1)?.gymEquipmentId ?? '';
     const requestedEquipmentId =
-      selectedEquipmentId !== undefined ? selectedEquipmentId ?? '' : recentEquipmentId;
+      selectedEquipmentId !== undefined ? (selectedEquipmentId ?? '') : recentEquipmentId;
     setGymEquipmentId(
       equipmentOptions.some((equipment) => equipment.id === requestedEquipmentId)
         ? requestedEquipmentId
@@ -154,7 +167,8 @@ export function SetInput({
   useEffect(() => {
     if (selectedEquipmentId === undefined) return;
     const next =
-      selectedEquipmentId && equipmentOptions.some((equipment) => equipment.id === selectedEquipmentId)
+      selectedEquipmentId &&
+      equipmentOptions.some((equipment) => equipment.id === selectedEquipmentId)
         ? selectedEquipmentId
         : '';
     setGymEquipmentId(next);
@@ -592,6 +606,46 @@ export function SetInput({
               </div>
             </div>
 
+            {metrics.length > 0 && (
+              <div
+                className={metrics.length > 1 ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-1 gap-2'}
+              >
+                {metrics.map((metric) => {
+                  const value =
+                    metric === 'VOLUME'
+                      ? form.weight * form.reps
+                      : estimateRepMax(form.weight, form.reps, metric === '10RM' ? 10 : 1);
+                  const label =
+                    metric === '1RM'
+                      ? metricT('oneRmShort')
+                      : metric === '10RM'
+                        ? metricT('tenRmShort')
+                        : metricT('volumeShort');
+                  return (
+                    <div
+                      key={metric}
+                      data-testid={'active-set-metric-' + metric}
+                      className="rounded-md border border-border bg-muted/20 px-3 py-2"
+                    >
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {label}
+                      </p>
+                      <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                        {value > 0
+                          ? formatWeight(value, unit, {
+                              decimals: 1,
+                              group: false,
+                              locale,
+                              withUnit: false,
+                            })
+                          : '–'}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* RIR */}
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -744,7 +798,10 @@ function computeInitial(
         loadConstraints,
       );
       weight = ordinary.weight ?? lastPerf.maxWeight;
-      if (returnRecommendation.weightCeiling != null && weight > returnRecommendation.weightCeiling) {
+      if (
+        returnRecommendation.weightCeiling != null &&
+        weight > returnRecommendation.weightCeiling
+      ) {
         weight = constrainGymWeightAtOrBelow(returnRecommendation.weightCeiling, loadConstraints);
       }
     }

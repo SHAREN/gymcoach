@@ -1,16 +1,38 @@
 'use client';
 
-import { useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useEffect, useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import { Check, Circle, CircleDot, CloudOff, Loader2, Pencil, Trash2, Trophy } from 'lucide-react';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import type { PendingSet } from '@/lib/indexeddb';
 import { detectPRs, type PRType } from '@/lib/records';
 import { formatCardioSet } from '@/lib/cardio';
 import { SetValuePicker } from '@/components/session/set-value-picker';
-import { fromDisplayWeight, roundWeight, toDisplayWeight, unitLabel } from '@/lib/units';
+import {
+  formatWeight,
+  fromDisplayWeight,
+  roundWeight,
+  toDisplayWeight,
+  unitLabel,
+} from '@/lib/units';
+import { estimateRepMax } from '@/lib/stats';
+import {
+  loadPreferences,
+  PREFERENCES_CHANGED_EVENT,
+  savePreferences,
+  SET_TABLE_METRICS,
+  setTableMetricEnabled,
+  type SetTableMetric,
+} from '@/lib/preferences';
 
 interface Props {
   programExercise: ProgramExercise & { exercise: Exercise };
@@ -33,6 +55,19 @@ interface Props {
 const PR_LABEL_KEYS = { weight: 'weightPr', e1rm: 'oneRmPr' } as const;
 const PR_TITLE_KEYS = { weight: 'weightPrTitle', e1rm: 'oneRmPrTitle' } as const;
 
+function formatSetMetric(
+  metric: SetTableMetric,
+  weight: number,
+  reps: number,
+  unit: WeightUnit,
+  locale: string,
+): string {
+  const value =
+    metric === 'VOLUME' ? weight * reps : estimateRepMax(weight, reps, metric === '10RM' ? 10 : 1);
+  if (value <= 0) return '–';
+  return formatWeight(value, unit, { decimals: 1, group: false, locale, withUnit: false });
+}
+
 export function SetsList({
   programExercise,
   sets,
@@ -43,6 +78,37 @@ export function SetsList({
   priorSets,
 }: Props) {
   const t = useTranslations('session.setsList');
+  const locale = useLocale();
+  const isStrength = programExercise.exercise.category !== 'CARDIO';
+  const [metrics, setMetrics] = useState<SetTableMetric[]>(['1RM']);
+
+  useEffect(() => {
+    const syncMetrics = () => setMetrics(loadPreferences().setTableMetrics);
+    syncMetrics();
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, syncMetrics);
+    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, syncMetrics);
+  }, []);
+
+  function metricLabel(metric: SetTableMetric, short = false) {
+    if (metric === '1RM') return t(short ? 'metrics.oneRmShort' : 'metrics.oneRm');
+    if (metric === '10RM') return t(short ? 'metrics.tenRmShort' : 'metrics.tenRm');
+    return t(short ? 'metrics.volumeShort' : 'metrics.volume');
+  }
+
+  function updateMetric(metric: SetTableMetric, enabled: boolean) {
+    const next = setTableMetricEnabled(metrics, metric, enabled);
+    if (next.length === metrics.length && next.every((value, index) => value === metrics[index]))
+      return;
+    const prefs = loadPreferences();
+    const rmDisplay = next.includes('10RM')
+      ? '10RM'
+      : next.includes('1RM')
+        ? '1RM'
+        : prefs.rmDisplay;
+    savePreferences({ ...prefs, rmDisplay, setTableMetrics: next });
+    setMetrics(next);
+  }
+
   const completedNonWarmup = sets.filter((s) => !s.isWarmup);
   const totalRows = Math.max(programExercise.targetSets, completedNonWarmup.length + 1);
   const currentSetNumber = completedNonWarmup.length + 1;
@@ -63,12 +129,50 @@ export function SetsList({
 
   return (
     <div className="rounded-lg border border-border">
+      {isStrength && (
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/20 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t('metrics.label')}
+            </span>
+            <span
+              className="truncate text-xs tabular-nums text-muted-foreground"
+              data-testid="set-metric-selection"
+            >
+              {metrics.map((metric) => metricLabel(metric, true)).join(' + ')}
+            </span>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" aria-label={t('metrics.open')}>
+                {t('metrics.open')}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-44">
+              <DropdownMenuLabel>{t('metrics.label')}</DropdownMenuLabel>
+              {SET_TABLE_METRICS.map((option) => (
+                <DropdownMenuCheckboxItem
+                  key={option}
+                  checked={metrics.includes(option)}
+                  disabled={metrics.length === 1 && metrics[0] === option}
+                  onSelect={(event) => event.preventDefault()}
+                  onCheckedChange={(checked) => updateMetric(option, checked === true)}
+                >
+                  {metricLabel(option)}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
       {sets.map((s, i) => (
         <RowDone
           key={s.localId}
           set={s}
           prs={prsFor(s, i)}
           unit={unit}
+          metrics={isStrength ? metrics : []}
+          locale={locale}
           onEdit={onEditSet ? (values) => onEditSet(s, values) : undefined}
           onDelete={() => onDeleteSet(s)}
         />
@@ -93,12 +197,16 @@ function RowDone({
   set,
   prs,
   unit,
+  metrics,
+  locale,
   onEdit,
   onDelete,
 }: {
   set: PendingSet;
   prs: PRType[];
   unit: WeightUnit;
+  metrics: SetTableMetric[];
+  locale: string;
   onEdit?: (values: { weight: number; reps: number; rir: number | null }) => Promise<void>;
   onDelete: () => void;
 }) {
@@ -161,6 +269,23 @@ function RowDone({
               {t('note')}
             </Badge>
           )}
+          {!isCardio && metrics.length > 0 && (
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] tabular-nums text-muted-foreground">
+              {metrics.map((metric) => (
+                <span
+                  key={metric}
+                  data-testid={'completed-set-' + set.setNumber + '-metric-' + metric}
+                >
+                  {metric === '1RM'
+                    ? t('metrics.oneRmShort')
+                    : metric === '10RM'
+                      ? t('metrics.tenRmShort')
+                      : t('metrics.volumeShort')}{' '}
+                  {formatSetMetric(metric, draft.weight, draft.reps, unit, locale)}
+                </span>
+              ))}
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {!isCardio && onEdit && (
@@ -204,7 +329,9 @@ function RowDone({
             </Button>
           </div>
           <div className="space-y-1">
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">{t('editReps')}</span>
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">
+              {t('editReps')}
+            </span>
             <Button
               type="button"
               variant="outline"
@@ -215,7 +342,9 @@ function RowDone({
             </Button>
           </div>
           <label className="space-y-1">
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">{t('editRir')}</span>
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">
+              {t('editRir')}
+            </span>
             <select
               value={draft.rir ?? ''}
               onChange={(event) =>
@@ -235,7 +364,12 @@ function RowDone({
             </select>
           </label>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+            >
               {t('cancelEdit')}
             </Button>
             <Button type="button" onClick={saveEdit} disabled={saving || draft.reps < 1}>
@@ -248,9 +382,12 @@ function RowDone({
             value={picker === 'reps' ? draft.reps : displayWeight}
             options={
               picker === 'reps'
-                ? [...new Set([...Array.from({ length: 30 }, (_, index) => index + 1), draft.reps])].sort(
-                    (a, b) => a - b,
-                  )
+                ? [
+                    ...new Set([
+                      ...Array.from({ length: 30 }, (_, index) => index + 1),
+                      draft.reps,
+                    ]),
+                  ].sort((a, b) => a - b)
                 : [displayWeight]
             }
             unit={unit}
@@ -275,8 +412,7 @@ function SyncIcon({ status }: { status: PendingSet['status'] }) {
   if (status === 'synced') return <Check className="size-4 flex-shrink-0 text-primary" />;
   if (status === 'syncing')
     return <Loader2 className="size-4 flex-shrink-0 animate-spin text-muted-foreground" />;
-  if (status === 'failed')
-    return <CloudOff className="size-4 flex-shrink-0 text-amber-500" />;
+  if (status === 'failed') return <CloudOff className="size-4 flex-shrink-0 text-amber-500" />;
   // 'pending'
   return <CloudOff className="size-4 flex-shrink-0 text-muted-foreground" />;
 }
