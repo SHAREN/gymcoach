@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { historicalSetInputSchema, setInputSchema, setUpdateSchema, validateSetForCategory } from './set';
+import {
+  historicalSetInputSchema,
+  setInputSchema,
+  setUpdateSchema,
+  validateSetForCategory,
+} from './set';
 
 describe('setInputSchema', () => {
   const valid = { exerciseId: 'ex1', setNumber: 1, weight: 60, reps: 10 };
@@ -20,6 +25,12 @@ describe('setInputSchema', () => {
     expect(parsed.setNumber).toBe(2);
     expect(parsed.weight).toBe(82.5);
     expect(parsed.reps).toBe(8);
+  });
+
+  it('preserves half-step RIR values from historical data', () => {
+    expect(setInputSchema.parse({ ...valid, rir: 0.5 }).rir).toBe(0.5);
+    expect(setUpdateSchema.parse({ weight: '80', reps: '8', rir: '1.5' }).rir).toBe(1.5);
+    expect(setInputSchema.safeParse({ ...valid, rir: 0.25 }).success).toBe(false);
   });
 
   it('allows weight 0 (bodyweight) and a null rir', () => {
@@ -105,7 +116,6 @@ describe('validateSetForCategory', () => {
     expect(validateSetForCategory('CARDIO', { durationSec: 750, distanceM: 2500 })).toBeNull();
   });
 });
-
 
 describe('historical set correction schemas', () => {
   it('accepts only value fields when correcting an existing set', () => {

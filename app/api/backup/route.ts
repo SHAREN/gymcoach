@@ -507,7 +507,7 @@ const importSchema = z.object({
               setNumber: z.number().int().min(1).max(1000),
               weight: z.number().min(0).max(5000),
               reps: z.number().int().min(0).max(1000),
-              rir: z.number().int().min(0).max(10).nullable().optional(),
+              rir: z.number().min(0).max(10).multipleOf(0.5).nullable().optional(),
               // v2 cardio fields; absent in v1 backups.
               durationSec: z.number().int().min(1).max(MAX_DURATION_SEC).nullable().optional(),
               distanceM: z.number().min(0).max(MAX_DISTANCE_M).nullable().optional(),

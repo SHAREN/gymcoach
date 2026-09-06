@@ -75,7 +75,7 @@ const workoutSetSchema = z
     setNumber: z.number().int().min(1).max(50),
     weight: z.number().min(0).max(5000),
     reps: z.number().int().min(1).max(1000),
-    rir: z.number().int().min(0).max(10).nullable().optional(),
+    rir: z.number().min(0).max(10).multipleOf(0.5).nullable().optional(),
     notes: z.string().trim().max(500).nullable().optional(),
     isWarmup: z.boolean().default(false),
     isDropSet: z.boolean().default(false),

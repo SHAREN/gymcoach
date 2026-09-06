@@ -33,7 +33,9 @@ function minRow(over: Partial<Record<string, string>> = {}): string {
 
 // Build a full export-shaped row (all HISTORY_CSV_HEADERS columns) the same
 // way app/api/history/csv/route.ts does: csvEscape on every cell.
-function exportRow(over: Partial<Record<(typeof HISTORY_CSV_HEADERS)[number], string>> = {}): string {
+function exportRow(
+  over: Partial<Record<(typeof HISTORY_CSV_HEADERS)[number], string>> = {},
+): string {
   const defaults: Record<(typeof HISTORY_CSV_HEADERS)[number], string> = {
     session_id: 'sess-1',
     session_date: '2026-05-02',
@@ -165,10 +167,9 @@ describe('parseGymcoachCsv - export round-trip', () => {
     // csvEscape turns '=2+2' into "'=2+2"; importing the export must restore
     // the raw stored value, not keep growing quote prefixes.
     const res = parseGymcoachCsv(
-      [
-        EXPORT_HEADER,
-        exportRow({ exercise: '=2+2', workout: '+DDE', set_notes: '@cmd' }),
-      ].join('\n'),
+      [EXPORT_HEADER, exportRow({ exercise: '=2+2', workout: '+DDE', set_notes: '@cmd' })].join(
+        '\n',
+      ),
     );
     expect(res.errors).toEqual([]);
     expect(res.rows[0]).toMatchObject({
@@ -279,6 +280,14 @@ describe('parseGymcoachCsv - hostile and malformed rows', () => {
     expect(res.errors.map((e) => e.line)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
+  it('preserves half-step RIR values from exported history', () => {
+    const result = parseGymcoachCsv(
+      [EXPORT_HEADER, exportRow({ rir: '0.5' })].join(String.fromCharCode(10)),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.rows[0]?.rir).toBe(0.5);
+  });
+
   it('rejects out-of-range rir and heart rate with per-line errors', () => {
     const res = parseGymcoachCsv(
       [
@@ -295,11 +304,7 @@ describe('parseGymcoachCsv - hostile and malformed rows', () => {
 
   it('rejects cardio-only fields on a strength row instead of dropping them', () => {
     const res = parseGymcoachCsv(
-      [
-        EXPORT_HEADER,
-        exportRow({ avg_hr: '150' }),
-        exportRow({ distance_m: '5000' }),
-      ].join('\n'),
+      [EXPORT_HEADER, exportRow({ avg_hr: '150' }), exportRow({ distance_m: '5000' })].join('\n'),
     );
     expect(res.rows).toHaveLength(0);
     expect(res.errors.map((e) => e.reason)).toEqual([
@@ -310,9 +315,7 @@ describe('parseGymcoachCsv - hostile and malformed rows', () => {
 
   it('neutralizes formula payloads only via the guard, never evaluates', () => {
     // A hostile cell is just data: it round-trips as a string.
-    const res = parseGymcoachCsv(
-      [MIN_HEADER, minRow({ exercise: '=HYPERLINK(evil)' })].join('\n'),
-    );
+    const res = parseGymcoachCsv([MIN_HEADER, minRow({ exercise: '=HYPERLINK(evil)' })].join('\n'));
     expect(res.errors).toEqual([]);
     expect(res.rows[0]?.exerciseName).toBe('=HYPERLINK(evil)');
   });

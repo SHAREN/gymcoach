@@ -18,7 +18,7 @@ export const setInputSchema = z.object({
   setNumber: z.coerce.number().int().min(1).max(50),
   weight: z.coerce.number().min(0).max(500),
   reps: z.coerce.number().int().min(0).max(100),
-  rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+  rir: z.union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null()]).optional().nullable(),
   // Cardio fields (issue #133): only valid on CARDIO exercises - the API
   // enforces that with validateSetForCategory below, since the category lives
   // on the exercise row, not in the payload. Bounds: 1 second to 24 hours,
@@ -58,7 +58,7 @@ export const setUpdateSchema = z
   .object({
     weight: z.coerce.number().min(0).max(500),
     reps: z.coerce.number().int().min(1).max(100),
-    rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+    rir: z.union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null()]).optional().nullable(),
   })
   .strict();
 
@@ -70,7 +70,7 @@ export const historicalSetInputSchema = z
     gymEquipmentId: z.string().min(1).nullable().optional(),
     weight: z.coerce.number().min(0).max(500),
     reps: z.coerce.number().int().min(1).max(100),
-    rir: z.union([z.coerce.number().int().min(0).max(5), z.null()]).optional().nullable(),
+    rir: z.union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null()]).optional().nullable(),
   })
   .strict();
 

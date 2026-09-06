@@ -450,7 +450,7 @@ model Set {
   setNumber                      Int
   weight                         Float
   reps                           Int
-  rir                            Int?
+  rir                            Float?
   // Cardio sets (issue #133, additive): duration in seconds (>= 1 when set)
   // and optional distance in meters. NULL on strength sets - existing rows
   // are untouched and lifting flows never write these.

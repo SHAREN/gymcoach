@@ -85,7 +85,7 @@ const commonSchema = z.object({
   workoutName: z.string().trim().min(1).max(200),
   exerciseName: z.string().trim().min(1).max(120),
   setOrder: z.number().int().min(1).max(50),
-  rir: z.number().int().min(0).max(5).nullable(),
+  rir: z.number().min(0).max(5).multipleOf(0.5).nullable(),
   notes: z.string().trim().max(500).nullable(),
 });
 

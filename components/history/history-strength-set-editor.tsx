@@ -381,7 +381,7 @@ function RirSelect({
       className={className}
     >
       <option value="">-</option>
-      {[0, 1, 2, 3, 4, 5].map((rir) => (
+      {[0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map((rir) => (
         <option key={rir} value={rir}>
           {rir}
         </option>
@@ -430,7 +430,7 @@ function validDraft(draft: DraftSet): boolean {
     Number.isInteger(draft.reps) &&
     draft.reps >= 1 &&
     draft.reps <= 100 &&
-    (draft.rir == null || (Number.isInteger(draft.rir) && draft.rir >= 0 && draft.rir <= 5))
+    (draft.rir == null || (draft.rir >= 0 && draft.rir <= 5 && Number.isInteger(draft.rir * 2)))
   );
 }
 

@@ -70,7 +70,12 @@ async function seed() {
   });
   const finishedAt = new Date('2026-09-04T18:00:00.000Z');
   const finished = await db.session.create({
-    data: { userId: user.id, gymId: gym.id, startedAt: new Date('2026-09-04T17:00:00Z'), finishedAt },
+    data: {
+      userId: user.id,
+      gymId: gym.id,
+      startedAt: new Date('2026-09-04T17:00:00Z'),
+      finishedAt,
+    },
   });
   const active = await db.session.create({ data: { userId: user.id, gymId: gym.id } });
   const historical = await db.set.create({
@@ -146,7 +151,7 @@ describe('completed workout strength set editor API', () => {
     const before = await db.set.findUniqueOrThrow({ where: { id: historical.id } });
 
     const response = await patchSet(
-      jsonRequest('PATCH', { weight: 25, reps: 8, rir: 1 }),
+      jsonRequest('PATCH', { weight: 25, reps: 8, rir: 0.5 }),
       params(historical.id),
     );
     expect(response.status).toBe(200);
@@ -157,7 +162,7 @@ describe('completed workout strength set editor API', () => {
       setNumber: before.setNumber,
       weight: 25,
       reps: 8,
-      rir: 1,
+      rir: 0.5,
       gymEquipmentId: before.gymEquipmentId,
       equipmentNameSnapshot: before.equipmentNameSnapshot,
       equipmentLoadSnapshot: before.equipmentLoadSnapshot,
