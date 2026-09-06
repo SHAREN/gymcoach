@@ -48,7 +48,7 @@ describe('structured coaching profile backup', () => {
     const exportResponse = await getBackup();
     expect(exportResponse.status).toBe(200);
     const dump = await exportResponse.json();
-    expect(dump.version).toBe(8);
+    expect(dump.version).toBe(9);
     expect(dump.profile).toMatchObject({
       coachNote: 'Keep this note too',
       coachingProfile: {

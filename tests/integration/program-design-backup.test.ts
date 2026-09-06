@@ -43,7 +43,7 @@ describe('program revision backup', () => {
     const exportResponse = await getBackup();
     expect(exportResponse.status).toBe(200);
     const dump = await exportResponse.json();
-    expect(dump.version).toBe(8);
+    expect(dump.version).toBe(9);
     expect(dump.programs[0]).toMatchObject({
       name: 'Current block',
       parentProgramIndex: null,

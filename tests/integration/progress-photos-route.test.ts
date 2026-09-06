@@ -111,9 +111,13 @@ describe('POST /api/progress-photos - valid uploads', () => {
       const abs = path.join(uploadsDir, 'progress-photos', row!.storagePath);
       expect(existsSync(abs)).toBe(true);
       expect(new Uint8Array(await readFile(abs))).toEqual(bytes);
-      // Written non-executable, owner-only (0o600).
-      const mode = (await stat(abs)).mode & 0o777;
-      expect(mode).toBe(0o600);
+      // POSIX filesystems expose the requested owner-only mode directly.
+      // Windows/NTFS does not model Unix permission bits; Node reports a
+      // synthesized 0o666 even though writeFile was called with mode 0o600.
+      if (process.platform !== 'win32') {
+        const mode = (await stat(abs)).mode & 0o777;
+        expect(mode).toBe(0o600);
+      }
     },
   );
 

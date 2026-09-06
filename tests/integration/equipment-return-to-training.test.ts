@@ -167,7 +167,14 @@ describe('equipment-aware return-to-training history', () => {
             name: cableA.name,
             equipmentType: cableA.equipmentType,
             loadConfigurationKnown: cableA.loadConfigurationKnown,
+            loadType: cableA.loadType,
             weightOptions: cableA.weightOptions,
+            selectedLoadMultiplier: cableA.selectedLoadMultiplier,
+            baseLoadKg: cableA.baseLoadKg,
+            platePoolId: cableA.platePoolId,
+            loadingSides: cableA.loadingSides,
+            systemBarbellFamily: cableA.systemBarbellFamily,
+            platePool: null,
             exerciseLinks: [{ exerciseId: exercise.id }],
           },
           {
@@ -175,7 +182,14 @@ describe('equipment-aware return-to-training history', () => {
             name: cableB.name,
             equipmentType: cableB.equipmentType,
             loadConfigurationKnown: cableB.loadConfigurationKnown,
+            loadType: cableB.loadType,
             weightOptions: cableB.weightOptions,
+            selectedLoadMultiplier: cableB.selectedLoadMultiplier,
+            baseLoadKg: cableB.baseLoadKg,
+            platePoolId: cableB.platePoolId,
+            loadingSides: cableB.loadingSides,
+            systemBarbellFamily: cableB.systemBarbellFamily,
+            platePool: null,
             exerciseLinks: [{ exerciseId: exercise.id }],
           },
         ],
@@ -198,6 +212,110 @@ describe('equipment-aware return-to-training history', () => {
       mode: 'exercise-reintro',
       exerciseGapDays: 50,
       historySessionCount: 1,
+    });
+  });
+
+  it('uses non-comparable history only to detect a long break and calibrates from the selected equipment floor', async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const user = await db.user.create({
+      data: { email: `equipment-fallback-${suffix}@test.dev`, passwordHash: 'x' },
+    });
+    const gym = await db.gym.create({
+      data: { userId: user.id, name: `Fallback Gym ${suffix}` },
+    });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: `Fallback cable press ${suffix}`,
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        equipmentType: 'CABLE',
+      },
+    });
+    const cable = await db.gymEquipment.create({
+      data: {
+        gymId: gym.id,
+        name: `Fallback Cable ${suffix}`,
+        equipmentType: 'CABLE',
+        loadConfigurationKnown: true,
+        loadType: 'SELECTORIZED',
+        weightOptions: [10, 20, 30],
+        exerciseLinks: { create: { exerciseId: exercise.id } },
+      },
+    });
+    await db.gymExerciseConfig.create({
+      data: {
+        gymId: gym.id,
+        exerciseId: exercise.id,
+        isAvailable: true,
+        preferredEquipmentId: cable.id,
+        weightOptions: [],
+      },
+    });
+    await createFinishedSession({
+      userId: user.id,
+      gymId: gym.id,
+      exerciseId: exercise.id,
+      gymEquipmentId: null,
+      daysAgoValue: 180,
+      weight: 70,
+    });
+
+    const recommendations = await getReturnToTrainingRecommendationsByEquipment({
+      userId: user.id,
+      programExercises: [
+        {
+          id: 'pe-fallback',
+          exerciseId: exercise.id,
+          targetSets: 4,
+          targetRepsMin: 8,
+          targetRIR: 2,
+          exercise,
+        },
+      ],
+      excludeSessionId: null,
+      now,
+      gym: {
+        ...gym,
+        exerciseConfigs: [
+          {
+            exerciseId: exercise.id,
+            isAvailable: true,
+            weightOptions: [],
+            preferredEquipmentId: cable.id,
+          },
+        ],
+        equipment: [
+          {
+            id: cable.id,
+            name: cable.name,
+            equipmentType: cable.equipmentType,
+            loadConfigurationKnown: cable.loadConfigurationKnown,
+            loadType: cable.loadType,
+            weightOptions: cable.weightOptions,
+            selectedLoadMultiplier: cable.selectedLoadMultiplier,
+            baseLoadKg: cable.baseLoadKg,
+            platePoolId: cable.platePoolId,
+            loadingSides: cable.loadingSides,
+            systemBarbellFamily: cable.systemBarbellFamily,
+            platePool: null,
+            exerciseLinks: [{ exerciseId: exercise.id }],
+          },
+        ],
+      },
+    });
+
+    const selected = recommendations['pe-fallback']?.find(
+      (item) => item.gymEquipmentId === cable.id,
+    )?.recommendation;
+    expect(selected).toMatchObject({
+      mode: 'muscle-reintro',
+      exerciseGapDays: 180,
+      historySessionCount: 0,
+      nonComparableHistorySessionCount: 1,
+      suggestedWeight: 10,
+      calibrationRequired: true,
+      confidence: 'low',
     });
   });
 });

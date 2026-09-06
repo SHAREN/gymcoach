@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { Prisma } from '@/prisma/generated/client';
 import {
+  BarbellDiameterFamily,
+  EquipmentLoadType,
   ExerciseCategory,
   EquipmentType,
   MessageRole,
@@ -36,6 +38,7 @@ import {
   MAX_GYM_EQUIPMENT_PER_GYM,
   decodeGymEquipmentImage,
 } from '@/lib/gym-equipment';
+import { initializeOwnedGymSystemProfiles } from '@/lib/gym-system-profiles';
 
 // ============================================================
 // Backup / Import JSON (LOT 11, completed by issue #168)
@@ -69,7 +72,7 @@ import {
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 8;
+const VERSION = 9;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -175,9 +178,21 @@ export async function GET() {
         include: {
           equipment: {
             orderBy: { name: 'asc' },
-            include: { exerciseLinks: { include: { exercise: { select: { name: true } } } } },
+            include: {
+              exerciseLinks: { include: { exercise: { select: { name: true } } } },
+              platePool: { select: { compatibilityKey: true } },
+            },
           },
-          exerciseConfigs: { include: { exercise: { select: { name: true } } } },
+          platePools: {
+            orderBy: [{ systemBarbellFamily: 'asc' }, { name: 'asc' }],
+            include: { plates: { orderBy: { weightKg: 'asc' } } },
+          },
+          exerciseConfigs: {
+            include: {
+              exercise: { select: { name: true } },
+              preferredEquipment: { select: { name: true } },
+            },
+          },
         },
       }),
     ]);
@@ -221,6 +236,15 @@ export async function GET() {
         dumbbellWeights: gym.dumbbellWeights,
         plateWeights: gym.plateWeights,
         barWeights: gym.barWeights,
+        platePools: gym.platePools.map((pool) => ({
+          name: pool.name,
+          compatibilityKey: pool.compatibilityKey,
+          systemBarbellFamily: pool.systemBarbellFamily,
+          plates: pool.plates.map((plate) => ({
+            weightKg: plate.weightKg,
+            quantity: plate.quantity,
+          })),
+        })),
         equipment: gym.equipment.map((item) => ({
           name: item.name,
           equipmentType: item.equipmentType,
@@ -228,7 +252,14 @@ export async function GET() {
           manufacturer: item.manufacturer,
           modelName: item.modelName,
           quantity: item.quantity,
+          loadConfigurationKnown: item.loadConfigurationKnown,
+          loadType: item.loadType,
           weightOptions: item.weightOptions,
+          selectedLoadMultiplier: item.selectedLoadMultiplier,
+          baseLoadKg: item.baseLoadKg,
+          platePoolCompatibilityKey: item.platePool?.compatibilityKey ?? null,
+          loadingSides: item.loadingSides,
+          systemBarbellFamily: item.systemBarbellFamily,
           imageUrl: item.imageUrl,
           imageMimeType: item.imageMimeType,
           imageBase64: item.imageData ? Buffer.from(item.imageData).toString('base64') : null,
@@ -238,6 +269,8 @@ export async function GET() {
           exerciseName: config.exercise.name,
           isAvailable: config.isAvailable,
           weightOptions: config.weightOptions,
+          systemProfileSupported: config.systemProfileSupported,
+          preferredEquipmentName: config.preferredEquipment?.name ?? null,
         })),
       })),
       programs: programs.map((p) => ({
@@ -528,6 +561,24 @@ const importSchema = z.object({
         dumbbellWeights: gymWeightListSchema,
         plateWeights: gymWeightListSchema,
         barWeights: gymWeightListSchema,
+        platePools: z
+          .array(
+            z.object({
+              name: z.string().trim().min(1).max(120),
+              compatibilityKey: z.string().trim().min(1).max(80),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
+              plates: z
+                .array(
+                  z.object({
+                    weightKg: z.number().min(0.1).max(500),
+                    quantity: z.number().int().min(0).max(1000).nullable(),
+                  }),
+                )
+                .max(200),
+            }),
+          )
+          .max(200)
+          .optional(),
         equipment: z
           .array(
             z.object({
@@ -537,7 +588,14 @@ const importSchema = z.object({
               manufacturer: z.string().max(120).nullable().optional(),
               modelName: z.string().max(120).nullable().optional(),
               quantity: z.number().int().min(1).max(100),
+              loadConfigurationKnown: z.boolean().optional(),
+              loadType: z.nativeEnum(EquipmentLoadType).optional(),
               weightOptions: gymWeightListSchema,
+              selectedLoadMultiplier: z.number().positive().max(20).optional(),
+              baseLoadKg: z.number().min(0).max(5000).optional(),
+              platePoolCompatibilityKey: z.string().trim().min(1).max(80).nullable().optional(),
+              loadingSides: z.number().int().min(1).max(8).optional(),
+              systemBarbellFamily: z.nativeEnum(BarbellDiameterFamily).nullable().optional(),
               imageUrl: z
                 .string()
                 .url()
@@ -560,6 +618,8 @@ const importSchema = z.object({
               exerciseName: z.string().max(120),
               isAvailable: z.boolean(),
               weightOptions: gymWeightListSchema,
+              systemProfileSupported: z.boolean().nullable().optional(),
+              preferredEquipmentName: z.string().max(120).nullable().optional(),
             }),
           )
           .max(2000),
@@ -651,6 +711,30 @@ export async function POST(req: Request) {
     for (const gym of payload.gyms ?? []) {
       if (seenGymNames.has(gym.name)) continue;
       seenGymNames.add(gym.name);
+      const poolNames = new Set<string>();
+      const poolKeys = new Set<string>();
+      const systemFamilies = new Set<BarbellDiameterFamily>();
+      for (const pool of gym.platePools ?? []) {
+        const nameKey = pool.name.toLocaleLowerCase('en-US');
+        if (poolNames.has(nameKey) || poolKeys.has(pool.compatibilityKey)) {
+          throw new ApiError(400, 'Duplicate gym plate-pool name or compatibility key in backup.');
+        }
+        poolNames.add(nameKey);
+        poolKeys.add(pool.compatibilityKey);
+        if (pool.systemBarbellFamily) {
+          if (systemFamilies.has(pool.systemBarbellFamily)) {
+            throw new ApiError(400, 'Duplicate system Barbell family in backup.');
+          }
+          systemFamilies.add(pool.systemBarbellFamily);
+        }
+      }
+      if (
+        payload.version >= 9 &&
+        (!systemFamilies.has('LARGE') || !systemFamilies.has('SMALL'))
+      ) {
+        throw new ApiError(400, 'Version 9 gym backup must contain LARGE and SMALL Barbell system pools.');
+      }
+
       const seenEquipmentNames = new Set<string>();
       const prepared = [] as NonNullable<ReturnType<typeof preparedEquipmentByGymName.get>>;
       for (const item of gym.equipment ?? []) {
@@ -659,6 +743,28 @@ export async function POST(req: Request) {
           throw new ApiError(400, `Duplicate gym equipment name in backup: ${item.name}`);
         }
         seenEquipmentNames.add(equipmentNameKey);
+        if (item.platePoolCompatibilityKey && !poolKeys.has(item.platePoolCompatibilityKey)) {
+          throw new ApiError(400, 'Gym equipment references a plate pool missing from the backup.');
+        }
+        const known = item.loadConfigurationKnown ?? true;
+        const loadType = item.loadType ??
+          (known && item.weightOptions.length > 0 && ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
+            ? EquipmentLoadType.SELECTORIZED
+            : EquipmentLoadType.NONE);
+        if (
+          !known &&
+          (loadType !== EquipmentLoadType.NONE ||
+            item.weightOptions.length > 0 ||
+            item.platePoolCompatibilityKey != null ||
+            (item.baseLoadKg ?? 0) !== 0 ||
+            (item.selectedLoadMultiplier ?? 1) !== 1 ||
+            (item.loadingSides ?? 2) !== 2)
+        ) {
+          throw new ApiError(400, 'Unknown equipment load configuration cannot carry confirmed mechanics.');
+        }
+        if (loadType === EquipmentLoadType.PLATE_LOADED && !item.platePoolCompatibilityKey) {
+          throw new ApiError(400, 'Plate-loaded backup equipment requires a compatible plate pool.');
+        }
         const decoded = item.imageBase64
           ? decodeGymEquipmentImage(item.imageBase64, item.imageMimeType ?? undefined)
           : null;
@@ -764,6 +870,7 @@ export async function POST(req: Request) {
                     exerciseId,
                     isAvailable: config.isAvailable,
                     weightOptions: config.weightOptions,
+                    systemProfileSupported: config.systemProfileSupported ?? null,
                   },
                 ]
               : [];
@@ -778,26 +885,72 @@ export async function POST(req: Request) {
               exerciseConfigs: { createMany: { data: configs } },
             },
           });
+
+          const poolIdByCompatibilityKey = new Map<string, string>();
+          for (const pool of gym.platePools ?? []) {
+            const createdPool = await tx.gymPlatePool.create({
+              data: {
+                gymId: created.id,
+                name: pool.name,
+                compatibilityKey: pool.compatibilityKey,
+                systemBarbellFamily: pool.systemBarbellFamily ?? null,
+                plates:
+                  pool.plates.length > 0
+                    ? {
+                        createMany: {
+                          data: pool.plates.map((plate) => ({
+                            weightKg: plate.weightKg,
+                            quantity: plate.quantity,
+                          })),
+                        },
+                      }
+                    : undefined,
+              },
+              select: { id: true, compatibilityKey: true },
+            });
+            poolIdByCompatibilityKey.set(createdPool.compatibilityKey, createdPool.id);
+          }
+
           const preparedEquipment = preparedEquipmentByGymName.get(gym.name) ?? [];
-          const createdEquipment =
-            preparedEquipment.length > 0
-              ? await tx.gymEquipment.createManyAndReturn({
-                  data: preparedEquipment.map(({ item, decoded }) => ({
-                    gymId: created.id,
-                    name: item.name,
-                    equipmentType: item.equipmentType,
-                    description: item.description ?? null,
-                    manufacturer: item.manufacturer ?? null,
-                    modelName: item.modelName ?? null,
-                    quantity: item.quantity,
-                    weightOptions: item.weightOptions,
-                    imageUrl: decoded ? null : (item.imageUrl ?? null),
-                    imageData: decoded?.bytes,
-                    imageMimeType: decoded?.mimeType ?? null,
-                  })),
-                  select: { id: true, name: true },
-                })
-              : [];
+          const createdEquipment: Array<{ id: string; name: string }> = [];
+          for (const { item, decoded } of preparedEquipment) {
+            const known = item.loadConfigurationKnown ?? true;
+            const loadType =
+              item.loadType ??
+              (known &&
+              item.weightOptions.length > 0 &&
+              ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
+                ? EquipmentLoadType.SELECTORIZED
+                : EquipmentLoadType.NONE);
+            const platePoolId = item.platePoolCompatibilityKey
+              ? (poolIdByCompatibilityKey.get(item.platePoolCompatibilityKey) ?? null)
+              : null;
+            const equipment = await tx.gymEquipment.create({
+              data: {
+                gymId: created.id,
+                name: item.name,
+                equipmentType: item.equipmentType,
+                description: item.description ?? null,
+                manufacturer: item.manufacturer ?? null,
+                modelName: item.modelName ?? null,
+                quantity: item.quantity,
+                loadConfigurationKnown: known,
+                loadType,
+                weightOptions: item.weightOptions,
+                selectedLoadMultiplier: item.selectedLoadMultiplier ?? 1,
+                baseLoadKg: item.baseLoadKg ?? 0,
+                platePoolId,
+                loadingSides: item.loadingSides ?? 2,
+                systemBarbellFamily: item.systemBarbellFamily ?? null,
+                imageUrl: decoded ? null : (item.imageUrl ?? null),
+                imageData: decoded?.bytes,
+                imageMimeType: decoded?.mimeType ?? null,
+              },
+              select: { id: true, name: true },
+            });
+            createdEquipment.push(equipment);
+          }
+
           const equipmentIdByName = new Map(createdEquipment.map((item) => [item.name, item.id]));
           for (const item of createdEquipment) {
             gymEquipmentIdByGymAndName.set(JSON.stringify([gym.name, item.name]), item.id);
@@ -815,8 +968,35 @@ export async function POST(req: Request) {
             ].map((exerciseId) => ({ equipmentId, exerciseId }));
           });
           if (equipmentExerciseLinks.length > 0) {
-            await tx.gymEquipmentExercise.createMany({ data: equipmentExerciseLinks });
+            await tx.gymEquipmentExercise.createMany({
+              data: equipmentExerciseLinks,
+              skipDuplicates: true,
+            });
           }
+
+          for (const config of gym.exerciseConfigs) {
+            if (!config.preferredEquipmentName) continue;
+            const exerciseId = exerciseIdByName.get(config.exerciseName);
+            const preferredEquipmentId = equipmentIdByName.get(config.preferredEquipmentName);
+            if (!exerciseId || !preferredEquipmentId) continue;
+            const linked = equipmentExerciseLinks.some(
+              (link) => link.exerciseId === exerciseId && link.equipmentId === preferredEquipmentId,
+            );
+            if (!linked) continue;
+            await tx.gymExerciseConfig.updateMany({
+              where: { gymId: created.id, exerciseId },
+              data: { preferredEquipmentId },
+            });
+          }
+
+          // Older backups had only the shared free-weight arrays. Materialize
+          // their M14 system profiles deterministically after the old content is
+          // restored. Version 9 carries the exact profiles/pools and must not be
+          // reinitialized or rewritten.
+          if (payload.version < 9) {
+            await initializeOwnedGymSystemProfiles(tx, userId, created.id);
+          }
+
           gymIdByName.set(gym.name, created.id);
         }
         const activeGymId = payload.profile?.activeGymName

@@ -30,6 +30,42 @@ export const settings = {
     dumbbells: 'Dumbbells (kg)',
     plates: 'Plate denominations (kg, per side)',
     bars: 'Bar weights (kg)',
+    initialFreeWeightsHelp:
+      'These values seed the permanent Dumbbells and Barbell profiles when the gym is first created.',
+    systemProfiles: {
+      title: 'Permanent free-weight profiles',
+      description:
+        'Dumbbells and barbells are managed as permanent gym systems instead of independent machines.',
+      systemBadge: 'system',
+      loading: 'Loading permanent profiles…',
+      loadError: 'Could not load permanent free-weight profiles.',
+      saved: 'Permanent profile saved.',
+      saveError: 'Could not save this permanent profile. Check the entered loads and plate counts.',
+      supportedExercises: 'Exercises supported by this system',
+      dumbbells: {
+        title: 'Dumbbells',
+        help: 'Enter every dumbbell load that really exists in this gym.',
+        weights: 'Available dumbbell weights (kg)',
+      },
+      barbell: {
+        title: 'Barbell',
+        help: 'Large and small sleeve families stay separate so incompatible plates are never mixed.',
+        bars: 'Bar weights (kg)',
+        plates: 'Plates and physical counts',
+        platesHelp: 'Format: 20x4, 10x2, 5x?. Use ? when the denomination is known but the count is unknown.',
+        loadingSides: 'Loading sides',
+      },
+      families: {
+        LARGE: {
+          title: 'Large-diameter family',
+          description: 'Olympic/large-sleeve bars and compatible plates.',
+        },
+        SMALL: {
+          title: 'Small-diameter family',
+          description: 'Small-sleeve bars and their separate compatible plates.',
+        },
+      },
+    },
     exerciseAvailability: 'Exercises and machines',
     exerciseAvailabilityDescription:
       'Mark missing equipment. For machines and cables, optionally enter every selectable stack weight.',

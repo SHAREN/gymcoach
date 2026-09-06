@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { listOwnedGymEquipment, upsertOwnedGymEquipment } from '@/lib/gym-equipment';
 import { resolveSetEquipmentSnapshot, emptySetEquipmentSnapshot } from '@/lib/set-equipment';
-import { databaseIdSchema, gymEquipmentUpsertSchema } from '@/lib/schemas/gym-equipment';
+import {
+  databaseIdSchema,
+  gymEquipmentUpsertObjectSchema,
+} from '@/lib/schemas/gym-equipment';
 import type { McpPrincipal } from '@/lib/mcp/auth';
 import { EquipmentType, ExerciseCategory, MuscleGroup } from '@/lib/prisma-client';
 import { Prisma } from '@/prisma/generated/client';
@@ -47,7 +50,7 @@ export const physicalEquipmentWriteSchema = z
   .object({
     gymId: gymIdSchema,
     existingEquipmentId: databaseIdSchema.optional(),
-    create: gymEquipmentUpsertSchema.omit({ equipmentId: true }).optional(),
+    create: gymEquipmentUpsertObjectSchema.omit({ equipmentId: true }).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

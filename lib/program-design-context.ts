@@ -37,7 +37,34 @@ const sourceProgramInclude = {
 
 const activeGymInclude = {
   exerciseConfigs: true,
-  equipment: { include: { exerciseLinks: true } },
+  equipment: {
+    select: {
+      id: true,
+      name: true,
+      equipmentType: true,
+      loadConfigurationKnown: true,
+      loadType: true,
+      weightOptions: true,
+      selectedLoadMultiplier: true,
+      baseLoadKg: true,
+      platePoolId: true,
+      loadingSides: true,
+      systemBarbellFamily: true,
+      platePool: {
+        select: {
+          id: true,
+          name: true,
+          compatibilityKey: true,
+          systemBarbellFamily: true,
+          plates: {
+            orderBy: { weightKg: 'asc' as const },
+            select: { weightKg: true, quantity: true },
+          },
+        },
+      },
+      exerciseLinks: { select: { exerciseId: true } },
+    },
+  },
 } satisfies Prisma.GymInclude;
 
 type SourceProgramRow = Prisma.ProgramGetPayload<{ include: typeof sourceProgramInclude }>;
@@ -478,7 +505,14 @@ function mapGym(gym: ActiveGymRow) {
       name: item.name,
       equipmentType: item.equipmentType,
       loadConfigurationKnown: item.loadConfigurationKnown,
+      loadType: item.loadType,
       weightOptions: item.weightOptions,
+      selectedLoadMultiplier: item.selectedLoadMultiplier,
+      baseLoadKg: item.baseLoadKg,
+      platePoolId: item.platePoolId,
+      loadingSides: item.loadingSides,
+      systemBarbellFamily: item.systemBarbellFamily,
+      platePool: item.platePool,
       exerciseIds: item.exerciseLinks.map((link) => link.exerciseId),
     })),
   };

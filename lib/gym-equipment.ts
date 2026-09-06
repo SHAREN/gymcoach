@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { ApiError } from '@/lib/api';
 import { db } from '@/lib/db';
-import type { EquipmentType } from '@/lib/prisma-client';
+import { rejectOwnedSystemBarMutation } from '@/lib/gym-system-profiles';
+import type { EquipmentLoadType, EquipmentType } from '@/lib/prisma-client';
 
 export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[number];
@@ -17,7 +18,12 @@ export interface UpsertGymEquipmentInput {
   modelName?: string | null;
   quantity?: number;
   loadConfigurationKnown?: boolean;
+  loadType?: EquipmentLoadType;
   weightOptions?: number[];
+  selectedLoadMultiplier?: number;
+  baseLoadKg?: number;
+  platePoolId?: string | null;
+  loadingSides?: number;
   exerciseIds?: string[];
   markExercisesAvailable?: boolean;
 }
@@ -39,7 +45,25 @@ const equipmentSelection = {
   modelName: true,
   quantity: true,
   loadConfigurationKnown: true,
+  loadType: true,
   weightOptions: true,
+  selectedLoadMultiplier: true,
+  baseLoadKg: true,
+  platePoolId: true,
+  loadingSides: true,
+  systemBarbellFamily: true,
+  platePool: {
+    select: {
+      id: true,
+      name: true,
+      compatibilityKey: true,
+      systemBarbellFamily: true,
+      plates: {
+        orderBy: { weightKg: 'asc' as const },
+        select: { id: true, weightKg: true, quantity: true },
+      },
+    },
+  },
   imageUrl: true,
   imageMimeType: true,
   createdAt: true,
@@ -95,7 +119,14 @@ export async function upsertOwnedGymEquipment(
         select: {
           id: true,
           equipmentType: true,
+          loadConfigurationKnown: true,
+          loadType: true,
           weightOptions: true,
+          selectedLoadMultiplier: true,
+          baseLoadKg: true,
+          platePoolId: true,
+          loadingSides: true,
+          systemBarbellFamily: true,
           exerciseLinks: { select: { exerciseId: true } },
         },
       })
@@ -104,12 +135,71 @@ export async function upsertOwnedGymEquipment(
         select: {
           id: true,
           equipmentType: true,
+          loadConfigurationKnown: true,
+          loadType: true,
           weightOptions: true,
+          selectedLoadMultiplier: true,
+          baseLoadKg: true,
+          platePoolId: true,
+          loadingSides: true,
+          systemBarbellFamily: true,
           exerciseLinks: { select: { exerciseId: true } },
         },
       });
   if (input.equipmentId && !current) throw new ApiError(404, 'Gym equipment not found.');
+  if (current?.systemBarbellFamily) {
+    throw new ApiError(409, 'System Barbell members must be edited through the Barbell profile.');
+  }
   const created = current == null;
+
+  const effectiveLoadConfigurationKnown =
+    input.loadConfigurationKnown ?? current?.loadConfigurationKnown ?? true;
+  const effectiveLoadType =
+    input.loadType ??
+    current?.loadType ??
+    (effectiveLoadConfigurationKnown &&
+    (input.weightOptions?.length ?? 0) > 0 &&
+    ['MACHINE', 'CABLE', 'OTHER'].includes(input.equipmentType)
+      ? 'SELECTORIZED'
+      : 'NONE');
+  const effectiveWeightOptions = input.weightOptions ?? current?.weightOptions ?? [];
+  const effectiveSelectedLoadMultiplier =
+    input.selectedLoadMultiplier ?? current?.selectedLoadMultiplier ?? 1;
+  const effectiveBaseLoadKg = input.baseLoadKg ?? current?.baseLoadKg ?? 0;
+  const effectivePlatePoolId =
+    input.platePoolId !== undefined ? input.platePoolId : (current?.platePoolId ?? null);
+  const effectiveLoadingSides = input.loadingSides ?? current?.loadingSides ?? 2;
+
+  if (
+    !effectiveLoadConfigurationKnown &&
+    (effectiveLoadType !== 'NONE' ||
+      effectiveWeightOptions.length > 0 ||
+      effectiveSelectedLoadMultiplier !== 1 ||
+      effectiveBaseLoadKg !== 0 ||
+      effectivePlatePoolId != null ||
+      effectiveLoadingSides !== 2)
+  ) {
+    throw new ApiError(400, 'Unknown load configuration cannot carry confirmed load mechanics.');
+  }
+  if (
+    (effectiveLoadType === 'FIXED' || effectiveLoadType === 'SELECTORIZED') &&
+    effectiveWeightOptions.length === 0
+  ) {
+    throw new ApiError(400, effectiveLoadType + ' equipment requires at least one displayed load.');
+  }
+  if (effectiveLoadType === 'PLATE_LOADED' && !effectivePlatePoolId) {
+    throw new ApiError(400, 'Plate-loaded equipment requires a compatible gym plate pool.');
+  }
+  if (effectiveLoadType !== 'PLATE_LOADED' && effectivePlatePoolId) {
+    throw new ApiError(400, 'Only plate-loaded equipment may reference a plate pool.');
+  }
+  if (effectivePlatePoolId) {
+    const pool = await db.gymPlatePool.findFirst({
+      where: { id: effectivePlatePoolId, gymId, gym: { userId } },
+      select: { id: true },
+    });
+    if (!pool) throw new ApiError(400, 'Gym plate pool not found.');
+  }
 
   const exerciseIds =
     requestedExerciseIds ?? current?.exerciseLinks.map((link) => link.exerciseId) ?? [];
@@ -126,7 +216,6 @@ export async function upsertOwnedGymEquipment(
   const equipmentTypeChanged = current != null && current.equipmentType !== input.equipmentType;
   const shouldSyncExerciseConfigs =
     requestedExerciseIds !== undefined || input.weightOptions !== undefined || equipmentTypeChanged;
-  const effectiveWeightOptions = input.weightOptions ?? current?.weightOptions ?? [];
 
   const item = await db.$transaction(async (tx) => {
     if (created) {
@@ -152,8 +241,13 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity,
-            loadConfigurationKnown: input.loadConfigurationKnown,
-            weightOptions: input.weightOptions,
+            loadConfigurationKnown: effectiveLoadConfigurationKnown,
+            loadType: effectiveLoadType,
+            weightOptions: effectiveWeightOptions,
+            selectedLoadMultiplier: effectiveSelectedLoadMultiplier,
+            baseLoadKg: effectiveBaseLoadKg,
+            platePoolId: effectivePlatePoolId,
+            loadingSides: effectiveLoadingSides,
           },
         })
       : await tx.gymEquipment.create({
@@ -165,8 +259,13 @@ export async function upsertOwnedGymEquipment(
             manufacturer: input.manufacturer,
             modelName: input.modelName,
             quantity: input.quantity ?? 1,
-            loadConfigurationKnown: input.loadConfigurationKnown ?? true,
-            weightOptions: input.weightOptions ?? [],
+            loadConfigurationKnown: effectiveLoadConfigurationKnown,
+            loadType: effectiveLoadType,
+            weightOptions: effectiveWeightOptions,
+            selectedLoadMultiplier: effectiveSelectedLoadMultiplier,
+            baseLoadKg: effectiveBaseLoadKg,
+            platePoolId: effectivePlatePoolId,
+            loadingSides: effectiveLoadingSides,
           },
         });
 
@@ -253,7 +352,13 @@ export async function setOwnedExerciseEquipmentSelection(
   const equipment = requestedIds.length
     ? await db.gymEquipment.findMany({
         where: { id: { in: requestedIds }, gym: { userId } },
-        select: { id: true, gymId: true, equipmentType: true },
+        select: {
+          id: true,
+          gymId: true,
+          equipmentType: true,
+          systemBarbellFamily: true,
+          exerciseLinks: { where: { exerciseId }, select: { exerciseId: true } },
+        },
       })
     : [];
   if (equipment.length !== requestedIds.length) throw new ApiError(400, 'One or more equipment IDs do not belong to the trainee.');
@@ -269,6 +374,9 @@ export async function setOwnedExerciseEquipmentSelection(
       if (exercise.equipmentType !== 'OTHER' && item.equipmentType !== 'OTHER' && exercise.equipmentType !== item.equipmentType) {
         throw new ApiError(400, 'Exercise and equipment types are incompatible.');
       }
+      if (item.systemBarbellFamily && item.exerciseLinks.length === 0) {
+        throw new ApiError(409, 'System Barbell links must be changed through the Barbell profile.');
+      }
     }
     if (selection.preferredEquipmentId && !selection.equipmentIds.includes(selection.preferredEquipmentId)) {
       throw new ApiError(400, 'Preferred equipment must remain linked to the exercise.');
@@ -278,11 +386,18 @@ export async function setOwnedExerciseEquipmentSelection(
   await db.$transaction(async (tx) => {
     for (const selection of selections) {
       await tx.gymEquipmentExercise.deleteMany({
-        where: { exerciseId, equipment: { gymId: selection.gymId } },
+        where: {
+          exerciseId,
+          equipment: { gymId: selection.gymId, systemBarbellFamily: null },
+        },
       });
-      if (selection.equipmentIds.length) {
+      const customEquipmentIds = selection.equipmentIds.filter(
+        (equipmentId) => byId.get(equipmentId)?.systemBarbellFamily == null,
+      );
+      if (customEquipmentIds.length) {
         await tx.gymEquipmentExercise.createMany({
-          data: selection.equipmentIds.map((equipmentId) => ({ equipmentId, exerciseId })),
+          data: customEquipmentIds.map((equipmentId) => ({ equipmentId, exerciseId })),
+          skipDuplicates: true,
         });
       }
       await tx.gymExerciseConfig.upsert({
@@ -343,6 +458,7 @@ export async function setOwnedPreferredGymEquipment(
 }
 
 export async function deleteOwnedGymEquipment(userId: string, equipmentId: string) {
+  await rejectOwnedSystemBarMutation(userId, equipmentId);
   const equipment = await requireOwnedEquipment(userId, equipmentId);
   await db.gymEquipment.delete({ where: { id: equipment.id } });
 }
@@ -384,6 +500,7 @@ export async function setOwnedGymEquipmentImage(
   equipmentId: string,
   input: SetGymEquipmentImageInput,
 ) {
+  await rejectOwnedSystemBarMutation(userId, equipmentId);
   const equipment = await requireOwnedEquipment(userId, equipmentId);
   const modes = [input.clear === true, input.imageUrl != null, input.imageBase64 != null].filter(
     Boolean,

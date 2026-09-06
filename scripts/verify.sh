@@ -66,17 +66,31 @@ if [ "$FULL" = "1" ]; then
   # wait instead; it is released automatically when this process exits. CI
   # never goes through this script, so it is unaffected.
   LOCK_FILE="${TMPDIR:-/tmp}/gymcoach-test-infra.lock"
-  exec 9>"$LOCK_FILE" || fail "test-infra lock (cannot open $LOCK_FILE)"
-  if ! flock --nonblock 9; then
-    echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
-    flock --wait 3600 9 || fail "test-infra lock (still held after 60m; a stale next-server or vitest from an interrupted run may hold it - check: fuser -v $LOCK_FILE)"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE" || fail "test-infra lock (cannot open $LOCK_FILE)"
+    if ! flock --nonblock 9; then
+      echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
+      flock --wait 3600 9 || fail "test-infra lock (still held after 60m)"
+    fi
+  else
+    LOCK_DIR="${LOCK_FILE}.portable-v2.d"
+    waited=0
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+      if [ "$waited" -eq 0 ]; then
+        echo "  another verify run holds the shared test infra (:5434/:3031); waiting for the lock..."
+      fi
+      [ "$waited" -ge 3600 ] && fail "test-infra lock (still held after 60m; stale lock directory: $LOCK_DIR)"
+      sleep 1
+      waited=$((waited + 1))
+    done
+    trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM HUP
   fi
   step "integration tests (needs Postgres on :5434)"
   # 9>&- keeps the lock fd out of the test children, so a zombie next-server
   # surviving an interrupted run (lesson L12) cannot hold the lock forever.
-  npm run test:integration 9>&- || fail "integration tests"
+  npm_config_script_shell="D:/Program Files/Git/bin/bash.exe" npm run test:integration 9>&- || fail "integration tests"
   step "E2E tests (Playwright)"
-  npm run test:e2e 9>&- || fail "E2E tests"
+  npm_config_script_shell="D:/Program Files/Git/bin/bash.exe" npm run test:e2e 9>&- || fail "E2E tests"
 fi
 
 echo ""

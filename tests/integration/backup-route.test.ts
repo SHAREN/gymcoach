@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { db } from '@/lib/db';
 import { getCurrentUserId } from '@/lib/auth';
+import { initializeOwnedGymSystemProfiles } from '@/lib/gym-system-profiles';
 
 // Backup export/restore completeness (issue #168): the export must carry every
 // user-owned model/field, the restore must be a lossless, ownership-scoped
@@ -108,6 +109,7 @@ async function seedFullUser(email: string) {
     },
   });
   await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
+  await db.$transaction((tx) => initializeOwnedGymSystemProfiles(tx, user.id, gym.id));
   const equipment = await db.gymEquipment.create({
     data: {
       gymId: gym.id,
@@ -303,7 +305,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 8 with multi-muscle profiles and program lineage and all earlier backup fields', async () => {
+  it('exports version 9 with permanent free-weight profiles and all earlier backup fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -311,7 +313,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(8);
+    expect(dump.version).toBe(9);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -327,30 +329,84 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     const pullup = dump.exercises.find((e: { name: string }) => e.name === 'Pull-up');
     expect(pullup.usesBodyweight).toBe(true);
     expect(pullup.equipmentType).toBe('BODYWEIGHT');
-    expect(dump.gyms).toEqual([
-      {
-        name: 'Basement',
-        dumbbellWeights: [10, 12, 14, 16, 19],
-        plateWeights: [1.25, 2.5, 5, 10, 20],
-        barWeights: [20],
-        equipment: [
-          {
-            name: 'Competition bench station',
-            equipmentType: 'BARBELL',
-            description: 'Flat bench with uprights and safety arms.',
-            manufacturer: 'GymCo',
-            modelName: 'Bench Pro',
-            quantity: 2,
-            weightOptions: [20, 40, 60, 80, 100],
-            imageUrl: null,
-            imageMimeType: 'image/png',
-            imageBase64: EQUIPMENT_PNG_BASE64,
-            exerciseNames: ['Bench Press'],
-          },
-        ],
-        exerciseConfigs: [{ exerciseName: 'Running', isAvailable: false, weightOptions: [] }],
-      },
-    ]);
+    expect(dump.gyms).toHaveLength(1);
+    const exportedGym = dump.gyms[0];
+    expect(exportedGym).toMatchObject({
+      name: 'Basement',
+      dumbbellWeights: [10, 12, 14, 16, 19],
+      plateWeights: [1.25, 2.5, 5, 10, 20],
+      barWeights: [20],
+    });
+    const customBench = exportedGym.equipment.find(
+      (item: { name: string }) => item.name === 'Competition bench station',
+    );
+    expect(customBench).toMatchObject({
+      equipmentType: 'BARBELL',
+      description: 'Flat bench with uprights and safety arms.',
+      manufacturer: 'GymCo',
+      modelName: 'Bench Pro',
+      quantity: 2,
+      loadConfigurationKnown: true,
+      loadType: 'NONE',
+      weightOptions: [20, 40, 60, 80, 100],
+      selectedLoadMultiplier: 1,
+      baseLoadKg: 0,
+      platePoolCompatibilityKey: null,
+      loadingSides: 2,
+      systemBarbellFamily: null,
+      imageUrl: null,
+      imageMimeType: 'image/png',
+      imageBase64: EQUIPMENT_PNG_BASE64,
+      exerciseNames: ['Bench Press'],
+    });
+    const systemBar = exportedGym.equipment.find(
+      (item: { systemBarbellFamily: string | null }) => item.systemBarbellFamily === 'LARGE',
+    );
+    expect(systemBar).toMatchObject({
+      equipmentType: 'BARBELL',
+      loadConfigurationKnown: true,
+      loadType: 'PLATE_LOADED',
+      baseLoadKg: 20,
+      platePoolCompatibilityKey: 'system_barbell_large',
+      loadingSides: 2,
+      systemBarbellFamily: 'LARGE',
+      exerciseNames: ['Bench Press'],
+    });
+    expect(exportedGym.platePools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          compatibilityKey: 'system_barbell_large',
+          systemBarbellFamily: 'LARGE',
+          plates: [
+            { weightKg: 1.25, quantity: null },
+            { weightKg: 2.5, quantity: null },
+            { weightKg: 5, quantity: null },
+            { weightKg: 10, quantity: null },
+            { weightKg: 20, quantity: null },
+          ],
+        }),
+        expect.objectContaining({
+          compatibilityKey: 'system_barbell_small',
+          systemBarbellFamily: 'SMALL',
+          plates: [],
+        }),
+      ]),
+    );
+    expect(exportedGym.exerciseConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          exerciseName: 'Running',
+          isAvailable: false,
+          systemProfileSupported: null,
+          preferredEquipmentName: null,
+        }),
+        expect.objectContaining({
+          exerciseName: 'Bench Press',
+          isAvailable: true,
+          systemProfileSupported: true,
+        }),
+      ]),
+    );
     expect(dump.sessions[0].gymName).toBe('Basement');
 
     const sets = dump.sessions[0].sets as Array<Record<string, unknown>>;
