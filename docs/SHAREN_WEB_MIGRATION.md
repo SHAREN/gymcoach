@@ -40,6 +40,15 @@ Goal: rebuild SHAREN/gymcoach as a clean web/server fork on top of current Julie
 | M14 | Permanent free-weight system profiles | DONE | Permanent Dumbbells/Barbell profiles, plate pools, structured load facts, backup v9, MCP/REST/UI integration, and full green-gate verified. |
 | M15 | Final semantic diff audit + full gate | DONE | Approved non-Android parity is exhausted; committed candidate passed unit/integration/E2E/typecheck/lint/build gates. |
 
+## Remaining migration-plan stages
+
+| Stage | Scope | Status | Notes |
+| --- | --- | --- | --- |
+| S13 | Remove Android-specific backend from clean web | DONE | Audit found no tracked Android/Huawei/mobile API, APK runtime/data/scripts, mobile auth models or mobile mutation models. Neutral MCP tokens/mutations and frozen equipment snapshots are shared web/MCP domain and remain. |
+| S14 | Extract Android/Huawei into separate repository with history | TODO | Preserve Android history with filter-repo/equivalent, remove secrets/local paths, document frozen status, then publish/archive only after verification. |
+| S15 | Final clean-web verification | TODO | Recheck forbidden paths, migrations on production DB copy, full gates, MCP smoke and real web workflow. |
+| S16 | Integrate/switch main, deploy, production health, cleanup | TODO | Preserve old main before switching; no force-push without backup. |
+
 ## Already upstream / do not re-port
 
 Russian localization, intra-set autoregulation, saved gym profiles, exercise technique media, base ChatGPT MCP, base return-to-training, physical gym equipment, set equipment history, native GymCoach CSV import, aerobic decoupling, progress photos, and muscle heat map are already present upstream or have an upstream-equivalent implementation.
