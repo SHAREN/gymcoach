@@ -220,6 +220,7 @@ export const session = {
     note: 'note',
     delete: 'Supprimer la série',
     edit: 'Modifier la série',
+    undoLast: 'Annuler la dernière série',
     editWeight: 'Poids ({unit})',
     editReps: 'Répétitions',
     editRir: 'RIR',

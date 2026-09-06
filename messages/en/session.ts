@@ -209,6 +209,7 @@ export const session = {
     note: 'note',
     delete: 'Delete the set',
     edit: 'Edit the set',
+    undoLast: 'Undo last set',
     editWeight: 'Weight ({unit})',
     editReps: 'Reps',
     editRir: 'RIR',

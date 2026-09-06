@@ -68,6 +68,10 @@ test('recommendation is explicit and reusable while the live card stays compact'
   const sessionId = await seedSession(page);
   await page.goto('/session/' + sessionId);
 
+  const currentRow = page.getByTestId('current-set-row');
+  await expect(currentRow.getByLabel('Quick entry')).toBeVisible();
+  await expect(currentRow.getByRole('button', { name: /log the set/i })).toBeVisible();
+
   await expect(page.getByText('Technique cue belongs on exercise detail only')).toHaveCount(0);
   await expect(page.getByText('Quadriceps')).toHaveCount(0);
   await page.getByRole('button', { name: /notes/i }).click();
@@ -93,4 +97,8 @@ test('recommendation is explicit and reusable while the live card stays compact'
   await expect(apply).toBeEnabled();
   await apply.click();
   await expect(apply).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Undo last set' }).click();
+  await expect(page.getByRole('button', { name: 'Undo last set' })).toHaveCount(0);
+  await expect(page.getByTestId('current-set-row')).toContainText('Set 1 · in progress');
 });

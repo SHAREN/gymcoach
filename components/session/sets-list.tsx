@@ -1,8 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Check, Circle, CircleDot, CloudOff, Loader2, Pencil, Trash2, Trophy } from 'lucide-react';
+import {
+  Check,
+  Circle,
+  CircleDot,
+  CloudOff,
+  Loader2,
+  Pencil,
+  Trash2,
+  Trophy,
+  Undo2,
+} from 'lucide-react';
 import type { Exercise, ProgramExercise, WeightUnit } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,6 +60,8 @@ interface Props {
   // badge means "beats your last session" rather than an all-time record - an
   // all-time baseline would need a separate query and is out of scope here.
   priorSets?: { weight: number; reps: number }[];
+  currentInput?: ReactNode;
+  onUndoLastSet?: () => Promise<void> | void;
 }
 
 const PR_LABEL_KEYS = { weight: 'weightPr', e1rm: 'oneRmPr' } as const;
@@ -76,6 +88,8 @@ export function SetsList({
   onDeleteSet,
   onEditSet,
   priorSets,
+  currentInput,
+  onUndoLastSet,
 }: Props) {
   const t = useTranslations('session.setsList');
   const locale = useLocale();
@@ -165,6 +179,14 @@ export function SetsList({
           </DropdownMenu>
         </div>
       )}
+      {sets.length > 0 && onUndoLastSet && (
+        <div className="flex justify-end border-b border-border px-3 py-2">
+          <Button type="button" variant="ghost" size="sm" onClick={() => void onUndoLastSet()}>
+            <Undo2 className="size-4" />
+            <span className="ml-1">{t('undoLast')}</span>
+          </Button>
+        </div>
+      )}
       {sets.map((s, i) => (
         <RowDone
           key={s.localId}
@@ -181,7 +203,22 @@ export function SetsList({
       {Array.from({ length: totalRows - sets.length }, (_, i) => {
         const setNum = completedNonWarmup.length + 1 + i;
         const isCurrent = i === 0 && isInputActive;
-        return <RowUpcoming key={`upcoming-${setNum}`} setNumber={setNum} isCurrent={isCurrent} />;
+        if (isCurrent && currentInput) {
+          return (
+            <div
+              key={'current-' + setNum}
+              data-testid="current-set-row"
+              className="border-b border-border bg-primary/5 last:border-b-0"
+            >
+              <div className="flex items-center gap-2 px-3 py-2">
+                <CircleDot className="size-4 flex-shrink-0 text-primary" />
+                <span className="text-sm font-medium">{t('current', { number: setNum })}</span>
+              </div>
+              <div className="border-t border-border">{currentInput}</div>
+            </div>
+          );
+        }
+        return <RowUpcoming key={'upcoming-' + setNum} setNumber={setNum} isCurrent={isCurrent} />;
       })}
 
       {!isInputActive && completedNonWarmup.length === 0 && sets.length === 0 && (

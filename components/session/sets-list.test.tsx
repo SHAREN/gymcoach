@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
 import type { PendingSet } from '@/lib/indexeddb';
@@ -146,5 +146,39 @@ describe('SetsList', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onEditSet).toHaveBeenCalledWith(set, { weight: 100, reps: 8, rir: 1 });
+  });
+  it('renders the current working input inside the active set row', () => {
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+        currentInput={<button type="button">Draft control</button>}
+      />,
+    );
+
+    const row = screen.getByTestId('current-set-row');
+    expect(within(row).getByText('Set 1 · in progress')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Draft control' })).toBeInTheDocument();
+  });
+
+  it('offers an explicit undo for the latest completed set', async () => {
+    const user = userEvent.setup();
+    const onUndoLastSet = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SetsList
+        programExercise={pe}
+        sets={[pendingSet({ localId: 'undo-me', setNumber: 1 })]}
+        isInputActive
+        unit="KG"
+        onDeleteSet={() => {}}
+        onUndoLastSet={onUndoLastSet}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Undo last set' }));
+    expect(onUndoLastSet).toHaveBeenCalledTimes(1);
   });
 });
