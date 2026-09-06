@@ -2,11 +2,11 @@
 // produced by an importer. The session runner should only surface the former.
 
 const IMPORT_METADATA_PATTERNS = [
-  /^alpha\s+(?:prescription|metadata)\s*:/iu,
-  /^\[?alpha[-\s]?progression[^\]]*\]?/iu,
-  /^imported\s+from\s+alpha\s+progression\b/iu,
+  /^(?:[\p{L}\p{N}_-]+\s+)*(?:prescription|metadata)\s*:/iu,
+  /^\[[^\]]*(?:progression|import)[^\]]*\]/iu,
+  /^imported\s+from/iu,
   /^original\s+exercise\s*:/iu,
-  /^импортировано\s+из\s+alpha\s+progression\b/iu,
+  /^импортировано\s+из/iu,
   /^исходное\s+упражнение\s*:/iu,
 ];
 
@@ -32,7 +32,7 @@ function isBoilerplateLine(line: string): boolean {
  * Returns only note lines that carry a genuine user/coach cue.
  *
  * Import metadata is removed line by line so a useful cue survives even when
- * it shares the same database field with an Alpha Progression prescription.
+ * it shares the same database field with importer prescription metadata.
  */
 export function meaningfulProgramNote(note: string | null | undefined): string | null {
   if (!note?.trim()) return null;

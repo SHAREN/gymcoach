@@ -52,7 +52,7 @@ const saveBarbell = vi.mocked(saveOwnedBarbellSystemProfile);
 
 const systemProfiles = {
   gymId: 'gym-1',
-  gymName: 'X-Fit',
+  gymName: 'Test Gym',
   dumbbells: {
     id: 'system-profile-dumbbells-gym-1',
     kind: 'DUMBBELLS' as const,
@@ -113,7 +113,7 @@ describe('MCP gym inventory reads', () => {
     findGyms.mockResolvedValue([
       {
         id: 'gym-1',
-        name: 'X-Fit',
+        name: 'Test Gym',
         createdAt: new Date('2026-08-01T00:00:00Z'),
         updatedAt: new Date('2026-09-01T00:00:00Z'),
         _count: { equipment: 3, exerciseConfigs: 4, sessions: 5 },
@@ -141,7 +141,7 @@ describe('MCP gym inventory reads', () => {
     findUser.mockResolvedValue({ activeGymId: 'gym-1' } as never);
     findGym.mockResolvedValue({
       id: 'gym-1',
-      name: 'X-Fit',
+      name: 'Test Gym',
       dumbbellWeights: [10, 12],
       plateWeights: [5, 10],
       barWeights: [20],
@@ -210,7 +210,10 @@ describe('MCP gym inventory reads', () => {
       expect.objectContaining({ where: { id: 'gym-1', userId: 'user-1' } }),
     );
     expect(result.systemProfiles).toEqual(systemProfiles);
-    expect(result.platePools[0]).toMatchObject({ id: 'pool-custom', compatibilityKey: 'hammer_plates' });
+    expect(result.platePools[0]).toMatchObject({
+      id: 'pool-custom',
+      compatibilityKey: 'hammer_plates',
+    });
     expect(result.equipment[0]?.image?.url).toBe(
       'https://gymcoach.example/api/gym-equipment/equipment-1/image?v=1',
     );
@@ -234,9 +237,9 @@ describe('MCP gym inventory reads', () => {
     findGym.mockResolvedValue(null);
     findExercises.mockResolvedValue([] as never);
 
-    await expect(getMcpGymInventory('user-1', 'https://gymcoach.example', 'other-gym')).rejects.toThrow(
-      'Gym not found.',
-    );
+    await expect(
+      getMcpGymInventory('user-1', 'https://gymcoach.example', 'other-gym'),
+    ).rejects.toThrow('Gym not found.');
     expect(findGym).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'other-gym', userId: 'user-1' } }),
     );
@@ -248,7 +251,7 @@ describe('MCP gym inventory reads', () => {
     findGym.mockResolvedValue({ id: 'gym-1' } as never);
     findFinalGym.mockResolvedValue({
       id: 'gym-1',
-      name: 'X-Fit',
+      name: 'Test Gym',
       dumbbellWeights: [10, 12],
       plateWeights: [5],
       barWeights: [20],

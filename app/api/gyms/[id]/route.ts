@@ -25,7 +25,8 @@ export async function PUT(req: Request, props: Params) {
     if (
       (input.dumbbellWeights !== undefined &&
         !sameWeights(input.dumbbellWeights, currentGym.dumbbellWeights)) ||
-      (input.plateWeights !== undefined && !sameWeights(input.plateWeights, currentGym.plateWeights)) ||
+      (input.plateWeights !== undefined &&
+        !sameWeights(input.plateWeights, currentGym.plateWeights)) ||
       (input.barWeights !== undefined && !sameWeights(input.barWeights, currentGym.barWeights))
     ) {
       throw new ApiError(
@@ -34,7 +35,7 @@ export async function PUT(req: Request, props: Params) {
       );
     }
 
-    // Keep M05/M14 metadata on GymExerciseConfig. The legacy gym editor owns
+    // Keep equipment preference/system-profile metadata on GymExerciseConfig. The gym editor owns
     // only isAvailable + weightOptions; omitted rows mean their legacy fields
     // return to implicit defaults, not that preferred/system metadata is erased.
     const updated = await db.$transaction(async (tx) => {
@@ -47,7 +48,9 @@ export async function PUT(req: Request, props: Params) {
           systemProfileSupported: true,
         },
       });
-      const requestedByExercise = new Map(exerciseConfigs.map((config) => [config.exerciseId, config]));
+      const requestedByExercise = new Map(
+        exerciseConfigs.map((config) => [config.exerciseId, config]),
+      );
 
       for (const config of exerciseConfigs) {
         await tx.gymExerciseConfig.upsert({

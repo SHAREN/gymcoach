@@ -26,7 +26,7 @@ export const gymCreateSchema = z.object({
 });
 
 export const gymUpdateSchema = gymCreateSchema.omit({ makeActive: true }).extend({
-  // Existing gyms edit free-weight inventory only through M14 permanent
+  // Existing gyms edit free-weight inventory only through permanent
   // system profiles. Keep these optional for legacy clients that still echo
   // unchanged values, but the web editor no longer needs to send them.
   dumbbellWeights: gymWeightListSchema.optional(),

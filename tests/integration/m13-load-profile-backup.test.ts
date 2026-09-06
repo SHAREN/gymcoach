@@ -21,10 +21,10 @@ function restoreRequest(payload: unknown): Request {
 
 beforeEach(() => mockUserId.mockReset());
 
-describe('M13 load-profile backup trust boundary', () => {
+describe('load-profile backup trust boundary', () => {
   it('rederives catalog trust from the full fingerprint instead of trusting imported REVIEWED metadata', async () => {
     const source = await db.user.create({
-      data: { email: 'm13-backup-source@test.dev', passwordHash: 'x' },
+      data: { email: 'load-backup-source@test.dev', passwordHash: 'x' },
     });
     await seedExerciseCatalog(db, source.id);
     actAs(source.id);
@@ -45,7 +45,7 @@ describe('M13 load-profile backup trust boundary', () => {
     bench.notes = 'User-edited technique note';
 
     const target = await db.user.create({
-      data: { email: 'm13-backup-target@test.dev', passwordHash: 'x' },
+      data: { email: 'load-backup-target@test.dev', passwordHash: 'x' },
     });
     actAs(target.id);
     const restoreResponse = await postBackup(restoreRequest(dump));

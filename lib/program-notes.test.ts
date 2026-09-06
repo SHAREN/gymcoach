@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { meaningfulProgramNote } from './program-notes';
 
 describe('meaningfulProgramNote', () => {
-  it('hides Alpha Progression prescription and metadata lines', () => {
+  it('hides importer prescription and metadata lines', () => {
     expect(
       meaningfulProgramNote('Alpha prescription: 5 sets; 10 reps\nAlpha metadata: Superset 1'),
     ).toBeNull();
@@ -11,7 +11,7 @@ describe('meaningfulProgramNote', () => {
   it('hides older one-line import metadata', () => {
     expect(
       meaningfulProgramNote(
-        '[alpha-progression-2026-07-10] Imported from Alpha Progression. Original exercise: Incline Bench Press.',
+        '[legacy-progression-2026-07-10] Imported from Legacy Tool. Original exercise: Incline Bench Press.',
       ),
     ).toBeNull();
   });

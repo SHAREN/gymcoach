@@ -48,7 +48,7 @@ ALTER TABLE "GymEquipment" ADD CONSTRAINT "GymEquipment_platePoolId_fkey"
 FOREIGN KEY ("platePoolId") REFERENCES "GymPlatePool"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Existing machine/cable/other weightOptions were explicit selectable load
--- lists in the pre-M14 domain. Promote only those already-known rows to the
+-- lists before permanent system profiles existed. Promote only those already-known rows to the
 -- structured SELECTORIZED type; UNKNOWN configurations remain untouched.
 UPDATE "GymEquipment"
 SET "loadType" = 'SELECTORIZED'::"EquipmentLoadType"

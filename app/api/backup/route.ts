@@ -728,11 +728,11 @@ export async function POST(req: Request) {
           systemFamilies.add(pool.systemBarbellFamily);
         }
       }
-      if (
-        payload.version >= 9 &&
-        (!systemFamilies.has('LARGE') || !systemFamilies.has('SMALL'))
-      ) {
-        throw new ApiError(400, 'Version 9 gym backup must contain LARGE and SMALL Barbell system pools.');
+      if (payload.version >= 9 && (!systemFamilies.has('LARGE') || !systemFamilies.has('SMALL'))) {
+        throw new ApiError(
+          400,
+          'Version 9 gym backup must contain LARGE and SMALL Barbell system pools.',
+        );
       }
 
       const seenEquipmentNames = new Set<string>();
@@ -747,8 +747,11 @@ export async function POST(req: Request) {
           throw new ApiError(400, 'Gym equipment references a plate pool missing from the backup.');
         }
         const known = item.loadConfigurationKnown ?? true;
-        const loadType = item.loadType ??
-          (known && item.weightOptions.length > 0 && ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
+        const loadType =
+          item.loadType ??
+          (known &&
+          item.weightOptions.length > 0 &&
+          ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
             ? EquipmentLoadType.SELECTORIZED
             : EquipmentLoadType.NONE);
         if (
@@ -760,10 +763,16 @@ export async function POST(req: Request) {
             (item.selectedLoadMultiplier ?? 1) !== 1 ||
             (item.loadingSides ?? 2) !== 2)
         ) {
-          throw new ApiError(400, 'Unknown equipment load configuration cannot carry confirmed mechanics.');
+          throw new ApiError(
+            400,
+            'Unknown equipment load configuration cannot carry confirmed mechanics.',
+          );
         }
         if (loadType === EquipmentLoadType.PLATE_LOADED && !item.platePoolCompatibilityKey) {
-          throw new ApiError(400, 'Plate-loaded backup equipment requires a compatible plate pool.');
+          throw new ApiError(
+            400,
+            'Plate-loaded backup equipment requires a compatible plate pool.',
+          );
         }
         const decoded = item.imageBase64
           ? decodeGymEquipmentImage(item.imageBase64, item.imageMimeType ?? undefined)
@@ -990,7 +999,7 @@ export async function POST(req: Request) {
           }
 
           // Older backups had only the shared free-weight arrays. Materialize
-          // their M14 system profiles deterministically after the old content is
+          // their system profiles deterministically after the old content is
           // restored. Version 9 carries the exact profiles/pools and must not be
           // reinitialized or rewritten.
           if (payload.version < 9) {

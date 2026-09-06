@@ -14,7 +14,7 @@ describe('MCP training history serialization', () => {
       notes: null,
       program: { id: 'program-1', name: 'Upper / Lower' },
       workout: { id: 'workout-1', name: 'Upper' },
-      gym: { id: 'gym-1', name: 'X-Fit' },
+      gym: { id: 'gym-1', name: 'Test Gym' },
       sets: [
         {
           id: 'set-1',
@@ -84,7 +84,7 @@ describe('MCP training history serialization', () => {
     expect(result).toMatchObject({
       sessionId: 'session-1',
       durationMin: 90,
-      gym: { id: 'gym-1', name: 'X-Fit' },
+      gym: { id: 'gym-1', name: 'Test Gym' },
       exercises: [
         {
           exerciseId: 'exercise-1',

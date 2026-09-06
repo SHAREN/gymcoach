@@ -13,7 +13,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastErrorMock } })
 const gyms = [
   {
     id: 'gym-a',
-    name: 'X-Fit',
+    name: 'Test Gym',
     preferredEquipmentId: 'cable-a',
     equipment: [
       { id: 'cable-a', name: 'Cable A', equipmentType: 'CABLE' as const, linked: true },
@@ -37,9 +37,13 @@ describe('ExerciseEquipmentEditor', () => {
       <ExerciseEquipmentEditor exerciseId="exercise-1" exerciseEquipmentType="CABLE" gyms={gyms} />,
     );
 
-    expect(screen.getByRole('checkbox', { name: 'Use Machine A for this exercise in X-Fit' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Use Cable B for this exercise in X-Fit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Set Cable B as preferred in X-Fit' }));
+    expect(
+      screen.getByRole('checkbox', { name: 'Use Machine A for this exercise in Test Gym' }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Use Cable B for this exercise in Test Gym' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Set Cable B as preferred in Test Gym' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save equipment' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -66,7 +70,9 @@ describe('ExerciseEquipmentEditor', () => {
       <ExerciseEquipmentEditor exerciseId="exercise-1" exerciseEquipmentType="CABLE" gyms={gyms} />,
     );
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Use Cable A for this exercise in X-Fit' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Use Cable A for this exercise in Test Gym' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Save equipment' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));

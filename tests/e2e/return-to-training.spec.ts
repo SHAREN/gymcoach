@@ -132,7 +132,7 @@ test('a long break activates a conservative first working set without replacing 
   const notice = page.getByTestId('return-to-training-notice');
   await expect(notice).toBeVisible();
   await expect(notice).toContainText('Sets today: 1. Target RIR: 4.');
-  // The old sets were recorded without a physical equipment id. Once M14
+  // The old sets were recorded without a physical equipment id. Once equipment-aware history
   // materializes a managed bar, those loads are non-comparable: they may prove
   // a long break, but they must not become a load anchor for this bar. Calibrate
   // from the selected bar's safe floor instead.

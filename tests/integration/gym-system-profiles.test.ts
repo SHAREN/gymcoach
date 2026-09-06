@@ -30,16 +30,16 @@ import {
 
 async function seedOwnerGraph() {
   const owner = await db.user.create({
-    data: { email: `m14-owner-${Date.now()}@test.dev`, passwordHash: 'unused' },
+    data: { email: `profile-owner-${Date.now()}@test.dev`, passwordHash: 'unused' },
   });
   const stranger = await db.user.create({
-    data: { email: `m14-stranger-${Date.now()}@test.dev`, passwordHash: 'unused' },
+    data: { email: `profile-stranger-${Date.now()}@test.dev`, passwordHash: 'unused' },
   });
   const [dumbbell, barbell, cable, strangerBarbell] = await Promise.all([
     db.exercise.create({
       data: {
         userId: owner.id,
-        name: 'M14 Dumbbell Curl',
+        name: 'Profile Dumbbell Curl',
         muscleGroup: 'BICEPS',
         category: 'ISOLATION',
         equipmentType: 'DUMBBELL',
@@ -48,7 +48,7 @@ async function seedOwnerGraph() {
     db.exercise.create({
       data: {
         userId: owner.id,
-        name: 'M14 Bench Press',
+        name: 'Profile Bench Press',
         muscleGroup: 'CHEST',
         category: 'COMPOUND',
         equipmentType: 'BARBELL',
@@ -57,7 +57,7 @@ async function seedOwnerGraph() {
     db.exercise.create({
       data: {
         userId: owner.id,
-        name: 'M14 Cable Row',
+        name: 'Profile Cable Row',
         muscleGroup: 'BACK_THICKNESS',
         category: 'COMPOUND',
         equipmentType: 'CABLE',
@@ -76,7 +76,7 @@ async function seedOwnerGraph() {
   const gym = await db.gym.create({
     data: {
       userId: owner.id,
-      name: 'M14 Gym',
+      name: 'System Profile Gym',
       dumbbellWeights: [10, 12],
       plateWeights: [5, 10],
       barWeights: [20],
@@ -104,7 +104,7 @@ function jsonRequest(url: string, method: string, body: unknown) {
 
 beforeEach(() => mockUserId.mockReset());
 
-describe('M14 permanent free-weight system profiles', () => {
+describe('permanent free-weight system profiles', () => {
   it('keeps system-profile reads read-only and does not hide missing initialization', async () => {
     const { owner, gym } = await seedOwnerGraph();
     expect(await db.gymPlatePool.count({ where: { gymId: gym.id } })).toBe(0);
@@ -150,7 +150,8 @@ describe('M14 permanent free-weight system profiles', () => {
   it('keeps LARGE and SMALL bars and plate inventories isolated while preserving nullable counts', async () => {
     const { owner, gym, dumbbell, barbell } = await seedOwnerGraph();
     const initial = await initialize(owner.id, gym.id);
-    const largeInitialBar = initial.barbell.families.find((family) => family.family === 'LARGE')!.bars[0]!;
+    const largeInitialBar = initial.barbell.families.find((family) => family.family === 'LARGE')!
+      .bars[0]!;
 
     await saveOwnedDumbbellsSystemProfile(
       owner.id,
@@ -213,7 +214,9 @@ describe('M14 permanent free-weight system profiles', () => {
       where: { gymId: gym.id, exerciseId: { in: [dumbbell.id, barbell.id] } },
       orderBy: { exerciseId: 'asc' },
     });
-    expect(support.every((config) => config.isAvailable && config.systemProfileSupported)).toBe(true);
+    expect(support.every((config) => config.isAvailable && config.systemProfileSupported)).toBe(
+      true,
+    );
   });
 
   it('rejects cross-family bar ids transactionally and protects system bars and pools from generic mutation', async () => {
@@ -294,7 +297,12 @@ describe('M14 permanent free-weight system profiles', () => {
         gymBarbellSystemProfileInputSchema.parse({
           exerciseIds: [barbell.id],
           families: [
-            { family: 'LARGE', loadingSides: 2, bars: [], plates: [{ weightKg: 5, quantity: null }] },
+            {
+              family: 'LARGE',
+              loadingSides: 2,
+              bars: [],
+              plates: [{ weightKg: 5, quantity: null }],
+            },
             { family: 'SMALL', loadingSides: 2, bars: [], plates: [] },
           ],
         }),
@@ -303,10 +311,12 @@ describe('M14 permanent free-weight system profiles', () => {
 
     expect(await db.gymEquipment.findUnique({ where: { id: largeBar.id } })).not.toBeNull();
     const after = await getOwnedGymSystemProfiles(owner.id, gym.id);
-    expect(after.barbell.families.find((family) => family.family === 'LARGE')!.bars).toHaveLength(1);
+    expect(after.barbell.families.find((family) => family.family === 'LARGE')!.bars).toHaveLength(
+      1,
+    );
   });
 
-  it('returns 404 and makes no changes when another user addresses M14 routes', async () => {
+  it('returns 404 and makes no changes when another user addresses system-profile routes', async () => {
     const { owner, stranger, gym, dumbbell, barbell } = await seedOwnerGraph();
     const profiles = await initialize(owner.id, gym.id);
     const large = profiles.barbell.families.find((family) => family.family === 'LARGE')!;
@@ -389,6 +399,8 @@ describe('M14 permanent free-weight system profiles', () => {
       name: 'Owner custom plates',
       compatibilityKey: 'owner_custom_plates',
     });
-    expect(await db.gymPlatePool.count({ where: { gymId: gym.id, name: 'Foreign attempt' } })).toBe(0);
+    expect(await db.gymPlatePool.count({ where: { gymId: gym.id, name: 'Foreign attempt' } })).toBe(
+      0,
+    );
   });
 });

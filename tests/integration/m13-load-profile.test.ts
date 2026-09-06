@@ -13,23 +13,23 @@ const pressProfile = reviewedExerciseLoadProfile({
   jointStress: ['SHOULDER', 'ELBOW'],
 });
 
-describe('M13 multi-muscle load profiles', () => {
+describe('multi-muscle load profiles', () => {
   it('flows a reviewed profile through saved history and program-design context', async () => {
     const user = await db.user.create({
       data: {
-        email: 'm13-flow@test.dev',
+        email: 'load-profile-flow@test.dev',
         passwordHash: 'x',
         goal: 'STRENGTH',
         weeklyFrequency: 3,
       },
     });
-    const gym = await db.gym.create({ data: { userId: user.id, name: 'M13 Gym' } });
+    const gym = await db.gym.create({ data: { userId: user.id, name: 'Load Profile Gym' } });
     await db.user.update({ where: { id: user.id }, data: { activeGymId: gym.id } });
 
     const exercise = await db.exercise.create({
       data: {
         userId: user.id,
-        name: 'M13 Bench Press',
+        name: 'Load Profile Bench Press',
         muscleGroup: 'CHEST',
         category: 'COMPOUND',
         equipmentType: 'BARBELL',
@@ -40,7 +40,7 @@ describe('M13 multi-muscle load profiles', () => {
     });
 
     const program = await db.program.create({
-      data: { userId: user.id, name: 'M13 Program', phase: 'base', isActive: true },
+      data: { userId: user.id, name: 'Load Profile Program', phase: 'base', isActive: true },
     });
     const workout = await db.workout.create({
       data: { programId: program.id, name: 'Upper', order: 1, dayOfWeek: 1 },

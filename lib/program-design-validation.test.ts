@@ -202,7 +202,7 @@ describe('validateProgramDesign', () => {
     );
   });
 
-  it('labels M13 accounting as multi-muscle and preserves direct counts', () => {
+  it('labels multi-muscle accounting correctly and preserves direct counts', () => {
     const result = validateProgramDesign(program(), context());
     expect(result.accounting.mode).toBe('MULTI_MUSCLE_V1');
     expect(result.weeklyLoadByMuscle.CHEST).toMatchObject({ directSets: 3, indirectSets: 0 });
