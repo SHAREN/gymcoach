@@ -86,11 +86,12 @@ if [ "$FULL" = "1" ]; then
     trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM HUP
   fi
   step "integration tests (needs Postgres on :5434)"
-  # 9>&- keeps the lock fd out of the test children, so a zombie next-server
-  # surviving an interrupted run (lesson L12) cannot hold the lock forever.
-  npm_config_script_shell="D:/Program Files/Git/bin/bash.exe" npm run test:integration 9>&- || fail "integration tests"
+  # The npm integration script delegates to a Node wrapper that injects the
+  # test DATABASE_URL without shell-specific VAR=value syntax. This keeps the
+  # same command portable across POSIX shells and Windows npm/cmd.exe.
+  npm run test:integration 9>&- || fail "integration tests"
   step "E2E tests (Playwright)"
-  npm_config_script_shell="D:/Program Files/Git/bin/bash.exe" npm run test:e2e 9>&- || fail "E2E tests"
+  npm run test:e2e 9>&- || fail "E2E tests"
 fi
 
 echo ""
