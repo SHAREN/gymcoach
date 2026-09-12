@@ -3,7 +3,7 @@ import type { MessageShape } from '@/i18n/message-types';
 
 export const navigation = {
   home: 'Главная',
-  history: 'История',
+  history: 'Календарь',
   progress: 'Прогресс',
   coach: 'Тренер',
   chat: 'Чат',
