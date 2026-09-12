@@ -10,6 +10,7 @@ import { buildProgramDesignContext } from '@/lib/program-design-context';
 import { validateProgramDesign } from '@/lib/program-design-validation';
 import {
   GYM_EQUIPMENT_IMAGE_MIME_TYPES,
+  createOwnedGym,
   getOwnedGymEquipmentImage,
   getOwnedGymInventory,
   listOwnedGyms,
@@ -36,13 +37,13 @@ Use read tools before making recommendations. Ground every recommendation in ret
 
 Before creating, extending or revising a program, read gymcoach://methodology/program-design and call get_program_design_context with the intended mode. Ask every required question returned in missingQuestions. Use validate_program_draft before any write. Do not calculate an exact catabolism percentage or CNS fatigue score; use GymCoach recovery and volume-pressure signals.
 
-Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory, call list_gyms and get_gym_inventory, and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
+Before inventorying a gym from narration or photos, read gymcoach://instructions/gym-inventory and call list_gyms. If the requested gym does not exist, explain whether it should start empty or clone an existing gym, then use create_gym only after explicit confirmation. Call get_gym_inventory for existing gyms and compare physical equipment separately from exercises. Do not guess a brand, model, selectable weight or exercise link from an unclear photo. Batch the proposed additions and corrections for confirmation before using write tools.
 
 Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
 export const GYM_INVENTORY_INSTRUCTIONS = `Gym inventory workflow:
 
-1. Call list_gyms and select the requested gym. Call get_gym_inventory before interpreting new observations.
+1. Call list_gyms and select the requested gym. If it does not exist, ask whether it should start empty or clone an existing gym; after explicit confirmation use create_gym, then call get_gym_inventory for the new gym. For an existing gym, call get_gym_inventory before interpreting new observations.
 2. Treat physical equipment as separate from exercises. One machine may support several exercise IDs, and several machines may support the same exercise.
 3. Compare narrated items and photos against sharedFreeWeights and equipment. Match by function, manufacturer/model when certain, and distinctive description. Do not rely on name similarity alone.
 4. Ask focused questions for unreadable plates, pin stacks, brands, models, quantities or ambiguous machines. Mark uncertainty explicitly instead of inventing values.
@@ -238,6 +239,32 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     },
     async () => result(await listOwnedGyms(principal.userId)),
+  );
+
+  server.registerTool(
+    'create_gym',
+    {
+      title: 'Create a gym',
+      description:
+        'Creates a saved gym after confirmation. Optionally clone free weights, exercise configurations, physical equipment, exercise links and equipment images from another owned gym.',
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        name: z.string().trim().min(1).max(80),
+        sourceGymId: gymIdSchema.optional(),
+        makeActive: z.boolean().default(false),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ confirmed: _confirmed, ...input }) => {
+      requireWrite(principal);
+      const saved = await createOwnedGym(principal.userId, input);
+      return result({ ok: true, ...saved });
+    },
   );
 
   server.registerTool(

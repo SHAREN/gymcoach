@@ -67,6 +67,7 @@ Read tools:
 
 Write tools:
 
+- `create_gym`
 - `update_gym_free_weights`
 - `upsert_gym_equipment`
 - `set_gym_equipment_image`
@@ -85,6 +86,12 @@ support several movements and several machines can support the same movement.
 `get_gym_inventory` returns all machines and stations with descriptions,
 manufacturer/model, quantity, selectable weights, exercise links and image
 metadata, alongside shared dumbbell, plate and bar inventories.
+
+`create_gym` creates an empty gym by default. With `sourceGymId`, it clones the
+source gym's shared free weights, exercise configurations, physical equipment,
+exercise links and saved equipment images into independent rows owned by the new
+gym. `makeActive` is optional; the new gym is also made active automatically when
+the trainee does not have an active gym yet.
 
 An agent should read `gymcoach://instructions/gym-inventory`, call `list_gyms`
 and `get_gym_inventory`, compare the saved inventory with the trainee's

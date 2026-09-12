@@ -7,6 +7,12 @@ export const GYM_EQUIPMENT_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image
 export type GymEquipmentImageMimeType = (typeof GYM_EQUIPMENT_IMAGE_MIME_TYPES)[number];
 export const MAX_GYM_EQUIPMENT_IMAGE_BYTES = 5 * 1024 * 1024;
 
+interface CreateOwnedGymInput {
+  name: string;
+  sourceGymId?: string;
+  makeActive?: boolean;
+}
+
 interface UpsertGymEquipmentInput {
   equipmentId?: string;
   name: string;
@@ -77,6 +83,127 @@ export async function listOwnedGyms(userId: string) {
     activeGymId: user?.activeGymId ?? null,
     gyms: gyms.map((gym) => ({ ...gym, isActive: gym.id === user?.activeGymId })),
   };
+}
+
+export async function createOwnedGym(userId: string, input: CreateOwnedGymInput) {
+  return db.$transaction(async (tx) => {
+    const source = input.sourceGymId
+      ? await tx.gym.findFirst({
+          where: { id: input.sourceGymId, userId },
+          select: {
+            id: true,
+            name: true,
+            dumbbellWeights: true,
+            plateWeights: true,
+            barWeights: true,
+            exerciseConfigs: {
+              select: {
+                exerciseId: true,
+                isAvailable: true,
+                weightOptions: true,
+                dumbbellWeights: true,
+                plateWeights: true,
+                barWeights: true,
+              },
+            },
+            equipment: {
+              select: {
+                name: true,
+                equipmentType: true,
+                description: true,
+                manufacturer: true,
+                modelName: true,
+                quantity: true,
+                weightOptions: true,
+                imageUrl: true,
+                imageData: true,
+                imageMimeType: true,
+                exerciseLinks: { select: { exerciseId: true } },
+              },
+            },
+          },
+        })
+      : null;
+    if (input.sourceGymId && !source) throw new Error('Source gym not found.');
+
+    const gym = await tx.gym.create({
+      data: {
+        userId,
+        name: input.name,
+        dumbbellWeights: source?.dumbbellWeights ?? [],
+        plateWeights: source?.plateWeights ?? [],
+        barWeights: source?.barWeights ?? [],
+        ...(source?.exerciseConfigs.length
+          ? {
+              exerciseConfigs: {
+                createMany: {
+                  data: source.exerciseConfigs.map((config) => ({
+                    exerciseId: config.exerciseId,
+                    isAvailable: config.isAvailable,
+                    weightOptions: config.weightOptions,
+                    dumbbellWeights: config.dumbbellWeights,
+                    plateWeights: config.plateWeights,
+                    barWeights: config.barWeights,
+                  })),
+                },
+              },
+            }
+          : {}),
+      },
+      select: { id: true },
+    });
+
+    for (const item of source?.equipment ?? []) {
+      const equipment = await tx.gymEquipment.create({
+        data: {
+          gymId: gym.id,
+          name: item.name,
+          equipmentType: item.equipmentType,
+          description: item.description,
+          manufacturer: item.manufacturer,
+          modelName: item.modelName,
+          quantity: item.quantity,
+          weightOptions: item.weightOptions,
+          imageUrl: item.imageUrl,
+          imageData: item.imageData,
+          imageMimeType: item.imageMimeType,
+        },
+        select: { id: true },
+      });
+      if (item.exerciseLinks.length > 0) {
+        await tx.gymEquipmentExercise.createMany({
+          data: item.exerciseLinks.map((link) => ({
+            equipmentId: equipment.id,
+            exerciseId: link.exerciseId,
+          })),
+        });
+      }
+    }
+
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { activeGymId: true },
+    });
+    const isActive = input.makeActive === true || !user?.activeGymId;
+    if (isActive) {
+      await tx.user.update({ where: { id: userId }, data: { activeGymId: gym.id } });
+    }
+
+    const saved = await tx.gym.findUnique({
+      where: { id: gym.id },
+      select: {
+        id: true,
+        name: true,
+        updatedAt: true,
+        _count: { select: { equipment: true, exerciseConfigs: true, sessions: true } },
+      },
+    });
+    if (!saved) throw new Error('Gym could not be read after saving.');
+    return {
+      gym: { ...saved, isActive },
+      clonedFromGym: source ? { id: source.id, name: source.name } : null,
+    };
+  });
 }
 
 export async function getOwnedGymInventory(userId: string, baseUrl: string, gymId?: string) {

@@ -32,6 +32,7 @@ describe('GymCoach MCP server', () => {
     const tools = await client.listTools();
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
     expect(byName.has('list_gyms')).toBe(true);
+    expect(byName.has('create_gym')).toBe(true);
     expect(byName.has('get_gym_inventory')).toBe(true);
     expect(byName.has('get_gym_equipment_image')).toBe(true);
     expect(byName.has('update_gym_free_weights')).toBe(true);
@@ -43,6 +44,8 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('create_program')).toBe(true);
     expect(byName.has('create_program_revision')).toBe(true);
     expect(byName.has('update_program_exercise')).toBe(true);
+    expect(byName.get('create_gym')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('create_gym')?.annotations?.destructiveHint).toBe(false);
     expect(byName.get('get_gym_inventory')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_gym_equipment_image')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('set_gym_equipment_image')?.annotations?.readOnlyHint).toBe(false);
