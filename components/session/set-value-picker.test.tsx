@@ -84,7 +84,7 @@ describe('SetValuePicker', () => {
       />,
     );
 
-    const list = screen.getByTestId('weight-picker-list');
+    const list = screen.getByTestId('set-value-options');
     const fifty = screen.getByRole('button', { name: '50 kg' });
     const sixty = screen.getByRole('button', { name: '60 kg' });
     const seventy = screen.getByRole('button', { name: '70 kg' });

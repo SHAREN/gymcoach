@@ -187,7 +187,8 @@ export function SetValuePicker({
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div
             ref={listRef}
-            data-testid={kind === 'weight' ? 'weight-picker-list' : 'set-value-options'}
+            data-testid="set-value-options"
+            data-weight-picker-list={kind === 'weight' ? 'true' : undefined}
             onPointerDown={() => kind === 'weight' && setManualEntryActive(false)}
             onWheel={() => kind === 'weight' && setManualEntryActive(false)}
             onScroll={previewCenteredWeight}
