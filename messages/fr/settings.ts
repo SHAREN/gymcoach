@@ -2,6 +2,7 @@ import { settings as english } from '../en/settings';
 import type { MessageShape } from '@/i18n/message-types';
 
 export const settings = {
+  ...english,
   title: 'Réglages',
   account: 'Compte',
   appearance: 'Apparence',

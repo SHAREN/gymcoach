@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   constrainGymWeight,
-  gymWeightOptions,
   constrainGymWeightAtOrBelow,
   constructibleBarbellWeights,
   gymWeightOptions,

@@ -817,6 +817,7 @@ export function SessionRunner({
               deloadActive={deloadActive}
               unit={unit}
               recommendation={currentRecommendation}
+              returnRecommendation={currentReturnRecommendation}
               loadConstraints={loadConstraintsFor(currentTarget)}
               gym={sessionGym}
               onGymUpdated={setSessionGym}

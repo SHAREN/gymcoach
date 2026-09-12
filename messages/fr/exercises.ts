@@ -2,6 +2,7 @@ import { exercises as english } from '../en/exercises';
 import type { MessageShape } from '@/i18n/message-types';
 
 export const exercises = {
+  ...english,
   title: 'Catalogue d’exercices',
   savedCount:
     '{count, plural, =0 {Aucun exercice enregistré.} one {# exercice enregistré.} other {# exercices enregistrés.}}',

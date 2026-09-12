@@ -2,6 +2,7 @@ import { history as english } from '../en/history';
 import type { MessageShape } from '@/i18n/message-types';
 
 export const history = {
+  ...english,
   title: 'Historique',
   noFiltered: 'Aucune séance terminée ne correspond à ces filtres.',
   emptyTitle: 'Aucune séance enregistrée',

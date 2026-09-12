@@ -150,7 +150,7 @@ async function doFlush(): Promise<FlushResult> {
           ? { gymEquipmentId: null, equipmentDroppedNotice: sentEquipmentId }
           : {}),
       });
-      if (equipmentDropped) {
+      if (equipmentDropped && sentEquipmentId !== null) {
         droppedEquipment.push({
           localId: item.localId,
           sessionId: item.sessionId,

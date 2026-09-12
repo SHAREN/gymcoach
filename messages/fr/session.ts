@@ -2,6 +2,7 @@ import { session as english } from '../en/session';
 import type { MessageShape } from '@/i18n/message-types';
 
 export const session = {
+  ...english,
   startTitle: 'Démarrer une séance',
   activeProgram: 'Programme actif : {name}',
   noActiveProgram: 'Aucun programme actif',
@@ -174,6 +175,7 @@ export const session = {
     oneRmPrTitle: 'Meilleur 1RM estimé depuis votre dernière séance',
   },
   exerciseCard: {
+    ...english.exerciseCard,
     notAvailable: 'Indisponible dans cette salle',
     cardioPrescription: '{sets, plural, one {# série} other {# séries}} · Repos {seconds} s',
     strengthPrescription:

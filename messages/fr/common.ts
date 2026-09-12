@@ -64,6 +64,7 @@ export const common = {
     sunday: 'Dimanche',
   },
   language: {
+    ...english.language,
     label: 'Langue',
     change: 'Changer de langue',
     description: 'Choisissez la langue de l’interface GymCoach.',

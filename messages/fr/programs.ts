@@ -71,6 +71,7 @@ export const programs = {
     supersetRemoved: 'Superset supprimé.',
   },
   exercise: {
+    ...english.exercise,
     actions: 'Actions de l’exercice',
     edit: 'Modifier l’exercice programmé',
     add: 'Ajouter un exercice',
@@ -124,6 +125,7 @@ export const programs = {
     noWorkouts: 'Ce programme n’a pas encore de séance à imprimer.',
   },
   generator: {
+    ...english.generator,
     title: 'Générer un programme avec l’IA',
     description:
       'Décrivez votre objectif, vos disponibilités, votre expérience et vos contraintes. Vous pourrez modifier le résultat avant de l’enregistrer.',

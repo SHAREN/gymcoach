@@ -67,10 +67,15 @@ export async function PATCH(req: Request, props: Params) {
   const params = await props.params;
   try {
     const userId = await requireApiUserId();
-    await ensureOwnership(params.id, userId);
+    const owned = await db.programExercise.findFirst({
+      where: { id: params.id, workout: { program: { userId } } },
+      select: { id: true },
+    });
+    if (!owned) throw new ApiError(404, 'Program exercise not found.');
+
     const data = await parseJsonBody(req, programExerciseTargetSetsSchema);
     const updated = await db.programExercise.update({
-      where: { id: params.id },
+      where: { id: params.id, workout: { program: { userId } } },
       data: { targetSets: data.targetSets },
       include: { exercise: true },
     });

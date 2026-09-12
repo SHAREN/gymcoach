@@ -52,6 +52,10 @@ const completedSet2: PendingSet = {
   rir: 1,
 };
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 const recommendation: IntraSetRecommendation = {
   mode: 'PRESERVE_RIR',
   weight: 92.5,
@@ -241,6 +245,42 @@ describe('EditableSetsTable', () => {
     );
   });
 
+  it('fills the active table row from an explicitly requested AI parse', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          parsed: { kind: 'strength', weight: 100, reps: 8, rir: 2 },
+        }),
+      }),
+    );
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        onSubmit={vi.fn()}
+        onUpdateSet={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Describe the set (AI)' }));
+    fireEvent.change(screen.getByLabelText('Describe the set (AI)'), {
+      target: { value: '100 kg for 8, 2 in the tank' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Parse with AI' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Set 1 weight in KG' })).toHaveTextContent('100'),
+    );
+    expect(screen.getByRole('button', { name: 'Set 1 repetitions' })).toHaveTextContent('8');
+    expect(screen.getByRole('combobox', { name: 'Set 1 reps in reserve' })).toHaveValue('2');
+  });
+
   it('applies the recommendation and restores it after a manual change or next set', async () => {
     const view = render(
       <EditableSetsTable
@@ -423,6 +463,7 @@ describe('EditableSetsTable', () => {
         returnRecommendation={{
           mode: 'exercise-reintro',
           exerciseGapDays: 60,
+          returnGapDays: 60,
           muscleGapDays: 5,
           muscleMaintained: true,
           recentMuscleSets: 12,
@@ -432,8 +473,13 @@ describe('EditableSetsTable', () => {
           targetRIR: 3,
           weightCeiling: 19,
           suggestedWeight: 16,
+          startFraction: 0.85,
           calibrationRequired: true,
           historySessionCount: 3,
+          recentHistorySessionCount: 1,
+          longTermHistorySessionCount: 2,
+          historyBasis: 'recent-and-long-term',
+          confidence: 'high',
         }}
         readiness={null}
         deloadActive={false}
