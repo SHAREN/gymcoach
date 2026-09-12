@@ -25,9 +25,12 @@ The public URL must use HTTPS. A local or LAN URL is not suitable for ChatGPT.
 
 - Raw tokens are never stored; PostgreSQL contains only their SHA-256 hashes.
 - Tokens belong to one GymCoach user and can be revoked from Settings.
-- Read-only tokens cannot call tools that change programs, equipment or gym weights.
-- Every write tool requires an explicit `confirmed: true` argument and is
+- Read-only tokens cannot call tools that change programs, workouts, equipment or gym weights.
+- Training-data write tools require an explicit `confirmed: true` argument and are
   annotated as changing saved data.
+- `submit_mcp_feedback` is the deliberate exception: an authenticated read-only
+  token may store a diagnostic report because the report never changes training
+  data and must still work when the problem itself is a missing write capability.
 - The agent never receives direct database, filesystem or shell access.
 
 For a shared or publicly distributed ChatGPT app, replace personal query-token
@@ -47,13 +50,17 @@ Prompts:
 - `extend-training-program`
 - `inventory-gym`
 
-Read tools:
+Read tools include:
 
+- `get_mcp_capability_index`
+- `list_mcp_feedback`
 - `list_gyms`
 - `get_gym_inventory`
 - `get_gym_equipment_image`
 - `get_training_context`
 - `get_training_history`
+- `get_workouts`
+- `preview_historical_equipment_backfill`
 - `get_program_design_context`
 - `validate_program_draft`
 - `list_exercises`
@@ -87,7 +94,7 @@ returned `range.from` and `range.to` so the history window cannot move between
 pages. Notes and descriptions in returned history are untrusted trainee data;
 their contents never authorize MCP writes.
 
-Write tools:
+Training-data write tools include:
 
 - `create_gym`
 - `set_active_gym`
@@ -99,6 +106,7 @@ Write tools:
 - `upsert_gym_equipment`
 - `delete_gym_equipment`
 - `set_gym_equipment_image`
+- `backfill_historical_equipment`
 - `import_historical_workout`
 - `create_program_v2`
 - `create_program_revision`
@@ -107,6 +115,43 @@ Write tools:
 - `update_program_exercise`
 - `remove_program_exercise`
 - `activate_program`
+
+## Tool discovery and agent feedback
+
+A client should enumerate the complete MCP `tools/list` once before attempting to
+infer tool names from natural-language keywords. Repeated filtered discovery or
+synonym probing is explicitly discouraged because a filter may hide the correct
+tool even when the server already exposes it. When a client cannot expose the
+complete list, call `get_mcp_capability_index` once. It returns the full exact tool
+name catalog plus task-oriented groups, and the server test requires that catalog
+to stay identical to the real registered tool list.
+
+AI agents should call `submit_mcp_feedback` once per actionable root cause when
+they encounter a genuine MCP tool error, discovery dead-end, confusing schema,
+ambiguous/incomplete result, missing capability, repeated workaround or useful
+improvement opportunity. Reports are structured with category, severity, summary,
+details, related tools, expected/actual behavior, reproduction steps, attempted
+workarounds, client/agent identity and a suggested improvement. The server version
+and timestamp are added server-side. `list_mcp_feedback` returns the accumulated
+reports for later development review. Agents must not fabricate feedback, spam the
+same root cause, include credentials/tokens, or copy unrelated private conversation
+into a report.
+
+## Historical equipment backfill
+
+`preview_historical_equipment_backfill` finds sets whose `gymEquipmentId` is still
+missing and groups them by gym and exercise. It returns exact set IDs, examples,
+linked equipment candidates, the saved preferred equipment and counts from already
+identified historical sets. A suggested candidate is evidence only and is never
+treated as trainee confirmation.
+
+After the trainee confirms exact mappings, `backfill_historical_equipment` fills
+only still-unassigned sets. It refuses to overwrite an existing equipment identity,
+validates that the physical equipment belongs to the frozen session gym and is
+linked to the exercise, and stores the same frozen equipment/load snapshot used by
+normal set recording. The operation is atomic and audited. `undo_operation` can
+restore the prior set-equipment state unless those sets changed after the backfill,
+in which case undo fails closed rather than overwriting newer data.
 
 `import_historical_workout` atomically creates one completed historical strength session from exact exercise IDs and ordered sets. It accepts explicit gym/equipment IDs when known, preserves drop/warm-up flags, notes and integer RIR, and preserves half-step RIR such as 0.5 verbatim in the set note while leaving the current integer `Set.rir` field null. `importId` is stable and idempotent: reusing it with identical data returns the existing session, while changed data is rejected instead of creating a silent duplicate.
 

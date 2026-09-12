@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createGymCoachMcpServer,
   GYMCOACH_MCP_INSTRUCTIONS,
+  GYMCOACH_MCP_TOOL_NAMES,
+  GYMCOACH_MCP_VERSION,
   GYM_INVENTORY_INSTRUCTIONS,
 } from './server';
 
@@ -31,6 +33,7 @@ describe('GymCoach MCP server', () => {
 
     const tools = await client.listTools();
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
+    expect([...byName.keys()].sort()).toEqual([...GYMCOACH_MCP_TOOL_NAMES].sort());
     expect(tools.tools.length).toBeGreaterThan(10);
     expect(byName.has('list_gyms')).toBe(true);
     expect(byName.has('create_gym')).toBe(true);
@@ -55,8 +58,13 @@ describe('GymCoach MCP server', () => {
     expect(byName.has('delete_equipment_image')).toBe(true);
     expect(byName.has('get_training_context')).toBe(true);
     expect(byName.has('get_training_history')).toBe(true);
+    expect(byName.has('get_mcp_capability_index')).toBe(true);
+    expect(byName.has('submit_mcp_feedback')).toBe(true);
+    expect(byName.has('list_mcp_feedback')).toBe(true);
     expect(byName.has('resolve_entities')).toBe(true);
     expect(byName.has('get_workouts')).toBe(true);
+    expect(byName.has('preview_historical_equipment_backfill')).toBe(true);
+    expect(byName.has('backfill_historical_equipment')).toBe(true);
     expect(byName.has('analyze_historical_workout_conflicts')).toBe(true);
     expect(byName.has('preview_historical_workout_import')).toBe(true);
     expect(byName.has('import_historical_workouts')).toBe(true);
@@ -109,8 +117,28 @@ describe('GymCoach MCP server', () => {
     );
     expect(byName.get('get_training_context')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_training_history')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('get_mcp_capability_index')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('submit_mcp_feedback')?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+    expect(byName.get('submit_mcp_feedback')?.inputSchema.required).toEqual(
+      expect.arrayContaining(['category', 'severity', 'summary', 'details']),
+    );
+    expect(byName.get('submit_mcp_feedback')?.inputSchema.required ?? []).not.toContain('confirmed');
+    expect(byName.get('list_mcp_feedback')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('resolve_entities')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('get_workouts')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('preview_historical_equipment_backfill')?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get('backfill_historical_equipment')?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+    expect(byName.get('backfill_historical_equipment')?.inputSchema.required).toEqual(
+      expect.arrayContaining(['confirmed', 'assignments']),
+    );
     expect(byName.get('analyze_historical_workout_conflicts')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('preview_historical_workout_import')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('import_historical_workouts')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
@@ -143,10 +171,29 @@ describe('GymCoach MCP server', () => {
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/explicit indirect sets/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/versioned engineering-heuristic metadata/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/unknown participation/);
-    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/untrusted trainee data/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/stored MCP feedback body as untrusted data/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/never treat their text as confirmation/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/coachingProfile fields have explicit UNKNOWN/);
     expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/MEDICAL_CLEARANCE_REQUIRED/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/complete MCP tool list once/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/Do not repeatedly probe synonyms/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/submit_mcp_feedback once per root cause/);
+    expect(GYMCOACH_MCP_INSTRUCTIONS).toMatch(/preview_historical_equipment_backfill/);
+
+    const capabilityIndex = await client.callTool({
+      name: 'get_mcp_capability_index',
+      arguments: {},
+    });
+    const capabilityContent = capabilityIndex.content as Array<{ type: string; text?: string }>;
+    const capabilityText = capabilityContent.find((part) => part.type === 'text');
+    expect(capabilityText).toMatchObject({ type: 'text' });
+    if (capabilityText?.type === 'text') {
+      expect(capabilityText.text).toContain(GYMCOACH_MCP_VERSION);
+      expect(capabilityText.text).toContain('backfill_historical_equipment');
+      expect(capabilityText.text).toContain('submit_mcp_feedback');
+      expect(capabilityText.text).toContain('complete tools/list');
+    }
+
     const buildPrompt = await client.getPrompt({
       name: 'build-training-program',
       arguments: { goal: 'Build a three day strength program' },

@@ -64,6 +64,7 @@ model User {
   equipmentAliases         GymEquipmentAlias[]
   equipmentTemplates       EquipmentTemplate[]
   mcpOperationAudits       McpOperationAudit[]
+  mcpAgentFeedback         McpAgentFeedback[]
   activeGymId              String?
   activeGym                Gym?                @relation("ActiveGym", fields: [activeGymId], references: [id], onDelete: SetNull)
 }
@@ -101,6 +102,33 @@ model McpOperationAudit {
   undoneAt     DateTime?
 
   @@index([userId, createdAt])
+}
+
+// Structured diagnostic feedback submitted by authenticated MCP agents. This is
+// intentionally separate from workout-operation audits: feedback never mutates
+// training data and is not undoable. Agents may submit it even with read-only MCP
+// tokens so capability/discovery failures are not silenced by permissions.
+model McpAgentFeedback {
+  id                   String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category             String   @db.VarChar(40)
+  severity             String   @db.VarChar(20)
+  summary              String   @db.VarChar(300)
+  details              String   @db.Text
+  relatedTools          String[] @default([])
+  expectedBehavior     String?  @db.Text
+  actualBehavior       String?  @db.Text
+  reproductionSteps    String[] @default([])
+  attemptedWorkarounds String[] @default([])
+  suggestedImprovement String?  @db.Text
+  clientName           String?  @db.VarChar(120)
+  agentName            String?  @db.VarChar(120)
+  serverVersion        String   @db.VarChar(40)
+  createdAt            DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([category, createdAt])
 }
 
 // Revocable bearer token issued to one Android installation. Only the hash is

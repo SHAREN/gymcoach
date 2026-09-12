@@ -60,6 +60,25 @@ export interface WorkoutUndoSnapshot {
   deletedSessions: StoredSessionSnapshot[];
 }
 
+export interface StoredSetEquipmentState {
+  id: string;
+  gymEquipmentId: string | null;
+  equipmentNameSnapshot: string | null;
+  selectedLoadKg: number | null;
+  selectedLoadMultiplierSnapshot: number | null;
+  nominalResistanceKg: number | null;
+  equipmentLoadSnapshot: PrismaTypes.JsonValue | null;
+}
+
+export interface SetEquipmentUndoSnapshot {
+  version: 2;
+  kind: 'SET_EQUIPMENT_BACKFILL';
+  before: StoredSetEquipmentState[];
+  after: StoredSetEquipmentState[];
+}
+
+export type McpUndoSnapshot = WorkoutUndoSnapshot | SetEquipmentUndoSnapshot;
+
 export async function captureOwnedSessionSnapshots(
   tx: PrismaTypes.TransactionClient,
   userId: string,
@@ -123,6 +142,28 @@ export async function captureOwnedSessionSnapshots(
   }));
 }
 
+export async function captureOwnedSetEquipmentStates(
+  tx: PrismaTypes.TransactionClient,
+  userId: string,
+  setIds: string[],
+): Promise<StoredSetEquipmentState[]> {
+  const ids = [...new Set(setIds)];
+  if (ids.length === 0) return [];
+  return tx.set.findMany({
+    where: { id: { in: ids }, session: { userId } },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      gymEquipmentId: true,
+      equipmentNameSnapshot: true,
+      selectedLoadKg: true,
+      selectedLoadMultiplierSnapshot: true,
+      nominalResistanceKg: true,
+      equipmentLoadSnapshot: true,
+    },
+  });
+}
+
 export async function createWorkoutOperationAudit(
   tx: PrismaTypes.TransactionClient,
   input: {
@@ -131,7 +172,7 @@ export async function createWorkoutOperationAudit(
     reason?: string | null;
     request?: unknown;
     result?: unknown;
-    undoSnapshot: WorkoutUndoSnapshot;
+    undoSnapshot: McpUndoSnapshot;
   },
 ) {
   const row = await tx.mcpOperationAudit.create({
@@ -159,6 +200,7 @@ export async function getMcpOperationAudit(userId: string, operationId: string) 
       result: true,
       createdAt: true,
       undoneAt: true,
+      undoSnapshot: true,
     },
   });
   if (!row) {
@@ -173,7 +215,7 @@ export async function getMcpOperationAudit(userId: string, operationId: string) 
     result: row.result,
     createdAt: row.createdAt.toISOString(),
     undoneAt: row.undoneAt?.toISOString() ?? null,
-    canUndo: row.undoneAt == null,
+    canUndo: row.undoneAt == null && parseUndoSnapshot(row.undoSnapshot) != null,
   } as const;
 }
 
@@ -208,6 +250,9 @@ export async function undoMcpWorkoutOperation(userId: string, operationId: strin
         errorCode: 'OPERATION_NOT_UNDOABLE',
         operationId,
       };
+    }
+    if (snapshot.version === 2) {
+      return undoSetEquipmentBackfill(tx, userId, operationId, audit, snapshot);
     }
 
     const createdIds = snapshot.createdSessions.map((row) => row.id);
@@ -288,6 +333,62 @@ export async function undoMcpWorkoutOperation(userId: string, operationId: strin
     await rederiveHistoricalWorkoutGoals(userId, affectedExerciseIds);
   }
   return result;
+}
+
+async function undoSetEquipmentBackfill(
+  tx: PrismaTypes.TransactionClient,
+  userId: string,
+  operationId: string,
+  audit: { id: string; operation: string },
+  snapshot: SetEquipmentUndoSnapshot,
+) {
+  const setIds = snapshot.after.map((row) => row.id);
+  const current = await captureOwnedSetEquipmentStates(tx, userId, setIds);
+  if (current.length !== setIds.length || stableJson(current) !== stableJson(snapshot.after)) {
+    return {
+      ok: false as const,
+      status: 'NEEDS_RESOLUTION' as const,
+      errorCode: 'UNDO_SET_EQUIPMENT_CHANGED',
+      operationId,
+      message:
+        'One or more sets changed after the equipment backfill; undo was not applied so newer data is preserved.',
+    };
+  }
+
+  for (const before of snapshot.before) {
+    await tx.set.update({
+      where: { id: before.id },
+      data: {
+        gymEquipmentId: before.gymEquipmentId,
+        equipmentNameSnapshot: before.equipmentNameSnapshot,
+        selectedLoadKg: before.selectedLoadKg,
+        selectedLoadMultiplierSnapshot: before.selectedLoadMultiplierSnapshot,
+        nominalResistanceKg: before.nominalResistanceKg,
+        equipmentLoadSnapshot: nullableJsonInput(before.equipmentLoadSnapshot),
+      },
+    });
+  }
+
+  const undoneAt = new Date();
+  await tx.mcpOperationAudit.update({ where: { id: audit.id }, data: { undoneAt } });
+  const undoAudit = await tx.mcpOperationAudit.create({
+    data: {
+      userId,
+      operation: 'undo_operation',
+      request: toInputJson({ operationId }),
+      result: toInputJson({ restoredSetEquipmentIds: snapshot.before.map((row) => row.id) }),
+    },
+    select: { id: true },
+  });
+  return {
+    ok: true as const,
+    status: 'UNDONE' as const,
+    operationId,
+    undoOperationId: undoAudit.id,
+    originalOperation: audit.operation,
+    restoredSetEquipmentIds: snapshot.before.map((row) => row.id),
+    undoneAt: undoneAt.toISOString(),
+  };
 }
 
 async function validateRestoreReferences(
@@ -389,13 +490,25 @@ function nullableJsonInput(value: PrismaTypes.JsonValue | null) {
   return value === null ? Prisma.DbNull : (value as PrismaTypes.InputJsonValue);
 }
 
-function parseUndoSnapshot(value: PrismaTypes.JsonValue | null): WorkoutUndoSnapshot | null {
+function parseUndoSnapshot(value: PrismaTypes.JsonValue | null): McpUndoSnapshot | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (candidate.version !== 1 || !Array.isArray(candidate.createdSessions) || !Array.isArray(candidate.deletedSessions)) {
-    return null;
+  if (
+    candidate.version === 1 &&
+    Array.isArray(candidate.createdSessions) &&
+    Array.isArray(candidate.deletedSessions)
+  ) {
+    return candidate as unknown as WorkoutUndoSnapshot;
   }
-  return candidate as unknown as WorkoutUndoSnapshot;
+  if (
+    candidate.version === 2 &&
+    candidate.kind === 'SET_EQUIPMENT_BACKFILL' &&
+    Array.isArray(candidate.before) &&
+    Array.isArray(candidate.after)
+  ) {
+    return candidate as unknown as SetEquipmentUndoSnapshot;
+  }
+  return null;
 }
 
 function sameSnapshots(a: StoredSessionSnapshot[], b: StoredSessionSnapshot[]) {
