@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, Delete } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Delete } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { WeightUnit } from '@/lib/prisma-client';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -35,18 +35,49 @@ export function SetValuePicker({
   const t = useTranslations('session.editableSets');
   const locale = useLocale();
   const [manualValue, setManualValue] = useState(String(value));
+  const [manualEntryActive, setManualEntryActive] = useState(false);
+  const [wheelValue, setWheelValue] = useState<number | null>(null);
+  const [wheelPadding, setWheelPadding] = useState(12);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setManualEntryActive(false);
     setManualValue(String(value));
+
     const timer = window.setTimeout(() => {
+      if (kind === 'weight') {
+        const nearest = nearestPickerOption(options, value);
+        setWheelValue(nearest);
+        if (nearest != null) {
+          setManualValue(String(nearest));
+          listRef.current
+            ?.querySelector<HTMLElement>(`[data-picker-option-value="${nearest}"]`)
+            ?.scrollIntoView?.({ block: 'center' });
+        }
+        return;
+      }
+
       listRef.current
         ?.querySelector<HTMLElement>('[data-picker-selected="true"]')
         ?.scrollIntoView?.({ block: 'center' });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [open, value]);
+  }, [kind, open, options, value]);
+
+  useEffect(() => {
+    if (!open || kind !== 'weight' || !listRef.current) return;
+    const list = listRef.current;
+    const updatePadding = () => {
+      setWheelPadding(Math.max(12, (list.clientHeight - 76) / 2));
+    };
+    updatePadding();
+
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updatePadding);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [kind, open]);
 
   const numericValue = parsePickerNumber(manualValue);
   const plateLoad = useMemo(() => {
@@ -69,6 +100,7 @@ export function SetValuePicker({
   }, [kind, loadConstraints, numericValue, unit]);
 
   function appendKey(key: string) {
+    if (kind === 'weight') setManualEntryActive(true);
     setManualValue((current) => {
       if (key === 'backspace') return current.slice(0, -1);
       if (key === 'decimal') {
@@ -82,13 +114,56 @@ export function SetValuePicker({
   }
 
   function confirmManual() {
-    if (!Number.isFinite(numericValue) || numericValue < 0) return;
-    onChoose(kind === 'reps' ? Math.max(1, Math.round(numericValue)) : numericValue);
+    const confirmedValue =
+      kind === 'weight' && !manualEntryActive && wheelValue != null ? wheelValue : numericValue;
+    if (!Number.isFinite(confirmedValue) || confirmedValue < 0) return;
+    onChoose(kind === 'reps' ? Math.max(1, Math.round(confirmedValue)) : confirmedValue);
+  }
+
+  function previewCenteredWeight() {
+    if (kind !== 'weight' || manualEntryActive || !listRef.current) return;
+    const list = listRef.current;
+    const listRect = list.getBoundingClientRect();
+    const centerY = listRect.top + list.clientHeight / 2;
+    const nearest = Array.from(
+      list.querySelectorAll<HTMLElement>('[data-picker-option-value]'),
+    ).reduce<{ value: number; distance: number } | null>((best, element) => {
+      const option = Number(element.dataset.pickerOptionValue);
+      if (!Number.isFinite(option)) return best;
+      const rect = element.getBoundingClientRect();
+      const distance = Math.abs(rect.top + rect.height / 2 - centerY);
+      return best == null || distance < best.distance ? { value: option, distance } : best;
+    }, null);
+
+    if (nearest != null && (wheelValue == null || !nearlyEqual(nearest.value, wheelValue))) {
+      setWheelValue(nearest.value);
+      setManualValue(String(nearest.value));
+    }
+  }
+
+  function moveWeightToCenter(option: number, element: HTMLElement) {
+    setManualEntryActive(false);
+    setWheelValue(option);
+    setManualValue(String(option));
+
+    const list = listRef.current;
+    if (!list) return;
+    const top = element.offsetTop - (list.clientHeight - element.offsetHeight) / 2;
+    if (typeof list.scrollTo === 'function') {
+      list.scrollTo({ top, behavior: 'smooth' });
+    } else {
+      element.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }
   }
 
   const decimalLabel = locale.toLowerCase().startsWith('ru') ? ',' : '.';
   const displayManual = manualValue.replace('.', decimalLabel) || '0';
-  const selectedValue = Number.isFinite(numericValue) ? numericValue : value;
+  const selectedValue =
+    kind === 'weight' && wheelValue != null
+      ? wheelValue
+      : Number.isFinite(numericValue)
+        ? numericValue
+        : value;
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -109,30 +184,62 @@ export function SetValuePicker({
           <span />
         </header>
 
-        <div
-          ref={listRef}
-          data-testid="set-value-options"
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3"
-        >
-          {options.map((option) => {
-            const selected = nearlyEqual(option, selectedValue);
-            return (
-              <button
-                key={option}
-                type="button"
-                data-picker-selected={selected ? 'true' : undefined}
-                onClick={() => setManualValue(String(option))}
-                className={`mx-auto flex h-[4.75rem] w-full max-w-[15.5rem] items-center justify-center rounded-md border text-2xl font-semibold tabular-nums transition-colors ${
-                  selected
-                    ? 'border-primary bg-primary/15 text-foreground'
-                    : 'border-border bg-muted/50 text-foreground hover:bg-muted'
-                }`}
-              >
-                {formatPickerNumber(option, locale)}{' '}
-                {kind === 'weight' ? unit.toLowerCase() : t('repsShort')}
-              </button>
-            );
-          })}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div
+            ref={listRef}
+            data-testid={kind === 'weight' ? 'weight-picker-list' : 'set-value-options'}
+            onPointerDown={() => kind === 'weight' && setManualEntryActive(false)}
+            onWheel={() => kind === 'weight' && setManualEntryActive(false)}
+            onScroll={previewCenteredWeight}
+            style={
+              kind === 'weight'
+                ? { paddingTop: wheelPadding, paddingBottom: wheelPadding }
+                : undefined
+            }
+            className={`h-full min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 ${
+              kind === 'weight' ? 'snap-y snap-mandatory scroll-smooth' : 'py-3'
+            }`}
+          >
+            {options.map((option) => {
+              const selected = nearlyEqual(option, selectedValue);
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  data-picker-option-value={kind === 'weight' ? option : undefined}
+                  data-picker-selected={selected ? 'true' : undefined}
+                  onClick={(event) => {
+                    if (kind === 'weight') {
+                      moveWeightToCenter(option, event.currentTarget);
+                    } else {
+                      setManualValue(String(option));
+                    }
+                  }}
+                  className={`mx-auto flex h-[4.75rem] w-full max-w-[15.5rem] items-center justify-center rounded-md border text-2xl font-semibold tabular-nums transition-[color,background-color,border-color,transform] ${
+                    kind === 'weight' ? 'snap-center' : ''
+                  } ${
+                    selected
+                      ? 'scale-[1.02] border-primary bg-primary/15 text-foreground'
+                      : 'border-border bg-muted/50 text-foreground hover:bg-muted'
+                  }`}
+                >
+                  {formatPickerNumber(option, locale)}{' '}
+                  {kind === 'weight' ? unit.toLowerCase() : t('repsShort')}
+                </button>
+              );
+            })}
+          </div>
+
+          {kind === 'weight' && options.length > 0 ? (
+            <div
+              data-testid="weight-picker-pointer"
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 top-1/2 flex h-[4.75rem] -translate-y-1/2 items-center justify-between px-2 text-primary"
+            >
+              <ChevronRight data-testid="weight-picker-pointer-left" className="size-9" strokeWidth={2.5} />
+              <ChevronLeft data-testid="weight-picker-pointer-right" className="size-9" strokeWidth={2.5} />
+            </div>
+          ) : null}
         </div>
 
         <div className="shrink-0 border-t border-border bg-background px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.18)]">
@@ -281,6 +388,14 @@ function parsePickerNumber(value: string): number {
 
 function formatPickerNumber(value: number, locale: string): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
+}
+
+function nearestPickerOption(options: number[], value: number): number | null {
+  const finite = options.filter(Number.isFinite);
+  if (finite.length === 0) return null;
+  return finite.reduce((nearest, option) =>
+    Math.abs(option - value) < Math.abs(nearest - value) ? option : nearest,
+  );
 }
 
 function nearlyEqual(left: number, right: number): boolean {

@@ -70,6 +70,44 @@ describe('SetValuePicker', () => {
     expect(onChoose).toHaveBeenCalledWith(67.5);
   });
 
+  it('tracks the value under the fixed weight pointer while scrolling and only confirms on apply', () => {
+    const onChoose = vi.fn();
+    render(
+      <SetValuePicker
+        open
+        kind="weight"
+        value={60}
+        options={[50, 60, 70]}
+        unit="KG"
+        onClose={vi.fn()}
+        onChoose={onChoose}
+      />,
+    );
+
+    const list = screen.getByTestId('weight-picker-list');
+    const fifty = screen.getByRole('button', { name: '50 kg' });
+    const sixty = screen.getByRole('button', { name: '60 kg' });
+    const seventy = screen.getByRole('button', { name: '70 kg' });
+    expect(screen.getByTestId('weight-picker-pointer-left')).toBeInTheDocument();
+    expect(screen.getByTestId('weight-picker-pointer-right')).toBeInTheDocument();
+
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 300 });
+    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({ top: 0, height: 300 } as DOMRect);
+    vi.spyOn(fifty, 'getBoundingClientRect').mockReturnValue({ top: -48, height: 76 } as DOMRect);
+    vi.spyOn(sixty, 'getBoundingClientRect').mockReturnValue({ top: 38, height: 76 } as DOMRect);
+    vi.spyOn(seventy, 'getBoundingClientRect').mockReturnValue({ top: 112, height: 76 } as DOMRect);
+
+    fireEvent.pointerDown(list);
+    fireEvent.scroll(list);
+
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(seventy).toHaveAttribute('data-picker-selected', 'true');
+    expect(screen.getByRole('textbox', { name: 'Manual weight' })).toHaveTextContent('70');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply value' }));
+    expect(onChoose).toHaveBeenCalledWith(70);
+  });
+
   it('keeps a repetition option pending until the check button confirms it', () => {
     const onChoose = vi.fn();
     render(
