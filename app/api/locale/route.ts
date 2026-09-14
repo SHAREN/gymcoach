@@ -6,14 +6,10 @@ const localeRequestSchema = z.object({
   locale: z.enum(locales),
 });
 
-function requestUsesHttps(request: NextRequest): boolean {
-  const forwardedProtocol = request.headers
-    .get('x-forwarded-proto')
-    ?.split(',')[0]
-    ?.trim()
-    .toLowerCase();
-
-  return forwardedProtocol ? forwardedProtocol === 'https' : request.nextUrl.protocol === 'https:';
+function localeCookieSecure(): boolean {
+  return process.env.SESSION_COOKIE_SECURE
+    ? process.env.SESSION_COOKIE_SECURE === 'true'
+    : process.env.NODE_ENV === 'production';
 }
 
 export async function POST(request: NextRequest) {
@@ -37,7 +33,7 @@ export async function POST(request: NextRequest) {
     path: '/',
     maxAge: localeCookieMaxAge,
     sameSite: 'lax',
-    secure: requestUsesHttps(request),
+    secure: localeCookieSecure(),
   });
 
   return response;

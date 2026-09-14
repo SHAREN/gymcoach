@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '@/app/api/locale/route';
 
 function request(url: string, locale: unknown, forwardedProtocol?: string) {
@@ -14,25 +14,54 @@ function request(url: string, locale: unknown, forwardedProtocol?: string) {
 }
 
 describe('POST /api/locale', () => {
-  it('sets a non-secure cookie for the local HTTP panel', async () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('sets a non-secure cookie when the existing self-host HTTP opt-out is disabled', async () => {
+    vi.stubEnv('SESSION_COOKIE_SECURE', 'false');
     const response = await POST(request('http://gymcoach.local:3030/api/locale', 'ru'));
     const cookie = response.headers.get('set-cookie');
 
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(cookie).toContain('gymcoach.locale=ru');
+    expect(cookie).toContain('Path=/');
+    expect(cookie).toContain('SameSite=lax');
     expect(cookie).not.toContain('Secure');
   });
 
-  it('sets a secure cookie behind the public HTTPS proxy', async () => {
-    const response = await POST(
-      request('http://gymcoach.internal:3030/api/locale', 'en', 'https'),
-    );
+  it('sets a secure cookie when the existing secure-cookie policy is enabled', async () => {
+    vi.stubEnv('SESSION_COOKIE_SECURE', 'true');
+    const response = await POST(request('http://gymcoach.internal:3030/api/locale', 'en'));
     const cookie = response.headers.get('set-cookie');
 
     expect(response.status).toBe(200);
     expect(cookie).toContain('gymcoach.locale=en');
     expect(cookie).toContain('Secure');
+  });
+
+  it('does not let x-forwarded-proto downgrade a secure locale cookie', async () => {
+    vi.stubEnv('SESSION_COOKIE_SECURE', 'true');
+    const response = await POST(
+      request('https://gymcoach.example/api/locale', 'fr', 'http'),
+    );
+    const cookie = response.headers.get('set-cookie');
+
+    expect(response.status).toBe(200);
+    expect(cookie).toContain('gymcoach.locale=fr');
+    expect(cookie).toContain('Secure');
+  });
+
+  it('does not let x-forwarded-proto upgrade an explicit HTTP opt-out', async () => {
+    vi.stubEnv('SESSION_COOKIE_SECURE', 'false');
+    const response = await POST(
+      request('http://gymcoach.local:3030/api/locale', 'ru', 'https'),
+    );
+    const cookie = response.headers.get('set-cookie');
+
+    expect(response.status).toBe(200);
+    expect(cookie).not.toContain('Secure');
   });
 
   it('rejects malformed JSON without setting a locale cookie', async () => {
