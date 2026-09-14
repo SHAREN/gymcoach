@@ -22,6 +22,7 @@ afterEach(() => {
     Object.defineProperty(document, 'visibilityState', originalVisibilityState);
   }
   navigation.pathname = '/';
+  window.sessionStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -108,6 +109,32 @@ describe('PwaUpdateManager', () => {
     navigation.pathname = '/history';
     view.rerender(<PwaUpdateManager reloadPage={reload} />);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('guards against repeated update reloads across page lifetimes', () => {
+    const now = 1_000_000;
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const first = installServiceWorkerMock({} as ServiceWorker);
+    const firstReload = vi.fn();
+    const firstView = render(<PwaUpdateManager reloadPage={firstReload} />);
+
+    act(() => first.listeners.get('controllerchange')?.(new Event('controllerchange')));
+    expect(firstReload).toHaveBeenCalledTimes(1);
+    firstView.unmount();
+
+    const second = installServiceWorkerMock({} as ServiceWorker);
+    const secondReload = vi.fn();
+    const secondView = render(<PwaUpdateManager reloadPage={secondReload} />);
+    act(() => second.listeners.get('controllerchange')?.(new Event('controllerchange')));
+    expect(secondReload).not.toHaveBeenCalled();
+    secondView.unmount();
+
+    dateNow.mockReturnValue(now + 60_001);
+    const later = installServiceWorkerMock({} as ServiceWorker);
+    const laterReload = vi.fn();
+    render(<PwaUpdateManager reloadPage={laterReload} />);
+    act(() => later.listeners.get('controllerchange')?.(new Event('controllerchange')));
+    expect(laterReload).toHaveBeenCalledTimes(1);
   });
 
   it('defers a replacement reload while hidden and reloads when visibility returns', () => {

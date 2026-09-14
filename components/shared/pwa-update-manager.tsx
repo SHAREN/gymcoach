@@ -11,6 +11,30 @@ interface Props {
   reloadPage?: () => void;
 }
 
+const PWA_RELOAD_GUARD_KEY = 'gymcoach:pwa-update-reloaded-at';
+const PWA_RELOAD_GUARD_MS = 60_000;
+
+function wasRecentlyReloadedForUpdate() {
+  try {
+    const value = window.sessionStorage.getItem(PWA_RELOAD_GUARD_KEY);
+    if (!value) return false;
+
+    const reloadedAt = Number(value);
+    const age = Date.now() - reloadedAt;
+    return Number.isFinite(reloadedAt) && age >= 0 && age < PWA_RELOAD_GUARD_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markUpdateReload() {
+  try {
+    window.sessionStorage.setItem(PWA_RELOAD_GUARD_KEY, String(Date.now()));
+  } catch {
+    // A storage failure must not prevent a required update reload.
+  }
+}
+
 function reloadCurrentPage() {
   window.location.reload();
 }
@@ -41,7 +65,7 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
     let controller = navigator.serviceWorker.controller;
 
     function reloadForUpdate() {
-      if (reloading.current) return;
+      if (reloading.current || wasRecentlyReloadedForUpdate()) return;
       if (document.visibilityState === 'hidden' || isLiveSessionPath(pathname)) {
         reloadPending.current = true;
         return;
@@ -49,6 +73,7 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
 
       reloadPending.current = false;
       reloading.current = true;
+      markUpdateReload();
       reloadPage();
     }
 
