@@ -67,6 +67,31 @@ describe('SessionExerciseStrip', () => {
     expect(onOpen).toHaveBeenCalledWith('exercise-1');
   });
 
+  it('blocks both opening and selecting exercises while navigation is disabled', () => {
+    const onSelect = vi.fn();
+    const onOpen = vi.fn();
+    render(
+      <SessionExerciseStrip
+        exercises={exercises}
+        currentIndex={0}
+        completedExerciseIds={new Set()}
+        onSelect={onSelect}
+        onOpen={onOpen}
+        disabled
+      />,
+    );
+
+    const active = screen.getByRole('button', { name: '1. Squats · Barbell' });
+    const inactive = screen.getByRole('button', { name: '2. Custom Rear Delt Raise' });
+    expect(active).toHaveAttribute('aria-disabled', 'true');
+    expect(inactive).toHaveAttribute('aria-disabled', 'true');
+
+    fireEvent.click(active);
+    fireEvent.click(inactive);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('connects adjacent superset exercises and leaves standalone exercises unmarked', () => {
     render(
       <SessionExerciseStrip
