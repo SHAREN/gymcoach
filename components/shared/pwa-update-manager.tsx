@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
+import { usePathname } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 
 export function isServiceWorkerUpdate(previousController: ServiceWorker | null): boolean {
   return previousController !== null;
@@ -14,22 +15,40 @@ function reloadCurrentPage() {
   window.location.reload();
 }
 
+export function isLiveSessionPath(pathname: string): boolean {
+  return pathname.startsWith('/session/');
+}
+
 export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {}) {
+  const pathname = usePathname();
+  const reloadPending = useRef(false);
+  const reloading = useRef(false);
+
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
+    if (
+      reloadPending.current &&
+      !isLiveSessionPath(pathname) &&
+      document.visibilityState !== 'hidden'
+    ) {
+      reloadPending.current = false;
+      reloading.current = true;
+      reloadPage();
+      return;
+    }
+
     let controller = navigator.serviceWorker.controller;
-    let reloadPending = false;
-    let reloading = false;
 
     function reloadForUpdate() {
-      if (reloading) return;
-      if (document.visibilityState === 'hidden') {
-        reloadPending = true;
+      if (reloading.current) return;
+      if (document.visibilityState === 'hidden' || isLiveSessionPath(pathname)) {
+        reloadPending.current = true;
         return;
       }
 
-      reloading = true;
+      reloadPending.current = false;
+      reloading.current = true;
       reloadPage();
     }
 
@@ -55,7 +74,7 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
 
     function handleVisibilityChange() {
       if (document.visibilityState !== 'visible') return;
-      if (reloadPending) {
+      if (reloadPending.current) {
         reloadForUpdate();
         return;
       }
@@ -78,7 +97,7 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
     };
-  }, [reloadPage]);
+  }, [pathname, reloadPage]);
 
   return null;
 }

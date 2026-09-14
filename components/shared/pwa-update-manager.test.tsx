@@ -2,6 +2,12 @@ import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PwaUpdateManager } from './pwa-update-manager';
 
+const navigation = vi.hoisted(() => ({ pathname: '/' }));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => navigation.pathname,
+}));
+
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
 const originalVisibilityState = Object.getOwnPropertyDescriptor(document, 'visibilityState');
 
@@ -15,6 +21,7 @@ afterEach(() => {
   if (originalVisibilityState) {
     Object.defineProperty(document, 'visibilityState', originalVisibilityState);
   }
+  navigation.pathname = '/';
   vi.restoreAllMocks();
 });
 
@@ -87,6 +94,20 @@ describe('PwaUpdateManager', () => {
 
     act(() => replacement.listeners.get('controllerchange')?.(new Event('controllerchange')));
     expect(reloadReplacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers a replacement reload during a live session until the route changes', () => {
+    navigation.pathname = '/session/session-1';
+    const { listeners } = installServiceWorkerMock({} as ServiceWorker);
+    const reload = vi.fn();
+    const view = render(<PwaUpdateManager reloadPage={reload} />);
+
+    act(() => listeners.get('controllerchange')?.(new Event('controllerchange')));
+    expect(reload).not.toHaveBeenCalled();
+
+    navigation.pathname = '/history';
+    view.rerender(<PwaUpdateManager reloadPage={reload} />);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('defers a replacement reload while hidden and reloads when visibility returns', () => {
