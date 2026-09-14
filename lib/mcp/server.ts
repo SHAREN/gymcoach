@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { buildCoachPayload } from '@/lib/coach';
+import { createOwnedGym } from '@/lib/gym-equipment';
 import { buildProgramFromGenerated } from '@/lib/program-generation';
 import { generatedExerciseSchema, generatedProgramSchema } from '@/lib/schemas/program-generation';
 import { programInputSchema } from '@/lib/schemas/program';
@@ -17,7 +18,7 @@ export const GYMCOACH_MCP_INSTRUCTIONS = `GymCoach stores the trainee's profile,
 
 Use read tools before making recommendations. Ground every recommendation in returned GymCoach data and never invent completed sets, available equipment, records or injuries. Respect the active gym's equipment constraints. Use the trainee's language.
 
-Program-writing tools change saved data. Explain the proposed change before calling a write tool. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
+Program-writing and gym-writing tools change saved data. Explain the proposed change before calling a write tool. Creating or cloning a gym requires explicit confirmation; cloning copies the owned source gym's shared free weights, exercise availability/load configuration, physical equipment, equipment images and exercise links into new records with new IDs. Newly created programs are inactive so the trainee can review them. Activate a program only when the trainee explicitly asks. Never delete or remove a program exercise without explicit confirmation.`;
 
 interface ServerOptions {
   principal: McpPrincipal;
@@ -225,6 +226,32 @@ export function createGymCoachMcpServer({ principal, baseUrl }: ServerOptions): 
         },
       });
       return result({ program });
+    },
+  );
+
+  server.registerTool(
+    'create_gym',
+    {
+      title: 'Create or clone gym',
+      description:
+        "Creates an empty owned gym or clones one of the trainee's existing gyms after explicit confirmation. A clone copies shared free weights, exercise availability/load configuration, physical equipment, equipment images and exercise links into new records with new IDs.",
+      inputSchema: {
+        confirmed: explicitConfirmation,
+        name: z.string().trim().min(1).max(120),
+        sourceGymId: z.string().cuid().optional(),
+        makeActive: z.boolean().default(false),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ name, sourceGymId, makeActive }) => {
+      requireWrite(principal);
+      const created = await createOwnedGym(principal.userId, { name, sourceGymId, makeActive });
+      return result({ ok: true, ...created });
     },
   );
 
