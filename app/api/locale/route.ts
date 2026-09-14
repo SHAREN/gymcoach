@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isLocale, localeCookieMaxAge, localeCookieName, type Locale } from '@/i18n/config';
+import { z } from 'zod';
+import { localeCookieMaxAge, localeCookieName, locales } from '@/i18n/config';
+
+const localeRequestSchema = z.object({
+  locale: z.enum(locales),
+});
 
 function requestUsesHttps(request: NextRequest): boolean {
   const forwardedProtocol = request.headers
@@ -12,22 +17,23 @@ function requestUsesHttps(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { locale?: Locale };
+  let body: unknown;
   try {
-    body = (await request.json()) as { locale?: Locale };
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
   }
 
-  if (!isLocale(body.locale)) {
+  const parsed = localeRequestSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'Unsupported locale.' }, { status: 400 });
   }
 
   const response = NextResponse.json(
-    { locale: body.locale },
+    { locale: parsed.data.locale },
     { headers: { 'Cache-Control': 'no-store' } },
   );
-  response.cookies.set(localeCookieName, body.locale, {
+  response.cookies.set(localeCookieName, parsed.data.locale, {
     path: '/',
     maxAge: localeCookieMaxAge,
     sameSite: 'lax',

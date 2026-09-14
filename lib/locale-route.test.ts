@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 import { POST } from '@/app/api/locale/route';
 
-function request(url: string, locale: string, forwardedProtocol?: string) {
+function request(url: string, locale: unknown, forwardedProtocol?: string) {
   return new NextRequest(url, {
     method: 'POST',
     headers: {
@@ -48,8 +48,15 @@ describe('POST /api/locale', () => {
     expect(response.headers.get('set-cookie')).toBeNull();
   });
 
-  it('rejects unsupported locales', async () => {
+  it('rejects unsupported locales without setting a cookie', async () => {
     const response = await POST(request('https://gymcoach.example/api/locale', 'de'));
     expect(response.status).toBe(400);
+    expect(response.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('rejects null JSON bodies without throwing or setting a cookie', async () => {
+    const response = await POST(request('https://gymcoach.example/api/locale', null));
+    expect(response.status).toBe(400);
+    expect(response.headers.get('set-cookie')).toBeNull();
   });
 });
