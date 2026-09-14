@@ -13,6 +13,7 @@ interface Props {
 
 const PWA_RELOAD_GUARD_KEY = 'gymcoach:pwa-update-reloaded-at';
 const PWA_RELOAD_GUARD_MS = 60_000;
+const PWA_UPDATE_CHECK_INTERVAL_MS = 30_000;
 
 function wasRecentlyReloadedForUpdate() {
   try {
@@ -47,6 +48,7 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
   const pathname = usePathname();
   const reloadPending = useRef(false);
   const reloading = useRef(false);
+  const lastUpdateCheckAt = useRef(Number.NEGATIVE_INFINITY);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -89,6 +91,10 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
     }
 
     async function checkForUpdate() {
+      const now = Date.now();
+      if (now - lastUpdateCheckAt.current < PWA_UPDATE_CHECK_INTERVAL_MS) return;
+      lastUpdateCheckAt.current = now;
+
       try {
         const registration = await navigator.serviceWorker.getRegistration();
         await registration?.update();
@@ -114,7 +120,10 @@ export function PwaUpdateManager({ reloadPage = reloadCurrentPage }: Props = {})
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnline);
     void navigator.serviceWorker.ready
-      .then((registration) => registration.update())
+      .then((registration) => {
+        lastUpdateCheckAt.current = Date.now();
+        return registration.update();
+      })
       .catch(() => {});
 
     return () => {

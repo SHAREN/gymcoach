@@ -158,7 +158,9 @@ describe('PwaUpdateManager', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('checks for updates again when the page becomes visible or comes online', async () => {
+  it('throttles update checks from repeated visibility and online events', async () => {
+    const now = 2_000_000;
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
     setVisibilityState('hidden');
     const { serviceWorker, update } = installServiceWorkerMock({} as ServiceWorker);
     render(<PwaUpdateManager reloadPage={vi.fn()} />);
@@ -167,11 +169,11 @@ describe('PwaUpdateManager', () => {
 
     setVisibilityState('visible');
     act(() => document.dispatchEvent(new Event('visibilitychange')));
-    await waitFor(() => expect(serviceWorker.getRegistration).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    act(() => window.dispatchEvent(new Event('online')));
+    expect(serviceWorker.getRegistration).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
 
-    (serviceWorker.getRegistration as ReturnType<typeof vi.fn>).mockClear();
-    update.mockClear();
+    dateNow.mockReturnValue(now + 30_001);
     act(() => window.dispatchEvent(new Event('online')));
     await waitFor(() => expect(serviceWorker.getRegistration).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
