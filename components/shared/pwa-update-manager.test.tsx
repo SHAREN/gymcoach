@@ -56,26 +56,33 @@ function installServiceWorkerMock(controller: ServiceWorker | null = {} as Servi
 }
 
 describe('PwaUpdateManager', () => {
-  it('checks for updates and removes all listeners on unmount', async () => {
+  it('checks for updates and removes the same listeners on unmount', async () => {
     const { serviceWorker, update } = installServiceWorkerMock();
+    const documentAdd = vi.spyOn(document, 'addEventListener');
     const documentRemove = vi.spyOn(document, 'removeEventListener');
+    const windowAdd = vi.spyOn(window, 'addEventListener');
     const windowRemove = vi.spyOn(window, 'removeEventListener');
     const view = render(<PwaUpdateManager reloadPage={vi.fn()} />);
 
     await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(serviceWorker.addEventListener).toHaveBeenCalledWith(
-      'controllerchange',
-      expect.any(Function),
-    );
+    const controllerListener = (serviceWorker.addEventListener as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[1];
+    const visibilityListener = documentAdd.mock.calls.find(
+      ([type]) => type === 'visibilitychange',
+    )?.[1];
+    const onlineListener = windowAdd.mock.calls.find(([type]) => type === 'online')?.[1];
+    expect(controllerListener).toEqual(expect.any(Function));
+    expect(visibilityListener).toEqual(expect.any(Function));
+    expect(onlineListener).toEqual(expect.any(Function));
 
     view.unmount();
 
     expect(serviceWorker.removeEventListener).toHaveBeenCalledWith(
       'controllerchange',
-      expect.any(Function),
+      controllerListener,
     );
-    expect(documentRemove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
-    expect(windowRemove).toHaveBeenCalledWith('online', expect.any(Function));
+    expect(documentRemove).toHaveBeenCalledWith('visibilitychange', visibilityListener);
+    expect(windowRemove).toHaveBeenCalledWith('online', onlineListener);
   });
 
   it('ignores the initial controller install but reloads for a replacement controller', () => {
