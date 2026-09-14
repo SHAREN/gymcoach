@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 
-export function isServiceWorkerUpdate(previousController: ServiceWorker | null): boolean {
+function isServiceWorkerUpdate(previousController: ServiceWorker | null): boolean {
   return previousController !== null;
 }
 
@@ -40,7 +40,7 @@ function reloadCurrentPage() {
   window.location.reload();
 }
 
-export function isLiveSessionPath(pathname: string): boolean {
+function isLiveSessionPath(pathname: string): boolean {
   return pathname.startsWith('/session/');
 }
 
