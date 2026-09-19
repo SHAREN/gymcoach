@@ -82,6 +82,48 @@ describe('SetInput first working set', () => {
     );
   });
 
+  it('uses the actual previous set without programmed progression in freeform mode', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SetInput
+        programExercise={pe}
+        existingSets={[]}
+        lastPerformance={{
+          ...lastPerformance,
+          sets: [{ weight: 100, reps: 8, rir: 1 }],
+        }}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        freeform
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /log the set/i }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ weight: 100, reps: 8, rir: 1, isDropSet: false }),
+    );
+  });
+
+  it('requires explicit reps for a new freeform exercise with no history', () => {
+    render(
+      <SetInput
+        programExercise={pe}
+        existingSets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        freeform
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /log the set/i })).toBeDisabled();
+  });
+
   it('uses the conservative return start and RIR instead of ordinary progression after a long break', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

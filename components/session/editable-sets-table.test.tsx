@@ -68,6 +68,25 @@ describe('EditableSetsTable', () => {
     );
   });
 
+  it('does not invent programmed reps or RIR for a new freeform exercise', () => {
+    render(
+      <EditableSetsTable
+        programExercise={programExercise}
+        sets={[]}
+        lastPerformance={undefined}
+        readiness={null}
+        deloadActive={false}
+        unit="KG"
+        freeform
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+        onDeleteSet={vi.fn()}
+        onUpdateSet={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /confirm set 1/i })).toBeDisabled();
+  });
+
   it('submits the selected gym equipment and carries it to the next set', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

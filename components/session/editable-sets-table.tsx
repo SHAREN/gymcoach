@@ -32,6 +32,7 @@ interface Props {
   readiness: ReadinessSignal | null;
   deloadActive: boolean;
   unit: WeightUnit;
+  freeform?: boolean;
   recommendation?: IntraSetRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
   equipmentOptions?: { id: string; name: string }[];
@@ -65,6 +66,7 @@ function initialDraft(
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
   loadConstraints: GymLoadConstraints | null,
+  freeform: boolean,
 ): DraftSet {
   const workingSets = sets.filter((set) => !set.isWarmup);
   const previousRow = lastPerformance?.sets[workingSets.length];
@@ -75,6 +77,10 @@ function initialDraft(
   const lastWorking = workingSets.at(-1);
   if (lastWorking) {
     return { weight: lastWorking.weight, reps: lastWorking.reps, rir: lastWorking.rir };
+  }
+
+  if (freeform) {
+    return { weight: 0, reps: 0, rir: null };
   }
 
   if (lastPerformance) {
@@ -109,6 +115,7 @@ export function EditableSetsTable({
   readiness,
   deloadActive,
   unit,
+  freeform = false,
   recommendation = null,
   loadConstraints = null,
   equipmentOptions = [],
@@ -122,7 +129,15 @@ export function EditableSetsTable({
   const inputT = useTranslations('session.input');
   const locale = useLocale();
   const [draft, setDraft] = useState<DraftSet>(() =>
-    initialDraft(programExercise, sets, lastPerformance, readiness, deloadActive, loadConstraints),
+    initialDraft(
+      programExercise,
+      sets,
+      lastPerformance,
+      readiness,
+      deloadActive,
+      loadConstraints,
+      freeform,
+    ),
   );
   const [submitting, setSubmitting] = useState(false);
   const [editingSet, setEditingSet] = useState<{ set: PendingSet; draft: DraftSet } | null>(null);
@@ -171,6 +186,7 @@ export function EditableSetsTable({
           readiness,
           deloadActive,
           loadConstraints,
+          freeform,
         ),
       );
     }

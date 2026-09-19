@@ -41,6 +41,7 @@ interface Props {
   // True while a planned deload week is active (issue #112).
   deloadActive: boolean;
   unit: WeightUnit;
+  freeform?: boolean;
   recommendation?: IntraSetRecommendation | null;
   returnRecommendation?: ReturnRecommendation | null;
   loadConstraints?: GymLoadConstraints | null;
@@ -84,6 +85,7 @@ export function SetInput({
   readiness,
   deloadActive,
   unit,
+  freeform = false,
   recommendation = null,
   returnRecommendation = null,
   loadConstraints = null,
@@ -101,6 +103,7 @@ export function SetInput({
     lastPerformance,
     readiness,
     deloadActive,
+    freeform,
     recommendation,
     returnRecommendation,
     loadConstraints,
@@ -125,6 +128,7 @@ export function SetInput({
         lastPerformance,
         readiness,
         deloadActive,
+        freeform,
         recommendation,
         returnRecommendation,
         loadConstraints,
@@ -267,9 +271,10 @@ export function SetInput({
     hasDistance &&
     (!Number.isFinite(distanceKm) || distanceKm < 0 || distanceKm * 1000 > MAX_DISTANCE_M);
   const cardioInvalid = isCardio && (durationSec === null || distanceInvalid);
+  const strengthInvalid = !isCardio && form.reps <= 0;
 
   async function handleValidate() {
-    if (cardioInvalid) return;
+    if (cardioInvalid || strengthInvalid) return;
     setSubmitting(true);
     try {
       const values = isCardio
@@ -618,7 +623,7 @@ export function SetInput({
         <Button
           type="button"
           onClick={handleValidate}
-          disabled={submitting || cardioInvalid}
+          disabled={submitting || cardioInvalid || strengthInvalid}
           className="h-20 w-full text-lg font-semibold"
         >
           <Check className="size-6" />
@@ -635,6 +640,7 @@ function computeInitial(
   lastPerf: SerializedLastPerformance | undefined,
   readiness: ReadinessSignal | null,
   deloadActive: boolean,
+  freeform: boolean,
   recommendation: IntraSetRecommendation | null = null,
   returnRecommendation: ReturnRecommendation | null = null,
   loadConstraints: GymLoadConstraints | null = null,
@@ -674,6 +680,25 @@ function computeInitial(
       notes: '',
     };
   }
+
+  // A freeform workout has no programmed rep/RIR target. For convenience, seed
+  // the first set from the actual first working set of the previous session when
+  // one exists, but never run the progression algorithm against the synthetic
+  // ProgramExercise defaults used only to reuse the session UI.
+  if (freeform) {
+    const previous = lastPerf?.sets[0];
+    return {
+      weight: previous?.weight ?? 0,
+      reps: previous?.reps ?? 0,
+      rir: previous?.rir ?? null,
+      durationInput: '',
+      distanceInput: '',
+      isWarmup: false,
+      isDropSet: false,
+      notes: '',
+    };
+  }
+
   // 2. A return after a long break is a session-only calibration. Keep the
   //    normal progression path intact for ordinary sessions, but start this one
   //    at the conservative history/inventory value and let later sets hand off
