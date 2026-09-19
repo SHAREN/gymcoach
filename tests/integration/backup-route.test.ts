@@ -211,6 +211,15 @@ async function seedFullUser(email: string) {
       },
     },
   });
+  await db.session.create({
+    data: {
+      userId: user.id,
+      startedAt: new Date('2026-06-02T10:00:00.000Z'),
+      finishedAt: new Date('2026-06-02T10:45:00.000Z'),
+      gymId: gym.id,
+      freeExerciseIds: [pullup.id, bench.id],
+    },
+  });
   await db.coachSession.create({
     data: {
       userId: user.id,
@@ -303,7 +312,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/backup - export completeness (issue #168)', () => {
-  it('exports version 5 with set equipment history and all earlier backup fields', async () => {
+  it('exports version 6 with freeform selections and all earlier backup fields', async () => {
     const user = await seedFullUser('a@test.dev');
     actAs(user.id);
 
@@ -311,7 +320,7 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
     expect(res.status).toBe(200);
     const dump = await res.json();
 
-    expect(dump.version).toBe(5);
+    expect(dump.version).toBe(6);
     expect(dump.profile).toMatchObject({
       displayName: 'Julien',
       bodyweight: 82.5,
@@ -352,6 +361,11 @@ describe('GET /api/backup - export completeness (issue #168)', () => {
       },
     ]);
     expect(dump.sessions[0].gymName).toBe('Basement');
+    expect(dump.sessions[1]).toMatchObject({
+      programName: null,
+      workoutName: null,
+      freeExerciseNames: ['Pull-up', 'Bench Press'],
+    });
 
     const sets = dump.sessions[0].sets as Array<Record<string, unknown>>;
     const benchSet = sets.find((s) => s.exerciseName === 'Bench Press');
@@ -452,6 +466,20 @@ describe('POST /api/backup - restore round trip (issue #168)', () => {
     // Ownership-scoped: user A's data is untouched, user B owns a full copy.
     expect(await countsFor(userA.id)).toEqual(countsA);
     expect(await countsFor(userB.id)).toEqual(countsA);
+    const restoredFreeform = await db.session.findFirst({
+      where: { userId: userB.id, programId: null, workoutId: null },
+    });
+    const restoredFreeformNames = await db.exercise.findMany({
+      where: { id: { in: restoredFreeform?.freeExerciseIds ?? [] } },
+      select: { id: true, name: true },
+    });
+    const restoredNameById = new Map(
+      restoredFreeformNames.map((exercise) => [exercise.id, exercise.name]),
+    );
+    expect((restoredFreeform?.freeExerciseIds ?? []).map((id) => restoredNameById.get(id))).toEqual([
+      'Pull-up',
+      'Bench Press',
+    ]);
 
     // JSON null convention is preserved by restore: a set with no equipment
     // snapshot stores JSON null, not SQL NULL, matching the normal set writer.

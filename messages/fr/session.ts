@@ -6,6 +6,23 @@ export const session = {
   activeProgram: 'Programme actif : {name}',
   noActiveProgram: 'Aucun programme actif',
   noActiveProgramDescription: 'Activez un programme pour pouvoir démarrer une séance.',
+  noActiveProgramFreeformDescription:
+    'Vous pouvez quand même démarrer une séance libre ou activer un programme pour des séances planifiées.',
+  noSessionFreeformDescription:
+    'Vous pouvez quand même démarrer une séance libre ou ajouter des exercices à ce programme.',
+  freeform: {
+    title: 'Séance libre',
+    description:
+      'Commencez avec une séance vide, ajoutez les exercices au fur et à mesure et notez simplement ce que vous faites.',
+    start: 'Démarrer une séance libre',
+    emptyDescription:
+      'Ajoutez votre premier exercice. Rien n’est planifié à l’avance dans cette séance.',
+    addExercise: 'Ajouter un exercice',
+    addDescription: 'Choisissez un exercice à ajouter à cette séance libre.',
+    search: 'Rechercher un exercice',
+    noChoices: 'Aucun autre exercice à ajouter.',
+    addError: 'Impossible d’ajouter l’exercice.',
+  },
   viewPrograms: 'Voir les programmes',
   noSession: 'Aucune séance dans ce programme',
   noSessionDescription: 'Ajoutez au moins une séance avec des exercices avant de démarrer.',
@@ -139,6 +156,7 @@ export const session = {
     note: 'Note de séance (facultatif)',
     notePlaceholder: 'Ressenti global, douleurs, points à travailler...',
     noteSaveError: 'Impossible d’enregistrer les notes.',
+    setCount: '{count} séries',
     setProgress: '{done}/{target} séries',
     maxWeight: ' · max {weight}',
     finishing: 'Clôture...',

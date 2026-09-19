@@ -26,6 +26,7 @@ interface Props {
   sets: PendingSet[];
   programExercises: (ProgramExercise & { exercise: Exercise })[];
   unit: WeightUnit;
+  freeform?: boolean;
   // Previous-session sets per exercise; absent entries mean no prior history.
   priorSets?: PriorSets;
   onBack: () => void;
@@ -98,6 +99,7 @@ export function SessionSummary({
   sets,
   programExercises,
   unit,
+  freeform = false,
   priorSets = {},
   onBack,
   onFinish,
@@ -231,7 +233,7 @@ export function SessionSummary({
               {exerciseStats.map((s) => (
                 <li key={s.pe.id} className="flex items-center justify-between gap-2 py-2 text-sm">
                   <div className="flex min-w-0 items-center gap-2">
-                    {s.complete ? (
+                    {(freeform ? s.doneSets > 0 : s.complete) ? (
                       <Check className="size-4 text-primary" />
                     ) : (
                       <span className="size-4 flex-shrink-0 rounded-full border border-muted-foreground/40" />
@@ -239,7 +241,9 @@ export function SessionSummary({
                     <span className="truncate">{exerciseName(s.pe.exercise.name)}</span>
                   </div>
                   <span className="flex-shrink-0 text-xs text-muted-foreground">
-                    {t('setProgress', { done: s.doneSets, target: s.targetSets })}
+                    {freeform
+                      ? t('setCount', { count: s.doneSets })
+                      : t('setProgress', { done: s.doneSets, target: s.targetSets })}
                     {s.cardioLabel
                       ? ` · ${s.cardioLabel}`
                       : s.maxWeight > 0

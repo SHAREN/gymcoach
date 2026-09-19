@@ -38,6 +38,7 @@ interface Props {
   unit: WeightUnit;
   gymName?: string | null;
   loadConstraints?: GymLoadConstraints | null;
+  freeform?: boolean;
 }
 
 export function ExerciseCard({
@@ -48,6 +49,7 @@ export function ExerciseCard({
   unit,
   gymName = null,
   loadConstraints = null,
+  freeform = false,
 }: Props) {
   const t = useTranslations('session.exerciseCard');
   const exerciseT = useTranslations('exercises');
@@ -159,26 +161,22 @@ export function ExerciseCard({
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3 pt-0">
-        <p className="text-sm font-medium">
-          {isCardio ? (
-            <>
-              {t('cardioPrescription', {
-                sets: programExercise.targetSets,
-                seconds: programExercise.restSec,
-              })}
-            </>
-          ) : (
-            <>
-              {t('strengthPrescription', {
-                sets: programExercise.targetSets,
-                reps: repsLabel,
-                rir: programExercise.targetRIR,
-                seconds: programExercise.restSec,
-                tempo: programExercise.tempo ?? 'none',
-              })}
-            </>
-          )}
-        </p>
+        {!freeform && (
+          <p className="text-sm font-medium">
+            {isCardio
+              ? t('cardioPrescription', {
+                  sets: programExercise.targetSets,
+                  seconds: programExercise.restSec,
+                })
+              : t('strengthPrescription', {
+                  sets: programExercise.targetSets,
+                  reps: repsLabel,
+                  rir: programExercise.targetRIR,
+                  seconds: programExercise.restSec,
+                  tempo: programExercise.tempo ?? 'none',
+                })}
+          </p>
+        )}
 
         {lastPerformance && (!isCardio || lastPerformance.cardio) && (
           <div className="rounded-md bg-secondary/50 p-3 text-sm">
@@ -202,7 +200,7 @@ export function ExerciseCard({
           </div>
         )}
 
-        {!isCardio && suggestion.weight != null && (
+        {!freeform && !isCardio && suggestion.weight != null && (
           <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
             <div className="flex items-center gap-2">
               {suggestion.reason === 'progression' ? (

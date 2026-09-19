@@ -6,6 +6,7 @@ import { requireSession } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { StartFreeWorkoutButton } from '@/components/session/start-free-workout-button';
 import { getHomeInsight } from '@/lib/home-insight';
 import { getTrainingDisplayName } from '@/i18n/training-names';
 
@@ -21,6 +22,7 @@ const DAY_KEYS = [
 
 export default async function DashboardPage() {
   const t = await getTranslations('dashboard');
+  const sessionT = await getTranslations('session');
   const common = await getTranslations('common');
   const format = await getFormatter();
   const locale = await getLocale();
@@ -82,7 +84,7 @@ export default async function DashboardPage() {
                 {t('startedOn', {
                   name: inProgressSession.workout?.name
                     ? getTrainingDisplayName(inProgressSession.workout.name, locale)
-                    : t('sessionFallback'),
+                    : sessionT('freeform.title'),
                   date: format.dateTime(inProgressSession.startedAt, {
                     day: '2-digit',
                     month: '2-digit',
@@ -104,8 +106,9 @@ export default async function DashboardPage() {
               <CardTitle className="text-base">{t('noActiveProgram')}</CardTitle>
               <CardDescription>{t('noActiveProgramDescription')}</CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button asChild>
+            <CardContent className="flex flex-col gap-2">
+              <StartFreeWorkoutButton />
+              <Button asChild variant="ghost">
                 <Link href="/programs">{t('viewPrograms')}</Link>
               </Button>
             </CardContent>
@@ -120,8 +123,9 @@ export default async function DashboardPage() {
                 })}
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button asChild>
+            <CardContent className="flex flex-col gap-2">
+              <StartFreeWorkoutButton />
+              <Button asChild variant="ghost">
                 <Link href={`/programs/${activeProgram.id}`}>{t('configureProgram')}</Link>
               </Button>
             </CardContent>

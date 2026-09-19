@@ -1,0 +1,2 @@
+ALTER TABLE "Session"
+ADD COLUMN "freeExerciseIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

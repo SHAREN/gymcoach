@@ -22,23 +22,15 @@ export async function GET() {
   }
 }
 
-// POST /api/sessions: starts a new session on one of the user's workouts.
-// Fails if an unfinished session already exists on the same workout
-// (avoids zombie sessions created by a double-click).
+// POST /api/sessions: starts either a programmed workout or an empty freeform
+// session. A freeform session deliberately has no Program/Workout rows.
 export async function POST(req: Request) {
   try {
     const userId = await requireApiUserId();
-    const { workoutId, gymId } = await parseJsonBody(req, sessionStartSchema);
-
-    const workout = await db.workout.findFirst({
-      where: { id: workoutId, program: { userId } },
-    });
-    if (!workout) {
-      throw new ApiError(404, 'Session not found.');
-    }
+    const input = await parseJsonBody(req, sessionStartSchema);
 
     const selectedGymId =
-      gymId ??
+      input.gymId ??
       (await db.user.findUnique({ where: { id: userId }, select: { activeGymId: true } }))
         ?.activeGymId ??
       null;
@@ -50,19 +42,48 @@ export async function POST(req: Request) {
       if (!gym) throw new ApiError(400, 'Invalid gym.');
     }
 
+    if ('freeform' in input) {
+      const inProgress = await db.session.findFirst({
+        where: {
+          userId,
+          workoutId: null,
+          programId: null,
+          finishedAt: null,
+        },
+        orderBy: { startedAt: 'desc' },
+      });
+      if (inProgress) {
+        return NextResponse.json(inProgress, { status: 200 });
+      }
+
+      const created = await db.session.create({
+        data: {
+          userId,
+          gymId: selectedGymId,
+          freeExerciseIds: [],
+        },
+      });
+      return NextResponse.json(created, { status: 201 });
+    }
+
+    const workout = await db.workout.findFirst({
+      where: { id: input.workoutId, program: { userId } },
+    });
+    if (!workout) {
+      throw new ApiError(404, 'Session not found.');
+    }
+
     const inProgress = await db.session.findFirst({
-      where: { userId, workoutId, finishedAt: null },
+      where: { userId, workoutId: input.workoutId, finishedAt: null },
     });
     if (inProgress) {
-      // We return the existing session instead of creating a new one:
-      // allows resuming cleanly after a reload.
       return NextResponse.json(inProgress, { status: 200 });
     }
 
     const created = await db.session.create({
       data: {
         userId,
-        workoutId,
+        workoutId: input.workoutId,
         programId: workout.programId,
         gymId: selectedGymId,
       },

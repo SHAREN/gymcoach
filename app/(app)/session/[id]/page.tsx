@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { getLastPerformances, type LastPerformance } from '@/lib/last-performance';
@@ -37,63 +38,110 @@ export default async function SessionRunPage(props: Props) {
 
   if (!session) notFound();
   if (session.finishedAt) {
-    // Session already finished: redirect to home. In LOT 8 we will point
-    // to the session history page.
     redirect('/');
   }
-  if (!session.workout) notFound();
 
-  const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
+  const freeform = session.workoutId == null && session.programId == null;
+  if (!freeform && !session.workout) notFound();
+
+  const t = await getTranslations('session');
+  const catalog = freeform
+    ? await db.exercise.findMany({
+        where: { userId: auth.userId },
+        orderBy: { name: 'asc' },
+      })
+    : [];
+  const catalogById = new Map(catalog.map((exercise) => [exercise.id, exercise]));
+  const freeProgramExercises = freeform
+    ? session.freeExerciseIds.flatMap((exerciseId, index) => {
+        const exercise = catalogById.get(exerciseId);
+        return exercise
+          ? [
+              {
+                id: `free-${exercise.id}`,
+                workoutId: `free-${session.id}`,
+                exerciseId: exercise.id,
+                order: index,
+                targetSets: 1,
+                targetRepsMin: 8,
+                targetRepsMax: 12,
+                targetRIR: 2,
+                restSec: exercise.defaultRestSec,
+                tempo: null,
+                notes: null,
+                supersetGroup: null,
+                autoregulationMode: 'PRESERVE_RIR' as const,
+                fatigueRate: null,
+                loadAdjustmentPct: null,
+                exercise,
+              },
+            ]
+          : [];
+      })
+    : [];
+
+  const runnerWorkout = session.workout ?? {
+    id: `free-${session.id}`,
+    programId: '',
+    name: t('freeform.title'),
+    dayOfWeek: null,
+    order: 0,
+    program: null,
+    exercises: freeProgramExercises,
+  };
+
+  const exerciseIds = runnerWorkout.exercises.map((pe) => pe.exerciseId);
   const userPromise = db.user.findUnique({
     where: { id: auth.userId },
     select: { unit: true, deloadUntil: true, bodyweight: true },
   });
+
   const [lastPerformances, user, latestCheckin, returnRecommendations] = await Promise.all([
     getLastPerformances(auth.userId, exerciseIds, session.id),
     userPromise,
-    db.readinessCheckin.findFirst({
-      where: { userId: auth.userId },
-      orderBy: { createdAt: 'desc' },
-    }),
-    userPromise.then((resolvedUser) =>
-      getReturnToTrainingRecommendations({
-        userId: auth.userId,
-        programExercises: session.workout!.exercises,
-        excludeSessionId: session.id,
-        now: session.startedAt,
-        bodyweight: resolvedUser?.bodyweight ?? null,
-        gym: session.gym,
-      }),
-    ),
+    freeform
+      ? Promise.resolve(null)
+      : db.readinessCheckin.findFirst({
+          where: { userId: auth.userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+    freeform
+      ? Promise.resolve({})
+      : userPromise.then((resolvedUser) =>
+          getReturnToTrainingRecommendations({
+            userId: auth.userId,
+            programExercises: runnerWorkout.exercises,
+            excludeSessionId: session.id,
+            now: session.startedAt,
+            bodyweight: resolvedUser?.bodyweight ?? null,
+            gym: session.gym,
+          }),
+        ),
   ]);
 
   const lastPerfRecord: Record<string, SerializedLastPerformance> = {};
-  for (const [k, v] of lastPerformances) {
-    lastPerfRecord[k] = serializePerf(v);
+  for (const [key, value] of lastPerformances) {
+    lastPerfRecord[key] = serializePerf(value);
   }
 
-  const readiness = buildReadinessSignal(latestCheckin);
-  // Planned deload week (issue #112): resolved against the clock here so the
-  // client never reasons about dates; an expired deloadUntil has no effect.
-  const deloadActive = isDeloadActive(user?.deloadUntil ?? null, new Date());
+  const readiness = freeform ? null : buildReadinessSignal(latestCheckin);
+  const deloadActive = freeform ? false : isDeloadActive(user?.deloadUntil ?? null, new Date());
 
   return (
     <SessionRunner
-      session={session}
+      session={{ ...session, workout: runnerWorkout }}
       lastPerformances={lastPerfRecord}
       returnRecommendations={returnRecommendations}
       readiness={readiness}
       deloadActive={deloadActive}
       unit={user?.unit ?? 'KG'}
       initialProgramExerciseId={searchParams.programExerciseId}
+      freeform={freeform}
+      catalog={catalog}
     />
   );
 }
 
-// Turn the latest check-in into the readiness signal that drives the load
-// suggestion. We only forward an in-window check-in; a stale one is dropped here
-// so the client never has to reason about clocks (and the suggestion stays
-// identical to the no-data path). Returns null when there is no usable signal.
 function buildReadinessSignal(
   checkin: {
     readiness: number;
@@ -105,7 +153,6 @@ function buildReadinessSignal(
   const ageHours = (Date.now() - checkin.createdAt.getTime()) / (1000 * 60 * 60);
   if (ageHours > READINESS_RECENCY_HOURS) return null;
 
-  // soreness is stored as JSON; coerce defensively to a plain { group: 1-5 } map.
   let soreness: ReadinessSignal['soreness'] = null;
   if (
     checkin.soreness &&
@@ -113,7 +160,7 @@ function buildReadinessSignal(
     !Array.isArray(checkin.soreness)
   ) {
     const entries = Object.entries(checkin.soreness as Record<string, unknown>).filter(
-      ([, v]) => typeof v === 'number',
+      ([, value]) => typeof value === 'number',
     ) as Array<[string, number]>;
     if (entries.length > 0) {
       soreness = Object.fromEntries(entries) as ReadinessSignal['soreness'];
@@ -123,12 +170,12 @@ function buildReadinessSignal(
   return { readiness: checkin.readiness, soreness, ageHours };
 }
 
-function serializePerf(p: LastPerformance): SerializedLastPerformance {
+function serializePerf(performance: LastPerformance): SerializedLastPerformance {
   return {
-    sessionStartedAt: p.sessionStartedAt.toISOString(),
-    sets: p.sets,
-    maxWeight: p.maxWeight,
-    repsAtMaxWeight: p.repsAtMaxWeight,
-    cardio: p.cardio,
+    sessionStartedAt: performance.sessionStartedAt.toISOString(),
+    sets: performance.sets,
+    maxWeight: performance.maxWeight,
+    repsAtMaxWeight: performance.repsAtMaxWeight,
+    cardio: performance.cardio,
   };
 }

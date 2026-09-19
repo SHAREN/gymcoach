@@ -23,6 +23,7 @@ import {
 } from '@/lib/cardio';
 import { MAX_SUPERSET_GROUP, MIN_SUPERSET_GROUP } from '@/lib/supersets';
 import { sorenessSchema } from '@/lib/schemas/readiness';
+import { MAX_FREEFORM_EXERCISES } from '@/lib/schemas/session';
 import { gymWeightListSchema } from '@/lib/schemas/gym';
 import {
   GYM_EQUIPMENT_IMAGE_MIME_TYPES,
@@ -49,7 +50,8 @@ import {
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
 // - Program / Workout / ProgramExercise: all user content incl supersetGroup.
-// - Session / Set: all user content incl durationSec, distanceM, avgHr.
+// - Session / Set: all user content incl freeform exercise order, durationSec,
+//   distanceM, avgHr.
 // - Saved Gym profiles plus physical GymEquipment, equipment-to-exercise links,
 //   and uploaded/external equipment images.
 // - CoachSession, ExerciseGoal, BodyweightEntry, ReadinessCheckin,
@@ -62,7 +64,7 @@ import {
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 5;
+const VERSION = 6;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -259,6 +261,10 @@ export async function GET() {
         finishedAt: s.finishedAt?.toISOString() ?? null,
         notes: s.notes,
         gymName: gyms.find((gym) => gym.id === s.gymId)?.name ?? null,
+        freeExerciseNames: s.freeExerciseIds.flatMap((exerciseId) => {
+          const name = exercises.find((exercise) => exercise.id === exerciseId)?.name;
+          return name ? [name] : [];
+        }),
         sets: s.sets.map((set) => ({
           exerciseName: exercises.find((e) => e.id === set.exerciseId)?.name ?? null,
           gymEquipmentName: set.gymEquipment?.name ?? null,
@@ -437,6 +443,7 @@ const importSchema = z.object({
         finishedAt: dateString.nullable().optional(),
         notes: z.string().max(5000).nullable().optional(),
         gymName: z.string().max(80).nullable().optional(),
+        freeExerciseNames: z.array(z.string().max(120)).max(MAX_FREEFORM_EXERCISES).optional(),
         sets: z
           .array(
             z.object({
@@ -843,6 +850,10 @@ export async function POST(req: Request) {
               finishedAt: s.finishedAt ? new Date(s.finishedAt) : null,
               notes: s.notes ?? null,
               gymId: s.gymName ? (gymIdByName.get(s.gymName) ?? null) : null,
+              freeExerciseIds: (s.freeExerciseNames ?? []).flatMap((name) => {
+                const exerciseId = exerciseIdByName.get(name);
+                return exerciseId ? [exerciseId] : [];
+              }),
             },
           });
           const setRows = s.sets.flatMap((set) => {

@@ -1,8 +1,22 @@
 import { z } from 'zod';
 
-export const sessionStartSchema = z.object({
-  workoutId: z.string().min(1),
-  gymId: z.string().min(1).optional().nullable(),
+export const MAX_FREEFORM_EXERCISES = 200;
+
+const gymIdSchema = z.string().min(1).optional().nullable();
+
+export const sessionStartSchema = z.union([
+  z.object({
+    workoutId: z.string().min(1),
+    gymId: gymIdSchema,
+  }),
+  z.object({
+    freeform: z.literal(true),
+    gymId: gymIdSchema,
+  }),
+]);
+
+export const freeSessionExerciseSchema = z.object({
+  exerciseId: z.string().min(1),
 });
 
 export const sessionUpdateSchema = z.object({

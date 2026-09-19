@@ -258,6 +258,10 @@ model Session {
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
   notes      String?
+  // Freeform sessions have no Program/Workout. Keep the selected exercise IDs
+  // in session order so the live logger can survive reloads without creating
+  // synthetic program data.
+  freeExerciseIds String[] @default([])
   // The gym is frozen when the session starts so later switching gyms does
   // not change the inventory used by an in-progress or historical workout.
   gymId      String?

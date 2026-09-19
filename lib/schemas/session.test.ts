@@ -2,10 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { sessionStartSchema, sessionUpdateSchema } from './session';
 
 describe('sessionStartSchema', () => {
-  it('requires a non-empty workoutId', () => {
-    expect(sessionStartSchema.parse({ workoutId: 'w1' }).workoutId).toBe('w1');
+  it('requires a non-empty workoutId for programmed sessions', () => {
+    const parsed = sessionStartSchema.parse({ workoutId: 'w1' });
+    expect('workoutId' in parsed ? parsed.workoutId : null).toBe('w1');
     expect(sessionStartSchema.safeParse({ workoutId: '' }).success).toBe(false);
     expect(sessionStartSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('accepts an explicit freeform session without a workoutId', () => {
+    expect(sessionStartSchema.parse({ freeform: true })).toEqual({ freeform: true });
+    expect(sessionStartSchema.safeParse({ freeform: false }).success).toBe(false);
   });
 });
 

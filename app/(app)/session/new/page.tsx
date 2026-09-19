@@ -65,11 +65,28 @@ export default async function NewSessionPage() {
           ) : null}
         </div>
 
+        <ReadinessCheckin />
+        <WorkoutStartList
+          activeGymId={user?.activeGymId ?? null}
+          gyms={gyms}
+          workouts={(activeProgram?.workouts ?? []).map((workout) => {
+            const dayKey =
+              workout.dayOfWeek != null ? DAY_KEYS[workout.dayOfWeek - 1] : null;
+            const day = dayKey ? common(`days.${dayKey}`) : null;
+            return {
+              id: workout.id,
+              name: getTrainingDisplayName(workout.name, locale),
+              day,
+              exerciseCount: workout._count.exercises,
+            };
+          })}
+        />
+
         {!activeProgram ? (
           <Card>
             <CardHeader>
               <CardTitle>{t('noActiveProgram')}</CardTitle>
-              <CardDescription>{t('noActiveProgramDescription')}</CardDescription>
+              <CardDescription>{t('noActiveProgramFreeformDescription')}</CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild>
@@ -81,7 +98,7 @@ export default async function NewSessionPage() {
           <Card>
             <CardHeader>
               <CardTitle>{t('noSession')}</CardTitle>
-              <CardDescription>{t('noSessionDescription')}</CardDescription>
+              <CardDescription>{t('noSessionFreeformDescription')}</CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild>
@@ -89,25 +106,7 @@ export default async function NewSessionPage() {
               </Button>
             </CardContent>
           </Card>
-        ) : (
-          <>
-            <ReadinessCheckin />
-            <WorkoutStartList
-              activeGymId={user?.activeGymId ?? null}
-              gyms={gyms}
-              workouts={activeProgram.workouts.map((w) => {
-                const dayKey = w.dayOfWeek != null ? DAY_KEYS[w.dayOfWeek - 1] : null;
-                const day = dayKey ? common(`days.${dayKey}`) : null;
-                return {
-                  id: w.id,
-                  name: getTrainingDisplayName(w.name, locale),
-                  day,
-                  exerciseCount: w._count.exercises,
-                };
-              })}
-            />
-          </>
-        )}
+        ) : null}
       </div>
     </main>
   );

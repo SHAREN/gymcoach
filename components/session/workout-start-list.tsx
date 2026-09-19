@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { StartWorkoutButton } from '@/components/session/start-workout-button';
+import { StartFreeWorkoutButton } from '@/components/session/start-free-workout-button';
 
 interface WorkoutOption {
   id: string;
@@ -58,6 +59,16 @@ export function WorkoutStartList({
           <p className="text-xs text-muted-foreground">{t('trainingGymDescription')}</p>
         </div>
       )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">{t('freeform.title')}</CardTitle>
+          <CardDescription>{t('freeform.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <StartFreeWorkoutButton gymId={gymId === 'none' ? null : gymId} />
+        </CardContent>
+      </Card>
 
       <ul className="flex flex-col gap-3">
         {workouts.map((workout) => (

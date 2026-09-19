@@ -57,6 +57,7 @@ import { RestTimer } from '@/components/session/rest-timer';
 import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
+import { FreeSessionExercisePicker } from '@/components/session/free-session-exercise-picker';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
 import type { GymLoadConstraints } from '@/lib/gym-loads';
@@ -106,6 +107,8 @@ type SessionRunnerProps = {
   deloadActive: boolean;
   unit: WeightUnit;
   initialProgramExerciseId?: string;
+  freeform?: boolean;
+  catalog?: Exercise[];
 };
 
 type Mode =
@@ -121,6 +124,8 @@ export function SessionRunner({
   deloadActive,
   unit,
   initialProgramExerciseId,
+  freeform = false,
+  catalog = [],
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
@@ -155,6 +160,14 @@ export function SessionRunner({
   const [hydrated, setHydrated] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(initialExerciseIndex);
   const [mode, setMode] = useState<Mode>({ kind: 'input' });
+
+  // A server refresh preserves this client component's local state. When a
+  // freeform exercise is added we first put its synthetic row id in the URL,
+  // then refresh; sync the local selection to that refreshed URL/row list so
+  // the newly added exercise becomes active immediately.
+  useEffect(() => {
+    setCurrentIdx(selectedExerciseIndex(programExercises, initialProgramExerciseId));
+  }, [initialProgramExerciseId, programExercises]);
   const [closing, setClosing] = useState(false);
   // Readiness auto-regulation can be turned off in settings (issue #61). The
   // preference lives in localStorage, so it is read after mount; until then we
@@ -246,6 +259,7 @@ export function SessionRunner({
     pe: ProgramExerciseWithExercise,
     atMs: number,
   ): IntraSetRecommendation | null {
+    if (freeform) return null;
     const completedSets = setsByExercise.get(pe.exerciseId) ?? [];
     const lastWorkingSet = completedSets.filter((set) => !set.isWarmup && !set.isDropSet).at(-1);
     if (!lastWorkingSet) return null;
@@ -383,9 +397,10 @@ export function SessionRunner({
       const justLogged = pe.exerciseId === currentPE.exerciseId ? 1 : 0;
       return target.targetSets - logged - justLogged;
     };
-    const nextIdx = values.isWarmup
-      ? null
-      : nextAutoAdvanceIndex(supersetView, currentIdx, remainingAfterThisSet);
+    const nextIdx =
+      freeform || values.isWarmup
+        ? null
+        : nextAutoAdvanceIndex(supersetView, currentIdx, remainingAfterThisSet);
 
     // Superset-aware rest (issue #189): a short transition rest when the
     // auto-advance moves to another member of the same group (A1 -> A2); the
@@ -559,6 +574,7 @@ export function SessionRunner({
         sets={liveSets}
         programExercises={effectiveProgramExercises}
         unit={unit}
+        freeform={freeform}
         priorSets={priorSetsByExercise}
         onBack={() => setMode({ kind: 'input' })}
         onFinish={handleFinishSession}
@@ -568,6 +584,33 @@ export function SessionRunner({
   }
 
   if (!currentPE || !currentTarget) {
+    if (freeform) {
+      return (
+        <main className="flex flex-1 items-center justify-center px-4 py-10">
+          <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">{t('freeform.title')}</h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t('freeform.emptyDescription')}
+              </p>
+            </div>
+            <FreeSessionExercisePicker
+              sessionId={session.id}
+              catalog={catalog}
+              selectedExerciseIds={[]}
+              onAdded={(exerciseId) => {
+                router.replace(sessionExercisePath(session.id, `free-${exerciseId}`));
+                router.refresh();
+              }}
+            />
+            <Button variant="ghost" size="sm" onClick={() => void handleFinishSession()}>
+              <Flag className="size-4" />
+              <span className="ml-2">{t('finish')}</span>
+            </Button>
+          </div>
+        </main>
+      );
+    }
     return (
       <main className="flex flex-1 items-center justify-center px-4 py-6">
         <p className="text-muted-foreground">{t('noExercises')}</p>
@@ -596,7 +639,9 @@ export function SessionRunner({
       <div className="sticky top-[97px] z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate text-xs text-muted-foreground">{trainingName(workout.name)}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {freeform ? t('freeform.title') : trainingName(workout.name)}
+            </p>
             <p className="text-sm font-medium">
               {t('exerciseProgress', {
                 current: currentIdx + 1,
@@ -627,11 +672,11 @@ export function SessionRunner({
             </Link>
           </Button>
         </div>
-        <Progress value={progressPct} className="mt-2 h-1.5" />
+        {!freeform && <Progress value={progressPct} className="mt-2 h-1.5" />}
         <SessionExerciseStrip
           exercises={programExercises}
           currentIndex={currentIdx}
-          completedProgramExerciseIds={completedProgramExerciseIds}
+          completedProgramExerciseIds={freeform ? new Set<string>() : completedProgramExerciseIds}
           disabled={mode.kind !== 'input'}
           onSelect={(index) => {
             selectExercise(index);
@@ -644,6 +689,19 @@ export function SessionRunner({
             router.push(exerciseDetailPath(pe.exerciseId, returnTo));
           }}
         />
+        {freeform && (
+          <div className="mt-2">
+            <FreeSessionExercisePicker
+              sessionId={session.id}
+              catalog={catalog}
+              selectedExerciseIds={programExercises.map((item) => item.exerciseId)}
+              onAdded={(exerciseId) => {
+                router.replace(sessionExercisePath(session.id, `free-${exerciseId}`));
+                router.refresh();
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
@@ -655,12 +713,15 @@ export function SessionRunner({
           unit={unit}
           gymName={session.gym?.name ?? null}
           loadConstraints={loadConstraintsFor(currentPE)}
+          freeform={freeform}
         />
-        <ReturnToTrainingNotice
-          recommendation={currentReturnRecommendation}
-          unit={unit}
-          usesBodyweight={currentTarget.exercise.usesBodyweight}
-        />
+        {!freeform && (
+          <ReturnToTrainingNotice
+            recommendation={currentReturnRecommendation}
+            unit={unit}
+            usesBodyweight={currentTarget.exercise.usesBodyweight}
+          />
+        )}
 
         {currentPE.exercise.category === 'CARDIO' ? (
           <SetsList

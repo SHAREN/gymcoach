@@ -36,6 +36,10 @@ export async function POST(req: Request, props: Params) {
     if (!exercise) {
       throw new ApiError(400, 'Invalid exercise.');
     }
+    const freeform = session.workoutId == null && session.programId == null;
+    if (freeform && !session.freeExerciseIds.includes(data.exerciseId)) {
+      throw new ApiError(400, 'Exercise is not part of this freeform session.');
+    }
 
     // Cardio cross-field rule (issue #133): duration/distance only on CARDIO
     // exercises, and a cardio set requires a duration.
