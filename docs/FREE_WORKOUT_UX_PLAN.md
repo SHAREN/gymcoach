@@ -1,6 +1,6 @@
 # GymCoach — план доработок UX тренировки
 
-Статус: требования реализованы локально; все проверки и production build зелёные, ожидается деплой на Renat VPS.
+Статус: реализовано, проверено и задеплоено на Renat VPS.
 
 Последнее обновление: 2026-09-20
 
@@ -156,6 +156,15 @@
 - integration: 357/357;
 - git diff --check: пройден;
 - production build: пройден успешно.
+
+Деплой:
+- кодовый commit: af29f6d2 (feat: streamline active workout UX);
+- production image: gymcoach-app:workout-ux-af29f6d;
+- URL: https://gymcoach.webuirenat.duckdns.org;
+- canary на 127.0.0.1:3011: login 200, авторизация 200, активная Session 200;
+- production на 127.0.0.1:3010: login 200;
+- внешний HTTPS после переключения: 200;
+- новых миграций БД в этой UX-доработке нет.
 
 ## Правило дальнейшей работы с этим файлом
 
