@@ -21,7 +21,7 @@ export const session = {
   exerciseStripLabel: 'Exercices de cette séance',
   superset: 'Superset {label}',
   deloadWeek: 'Semaine de décharge',
-  quit: 'Quitter sans terminer',
+  quit: 'Réduire la séance',
   askCoach: 'Demander au coach',
   previous: 'Précédent',
   next: 'Suivant',
@@ -32,6 +32,22 @@ export const session = {
   setUpdateError: 'Impossible de mettre à jour la série.',
   finished: 'Séance terminée.',
   finishError: 'Impossible de terminer la séance.',
+  management: {
+    open: 'Gestion de la séance',
+    title: 'Gestion de la séance',
+    description: 'Terminez la séance ou réinitialisez-la complètement.',
+    finish: 'Terminer la séance',
+    reset: 'Réinitialiser la séance',
+    resetTitle: 'Réinitialiser cette séance ?',
+    resetDescription:
+      'Toutes les données de cette séance en cours seront supprimées. Cette action est irréversible après confirmation.',
+    cancel: 'Annuler',
+    resetCountdown: 'Réinitialiser dans {seconds} s',
+    resetConfirm: 'Réinitialiser la séance',
+    resetting: 'Réinitialisation...',
+    resetDone: 'Séance réinitialisée.',
+    resetError: 'Impossible de réinitialiser la séance.',
+  },
   equipmentDropped:
     'Série enregistrée, mais le matériel n’a pas été associé : il n’est plus disponible dans cette salle.',
   free: {
@@ -43,8 +59,7 @@ export const session = {
     emptyDescription: 'Ajoutez votre premier exercice pour commencer à enregistrer la séance.',
     addExercise: 'Ajouter un exercice',
     chooseExercise: 'Choisir un exercice',
-    chooseExerciseDescription:
-      'Les exercices déjà pratiqués apparaissent en premier. La recherche et les filtres conservent cet ordre.',
+    chooseExerciseDescription: 'Choisissez un exercice pour cette séance.',
     searchExercises: 'Rechercher des exercices',
     sessionCount: '{count, plural, one {# séance} other {# séances}}',
     noChoices: 'Aucun exercice ne correspond à ces filtres.',

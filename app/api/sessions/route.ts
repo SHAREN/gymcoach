@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { sessionStartSchema } from '@/lib/schemas/session';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
+import { defaultIntraSetConfig } from '@/lib/intra-set-autoregulation';
 
 export async function GET() {
   try {
@@ -23,13 +24,12 @@ export async function GET() {
 }
 
 // POST /api/sessions: starts either a programmed workout or a free session.
-// Programmed sessions keep the existing resume-on-double-click behavior. Free
-// sessions have no workout/program relation and keep their exercise list in
-// SessionExercise rows owned only by that session.
+// A free session is created atomically with its first exercise, so cancelling
+// the picker can never leave an empty unfinished Session behind.
 export async function POST(req: Request) {
   try {
     const userId = await requireApiUserId();
-    const { workoutId, gymId } = await parseJsonBody(req, sessionStartSchema);
+    const { workoutId, gymId, initialExerciseId } = await parseJsonBody(req, sessionStartSchema);
 
     const selectedGymId =
       gymId ??
@@ -51,11 +51,35 @@ export async function POST(req: Request) {
       });
       if (inProgressFree) return NextResponse.json(inProgressFree);
 
-      const created = await db.session.create({
-        data: {
-          userId,
-          gymId: selectedGymId,
-        },
+      const exercise = await db.exercise.findFirst({
+        where: { id: initialExerciseId!, userId },
+      });
+      if (!exercise) throw new ApiError(400, 'Invalid exercise.');
+
+      const autoregulation = defaultIntraSetConfig(exercise);
+      const created = await db.$transaction(async (tx) => {
+        const session = await tx.session.create({
+          data: {
+            userId,
+            gymId: selectedGymId,
+          },
+        });
+        await tx.sessionExercise.create({
+          data: {
+            sessionId: session.id,
+            exerciseId: exercise.id,
+            ordinal: 0,
+            targetSets: 4,
+            targetRepsMin: 8,
+            targetRepsMax: 12,
+            targetRIR: 2,
+            restSec: exercise.defaultRestSec,
+            autoregulationMode: 'PRESERVE_RIR',
+            fatigueRate: autoregulation.fatigueRate,
+            loadAdjustmentPct: autoregulation.loadAdjustmentPct,
+          },
+        });
+        return session;
       });
       return NextResponse.json(created, { status: 201 });
     }
@@ -63,16 +87,12 @@ export async function POST(req: Request) {
     const workout = await db.workout.findFirst({
       where: { id: workoutId, program: { userId } },
     });
-    if (!workout) {
-      throw new ApiError(404, 'Session not found.');
-    }
+    if (!workout) throw new ApiError(404, 'Session not found.');
 
     const inProgress = await db.session.findFirst({
       where: { userId, workoutId, finishedAt: null },
     });
-    if (inProgress) {
-      return NextResponse.json(inProgress, { status: 200 });
-    }
+    if (inProgress) return NextResponse.json(inProgress, { status: 200 });
 
     const created = await db.session.create({
       data: {

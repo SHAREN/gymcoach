@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { getHomeInsight } from '@/lib/home-insight';
 import { getTrainingDisplayName } from '@/i18n/training-names';
 import { StartFreeSessionButton } from '@/components/session/start-free-session-button';
+import { getExerciseCatalogWithUsage } from '@/lib/free-session-catalog';
 
 const DAY_KEYS = [
   'monday',
@@ -33,6 +34,10 @@ export default async function DashboardPage() {
     orderBy: { startedAt: 'desc' },
     include: { workout: { select: { name: true } } },
   });
+
+  const exerciseCatalog = inProgressSession
+    ? []
+    : await getExerciseCatalogWithUsage(session.userId);
 
   const activeProgram = await db.program.findFirst({
     where: { userId: session.userId, isActive: true },
@@ -75,7 +80,12 @@ export default async function DashboardPage() {
           </Link>
         )}
 
-        {!inProgressSession && <StartFreeSessionButton className="min-h-tap w-full text-base" />}
+        {!inProgressSession && (
+          <StartFreeSessionButton
+            className="min-h-tap w-full text-base"
+            catalog={exerciseCatalog}
+          />
+        )}
 
         {inProgressSession ? (
           <Card className="border-primary/40 bg-primary/5">

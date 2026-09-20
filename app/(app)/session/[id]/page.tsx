@@ -11,6 +11,7 @@ import { isDeloadActive } from '@/lib/deload';
 import { getReturnToTrainingRecommendationsByEquipment } from '@/lib/return-to-training-history';
 import { SessionRunner, type SerializedLastPerformance } from '@/components/session/session-runner';
 import { liveSessionGymInclude } from '@/lib/session-gym-selection';
+import { getExerciseCatalogWithUsage } from '@/lib/free-session-catalog';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -77,52 +78,26 @@ export default async function SessionRunPage(props: Props) {
     select: { unit: true, deloadUntil: true, bodyweight: true },
   });
 
-  const [
-    lastPerformances,
-    user,
-    latestCheckin,
-    returnRecommendations,
-    exerciseCatalog,
-    exerciseUsage,
-  ] = await Promise.all([
-    getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
-    userPromise,
-    db.readinessCheckin.findFirst({
-      where: { userId: auth.userId },
-      orderBy: { createdAt: 'desc' },
-    }),
-    userPromise.then((resolvedUser) =>
-      getReturnToTrainingRecommendationsByEquipment({
-        userId: auth.userId,
-        programExercises: sessionExercises,
-        excludeSessionId: session.id,
-        now: session.startedAt,
-        bodyweight: resolvedUser?.bodyweight ?? null,
-        gym: session.gym,
+  const [lastPerformances, user, latestCheckin, returnRecommendations, exerciseCatalog] =
+    await Promise.all([
+      getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
+      userPromise,
+      db.readinessCheckin.findFirst({
+        where: { userId: auth.userId },
+        orderBy: { createdAt: 'desc' },
       }),
-    ),
-    db.exercise.findMany({
-      where: { userId: auth.userId },
-      orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
-    }),
-    db.set.findMany({
-      where: { isWarmup: false, session: { userId: auth.userId } },
-      select: { exerciseId: true, sessionId: true },
-      distinct: ['exerciseId', 'sessionId'],
-    }),
-  ]);
-
-  const sessionCountByExercise = new Map<string, number>();
-  for (const usage of exerciseUsage) {
-    sessionCountByExercise.set(
-      usage.exerciseId,
-      (sessionCountByExercise.get(usage.exerciseId) ?? 0) + 1,
-    );
-  }
-  const catalogWithHistory = exerciseCatalog.map((exercise) => ({
-    ...exercise,
-    sessionCount: sessionCountByExercise.get(exercise.id) ?? 0,
-  }));
+      userPromise.then((resolvedUser) =>
+        getReturnToTrainingRecommendationsByEquipment({
+          userId: auth.userId,
+          programExercises: sessionExercises,
+          excludeSessionId: session.id,
+          now: session.startedAt,
+          bodyweight: resolvedUser?.bodyweight ?? null,
+          gym: session.gym,
+        }),
+      ),
+      getExerciseCatalogWithUsage(auth.userId),
+    ]);
 
   const lastPerfRecord: Record<string, SerializedLastPerformance[]> = {};
   for (const performance of lastPerformances) {
@@ -146,7 +121,7 @@ export default async function SessionRunPage(props: Props) {
       deloadActive={deloadActive}
       unit={user?.unit ?? 'KG'}
       initialProgramExerciseId={requestedProgramExerciseId}
-      exerciseCatalog={catalogWithHistory}
+      exerciseCatalog={exerciseCatalog}
     />
   );
 }

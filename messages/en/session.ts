@@ -18,7 +18,7 @@ export const session = {
   exerciseStripLabel: 'Exercises in this workout',
   superset: 'Superset {label}',
   deloadWeek: 'Deload week',
-  quit: 'Quit without finishing',
+  quit: 'Minimize workout',
   askCoach: 'Ask the coach',
   previous: 'Previous',
   next: 'Next',
@@ -29,6 +29,22 @@ export const session = {
   setUpdateError: 'Could not update the set.',
   finished: 'Session finished.',
   finishError: 'Could not finish the session.',
+  management: {
+    open: 'Workout management',
+    title: 'Workout management',
+    description: 'Finish the workout or reset it completely.',
+    finish: 'Finish workout',
+    reset: 'Reset workout',
+    resetTitle: 'Reset this workout?',
+    resetDescription:
+      'All data from this current workout will be deleted. This cannot be undone after confirmation.',
+    cancel: 'Cancel',
+    resetCountdown: 'Reset in {seconds}s',
+    resetConfirm: 'Reset workout',
+    resetting: 'Resetting...',
+    resetDone: 'Workout reset.',
+    resetError: 'Could not reset the workout.',
+  },
   equipmentDropped:
     'Set saved, but the equipment was not attached: it is no longer available in this gym.',
   free: {
@@ -40,8 +56,7 @@ export const session = {
     emptyDescription: 'Add your first exercise to start logging this workout.',
     addExercise: 'Add exercise',
     chooseExercise: 'Choose an exercise',
-    chooseExerciseDescription:
-      'Exercises you have trained before appear first. Search and filters keep the same ordering.',
+    chooseExerciseDescription: 'Choose an exercise for this workout.',
     searchExercises: 'Search exercises',
     sessionCount: '{count, plural, one {# workout} other {# workouts}}',
     noChoices: 'No exercises match these filters.',

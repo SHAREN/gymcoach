@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Flag, MessageSquare, X } from 'lucide-react';
+import { Flag, MessageSquare, Trash2, Wrench, X } from 'lucide-react';
 import type {
   Exercise,
   Program,
@@ -22,6 +22,23 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { acquireWakeLock, bindWakeLockToVisibility, releaseWakeLock } from '@/lib/wake-lock';
 import { vibrate, VIBRATION_PATTERNS } from '@/lib/vibrate';
 import { generateLocalId, getDB, type PendingSet } from '@/lib/indexeddb';
@@ -37,7 +54,6 @@ import {
   buildSupersetView,
   isSupersetTransitionRest,
   nextAutoAdvanceIndex,
-  nextNavIndex,
   SUPERSET_TRANSITION_REST_SEC,
 } from '@/lib/supersets';
 import { isReadinessAutoRegulationEnabled } from '@/lib/preferences';
@@ -226,10 +242,34 @@ export function SessionRunner({
   );
   const [mode, setMode] = useState<Mode>({ kind: 'input' });
   const [closing, setClosing] = useState(false);
+  const [managementOpen, setManagementOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetDelay, setResetDelay] = useState(3);
+  const [resetting, setResetting] = useState(false);
+  const [freeAddOpen, setFreeAddOpen] = useState(false);
+  const [programAddOpen, setProgramAddOpen] = useState(false);
   // Readiness auto-regulation can be turned off in settings (issue #61). The
   // preference lives in localStorage, so it is read after mount; until then we
   // assume the default (on) so the first render matches the server output.
   const [autoRegulate, setAutoRegulate] = useState(true);
+
+  useEffect(() => {
+    if (!resetOpen) {
+      setResetDelay(3);
+      return;
+    }
+    setResetDelay(3);
+    const timer = window.setInterval(() => {
+      setResetDelay((value) => {
+        if (value <= 1) {
+          window.clearInterval(timer);
+          return 0;
+        }
+        return value - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resetOpen]);
 
   const currentPE = programExercises[currentIdx];
   const currentTarget = effectiveProgramExercises[currentIdx];
@@ -551,6 +591,28 @@ export function SessionRunner({
     }
   }
 
+  async function handleResetSession() {
+    if (resetting || resetDelay > 0) return;
+    setResetting(true);
+    try {
+      const response = await fetch('/api/sessions/' + encodeURIComponent(session.id), {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        toast.error(t('management.resetError'));
+        return;
+      }
+      await getDB().pendingSets.where('sessionId').equals(session.id).delete();
+      toast.success(t('management.resetDone'));
+      router.replace('/');
+      router.refresh();
+    } catch {
+      toast.error(t('management.resetError'));
+    } finally {
+      setResetting(false);
+    }
+  }
+
   function handleRestEnd() {
     vibrate(VIBRATION_PATTERNS.restEnd);
     if (mode.kind === 'rest' && mode.nextExerciseIdx != null) {
@@ -569,26 +631,6 @@ export function SessionRunner({
   function handleAdd30s() {
     if (mode.kind !== 'rest') return;
     setMode({ ...mode, endsAt: mode.endsAt + 30_000 });
-  }
-
-  function goPrev() {
-    setCurrentIdx((i) => Math.max(0, i - 1));
-    setMode({ kind: 'input' });
-  }
-  // Next is linear for standalone exercises (unchanged) and cycles within a
-  // superset group before advancing past it (issue #146).
-  const remainingNow = (pe: ProgramExerciseWithExercise) => {
-    const target = effectiveProgramExerciseById.get(pe.id) ?? pe;
-    return (
-      target.targetSets -
-      (setsByExercise.get(pe.exerciseId)?.filter((s) => !s.isWarmup).length ?? 0)
-    );
-  };
-  const navNextIdx = nextNavIndex(supersetView, currentIdx, remainingNow);
-  function goNext() {
-    if (navNextIdx == null) return;
-    setCurrentIdx(navNextIdx);
-    setMode({ kind: 'input' });
   }
 
   if (mode.kind === 'summary') {
@@ -657,9 +699,14 @@ export function SessionRunner({
   return (
     <main className="flex flex-1 flex-col">
       {/* Sticky header with progress and exit button */}
-      <div className="sticky top-[97px] z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
+      <div className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
+        <div className="flex items-start justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setManagementOpen(true)}
+            className="min-w-0 flex-1 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t('management.open')}
+          >
             <p className="truncate text-xs text-muted-foreground">
               {isFreeSession || !session.workout
                 ? t('free.title')
@@ -682,18 +729,30 @@ export function SessionRunner({
                 {t('deloadWeek')}
               </Badge>
             )}
+          </button>
+          <div className="flex shrink-0 items-center">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground"
+              onClick={() => setManagementOpen(true)}
+              aria-label={t('management.open')}
+            >
+              <Wrench className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              asChild
+              className="text-muted-foreground"
+              aria-label={t('quit')}
+            >
+              <Link href="/">
+                <X className="size-4" />
+              </Link>
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            asChild
-            className="text-muted-foreground"
-            aria-label={t('quit')}
-          >
-            <Link href="/">
-              <X className="size-4" />
-            </Link>
-          </Button>
         </div>
         <Progress value={progressPct} className="mt-2 h-1.5" />
         <SessionExerciseStrip
@@ -711,26 +770,36 @@ export function SessionRunner({
               `/exercises/${programExercise.exerciseId}?returnTo=${encodeURIComponent(returnTo)}`,
             );
           }}
+          onAdd={() => {
+            if (isFreeSession) setFreeAddOpen(true);
+            else setProgramAddOpen(true);
+          }}
+          addDisabled={mode.kind !== 'input'}
         />
+        {isFreeSession && (
+          <FreeSessionExercisePicker
+            sessionId={session.id}
+            catalog={exerciseCatalog}
+            existingExerciseIds={programExercises.map((item) => item.exerciseId)}
+            open={freeAddOpen}
+            onOpenChange={setFreeAddOpen}
+            hideTrigger
+          />
+        )}
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
-        {mode.kind === 'input' && (
+        {mode.kind === 'input' && !isFreeSession && (
           <div className="flex justify-end">
-            {isFreeSession ? (
-              <FreeSessionExercisePicker
-                sessionId={session.id}
-                catalog={exerciseCatalog}
-                existingExerciseIds={programExercises.map((item) => item.exerciseId)}
-              />
-            ) : (
-              <SessionExerciseActions
-                programExercise={currentPE}
-                programExercises={programExercises}
-                catalog={exerciseCatalog}
-                loggedSetCount={currentSets.length}
-              />
-            )}
+            <SessionExerciseActions
+              programExercise={currentPE}
+              programExercises={programExercises}
+              catalog={exerciseCatalog}
+              loggedSetCount={currentSets.length}
+              addOpen={programAddOpen}
+              onAddOpenChange={setProgramAddOpen}
+              hideAddAction
+            />
           </div>
         )}
         <ExerciseCard
@@ -815,41 +884,67 @@ export function SessionRunner({
             <span className="ml-2">{t('askCoach')}</span>
           </Link>
         </Button>
-
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goPrev}
-            disabled={currentIdx === 0 || mode.kind !== 'input'}
-            className="min-h-tap"
-          >
-            <ChevronLeft className="size-4" />
-            <span className="ml-1">{t('previous')}</span>
-          </Button>
-
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => setMode({ kind: 'summary' })}
-            className="min-h-tap"
-          >
-            <Flag className="size-4" />
-            <span className="ml-2">{t('finish')}</span>
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goNext}
-            disabled={navNextIdx == null || mode.kind !== 'input'}
-            className="min-h-tap"
-          >
-            <span className="mr-1">{t('next')}</span>
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
       </div>
+
+      <Dialog open={managementOpen} onOpenChange={setManagementOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('management.title')}</DialogTitle>
+            <DialogDescription>{t('management.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Button
+              type="button"
+              className="min-h-tap justify-start"
+              onClick={() => {
+                setManagementOpen(false);
+                setMode({ kind: 'summary' });
+              }}
+            >
+              <Flag className="mr-2 size-4" />
+              {t('management.finish')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-tap justify-start text-destructive hover:text-destructive"
+              onClick={() => {
+                setManagementOpen(false);
+                setResetOpen(true);
+              }}
+            >
+              <Trash2 className="mr-2 size-4" />
+              {t('management.reset')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('management.resetTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('management.resetDescription')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetting}>{t('management.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleResetSession();
+              }}
+              disabled={resetting || resetDelay > 0}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {resetting
+                ? t('management.resetting')
+                : resetDelay > 0
+                  ? t('management.resetCountdown', { seconds: resetDelay })
+                  : t('management.resetConfirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }

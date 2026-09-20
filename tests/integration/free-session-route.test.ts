@@ -25,19 +25,67 @@ beforeEach(() => {
 });
 
 describe('free workout sessions', () => {
-  it('starts a session without a program or workout', async () => {
+  it('creates a free session atomically with the first selected exercise', async () => {
     const user = await db.user.create({
       data: { email: 'free-start@test.dev', passwordHash: 'x' },
     });
+    const exercise = await db.exercise.create({
+      data: {
+        userId: user.id,
+        name: 'Initial free bench',
+        muscleGroup: 'CHEST',
+        category: 'COMPOUND',
+        defaultRestSec: 140,
+      },
+    });
     mockUserId.mockResolvedValue(user.id);
 
-    const response = await startSession(jsonReq({}));
+    const response = await startSession(jsonReq({ initialExerciseId: exercise.id }));
     expect(response.status).toBe(201);
     const body = (await response.json()) as { id: string };
-    const session = await db.session.findUnique({ where: { id: body.id } });
+    const session = await db.session.findUnique({
+      where: { id: body.id },
+      include: { sessionExercises: true },
+    });
 
     expect(session?.programId).toBeNull();
     expect(session?.workoutId).toBeNull();
+    expect(session?.sessionExercises).toEqual([
+      expect.objectContaining({
+        exerciseId: exercise.id,
+        ordinal: 0,
+        targetSets: 4,
+        targetRepsMin: 8,
+        targetRepsMax: 12,
+        targetRIR: 2,
+        restSec: 140,
+      }),
+    ]);
+  });
+
+  it('does not create an empty free session when no first exercise was chosen', async () => {
+    const user = await db.user.create({
+      data: { email: 'free-empty@test.dev', passwordHash: 'x' },
+    });
+    mockUserId.mockResolvedValue(user.id);
+
+    const before = await db.session.count({ where: { userId: user.id } });
+    const response = await startSession(jsonReq({}));
+
+    expect(response.status).toBe(400);
+    expect(await db.session.count({ where: { userId: user.id } })).toBe(before);
+  });
+
+  it('rejects an invalid initial exercise without leaving a session behind', async () => {
+    const user = await db.user.create({
+      data: { email: 'free-invalid-start@test.dev', passwordHash: 'x' },
+    });
+    mockUserId.mockResolvedValue(user.id);
+
+    const response = await startSession(jsonReq({ initialExerciseId: 'missing-exercise' }));
+
+    expect(response.status).toBe(400);
+    expect(await db.session.count({ where: { userId: user.id } })).toBe(0);
   });
 
   it('adds exercises to the free session without creating or changing ProgramExercise rows', async () => {

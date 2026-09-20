@@ -7,8 +7,9 @@ describe('sessionStartSchema', () => {
     expect(sessionStartSchema.safeParse({ workoutId: '' }).success).toBe(false);
   });
 
-  it('accepts an empty object to start a free session', () => {
-    expect(sessionStartSchema.safeParse({}).success).toBe(true);
+  it('requires the first exercise before a free session can be created', () => {
+    expect(sessionStartSchema.safeParse({}).success).toBe(false);
+    expect(sessionStartSchema.parse({ initialExerciseId: 'e1' }).initialExerciseId).toBe('e1');
   });
 });
 

@@ -41,6 +41,9 @@ interface Props {
   programExercises: SessionProgramExercise[];
   catalog: Exercise[];
   loggedSetCount: number;
+  addOpen?: boolean;
+  onAddOpenChange?: (open: boolean) => void;
+  hideAddAction?: boolean;
 }
 
 export function SessionExerciseActions({
@@ -48,12 +51,17 @@ export function SessionExerciseActions({
   programExercises,
   catalog,
   loggedSetCount,
+  addOpen: controlledAddOpen,
+  onAddOpenChange,
+  hideAddAction = false,
 }: Props) {
   const t = useTranslations('session.exerciseActions');
   const exerciseName = useExerciseName();
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
+  const [internalAddOpen, setInternalAddOpen] = useState(false);
+  const addOpen = controlledAddOpen ?? internalAddOpen;
+  const setAddOpen = onAddOpenChange ?? setInternalAddOpen;
   const [supersetOpen, setSupersetOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,12 +78,12 @@ export function SessionExerciseActions({
   const replaceCatalog =
     loggedSetCount > 0
       ? [programExercise.exercise]
-      : catalog.filter(
-          (exercise) => exercise.muscleGroup === programExercise.exercise.muscleGroup,
-        );
+      : catalog.filter((exercise) => exercise.muscleGroup === programExercise.exercise.muscleGroup);
   const removeDisabled = loggedSetCount > 0 || programExercises.length <= 1;
 
-  async function mutateSuperset(input: { action: 'dissolve' } | { action: 'link'; neighborId: string }) {
+  async function mutateSuperset(
+    input: { action: 'dissolve' } | { action: 'link'; neighborId: string },
+  ) {
     if (busy) return;
     setBusy(true);
     try {
@@ -117,7 +125,13 @@ export function SessionExerciseActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="outline" size="sm" className="gap-2" aria-label={t('open')}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            aria-label={t('open')}
+          >
             <MoreHorizontal className="size-4" />
             {t('actions')}
           </Button>
@@ -127,11 +141,16 @@ export function SessionExerciseActions({
             <Pencil />
             {t('edit')}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddOpen(true)} disabled={addCatalog.length === 0}>
-            <Plus />
-            {t('add')}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setSupersetOpen(true)} disabled={neighbors.length === 0}>
+          {!hideAddAction && (
+            <DropdownMenuItem onSelect={() => setAddOpen(true)} disabled={addCatalog.length === 0}>
+              <Plus />
+              {t('add')}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            onSelect={() => setSupersetOpen(true)}
+            disabled={neighbors.length === 0}
+          >
             <Link2 />
             {t('superset')}
           </DropdownMenuItem>
@@ -188,7 +207,11 @@ export function SessionExerciseActions({
                 variant="outline"
                 className="w-full justify-start"
                 onClick={() => void mutateSuperset({ action: 'link', neighborId: neighbor.id })}
-                disabled={busy || neighbor.supersetGroup === programExercise.supersetGroup && programExercise.supersetGroup != null}
+                disabled={
+                  busy ||
+                  (neighbor.supersetGroup === programExercise.supersetGroup &&
+                    programExercise.supersetGroup != null)
+                }
               >
                 <Link2 className="mr-2 size-4" />
                 {t('linkWith', { name: exerciseName(neighbor.exercise.name) })}

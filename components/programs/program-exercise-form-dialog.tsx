@@ -1,10 +1,12 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Dumbbell } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   Exercise,
@@ -38,6 +40,7 @@ import {
 } from '@/lib/schemas/program-exercise';
 import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
+import { getExerciseMedia } from '@/lib/exercise-media';
 
 interface CreateProps {
   open: boolean;
@@ -174,11 +177,30 @@ export function ProgramExerciseFormDialog(props: Props) {
                     <SelectLabel>
                       {exerciseT(`muscleGroups.${muscleGroupMessageKeys[group as MuscleGroup]}`)}
                     </SelectLabel>
-                    {list.map((ex) => (
-                      <SelectItem key={ex.id} value={ex.id}>
-                        {exerciseName(ex.name)}
-                      </SelectItem>
-                    ))}
+                    {list.map((ex) => {
+                      const media = getExerciseMedia(ex.name);
+                      return (
+                        <SelectItem key={ex.id} value={ex.id}>
+                          <span className="flex items-center gap-2">
+                            <span className="relative flex size-8 shrink-0 items-center justify-center overflow-hidden rounded border border-border bg-muted">
+                              {media ? (
+                                <Image
+                                  src={media.frames[0]}
+                                  alt=""
+                                  fill
+                                  unoptimized
+                                  sizes="32px"
+                                  className="object-cover"
+                                />
+                              ) : (
+                                <Dumbbell className="size-4 text-muted-foreground" aria-hidden />
+                              )}
+                            </span>
+                            <span>{exerciseName(ex.name)}</span>
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectGroup>
                 ))}
               </SelectContent>

@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { Check } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import type { Exercise, ProgramExercise } from '@/lib/prisma-client';
@@ -16,7 +16,9 @@ interface Props {
   completedExerciseIds: ReadonlySet<string>;
   onSelect: (index: number) => void;
   onOpen: (programExercise: SessionExercise) => void;
+  onAdd?: () => void;
   disabled?: boolean;
+  addDisabled?: boolean;
 }
 
 function abbreviation(name: string): string {
@@ -36,14 +38,20 @@ export function SessionExerciseStrip({
   completedExerciseIds,
   onSelect,
   onOpen,
+  onAdd,
   disabled = false,
+  addDisabled = false,
 }: Props) {
   const exerciseName = useExerciseName();
   const t = useTranslations('session');
   const currentRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    currentRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    currentRef.current?.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'center',
+    });
   }, [currentIndex]);
 
   return (
@@ -124,6 +132,22 @@ export function SessionExerciseStrip({
             </button>
           );
         })}
+        {onAdd && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!addDisabled) onAdd();
+            }}
+            disabled={addDisabled}
+            aria-label={t('free.addExercise')}
+            title={t('free.addExercise')}
+            className="group relative shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <span className="flex h-14 w-[4.5rem] items-center justify-center rounded-md border border-border bg-muted/30 transition-colors group-hover:border-primary/50 group-hover:bg-muted sm:h-16 sm:w-20">
+              <Plus className="size-7" aria-hidden />
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

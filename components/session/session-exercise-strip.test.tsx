@@ -88,6 +88,26 @@ describe('SessionExerciseStrip', () => {
     expect(onOpen).toHaveBeenCalledWith(exercises[0]);
   });
 
+  it('renders the add action as a plus-only card after the exercise cards', () => {
+    const onAdd = vi.fn();
+    render(
+      <SessionExerciseStrip
+        exercises={exercises}
+        currentIndex={0}
+        completedExerciseIds={new Set()}
+        onSelect={vi.fn()}
+        onOpen={vi.fn()}
+        onAdd={onAdd}
+      />,
+    );
+
+    const addButton = screen.getByRole('button', { name: 'Add exercise' });
+    expect(addButton).toBeInTheDocument();
+    expect(addButton).not.toHaveTextContent('Add exercise');
+    fireEvent.click(addButton);
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
   it('connects adjacent exercises in the same superset', () => {
     render(
       <SessionExerciseStrip
