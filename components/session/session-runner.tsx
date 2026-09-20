@@ -57,6 +57,10 @@ import { SessionSummary } from '@/components/session/session-summary';
 import { ReturnToTrainingNotice } from '@/components/session/return-to-training-notice';
 import { SessionExerciseStrip } from '@/components/session/session-exercise-strip';
 import { SessionExerciseActions } from '@/components/session/session-exercise-actions';
+import {
+  FreeSessionExercisePicker,
+  type FreeExerciseChoice,
+} from '@/components/session/free-session-exercise-picker';
 import { PreviousSessionSets } from '@/components/session/previous-session-sets';
 import { useExerciseName } from '@/components/shared/use-exercise-name';
 import { useTrainingName } from '@/components/shared/use-training-name';
@@ -120,7 +124,9 @@ type SessionRunnerProps = {
   deloadActive: boolean;
   unit: WeightUnit;
   initialProgramExerciseId?: string | null;
-  exerciseCatalog: Exercise[];
+  exerciseCatalog: FreeExerciseChoice[];
+  sessionExercises: ProgramExerciseWithExercise[];
+  isFreeSession: boolean;
 };
 
 type Mode =
@@ -168,16 +174,17 @@ export function SessionRunner({
   unit,
   initialProgramExerciseId = null,
   exerciseCatalog,
+  sessionExercises,
+  isFreeSession,
 }: SessionRunnerProps) {
   const t = useTranslations('session');
   const exerciseName = useExerciseName();
   const trainingName = useTrainingName();
   const router = useRouter();
-  const workout = session.workout!;
   // Supersets (issue #146, slice 1): run the workout in presentation order -
   // members of a superset group come consecutively with A1/A2 labels. For a
   // workout without supersets this is exactly the stored order.
-  const supersetView = useMemo(() => buildSupersetView(workout.exercises), [workout.exercises]);
+  const supersetView = useMemo(() => buildSupersetView(sessionExercises), [sessionExercises]);
   const programExercises = supersetView.ordered;
   const [selectedEquipmentByExercise, setSelectedEquipmentByExercise] = useState<
     Record<string, string | null>
@@ -601,8 +608,28 @@ export function SessionRunner({
 
   if (!currentPE || !currentTarget) {
     return (
-      <main className="flex flex-1 items-center justify-center px-4 py-6">
-        <p className="text-muted-foreground">{t('noExercises')}</p>
+      <main className="flex flex-1 items-center justify-center px-4 py-10">
+        <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
+          <div>
+            <h1 className="text-xl font-semibold">
+              {isFreeSession ? t('free.emptyTitle') : t('noExercises')}
+            </h1>
+            {isFreeSession && (
+              <p className="mt-2 text-sm text-muted-foreground">{t('free.emptyDescription')}</p>
+            )}
+          </div>
+          {isFreeSession && (
+            <FreeSessionExercisePicker
+              sessionId={session.id}
+              catalog={exerciseCatalog}
+              existingExerciseIds={[]}
+              buttonClassName="min-h-tap"
+            />
+          )}
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/">{t('quit')}</Link>
+          </Button>
+        </div>
       </main>
     );
   }
@@ -633,7 +660,11 @@ export function SessionRunner({
       <div className="sticky top-[97px] z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate text-xs text-muted-foreground">{trainingName(workout.name)}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {isFreeSession || !session.workout
+                ? t('free.title')
+                : trainingName(session.workout.name)}
+            </p>
             <p className="text-sm font-medium">
               {t('exerciseProgress', {
                 current: currentIdx + 1,
@@ -686,12 +717,20 @@ export function SessionRunner({
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
         {mode.kind === 'input' && (
           <div className="flex justify-end">
-            <SessionExerciseActions
-              programExercise={currentPE}
-              programExercises={programExercises}
-              catalog={exerciseCatalog}
-              loggedSetCount={currentSets.length}
-            />
+            {isFreeSession ? (
+              <FreeSessionExercisePicker
+                sessionId={session.id}
+                catalog={exerciseCatalog}
+                existingExerciseIds={programExercises.map((item) => item.exerciseId)}
+              />
+            ) : (
+              <SessionExerciseActions
+                programExercise={currentPE}
+                programExercises={programExercises}
+                catalog={exerciseCatalog}
+                loggedSetCount={currentSets.length}
+              />
+            )}
           </div>
         )}
         <ExerciseCard

@@ -1,23 +1,27 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { sessionStartSchema, sessionUpdateSchema } from './session';
 
 describe('sessionStartSchema', () => {
-  it('requires a non-empty workoutId', () => {
+  it('accepts a programmed workoutId and rejects an empty workoutId', () => {
     expect(sessionStartSchema.parse({ workoutId: 'w1' }).workoutId).toBe('w1');
     expect(sessionStartSchema.safeParse({ workoutId: '' }).success).toBe(false);
-    expect(sessionStartSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('accepts an empty object to start a free session', () => {
+    expect(sessionStartSchema.safeParse({}).success).toBe(true);
   });
 });
 
 describe('sessionUpdateSchema', () => {
   it('accepts an empty object (all fields optional)', () => {
-    expect(sessionUpdateSchema.safeParse({}).success).toBe(true);
+    expect(sessionUpdateSchema.parse({})).toEqual({});
   });
 
   it('trims notes and accepts a finish flag', () => {
-    const parsed = sessionUpdateSchema.parse({ notes: '  good session  ', finish: true });
-    expect(parsed.notes).toBe('good session');
-    expect(parsed.finish).toBe(true);
+    expect(sessionUpdateSchema.parse({ notes: '  good  ', finish: true })).toEqual({
+      notes: 'good',
+      finish: true,
+    });
   });
 
   it('rejects notes longer than 2000 characters', () => {

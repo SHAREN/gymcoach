@@ -57,11 +57,15 @@ export async function DELETE(_req: Request, props: Params) {
     const usage = await db.exercise.findFirst({
       where: { id: params.id, userId },
       select: {
-        _count: { select: { programExercises: true, sets: true } },
+        _count: { select: { programExercises: true, sessionExercises: true, sets: true } },
       },
     });
     if (!usage) throw new ApiError(404, 'Exercise not found.');
-    if (usage._count.programExercises > 0 || usage._count.sets > 0) {
+    if (
+      usage._count.programExercises > 0 ||
+      usage._count.sessionExercises > 0 ||
+      usage._count.sets > 0
+    ) {
       throw new ApiError(409, 'Exercise used in a program or in history. Remove it first.');
     }
 

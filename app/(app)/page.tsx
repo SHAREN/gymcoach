@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { getHomeInsight } from '@/lib/home-insight';
 import { getTrainingDisplayName } from '@/i18n/training-names';
+import { StartFreeSessionButton } from '@/components/session/start-free-session-button';
 
 const DAY_KEYS = [
   'monday',
@@ -73,6 +74,8 @@ export default async function DashboardPage() {
             </Card>
           </Link>
         )}
+
+        {!inProgressSession && <StartFreeSessionButton className="min-h-tap w-full text-base" />}
 
         {inProgressSession ? (
           <Card className="border-primary/40 bg-primary/5">

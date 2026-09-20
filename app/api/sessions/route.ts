@@ -22,20 +22,14 @@ export async function GET() {
   }
 }
 
-// POST /api/sessions: starts a new session on one of the user's workouts.
-// Fails if an unfinished session already exists on the same workout
-// (avoids zombie sessions created by a double-click).
+// POST /api/sessions: starts either a programmed workout or a free session.
+// Programmed sessions keep the existing resume-on-double-click behavior. Free
+// sessions have no workout/program relation and keep their exercise list in
+// SessionExercise rows owned only by that session.
 export async function POST(req: Request) {
   try {
     const userId = await requireApiUserId();
     const { workoutId, gymId } = await parseJsonBody(req, sessionStartSchema);
-
-    const workout = await db.workout.findFirst({
-      where: { id: workoutId, program: { userId } },
-    });
-    if (!workout) {
-      throw new ApiError(404, 'Session not found.');
-    }
 
     const selectedGymId =
       gymId ??
@@ -50,12 +44,33 @@ export async function POST(req: Request) {
       if (!gym) throw new ApiError(400, 'Invalid gym.');
     }
 
+    if (!workoutId) {
+      const inProgressFree = await db.session.findFirst({
+        where: { userId, workoutId: null, programId: null, finishedAt: null },
+        orderBy: { startedAt: 'desc' },
+      });
+      if (inProgressFree) return NextResponse.json(inProgressFree);
+
+      const created = await db.session.create({
+        data: {
+          userId,
+          gymId: selectedGymId,
+        },
+      });
+      return NextResponse.json(created, { status: 201 });
+    }
+
+    const workout = await db.workout.findFirst({
+      where: { id: workoutId, program: { userId } },
+    });
+    if (!workout) {
+      throw new ApiError(404, 'Session not found.');
+    }
+
     const inProgress = await db.session.findFirst({
       where: { userId, workoutId, finishedAt: null },
     });
     if (inProgress) {
-      // We return the existing session instead of creating a new one:
-      // allows resuming cleanly after a reload.
       return NextResponse.json(inProgress, { status: 200 });
     }
 

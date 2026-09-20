@@ -31,6 +31,22 @@ export const session = {
   finishError: 'Could not finish the session.',
   equipmentDropped:
     'Set saved, but the equipment was not attached: it is no longer available in this gym.',
+  free: {
+    title: 'Free workout',
+    start: 'Start free workout',
+    starting: 'Starting...',
+    startError: 'Could not start the free workout.',
+    emptyTitle: 'Free workout',
+    emptyDescription: 'Add your first exercise to start logging this workout.',
+    addExercise: 'Add exercise',
+    chooseExercise: 'Choose an exercise',
+    chooseExerciseDescription:
+      'Exercises you have trained before appear first. Search and filters keep the same ordering.',
+    searchExercises: 'Search exercises',
+    sessionCount: '{count, plural, one {# workout} other {# workouts}}',
+    noChoices: 'No exercises match these filters.',
+    addError: 'Could not add the exercise.',
+  },
   exerciseActions: {
     open: 'Open exercise actions',
     actions: 'Exercise actions',

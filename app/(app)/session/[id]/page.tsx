@@ -36,48 +36,93 @@ export default async function SessionRunPage(props: Props) {
           },
         },
       },
+      sessionExercises: {
+        orderBy: { ordinal: 'asc' },
+        include: { exercise: true },
+      },
       sets: { orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }] },
       gym: { include: liveSessionGymInclude },
     },
   });
 
   if (!session) notFound();
-  if (session.finishedAt) {
-    // Session already finished: redirect to home. In LOT 8 we will point
-    // to the session history page.
-    redirect('/');
-  }
-  if (!session.workout) notFound();
+  if (session.finishedAt) redirect('/');
 
-  const exerciseIds = session.workout.exercises.map((pe) => pe.exerciseId);
+  const isFreeSession = session.workout == null;
+  const sessionExercises = session.workout
+    ? session.workout.exercises
+    : session.sessionExercises.map((item) => ({
+        id: item.exerciseId,
+        workoutId: '',
+        exerciseId: item.exerciseId,
+        order: item.ordinal,
+        targetSets: item.targetSets ?? 4,
+        targetRepsMin: item.targetRepsMin ?? 8,
+        targetRepsMax: item.targetRepsMax ?? 12,
+        targetRIR: item.targetRIR ?? 2,
+        restSec: item.restSec ?? item.exercise.defaultRestSec,
+        tempo: item.tempo,
+        notes: item.notes,
+        supersetGroup: item.supersetGroup,
+        autoregulationMode: item.autoregulationMode ?? 'PRESERVE_RIR',
+        fatigueRate: item.fatigueRate,
+        loadAdjustmentPct: item.loadAdjustmentPct,
+        exercise: item.exercise,
+      }));
+
+  const exerciseIds = sessionExercises.map((item) => item.exerciseId);
   const performanceTargets = buildEquipmentPerformanceTargets(exerciseIds, session.gym);
   const userPromise = db.user.findUnique({
     where: { id: auth.userId },
     select: { unit: true, deloadUntil: true, bodyweight: true },
   });
-  const [lastPerformances, user, latestCheckin, returnRecommendations, exerciseCatalog] =
-    await Promise.all([
-      getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
-      userPromise,
-      db.readinessCheckin.findFirst({
-        where: { userId: auth.userId },
-        orderBy: { createdAt: 'desc' },
+
+  const [
+    lastPerformances,
+    user,
+    latestCheckin,
+    returnRecommendations,
+    exerciseCatalog,
+    exerciseUsage,
+  ] = await Promise.all([
+    getLastPerformancesForEquipmentTargets(auth.userId, performanceTargets, session.id),
+    userPromise,
+    db.readinessCheckin.findFirst({
+      where: { userId: auth.userId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    userPromise.then((resolvedUser) =>
+      getReturnToTrainingRecommendationsByEquipment({
+        userId: auth.userId,
+        programExercises: sessionExercises,
+        excludeSessionId: session.id,
+        now: session.startedAt,
+        bodyweight: resolvedUser?.bodyweight ?? null,
+        gym: session.gym,
       }),
-      userPromise.then((resolvedUser) =>
-        getReturnToTrainingRecommendationsByEquipment({
-          userId: auth.userId,
-          programExercises: session.workout!.exercises,
-          excludeSessionId: session.id,
-          now: session.startedAt,
-          bodyweight: resolvedUser?.bodyweight ?? null,
-          gym: session.gym,
-        }),
-      ),
-      db.exercise.findMany({
-        where: { userId: auth.userId },
-        orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
-      }),
-    ]);
+    ),
+    db.exercise.findMany({
+      where: { userId: auth.userId },
+      orderBy: [{ muscleGroup: 'asc' }, { name: 'asc' }],
+    }),
+    db.set.findMany({
+      where: { isWarmup: false, session: { userId: auth.userId } },
+      select: { exerciseId: true, sessionId: true },
+      distinct: ['exerciseId', 'sessionId'],
+    }),
+  ]);
+
+  const sessionCountByExercise = new Map<string, number>();
+  for (const usage of exerciseUsage) {
+    sessionCountByExercise.set(
+      usage.exerciseId,
+      (sessionCountByExercise.get(usage.exerciseId) ?? 0) + 1,
+    );
+  }
+  const catalogWithHistory = exerciseCatalog.map((exercise) => ({
+    ...exercise,
+    sessionCount: sessionCountByExercise.get(exercise.id) ?? 0,
+  }));
 
   const lastPerfRecord: Record<string, SerializedLastPerformance[]> = {};
   for (const performance of lastPerformances) {
@@ -87,29 +132,25 @@ export default async function SessionRunPage(props: Props) {
   }
 
   const readiness = buildReadinessSignal(latestCheckin);
-  // Planned deload week (issue #112): resolved against the clock here so the
-  // client never reasons about dates; an expired deloadUntil has no effect.
   const deloadActive = isDeloadActive(user?.deloadUntil ?? null, new Date());
 
   return (
     <SessionRunner
-      key={`${session.id}:${session.workout.exercises.map((exercise) => exercise.id).join(',')}`}
+      key={session.id + ':' + sessionExercises.map((exercise) => exercise.id).join(',')}
       session={session}
+      sessionExercises={sessionExercises}
+      isFreeSession={isFreeSession}
       lastPerformances={lastPerfRecord}
       returnRecommendations={returnRecommendations}
       readiness={readiness}
       deloadActive={deloadActive}
       unit={user?.unit ?? 'KG'}
       initialProgramExerciseId={requestedProgramExerciseId}
-      exerciseCatalog={exerciseCatalog}
+      exerciseCatalog={catalogWithHistory}
     />
   );
 }
 
-// Turn the latest check-in into the readiness signal that drives the load
-// suggestion. We only forward an in-window check-in; a stale one is dropped here
-// so the client never has to reason about clocks (and the suggestion stays
-// identical to the no-data path). Returns null when there is no usable signal.
 function buildReadinessSignal(
   checkin: {
     readiness: number;
@@ -121,7 +162,6 @@ function buildReadinessSignal(
   const ageHours = (Date.now() - checkin.createdAt.getTime()) / (1000 * 60 * 60);
   if (ageHours > READINESS_RECENCY_HOURS) return null;
 
-  // soreness is stored as JSON; coerce defensively to a plain { group: 1-5 } map.
   let soreness: ReadinessSignal['soreness'] = null;
   if (
     checkin.soreness &&
@@ -129,11 +169,9 @@ function buildReadinessSignal(
     !Array.isArray(checkin.soreness)
   ) {
     const entries = Object.entries(checkin.soreness as Record<string, unknown>).filter(
-      ([, v]) => typeof v === 'number',
+      ([, value]) => typeof value === 'number',
     ) as Array<[string, number]>;
-    if (entries.length > 0) {
-      soreness = Object.fromEntries(entries) as ReadinessSignal['soreness'];
-    }
+    if (entries.length > 0) soreness = Object.fromEntries(entries) as ReadinessSignal['soreness'];
   }
 
   return { readiness: checkin.readiness, soreness, ageHours };

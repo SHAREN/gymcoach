@@ -59,6 +59,7 @@ import { initializeOwnedGymSystemProfiles } from '@/lib/gym-system-profiles';
 // - Exercise: name, muscleGroup, category, defaultRestSec, notes,
 //   usesBodyweight.
 // - Program / Workout / ProgramExercise: all user content incl supersetGroup.
+// - SessionExercise: free-workout exercise order and per-session targets.
 // - Session / Set: all user content incl durationSec, distanceM, avgHr.
 // - Saved Gym profiles plus physical GymEquipment, equipment-to-exercise links,
 //   and uploaded/external equipment images.
@@ -72,7 +73,7 @@ import { initializeOwnedGymSystemProfiles } from '@/lib/gym-system-profiles';
 // - Program.createdAt / Program.updatedAt and Exercise.createdAt (server-side
 //   bookkeeping with no user-facing meaning; reset to the import time).
 
-const VERSION = 9;
+const VERSION = 10;
 
 // Hard cap on the import body size, enforced while reading the stream (the
 // Content-Length header is attacker-controlled). Generous: a decade of daily
@@ -147,6 +148,10 @@ export async function GET() {
         where: { userId },
         orderBy: { startedAt: 'asc' },
         include: {
+          sessionExercises: {
+            orderBy: { ordinal: 'asc' },
+            include: { exercise: { select: { name: true, defaultRestSec: true } } },
+          },
           sets: {
             orderBy: [{ exerciseId: 'asc' }, { setNumber: 'asc' }],
             include: { gymEquipment: { select: { name: true } } },
@@ -313,6 +318,21 @@ export async function GET() {
         finishedAt: s.finishedAt?.toISOString() ?? null,
         notes: s.notes,
         gymName: gyms.find((gym) => gym.id === s.gymId)?.name ?? null,
+        exercises: (s.workoutId == null ? s.sessionExercises : []).map((item) => ({
+          exerciseName: item.exercise.name,
+          order: item.ordinal,
+          targetSets: item.targetSets ?? 4,
+          targetRepsMin: item.targetRepsMin ?? 8,
+          targetRepsMax: item.targetRepsMax ?? 12,
+          targetRIR: item.targetRIR ?? 2,
+          restSec: item.restSec ?? item.exercise.defaultRestSec,
+          autoregulationMode: item.autoregulationMode ?? 'PRESERVE_RIR',
+          fatigueRate: item.fatigueRate,
+          loadAdjustmentPct: item.loadAdjustmentPct,
+          tempo: item.tempo,
+          notes: item.notes,
+          supersetGroup: item.supersetGroup,
+        })),
         sets: s.sets.map((set) => ({
           exerciseName: exercises.find((e) => e.id === set.exerciseId)?.name ?? null,
           gymEquipmentName: set.gymEquipment?.name ?? null,
@@ -497,6 +517,33 @@ const importSchema = z.object({
         finishedAt: dateString.nullable().optional(),
         notes: z.string().max(5000).nullable().optional(),
         gymName: z.string().max(80).nullable().optional(),
+        // v10: free-workout exercise plan. Older backups omit this field.
+        exercises: z
+          .array(
+            z.object({
+              exerciseName: z.string().trim().min(1).max(120),
+              order: z.number().int().min(0).max(1000),
+              targetSets: z.number().int().min(1).max(20),
+              targetRepsMin: z.number().int().min(1).max(50),
+              targetRepsMax: z.number().int().min(1).max(50),
+              targetRIR: z.number().int().min(0).max(5),
+              restSec: z.number().int().min(15).max(600),
+              autoregulationMode: z.enum(['PRESERVE_RIR', 'PRESERVE_REPS']).optional(),
+              fatigueRate: z.number().min(0.25).max(2).nullable().optional(),
+              loadAdjustmentPct: z.number().min(1).max(5).nullable().optional(),
+              tempo: z.string().max(20).nullable().optional(),
+              notes: z.string().max(2000).nullable().optional(),
+              supersetGroup: z
+                .number()
+                .int()
+                .min(MIN_SUPERSET_GROUP)
+                .max(MAX_SUPERSET_GROUP)
+                .nullable()
+                .optional(),
+            }),
+          )
+          .max(200)
+          .optional(),
         sets: z
           .array(
             z.object({
@@ -728,11 +775,11 @@ export async function POST(req: Request) {
           systemFamilies.add(pool.systemBarbellFamily);
         }
       }
-      if (
-        payload.version >= 9 &&
-        (!systemFamilies.has('LARGE') || !systemFamilies.has('SMALL'))
-      ) {
-        throw new ApiError(400, 'Version 9 gym backup must contain LARGE and SMALL Barbell system pools.');
+      if (payload.version >= 9 && (!systemFamilies.has('LARGE') || !systemFamilies.has('SMALL'))) {
+        throw new ApiError(
+          400,
+          'Version 9 gym backup must contain LARGE and SMALL Barbell system pools.',
+        );
       }
 
       const seenEquipmentNames = new Set<string>();
@@ -747,8 +794,11 @@ export async function POST(req: Request) {
           throw new ApiError(400, 'Gym equipment references a plate pool missing from the backup.');
         }
         const known = item.loadConfigurationKnown ?? true;
-        const loadType = item.loadType ??
-          (known && item.weightOptions.length > 0 && ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
+        const loadType =
+          item.loadType ??
+          (known &&
+          item.weightOptions.length > 0 &&
+          ['MACHINE', 'CABLE', 'OTHER'].includes(item.equipmentType)
             ? EquipmentLoadType.SELECTORIZED
             : EquipmentLoadType.NONE);
         if (
@@ -760,10 +810,16 @@ export async function POST(req: Request) {
             (item.selectedLoadMultiplier ?? 1) !== 1 ||
             (item.loadingSides ?? 2) !== 2)
         ) {
-          throw new ApiError(400, 'Unknown equipment load configuration cannot carry confirmed mechanics.');
+          throw new ApiError(
+            400,
+            'Unknown equipment load configuration cannot carry confirmed mechanics.',
+          );
         }
         if (loadType === EquipmentLoadType.PLATE_LOADED && !item.platePoolCompatibilityKey) {
-          throw new ApiError(400, 'Plate-loaded backup equipment requires a compatible plate pool.');
+          throw new ApiError(
+            400,
+            'Plate-loaded backup equipment requires a compatible plate pool.',
+          );
         }
         const decoded = item.imageBase64
           ? decodeGymEquipmentImage(item.imageBase64, item.imageMimeType ?? undefined)
@@ -1092,6 +1148,32 @@ export async function POST(req: Request) {
               gymId: s.gymName ? (gymIdByName.get(s.gymName) ?? null) : null,
             },
           });
+          const sessionExerciseRows = (s.exercises ?? []).flatMap((item) => {
+            const exerciseId = exerciseIdByName.get(item.exerciseName);
+            if (!exerciseId) return [];
+            return [
+              {
+                sessionId: session.id,
+                exerciseId,
+                ordinal: item.order,
+                targetSets: item.targetSets,
+                targetRepsMin: item.targetRepsMin,
+                targetRepsMax: item.targetRepsMax,
+                targetRIR: item.targetRIR,
+                restSec: item.restSec,
+                autoregulationMode: item.autoregulationMode ?? 'PRESERVE_RIR',
+                fatigueRate: item.fatigueRate ?? null,
+                loadAdjustmentPct: item.loadAdjustmentPct ?? null,
+                tempo: item.tempo ?? null,
+                notes: item.notes ?? null,
+                supersetGroup: item.supersetGroup ?? null,
+              },
+            ];
+          });
+          if (sessionExerciseRows.length > 0) {
+            await tx.sessionExercise.createMany({ data: sessionExerciseRows });
+          }
+
           const setRows = s.sets.flatMap((set) => {
             const exId = set.exerciseName ? exerciseIdByName.get(set.exerciseName) : undefined;
             if (!exId) return [];

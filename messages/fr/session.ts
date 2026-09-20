@@ -34,6 +34,22 @@ export const session = {
   finishError: 'Impossible de terminer la séance.',
   equipmentDropped:
     'Série enregistrée, mais le matériel n’a pas été associé : il n’est plus disponible dans cette salle.',
+  free: {
+    title: 'Séance libre',
+    start: 'Démarrer une séance libre',
+    starting: 'Démarrage...',
+    startError: 'Impossible de démarrer la séance libre.',
+    emptyTitle: 'Séance libre',
+    emptyDescription: 'Ajoutez votre premier exercice pour commencer à enregistrer la séance.',
+    addExercise: 'Ajouter un exercice',
+    chooseExercise: 'Choisir un exercice',
+    chooseExerciseDescription:
+      'Les exercices déjà pratiqués apparaissent en premier. La recherche et les filtres conservent cet ordre.',
+    searchExercises: 'Rechercher des exercices',
+    sessionCount: '{count, plural, one {# séance} other {# séances}}',
+    noChoices: 'Aucun exercice ne correspond à ces filtres.',
+    addError: 'Impossible d’ajouter l’exercice.',
+  },
   exerciseActions: {
     open: 'Ouvrir les actions de l’exercice',
     actions: 'Actions de l’exercice',

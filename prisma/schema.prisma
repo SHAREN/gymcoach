@@ -165,6 +165,7 @@ model Exercise {
   loadProfile       Json                   @default("{\"version\":1,\"algorithmVersion\":\"2026-07-18-multi-muscle-v1\",\"classification\":\"UNCLASSIFIED\",\"provenance\":\"UNCLASSIFIED\",\"confidence\":\"UNKNOWN\",\"primaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"secondaryMuscles\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"movementPatterns\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"fatigueTags\":{\"state\":\"UNKNOWN\",\"entries\":[]},\"jointStress\":{\"state\":\"UNKNOWN\",\"entries\":[]}}")
   createdAt         DateTime               @default(now())
   programExercises  ProgramExercise[]
+  sessionExercises  SessionExercise[]
   sets              Set[]
   goals             ExerciseGoal[]
   gymConfigs        GymExerciseConfig[]
@@ -311,9 +312,34 @@ model Session {
   // not change the inventory used by an in-progress or historical workout.
   gymId      String?
   gym        Gym?      @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  sessionExercises SessionExercise[]
   sets       Set[]
 
   @@index([userId, startedAt])
+}
+
+model SessionExercise {
+  sessionId          String
+  session            Session               @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId         String
+  exercise           Exercise              @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  addedAt            DateTime              @default(now())
+  ordinal            Int
+  targetSets         Int?
+  targetRepsMin      Int?
+  targetRepsMax      Int?
+  targetRIR          Int?
+  restSec            Int?
+  tempo              String?
+  notes              String?
+  supersetGroup      Int?
+  autoregulationMode SetAutoregulationMode?
+  fatigueRate        Float?
+  loadAdjustmentPct  Float?
+
+  @@id([sessionId, exerciseId])
+  @@unique([sessionId, ordinal])
+  @@index([exerciseId])
 }
 
 model Gym {
